@@ -134,11 +134,18 @@ pub fn stop_xray() -> Result<(), String> {
     }
     *proc = None;
     
-    // Also force-kill any orphaned xray.exe (e.g. after crash)
-    let _ = std::process::Command::new("taskkill")
-        .args(&["/IM", "xray.exe", "/F"])
-        .creation_flags(0x08000000)
-        .output();
+    // Also force-kill any orphaned xray process (e.g. after crash)
+    #[cfg(windows)]
+    {
+        let mut cmd = std::process::Command::new("taskkill");
+        cmd.args(&["/IM", "xray.exe", "/F"]);
+        cmd.creation_flags(0x08000000);
+        let _ = cmd.output();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = std::process::Command::new("pkill").args(["-f", "xray"]).output();
+    }
     
     // Brief pause to let ports release
     std::thread::sleep(std::time::Duration::from_millis(300));

@@ -974,10 +974,11 @@ async fn get_traffic_stats() -> serde_json::Value {
     let mut ul: i64 = 0;
 
     // Query xray stats API via CLI - reset counters each call to get delta
-    if let Ok(output) = std::process::Command::new(&xray_exe)
-        .args(&["api", "statsquery", "-s", "127.0.0.1:10813", "-reset"])
-        .creation_flags(0x08000000)
-        .output() 
+    let mut cmd = std::process::Command::new(&xray_exe);
+    cmd.args(&["api", "statsquery", "-s", "127.0.0.1:10813", "-reset"]);
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000);
+    if let Ok(output) = cmd.output() 
     {
         let stdout = String::from_utf8_lossy(&output.stdout);
         // xray outputs JSON: { "stat": [{ "name": "...", "value": "123" }, ...] }
@@ -1016,37 +1017,45 @@ async fn get_traffic_stats() -> serde_json::Value {
 /// Check what process is using a given port
 #[tauri::command]
 async fn check_port(port: u16) -> serde_json::Value {
-    if let Ok(output) = std::process::Command::new("netstat")
-        .args(&["-ano"])
-        .creation_flags(0x08000000)
-        .output() 
+    #[cfg(windows)]
     {
-        let text = String::from_utf8_lossy(&output.stdout);
-        let port_str = format!(":{}", port);
-        for line in text.lines() {
-            if line.contains(&port_str) && line.contains("LISTENING") {
-                // Extract PID (last column)
-                if let Some(pid_str) = line.split_whitespace().last() {
-                    if let Ok(pid) = pid_str.parse::<u32>() {
-                        // Get process name from PID
-                        let mut proc_name = format!("PID {}", pid);
-                        if let Ok(info) = std::process::Command::new("tasklist")
-                            .args(&["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/NH"])
-                            .creation_flags(0x08000000)
-                            .output()
-                        {
-                            let info_text = String::from_utf8_lossy(&info.stdout);
-                            if let Some(name) = info_text.split(',').next() {
-                                proc_name = name.trim().trim_matches('"').to_string();
+        let mut cmd = std::process::Command::new("netstat");
+        cmd.args(&["-ano"]);
+        cmd.creation_flags(0x08000000);
+        if let Ok(output) = cmd.output() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            let port_str = format!(":{}", port);
+            for line in text.lines() {
+                if line.contains(&port_str) && line.contains("LISTENING") {
+                    if let Some(pid_str) = line.split_whitespace().last() {
+                        if let Ok(pid) = pid_str.parse::<u32>() {
+                            let mut proc_name = format!("PID {}", pid);
+                            let mut info_cmd = std::process::Command::new("tasklist");
+                            info_cmd.args(&["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/NH"]);
+                            info_cmd.creation_flags(0x08000000);
+                            if let Ok(info) = info_cmd.output() {
+                                let info_text = String::from_utf8_lossy(&info.stdout);
+                                if let Some(name) = info_text.split(',').next() {
+                                    proc_name = name.trim().trim_matches('"').to_string();
+                                }
                             }
+                            return serde_json::json!({
+                                "busy": true, "pid": pid, "process": proc_name,
+                                "message": format!("Port {} is used by {} (PID {})", port, proc_name, pid)
+                            });
                         }
-                        return serde_json::json!({
-                            "busy": true,
-                            "pid": pid,
-                            "process": proc_name,
-                            "message": format!("Port {} is used by {} (PID {})", port, proc_name, pid)
-                        });
                     }
+                }
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        if let Ok(output) = std::process::Command::new("lsof").args(&["-i", &format!(":{}", port), "-t"]).output() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            if let Some(pid_str) = text.lines().next() {
+                if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                    return serde_json::json!({ "busy": true, "pid": pid, "process": format!("PID {}", pid), "message": format!("Port {} is used by PID {}", port, pid) });
                 }
             }
         }
@@ -1057,23 +1066,37 @@ async fn check_port(port: u16) -> serde_json::Value {
 /// Force kill process on a specific port
 #[tauri::command]
 async fn force_free_port(port: u16) -> String {
-    if let Ok(output) = std::process::Command::new("netstat")
-        .args(&["-ano"])
-        .creation_flags(0x08000000)
-        .output() 
+    #[cfg(windows)]
     {
-        let text = String::from_utf8_lossy(&output.stdout);
-        let port_str = format!(":{}", port);
-        for line in text.lines() {
-            if line.contains(&port_str) && line.contains("LISTENING") {
-                if let Some(pid_str) = line.split_whitespace().last() {
-                    if let Ok(pid) = pid_str.parse::<u32>() {
-                        let _ = std::process::Command::new("taskkill")
-                            .args(&["/PID", &pid.to_string(), "/F"])
-                            .creation_flags(0x08000000)
-                            .output();
-                        return format!("Killed PID {} on port {}", pid, port);
+        let mut cmd = std::process::Command::new("netstat");
+        cmd.args(&["-ano"]);
+        cmd.creation_flags(0x08000000);
+        if let Ok(output) = cmd.output() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            let port_str = format!(":{}", port);
+            for line in text.lines() {
+                if line.contains(&port_str) && line.contains("LISTENING") {
+                    if let Some(pid_str) = line.split_whitespace().last() {
+                        if let Ok(pid) = pid_str.parse::<u32>() {
+                            let mut kill = std::process::Command::new("taskkill");
+                            kill.args(&["/PID", &pid.to_string(), "/F"]);
+                            kill.creation_flags(0x08000000);
+                            let _ = kill.output();
+                            return format!("Killed PID {} on port {}", pid, port);
+                        }
                     }
+                }
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        if let Ok(output) = std::process::Command::new("lsof").args(&["-i", &format!(":{}", port), "-t"]).output() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            if let Some(pid_str) = text.lines().next() {
+                if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                    let _ = std::process::Command::new("kill").args(&["-9", &pid.to_string()]).output();
+                    return format!("Killed PID {} on port {}", pid, port);
                 }
             }
         }
@@ -1166,7 +1189,8 @@ pub fn run() {
                             };
                             if is_connected {
                                 let _ = singbox::stop_singbox();
-                                let _ = ipc::send_command_to_service("StopTun");
+                                #[cfg(windows)]
+                                { let _ = ipc::send_command_to_service("StopTun"); }
                             }
                             app.exit(0);
                         }
