@@ -1,0 +1,201 @@
+@import "tailwindcss";
+
+/* ========== Design Tokens — Retro Rubber Hose Style ========== */
+@theme {
+  /* Main backgrounds — RETRO ORANGE */
+  --color-bg-primary: #DB8B17;
+  --color-bg-secondary: #B87311;
+  --color-bg-deep: #915A0A;
+
+  /* Element backgrounds — BLACK/WHITE */
+  --color-el-primary: #000000;
+  --color-el-secondary: #1A1A1A;
+  --color-el-hover: #333333;
+  --color-el-glass: #FFFFFF;
+  --color-el-glass-light: #F0F0F0;
+  --color-el-subtle: #FFFBE6;
+
+  /* Text */
+  --color-text-on-dark: #FFFFFF;
+  --color-text-on-dark-secondary: #E0E0E0;
+  --color-text-on-dark-muted: #A0A0A0;
+  --color-text-on-orange: #000000;
+  --color-text-on-orange-secondary: #222222;
+  --color-text-on-orange-muted: rgba(0, 0, 0, 0.6);
+
+  /* Accents */
+  --color-accent: #FFFFFF;
+  --color-success: #4ade80;
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+
+  --color-border-dark: #FFFFFF;
+  --color-border-orange: #000000;
+
+  --color-star: #000000;
+  --color-star-empty: rgba(0, 0, 0, 0.2);
+
+  --font-family-sans: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* ========== Global ========== */
+@layer base {
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  html, body, #root {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--font-family-sans);
+    background: var(--color-bg-primary);
+    color: var(--color-text-on-orange);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::-webkit-scrollbar {
+    width: 5px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 3px;
+  }
+}
+
+/* ========== Animations ========== */
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 20px rgba(26, 26, 26, 0.4), 0 0 40px rgba(26, 26, 26, 0.2); }
+  50%      { box-shadow: 0 0 35px rgba(26, 26, 26, 0.6), 0 0 60px rgba(26, 26, 26, 0.4); }
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes spin-pulse {
+  0% { transform: rotate(0deg) scale(0.95); opacity: 0.8; }
+  50% { transform: rotate(180deg) scale(1.05); opacity: 1; }
+  100% { transform: rotate(360deg) scale(0.95); opacity: 0.8; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-in-scale {
+  from { opacity: 0; transform: scale(0.92); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(20px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes connecting-pulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(26, 26, 26, 0.4); }
+  50% { transform: scale(1.05); box-shadow: 0 0 0 15px rgba(26, 26, 26, 0); }
+}
+
+@layer utilities {
+  .animate-pulse-glow {
+    animation: pulse-glow 3s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  }
+  .animate-spin-slow {
+    animation: spin-slow 4s linear infinite;
+  }
+  .animate-spin-pulse {
+    animation: spin-pulse 2.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  }
+  .animate-fade-in {
+    animation: fade-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  .animate-fade-in-scale {
+    animation: fade-in-scale 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  .animate-slide-up {
+    animation: slide-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  .animate-slide-in-right {
+    animation: slide-in-right 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  .animate-connecting {
+    animation: connecting-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  /* Utility function for thick border & retro brutalist shadow */
+  .retro-border {
+    border: 3px solid #000;
+    box-shadow: 4px 4px 0px #000;
+    transition: all 0.1s ease-in-out;
+  }
+  .retro-border:active {
+    transform: translate(2px, 2px);
+    box-shadow: 2px 2px 0px #000;
+  }
+
+  /* Solid cards - no glassmorphism */
+  .card {
+    background: var(--color-el-glass);
+    border: 3px solid #000;
+    border-radius: 12px;
+    color: var(--color-text-on-orange);
+    box-shadow: 4px 4px 0px #000;
+  }
+
+  /* Subtle card */
+  .card-subtle {
+    background: var(--color-el-subtle);
+    border: 3px solid #000;
+    border-radius: 12px;
+    color: var(--color-text-on-orange);
+    box-shadow: 4px 4px 0px #000;
+  }
+
+  /* Light card */
+  .card-light {
+    background: #FFFFFF;
+    border: 3px solid #000;
+    border-radius: 12px;
+    color: var(--color-text-on-orange);
+    box-shadow: 4px 4px 0px #000;
+  }
+
+  /* Button on orange bg */
+  .btn-dark {
+    background: var(--color-el-primary);
+    color: var(--color-text-on-dark);
+    border: 3px solid #000;
+    border-radius: 12px;
+    font-weight: 800;
+    cursor: pointer;
+    box-shadow: 4px 4px 0px #000;
+    transition: all 0.1s ease-in-out;
+  }
+  .btn-dark:hover {
+    background: var(--color-el-secondary);
+    transform: translate(-1px, -1px);
+    box-shadow: 5px 5px 0px #000;
+  }
+  .btn-dark:active {
+    transform: translate(2px, 2px);
+    box-shadow: 2px 2px 0px #000;
+  }
+}

@@ -1,0 +1,266 @@
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+// Trigger HMR
+
+// ========== Types ==========
+
+export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
+export type RoutingMode = 'global' | 'bypass' | 'app-split';
+export type ProxyMode = 'system-proxy' | 'tun';
+
+export interface ServerConfig {
+  id: string;
+  name: string;
+  protocol: 'vless' | 'vmess' | 'trojan' | 'shadowsocks' | 'hysteria2' | 'tuic' | 'wireguard';
+  address: string;
+  port: number;
+  uuid?: string;
+  password?: string;
+  transport: string;
+  security: string;
+  host?: string;
+  path?: string;
+  sni?: string;
+  fingerprint?: string;
+  publicKey?: string;
+  shortId?: string;
+  flow?: string;
+  encryption?: string;
+  country?: string;
+  countryCode?: string;
+  subscriptionId?: string;
+  ping?: number;
+  rawLink: string;
+  rawConfig?: unknown;
+  // Hysteria2 specific
+  obfsType?: string;       // 'salamander'
+  obfsPassword?: string;
+  upMbps?: number;
+  downMbps?: number;
+  // TUIC specific
+  congestionControl?: string;  // 'bbr' | 'cubic' | 'new_reno'
+  udpRelayMode?: string;       // 'native' | 'quic'
+  alpn?: string[];
+  // WireGuard specific
+  privateKey?: string;
+  peerPublicKey?: string;
+  preSharedKey?: string;
+  localAddress?: string[];    // e.g. ['10.0.0.2/32']
+  reserved?: number[];        // [0,0,0]
+  mtu?: number;
+  workers?: number;
+}
+
+export interface LogEntry {
+  id: string;
+  time: string;
+  level: 'info' | 'warning' | 'error' | 'success';
+  message: string;
+}
+
+export interface Subscription {
+  id: string;
+  name: string;
+  url: string;
+  servers: ServerConfig[];
+  updatedAt: string;
+}
+
+export interface SpeedPoint {
+  time: string;
+  download: number;
+  upload: number;
+}
+
+export interface AppState {
+  status: ConnectionStatus;
+  activeServer: ServerConfig | null;
+  proxyMode: ProxyMode;
+  routingMode: RoutingMode;
+  bypassApps: string[];
+  servers: ServerConfig[];
+  subscriptions: Subscription[];
+  speedHistory: SpeedPoint[];
+  currentDownload: number;
+  currentUpload: number;
+  logs: LogEntry[];
+  socksPort: number;
+  httpPort: number;
+  autoStart: boolean;
+  theme: 'dark' | 'light';
+  language: 'ru' | 'en';
+  networkStack: 'mixed' | 'system' | 'gvisor';
+  dnsMode: 'fakeip' | 'realip';
+  strictRoute: boolean;
+  killSwitch: boolean;
+  autoSelectFastest: boolean;
+  subAutoUpdateMinutes: number;
+  connectedAt: number | null;
+  alwaysRunAdmin: boolean;
+
+  setStatus: (status: ConnectionStatus) => void;
+  setActiveServer: (server: ServerConfig | null) => void;
+  setProxyMode: (mode: ProxyMode) => void;
+  setRoutingMode: (mode: RoutingMode) => void;
+  setNetworkStack: (stack: 'mixed' | 'system' | 'gvisor') => void;
+  setDnsMode: (mode: 'fakeip' | 'realip') => void;
+  setStrictRoute: (strict: boolean) => void;
+  setKillSwitch: (on: boolean) => void;
+  setAutoSelectFastest: (on: boolean) => void;
+  setSubAutoUpdateMinutes: (mins: number) => void;
+  setConnectedAt: (ts: number | null) => void;
+  setAlwaysRunAdmin: (on: boolean) => void;
+  addBypassApp: (path: string) => void;
+  removeBypassApp: (path: string) => void;
+  addServer: (server: ServerConfig) => void;
+  removeServer: (id: string) => void;
+  removeAllManualServers: () => void;
+  setServers: (servers: ServerConfig[]) => void;
+  addSubscription: (sub: Subscription) => void;
+  removeSubscription: (id: string) => void;
+  updateSubscription: (id: string, newSub: Subscription) => void;
+  updateServerPing: (id: string, ping: number) => void;
+  addSpeedPoint: (point: SpeedPoint) => void;
+  setCurrentSpeed: (download: number, upload: number) => void;
+  setSocksPort: (port: number) => void;
+  setHttpPort: (port: number) => void;
+  setTheme: (theme: 'dark' | 'light') => void;
+  setLanguage: (lang: 'ru' | 'en') => void;
+  addLog: (level: LogEntry['level'], message: string) => void;
+  clearLogs: () => void;
+  wipeData: () => void;
+}
+
+export const useAppStore = create<AppState>()(
+  persist(
+    (set) => ({
+      status: 'disconnected',
+      activeServer: null,
+      proxyMode: 'system-proxy',
+      routingMode: 'bypass',
+      bypassApps: [],
+      servers: [],
+      subscriptions: [],
+      speedHistory: [],
+      currentDownload: 0,
+      currentUpload: 0,
+      logs: [],
+      socksPort: 10808,
+      httpPort: 10809,
+      autoStart: false,
+      theme: 'dark',
+      language: 'ru',
+      networkStack: 'mixed',
+      dnsMode: 'fakeip',
+      strictRoute: true,
+      killSwitch: false,
+      autoSelectFastest: true,
+      subAutoUpdateMinutes: 60,
+      connectedAt: null,
+      alwaysRunAdmin: false,
+
+      setStatus: (status) => set({ status }),
+      setActiveServer: (server) => set({ activeServer: server }),
+      setProxyMode: (mode) => set({ proxyMode: mode }),
+      setRoutingMode: (mode) => set({ routingMode: mode }),
+      setNetworkStack: (stack) => set({ networkStack: stack }),
+      setDnsMode: (mode) => set({ dnsMode: mode }),
+      setStrictRoute: (strict) => set({ strictRoute: strict }),
+      setKillSwitch: (on) => set({ killSwitch: on }),
+      setAutoSelectFastest: (on) => set({ autoSelectFastest: on }),
+      setSubAutoUpdateMinutes: (mins) => set({ subAutoUpdateMinutes: mins }),
+      setConnectedAt: (ts) => set({ connectedAt: ts }),
+      setAlwaysRunAdmin: (on) => set({ alwaysRunAdmin: on }),
+
+      addBypassApp: (path) => set((s) => ({ bypassApps: [...s.bypassApps, path] })),
+      removeBypassApp: (path) => set((s) => ({
+        bypassApps: s.bypassApps.filter((p) => p !== path),
+      })),
+
+      addServer: (server) => set((s) => ({ servers: [...s.servers, server] })),
+      removeServer: (id) => set((s) => ({
+        servers: s.servers.filter((s2) => s2.id !== id),
+        activeServer: s.activeServer?.id === id ? null : s.activeServer
+      })),
+      removeAllManualServers: () => set((s) => ({
+        servers: s.servers.filter((srv) => srv.subscriptionId !== undefined),
+        activeServer: (!s.activeServer?.subscriptionId) ? null : s.activeServer
+      })),
+      setServers: (servers) => set({ servers }),
+
+      addSubscription: (sub) => set((s) => {
+        // If subscription with same URL already exists, replace it
+        const existing = s.subscriptions.find((x) => x.url === sub.url);
+        const newSubscriptions = existing
+          ? s.subscriptions.map((x) => x.url === sub.url ? sub : x)
+          : [...s.subscriptions, sub];
+        const newServers = existing
+          ? [...s.servers.filter((srv) => srv.subscriptionId !== existing.id), ...sub.servers]
+          : [...s.servers, ...sub.servers];
+        // Deduplicate servers by address+port+protocol
+        const seen = new Set<string>();
+        const deduped = newServers.filter((srv) => {
+          const key = `${srv.address}:${srv.port}:${srv.protocol}:${srv.name}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        return { subscriptions: newSubscriptions, servers: deduped };
+      }),
+      removeSubscription: (id) => set((s) => ({
+        subscriptions: s.subscriptions.filter((sub) => sub.id !== id),
+        servers: s.servers.filter((srv) => srv.subscriptionId !== id),
+        activeServer: s.activeServer?.subscriptionId === id ? null : s.activeServer
+      })),
+      updateSubscription: (id, newSub) => set((s) => {
+        const newServers = [
+          ...s.servers.filter((srv) => srv.subscriptionId !== id),
+          ...newSub.servers,
+        ];
+        // Deduplicate
+        const seen = new Set<string>();
+        const deduped = newServers.filter((srv) => {
+          const key = `${srv.address}:${srv.port}:${srv.protocol}:${srv.name}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        return {
+          subscriptions: s.subscriptions.map((sub) => sub.id === id ? newSub : sub),
+          servers: deduped,
+        };
+      }),
+
+      updateServerPing: (id, ping) => set((s) => ({
+        servers: s.servers.map((srv) =>
+          srv.id === id ? { ...srv, ping } : srv
+        ),
+        activeServer: s.activeServer?.id === id ? { ...s.activeServer, ping } : s.activeServer
+      })),
+
+      addSpeedPoint: (point) => set((s) => ({
+        speedHistory: [...s.speedHistory.slice(-239), point],
+      })),
+      setCurrentSpeed: (download, upload) => set({
+        currentDownload: download,
+        currentUpload: upload,
+      }),
+
+      setSocksPort: (port) => set({ socksPort: port }),
+      setHttpPort: (port) => set({ httpPort: port }),
+      setTheme: (theme) => set({ theme }),
+      setLanguage: (lang) => set({ language: lang }),
+      addLog: (level, message) => set((s) => ({
+        logs: [...s.logs.slice(-99), { id: crypto.randomUUID(), time: new Date().toLocaleTimeString(), level, message }],
+      })),
+      clearLogs: () => set({ logs: [] }),
+      wipeData: () => set({ servers: [], subscriptions: [], activeServer: null }),
+    }),
+    {
+      name: 'doodleray-storage',
+      partialize: (state) => Object.fromEntries(
+        Object.entries(state as any).filter(([key]) => !['status', 'speedHistory', 'currentDownload', 'currentUpload', 'logs'].includes(key))
+      ) as Partial<AppState>,
+    }
+  )
+);
