@@ -47,7 +47,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRGNENGODYxOURERUQ3OQpSV1I1N2QwWmhzLzBCTFRnMkVJSDhlOVZjTTNlWTZsb3F5UFNpK3BkdTlJVno0cjBCbjhhRitxSAo=",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ1NzM4NkU4MDBGQkExNwpSV1FYdWcrQWJqaFhCRkcrRVFpL3dqenUvOExjQlJsUEhmcXNaUURZSXMwU21STHM4UlpMM05JMQo=",
       "endpoints": [
         "https://github.com/Maximus657/doodleray/releases/latest/download/latest.json"
       ]
