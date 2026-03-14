@@ -846,98 +846,113 @@ fn vpn_status() -> bool {
     *state
 }
 
-/// Check if we're running with Administrator privileges
+/// Check if we're running with Administrator/root privileges
 #[tauri::command]
 fn is_admin() -> bool {
-    use std::mem;
-    use std::ptr;
-    
-    unsafe {
-        #[link(name = "advapi32")]
-        extern "system" {
-            fn OpenProcessToken(
-                ProcessHandle: *mut std::ffi::c_void,
-                DesiredAccess: u32,
-                TokenHandle: *mut *mut std::ffi::c_void,
-            ) -> i32;
-            fn GetTokenInformation(
-                TokenHandle: *mut std::ffi::c_void,
-                TokenInformationClass: u32,
-                TokenInformation: *mut std::ffi::c_void,
-                TokenInformationLength: u32,
-                ReturnLength: *mut u32,
-            ) -> i32;
-        }
-        #[link(name = "kernel32")]
-        extern "system" {
-            fn GetCurrentProcess() -> *mut std::ffi::c_void;
-            fn CloseHandle(hObject: *mut std::ffi::c_void) -> i32;
-        }
-
-        let mut token: *mut std::ffi::c_void = ptr::null_mut();
-        // TOKEN_QUERY = 0x0008
-        if OpenProcessToken(GetCurrentProcess(), 0x0008, &mut token) == 0 {
-            return false;
-        }
-
-        // TokenElevation = 20
-        let mut elevation: u32 = 0;
-        let mut return_length: u32 = 0;
-        let result = GetTokenInformation(
-            token,
-            20, // TokenElevation
-            &mut elevation as *mut u32 as *mut std::ffi::c_void,
-            mem::size_of::<u32>() as u32,
-            &mut return_length,
-        );
-        CloseHandle(token);
+    #[cfg(windows)]
+    {
+        use std::mem;
+        use std::ptr;
         
-        result != 0 && elevation != 0
+        unsafe {
+            #[link(name = "advapi32")]
+            extern "system" {
+                fn OpenProcessToken(
+                    ProcessHandle: *mut std::ffi::c_void,
+                    DesiredAccess: u32,
+                    TokenHandle: *mut *mut std::ffi::c_void,
+                ) -> i32;
+                fn GetTokenInformation(
+                    TokenHandle: *mut std::ffi::c_void,
+                    TokenInformationClass: u32,
+                    TokenInformation: *mut std::ffi::c_void,
+                    TokenInformationLength: u32,
+                    ReturnLength: *mut u32,
+                ) -> i32;
+            }
+            #[link(name = "kernel32")]
+            extern "system" {
+                fn GetCurrentProcess() -> *mut std::ffi::c_void;
+                fn CloseHandle(hObject: *mut std::ffi::c_void) -> i32;
+            }
+
+            let mut token: *mut std::ffi::c_void = ptr::null_mut();
+            if OpenProcessToken(GetCurrentProcess(), 0x0008, &mut token) == 0 {
+                return false;
+            }
+
+            let mut elevation: u32 = 0;
+            let mut return_length: u32 = 0;
+            let result = GetTokenInformation(
+                token,
+                20,
+                &mut elevation as *mut u32 as *mut std::ffi::c_void,
+                mem::size_of::<u32>() as u32,
+                &mut return_length,
+            );
+            CloseHandle(token);
+            
+            result != 0 && elevation != 0
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        // On macOS/Linux, check if running as root (uid 0)
+        unsafe {
+            extern "C" { fn getuid() -> u32; }
+            getuid() == 0
+        }
     }
 }
 
 /// Relaunch the app as Administrator (triggers UAC prompt)
 #[tauri::command]
 fn restart_as_admin() -> Result<(), String> {
-    let exe_path = std::env::current_exe()
-        .map_err(|e| format!("Failed to get exe path: {}", e))?;
-    
-    let exe_str: Vec<u16> = exe_path.to_string_lossy()
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect();
-    
-    let verb: Vec<u16> = "runas\0".encode_utf16().collect();
-    
-    unsafe {
-        #[link(name = "shell32")]
-        extern "system" {
-            fn ShellExecuteW(
-                hwnd: *mut std::ffi::c_void,
-                lpOperation: *const u16,
-                lpFile: *const u16,
-                lpParameters: *const u16,
-                lpDirectory: *const u16,
-                nShowCmd: i32,
-            ) -> isize;
+    #[cfg(windows)]
+    {
+        let exe_path = std::env::current_exe()
+            .map_err(|e| format!("Failed to get exe path: {}", e))?;
+        
+        let exe_str: Vec<u16> = exe_path.to_string_lossy()
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        
+        let verb: Vec<u16> = "runas\0".encode_utf16().collect();
+        
+        unsafe {
+            #[link(name = "shell32")]
+            extern "system" {
+                fn ShellExecuteW(
+                    hwnd: *mut std::ffi::c_void,
+                    lpOperation: *const u16,
+                    lpFile: *const u16,
+                    lpParameters: *const u16,
+                    lpDirectory: *const u16,
+                    nShowCmd: i32,
+                ) -> isize;
+            }
+            
+            let result = ShellExecuteW(
+                std::ptr::null_mut(),
+                verb.as_ptr(),
+                exe_str.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                1,
+            );
+            
+            if result as usize <= 32 {
+                return Err("User declined UAC or ShellExecute failed".into());
+            }
         }
         
-        let result = ShellExecuteW(
-            std::ptr::null_mut(),
-            verb.as_ptr(),
-            exe_str.as_ptr(),
-            std::ptr::null(),
-            std::ptr::null(),
-            1, // SW_SHOWNORMAL
-        );
-        
-        if result as usize <= 32 {
-            return Err("User declined UAC or ShellExecute failed".into());
-        }
+        std::process::exit(0);
     }
-    
-    // Exit current (non-admin) process
-    std::process::exit(0);
+    #[cfg(not(windows))]
+    {
+        Err("restart_as_admin is only supported on Windows. Use sudo on macOS.".into())
+    }
 }
 
 /// Returns new proxy log lines from xray-core since last call
