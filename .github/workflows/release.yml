@@ -30,7 +30,45 @@ jobs:
       
       - name: Install frontend dependencies
         run: npm ci
-      
+
+      # Download xray-core for Windows
+      - name: Download xray-core
+        run: |
+          $xrayVersion = "v25.3.6"
+          $url = "https://github.com/XTLS/Xray-core/releases/download/$xrayVersion/Xray-windows-64.zip"
+          Invoke-WebRequest -Uri $url -OutFile xray.zip
+          Expand-Archive -Path xray.zip -DestinationPath xray-core-tmp
+          New-Item -ItemType Directory -Force -Path "src-tauri/xray-core"
+          Copy-Item "xray-core-tmp/xray.exe" "src-tauri/xray-core/"
+          Copy-Item "xray-core-tmp/geoip.dat" "src-tauri/xray-core/"
+          Copy-Item "xray-core-tmp/geosite.dat" "src-tauri/xray-core/"
+          # Download wintun.dll for TUN
+          $wintunUrl = "https://www.wintun.net/builds/wintun-0.14.1.zip"
+          Invoke-WebRequest -Uri $wintunUrl -OutFile wintun.zip
+          Expand-Archive -Path wintun.zip -DestinationPath wintun-tmp
+          Copy-Item "wintun-tmp/wintun/bin/amd64/wintun.dll" "src-tauri/xray-core/"
+        shell: pwsh
+
+      # Download sing-box for Windows
+      - name: Download sing-box
+        run: |
+          $sbVersion = "1.11.4"
+          $url = "https://github.com/SagerNet/sing-box/releases/download/v$sbVersion/sing-box-$sbVersion-windows-amd64.zip"
+          Invoke-WebRequest -Uri $url -OutFile singbox.zip
+          Expand-Archive -Path singbox.zip -DestinationPath singbox-tmp
+          Copy-Item "singbox-tmp/sing-box-$sbVersion-windows-amd64/sing-box.exe" "src-tauri/"
+        shell: pwsh
+
+      # Configure Tauri to bundle external binaries
+      - name: Setup external resources
+        run: |
+          # Copy binaries to where Tauri build expects them
+          $targetDir = "src-tauri/target/release"
+          New-Item -ItemType Directory -Force -Path "$targetDir/xray-core"
+          Copy-Item "src-tauri/xray-core/*" "$targetDir/xray-core/" -Recurse
+          Copy-Item "src-tauri/sing-box.exe" "$targetDir/" -ErrorAction SilentlyContinue
+        shell: pwsh
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
@@ -40,7 +78,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "DoodleRay ${{ github.ref_name }}"
-          releaseBody: "See the assets below to download and install."
+          releaseBody: "Download the installer for your platform below."
           releaseDraft: false
           prerelease: false
 
@@ -48,7 +86,11 @@ jobs:
     runs-on: macos-latest
     strategy:
       matrix:
-        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+        include:
+          - target: aarch64-apple-darwin
+            arch: arm64
+          - target: x86_64-apple-darwin
+            arch: amd64
     steps:
       - uses: actions/checkout@v4
       
@@ -70,7 +112,46 @@ jobs:
       
       - name: Install frontend dependencies
         run: npm ci
-      
+
+      # Download xray-core for macOS
+      - name: Download xray-core
+        run: |
+          XRAY_VERSION="v25.3.6"
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            XRAY_ARCH="macos-arm64-v8a"
+          else
+            XRAY_ARCH="macos-64"
+          fi
+          curl -L "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-${XRAY_ARCH}.zip" -o xray.zip
+          unzip xray.zip -d xray-core-tmp
+          mkdir -p src-tauri/xray-core
+          cp xray-core-tmp/xray src-tauri/xray-core/
+          cp xray-core-tmp/geoip.dat src-tauri/xray-core/
+          cp xray-core-tmp/geosite.dat src-tauri/xray-core/
+          chmod +x src-tauri/xray-core/xray
+
+      # Download sing-box for macOS
+      - name: Download sing-box
+        run: |
+          SB_VERSION="1.11.4"
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            SB_ARCH="darwin-arm64"
+          else
+            SB_ARCH="darwin-amd64"
+          fi
+          curl -L "https://github.com/SagerNet/sing-box/releases/download/v${SB_VERSION}/sing-box-${SB_VERSION}-${SB_ARCH}.tar.gz" -o singbox.tar.gz
+          tar xzf singbox.tar.gz
+          cp sing-box-${SB_VERSION}-${SB_ARCH}/sing-box src-tauri/
+          chmod +x src-tauri/sing-box
+
+      # Setup external resources
+      - name: Setup external resources
+        run: |
+          TARGET_DIR="src-tauri/target/${{ matrix.target }}/release"
+          mkdir -p "$TARGET_DIR/xray-core"
+          cp -r src-tauri/xray-core/* "$TARGET_DIR/xray-core/"
+          cp src-tauri/sing-box "$TARGET_DIR/" 2>/dev/null || true
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
@@ -80,7 +161,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "DoodleRay ${{ github.ref_name }}"
-          releaseBody: "See the assets below to download and install."
+          releaseBody: "Download the installer for your platform below."
           releaseDraft: false
           prerelease: false
           args: --target ${{ matrix.target }}
