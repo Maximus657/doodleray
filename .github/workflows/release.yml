@@ -58,6 +58,23 @@ jobs:
           Expand-Archive -Path singbox.zip -DestinationPath singbox-tmp
           Copy-Item "singbox-tmp/sing-box-$sbVersion-windows-amd64/sing-box.exe" "src-tauri/"
         shell: pwsh
+      # Build libsingbox.dll from Go source
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: src-tauri/singbox-core/go.sum
+
+      - name: Build libsingbox.dll
+        run: |
+          cd src-tauri/singbox-core
+          $env:CGO_ENABLED = "1"
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          go build -buildmode=c-shared -o ../libsingbox.dll .
+          Write-Host "Built libsingbox.dll:"
+          Get-Item ../libsingbox.dll
+        shell: pwsh
 
       # Configure Tauri to bundle external binaries
       - name: Setup external resources
