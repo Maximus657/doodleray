@@ -604,10 +604,39 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
         .unwrap_or(std::path::Path::new("."))
         .join("doodleray_debug_config.json");
     
-    // Stop any previous engines
+    // Stop previous engine — only call stop_tun() (which needs admin password on macOS)
+    // when TUN was actually active
+    let prev_engine = {
+        let engine = ACTIVE_ENGINE.lock().unwrap();
+        engine.clone()
+    };
+    
+    // Always stop in-process libsingbox (safe, no admin needed)
     let _ = singbox::stop_singbox();
-    let _ = xray::stop_xray();
-    let _ = tun::stop_tun();
+    
+    match prev_engine.as_deref() {
+        Some("xray") => {
+            let _ = xray::stop_xray();
+        }
+        Some("xray+tun") | Some("xray+app-proxy") => {
+            let _ = tun::stop_tun();
+            let _ = xray::stop_xray();
+        }
+        Some("singbox-tun") => {
+            let _ = tun::stop_tun();
+        }
+        Some("singbox") => {
+            // already stopped above
+        }
+        _ => {
+            let _ = xray::stop_xray();
+            // Try to clean up orphaned sing-box processes (e.g. from previous app session)
+            // Use regular pkill only — do NOT escalate to admin (no password prompt)
+            let _ = std::process::Command::new("pkill")
+                .args(["-f", "sing-box"])
+                .output();
+        }
+    }
     let _ = sysproxy::unset_system_proxy();
     reset_sb_traffic();
     // Wait for ports to be released
@@ -1378,16 +1407,6 @@ pub fn run() {
                             app.exit(0);
                         }
                         _ => {}
-                    }
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let tauri::tray::TrayIconEvent::DoubleClick { .. } = event {
-                        let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.unminimize();
-                            let _ = window.set_focus();
-                        }
                     }
                 })
                 .build(app)?;

@@ -173,7 +173,7 @@ pub fn start_tun_elevated(config_json: &serde_json::Value) -> Result<(), String>
     }
 }
 
-fn is_singbox_running() -> bool {
+pub fn is_singbox_running() -> bool {
     #[cfg(windows)]
     {
         if let Ok(output) = Command::new("tasklist")

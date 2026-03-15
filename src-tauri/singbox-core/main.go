@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	box "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/include"
@@ -33,6 +34,13 @@ func StartSingBox(configJson *C.char) C.int {
 	logError("=== StartSingBox called ===")
 	logError("Config: " + configStr)
 
+	// Close any previous instance first
+	if instance != nil {
+		instance.Close()
+		instance = nil
+		time.Sleep(300 * time.Millisecond)
+	}
+
 	// Use include.Context to register all protocol registries
 	ctx := include.Context(context.Background())
 
@@ -55,6 +63,7 @@ func StartSingBox(configJson *C.char) C.int {
 	err = b.Start()
 	if err != nil {
 		logError("Error starting sing-box: " + err.Error())
+		b.Close() // Clean up to release bound ports
 		return -3
 	}
 
