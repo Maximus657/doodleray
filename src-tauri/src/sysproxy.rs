@@ -5,14 +5,12 @@ use winreg::RegKey;
 const INTERNET_SETTINGS: &str = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
 
 pub fn set_system_proxy(http_port: u16) -> Result<(), String> {
-    let socks_port = http_port - 1; // SOCKS port = HTTP port - 1 (10808 for 10809)
+    let socks_port = http_port - 1;
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let (key, _) = hkcu
         .create_subkey(INTERNET_SETTINGS)
         .map_err(|e| format!("Failed to open registry: {}", e))?;
     
-    // Set proxy server with both HTTP and SOCKS5
-    // Format: http=host:port;https=host:port;socks=host:port
     let proxy_addr = format!(
         "http=127.0.0.1:{};https=127.0.0.1:{};socks=127.0.0.1:{}", 
         http_port, http_port, socks_port
@@ -20,15 +18,46 @@ pub fn set_system_proxy(http_port: u16) -> Result<(), String> {
     key.set_value("ProxyServer", &proxy_addr)
         .map_err(|e| format!("Failed to set ProxyServer: {}", e))?;
     
-    // Enable proxy
     key.set_value("ProxyEnable", &1u32)
         .map_err(|e| format!("Failed to set ProxyEnable: {}", e))?;
     
-    // Bypass local addresses
-    key.set_value("ProxyOverride", &"localhost;127.*;10.*;192.168.*;<local>")
+    // Bypass list: local addresses + ALL major game platforms
+    // Games will connect DIRECTLY without VPN (no ping increase)
+    let bypass = vec![
+        // Local
+        "localhost", "127.*", "10.*", "192.168.*", "172.16.*", "<local>",
+        // Riot Games (Valorant, LoL, etc.)
+        "*.riotgames.com", "*.leagueoflegends.com", "*.playvalorant.com",
+        "*.riotcdn.net", "*.riotgames.net", "*.lolesports.com",
+        // Steam
+        "*.steampowered.com", "*.steamcommunity.com", "*.steamgames.com",
+        "*.steamcontent.com", "*.steamstatic.com", "*.steam-chat.com",
+        "*.valvesoftware.com",
+        // Epic Games
+        "*.epicgames.com", "*.unrealengine.com", "*.fortnite.com",
+        "*.epicgames.dev", "*.on.epicgames.com",
+        // Blizzard / Activision
+        "*.blizzard.com", "*.battle.net", "*.battlenet.com.cn",
+        "*.blizzard.cn", "*.activision.com",
+        // EA / Origin
+        "*.ea.com", "*.origin.com", "*.tnt-ea.com",
+        // Ubisoft
+        "*.ubisoft.com", "*.ubi.com",
+        // Minecraft / Xbox
+        "*.minecraft.net", "*.mojang.com", "*.xbox.com",
+        "*.xboxlive.com", "*.microsoftonline.com",
+        // Faceit / ESEA
+        "*.faceit.com", "*.esea.net",
+        // General gaming
+        "*.gaijin.net", "*.wargaming.net", "*.worldoftanks.com",
+        "*.roblox.com", "*.rbxcdn.com",
+        // Anti-cheat
+        "*.easyanticheat.net", "*.battleye.com", "*.vanguard.riotgames.com",
+    ];
+    
+    key.set_value("ProxyOverride", &bypass.join(";"))
         .map_err(|e| format!("Failed to set ProxyOverride: {}", e))?;
 
-    // Notify Windows that proxy settings changed
     notify_proxy_change();
     
     Ok(())

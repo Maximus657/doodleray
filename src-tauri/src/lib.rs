@@ -104,6 +104,7 @@ async fn fetch_url(url: String) -> Result<String, String> {
 async fn workshop_api(url: String, method: String, body: Option<String>) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
+        .no_proxy()  // IMPORTANT: bypass system proxy so API calls don't loop through VPN
         .timeout(Duration::from_secs(15))
         .build()
         .map_err(|e| format!("HTTP client error: {}", e))?;
