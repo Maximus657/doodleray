@@ -35,8 +35,13 @@ src-tauri/*.sh
 *.exe
 *.dll
 *.dylib
+*.so
 xray-core/
-singbox-core/
+singbox-core/*.dll
+singbox-core/*.dylib
+singbox-core/*.so
+singbox-core/*.h
+singbox-core/build_log.txt
 
 # Workshop API (separate repo)
 workshop-api/
