@@ -52,7 +52,7 @@ jobs:
       # Download sing-box for Windows
       - name: Download sing-box
         run: |
-          $sbVersion = "1.11.4"
+          $sbVersion = "1.13.2"
           $url = "https://github.com/SagerNet/sing-box/releases/download/v$sbVersion/sing-box-$sbVersion-windows-amd64.zip"
           Invoke-WebRequest -Uri $url -OutFile singbox.zip
           Expand-Archive -Path singbox.zip -DestinationPath singbox-tmp
@@ -71,7 +71,7 @@ jobs:
           $env:CGO_ENABLED = "1"
           $env:GOOS = "windows"
           $env:GOARCH = "amd64"
-          go build -tags "with_quic,with_utls,with_reality_server,with_gvisor,with_dhcp,with_clash_api" -buildmode=c-shared -o ../libsingbox.dll .
+          go build -tags "with_quic,with_utls,with_gvisor,with_dhcp,with_clash_api" -buildmode=c-shared -o ../libsingbox.dll .
           Write-Host "Built libsingbox.dll:"
           Get-Item ../libsingbox.dll
         shell: pwsh
@@ -156,7 +156,7 @@ jobs:
       # Download sing-box for macOS
       - name: Download sing-box
         run: |
-          SB_VERSION="1.11.4"
+          SB_VERSION="1.13.2"
           if [ "${{ matrix.arch }}" = "arm64" ]; then
             SB_ARCH="darwin-arm64"
           else
@@ -184,7 +184,7 @@ jobs:
           fi
           export CGO_ENABLED=1
           export GOOS=darwin
-          go build -tags "with_quic,with_utls,with_reality_server,with_gvisor,with_dhcp,with_clash_api" -buildmode=c-shared -o ../libsingbox.dylib .
+          go build -tags "with_quic,with_utls,with_gvisor,with_dhcp,with_clash_api" -buildmode=c-shared -o ../libsingbox.dylib .
           echo "Built libsingbox.dylib:"
           ls -la ../libsingbox.dylib
 
