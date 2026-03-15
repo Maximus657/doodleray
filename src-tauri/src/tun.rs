@@ -1,6 +1,31 @@
 use std::process::Command;
+use std::path::PathBuf;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
+
+/// Get the directory where external resources (binaries) are located.
+/// On Windows: next to the .exe
+/// On macOS: Contents/Resources/ in the .app bundle, or next to the binary for dev
+fn get_resource_dir() -> PathBuf {
+    let exe_dir = std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    
+    #[cfg(target_os = "macos")]
+    {
+        // In a .app bundle: Contents/MacOS/DoodleRay → Contents/Resources/
+        let resources_dir = exe_dir.parent()
+            .map(|p| p.join("Resources"))
+            .unwrap_or(exe_dir.clone());
+        if resources_dir.exists() {
+            return resources_dir;
+        }
+    }
+    
+    exe_dir
+}
 
 /// Start sing-box TUN as an elevated (admin/root) subprocess
 pub fn start_tun_elevated(config_json: &serde_json::Value) -> Result<(), String> {
@@ -11,15 +36,22 @@ pub fn start_tun_elevated(config_json: &serde_json::Value) -> Result<(), String>
         .parent()
         .unwrap()
         .to_path_buf();
+    
+    let resource_dir = get_resource_dir();
 
     #[cfg(windows)]
     let singbox_name = "sing-box.exe";
     #[cfg(not(windows))]
     let singbox_name = "sing-box";
 
-    let singbox_exe = exe_dir.join(singbox_name);
+    // Try resource dir first, then exe dir
+    let singbox_exe = if resource_dir.join(singbox_name).exists() {
+        resource_dir.join(singbox_name)
+    } else {
+        exe_dir.join(singbox_name)
+    };
     if !singbox_exe.exists() {
-        return Err(format!("{} not found at {:?}", singbox_name, singbox_exe));
+        return Err(format!("{} not found at {:?} or {:?}", singbox_name, resource_dir.join(singbox_name), exe_dir.join(singbox_name)));
     }
 
     // Write config to file

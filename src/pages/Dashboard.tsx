@@ -15,6 +15,9 @@ import {
   Timer,
   Wifi,
   Shield,
+  ClipboardPaste,
+  Link,
+  Loader2,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -25,7 +28,8 @@ import {
 } from 'recharts';
 import { useAppStore } from '../stores/app-store';
 import { formatSpeed, formatTime, protocolLabel } from '../lib/utils';
-import { refreshSubscription } from '../lib/subscription';
+import { refreshSubscription, fetchSubscription } from '../lib/subscription';
+import { parseProxyLink } from '../lib/parser';
 import { useWorkshopStore } from '../stores/workshop-store';
 
 /* ═══════════════════════════════════════════════════════════ */
@@ -70,6 +74,8 @@ export default function Dashboard() {
     autoSelectFastest,
     subAutoUpdateMinutes,
     setConnectedAt,
+    addSubscription,
+    addServer,
   } = useAppStore();
 
   const [connectTime, setConnectTime] = useState(0);
@@ -79,6 +85,8 @@ export default function Dashboard() {
   const [totalDown, setTotalDown] = useState(0);
   const [totalUp, setTotalUp] = useState(0);
   const logsEndRef = useRef<HTMLDivElement>(null);
+  const [quickInput, setQuickInput] = useState('');
+  const [quickImporting, setQuickImporting] = useState(false);
 
   // Sync connection state from backend on mount (handles WebView/HMR reloads)
   useEffect(() => {
@@ -358,6 +366,46 @@ export default function Dashboard() {
 
   const canConnect = activeServer || servers.length > 0;
 
+  // Quick add handler for Dashboard input
+  const handleQuickAdd = useCallback(async () => {
+    const trimmed = quickInput.trim();
+    if (!trimmed) return;
+    setQuickImporting(true);
+    try {
+      if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+        // Subscription URL
+        addLog('info', `Fetching subscription: ${trimmed}`);
+        const sub = await fetchSubscription(trimmed);
+        addSubscription(sub);
+        addLog('success', `Loaded ${sub.servers.length} servers from ${sub.name}`);
+        setQuickInput('');
+      } else if (/^(vless|vmess|trojan|ss|hy2|tuic|wg):\/\//.test(trimmed)) {
+        // Single proxy link
+        const server = parseProxyLink(trimmed);
+        if (server) {
+          addServer(server);
+          addLog('success', `Added server: ${server.name}`);
+          setQuickInput('');
+        } else {
+          addLog('error', 'Invalid proxy link format');
+        }
+      } else {
+        addLog('error', 'Paste a subscription URL (https://...) or proxy link (vless://, vmess://, etc.)');
+      }
+    } catch (err: any) {
+      addLog('error', `Error: ${err.message || err}`);
+    } finally {
+      setQuickImporting(false);
+    }
+  }, [quickInput, addLog, addSubscription, addServer]);
+
+  const handleQuickPaste = useCallback(async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      setQuickInput(text);
+    } catch { /* */ }
+  }, []);
+
   const renderFlag = (code?: string) => {
     if (!code || code.length !== 2) return <Globe className="w-4 h-4 text-text-on-orange-muted" />;
     return <img src={`https://flagcdn.com/w40/${code.toLowerCase()}.png`} alt={code} className="w-6 h-4 object-cover rounded-sm shadow-sm" />;
@@ -387,6 +435,51 @@ export default function Dashboard() {
             <Network className="w-4 h-4" /> tun
           </button>
         </div>
+
+        {/* ── QUICK ADD (when no servers) ── */}
+        {servers.length === 0 && status === 'disconnected' && (
+          <div className="w-full max-w-sm mt-4 relative z-10 animate-slide-up">
+            <div className="bg-white border-[4px] border-black rounded-3xl p-5 shadow-[6px_6px_0_#000] space-y-3">
+              <div className="flex items-center gap-2 mb-1">
+                <Link className="w-5 h-5 text-black stroke-[3px]" />
+                <h3 className="text-sm font-black text-black uppercase tracking-widest">Quick Start</h3>
+              </div>
+              <p className="text-[10px] font-black text-black/50 uppercase tracking-wider">
+                Paste subscription URL or proxy link to get started
+              </p>
+              <div className="flex gap-2">
+                <div className="flex-1 relative">
+                  <input
+                    type="text"
+                    value={quickInput}
+                    onChange={(e) => setQuickInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleQuickAdd()}
+                    placeholder="https://... or vless://..."
+                    className="w-full bg-gray-50 border-[3px] border-black rounded-xl px-4 py-3 text-sm text-black placeholder:text-black/30 focus:outline-none font-bold tracking-tight"
+                  />
+                </div>
+                <button
+                  onClick={handleQuickPaste}
+                  className="p-3 bg-white border-[3px] border-black rounded-xl shadow-[2px_2px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none cursor-pointer transition-all hover:bg-gray-100"
+                  title="Paste from clipboard"
+                >
+                  <ClipboardPaste className="w-5 h-5 text-black stroke-[2.5px]" />
+                </button>
+              </div>
+              <button
+                onClick={handleQuickAdd}
+                disabled={quickImporting || !quickInput.trim()}
+                className="w-full py-3 bg-black text-white border-[3px] border-black rounded-xl text-sm font-black uppercase tracking-widest cursor-pointer shadow-[4px_4px_0_#000] hover:-translate-y-0.5 hover:-translate-x-0.5 hover:shadow-[6px_6px_0_#000] active:translate-x-[4px] active:translate-y-[4px] active:shadow-none transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {quickImporting ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Loading...</>
+                ) : (
+                  'Add & Connect'
+                )}
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* ── SERVER SELECTOR ── */}
         <div className="w-full max-w-sm mt-4 relative z-10">

@@ -21,11 +21,21 @@ pub fn start_singbox(config_json: &Value) -> Result<(), String> {
         #[cfg(target_os = "linux")]
         let lib_name = "libsingbox.so";
 
-        let lib_path = std::env::current_exe()
+        let exe_dir = std::env::current_exe()
             .unwrap()
             .parent()
             .unwrap()
-            .join(lib_name);
+            .to_path_buf();
+        
+        let lib_path = exe_dir.join(lib_name);
+        
+        // macOS .app bundle: Contents/Resources/
+        #[cfg(target_os = "macos")]
+        let macos_resource_path = exe_dir.parent()
+            .map(|p| p.join("Resources").join(lib_name))
+            .unwrap_or(lib_path.clone());
+        #[cfg(not(target_os = "macos"))]
+        let macos_resource_path = lib_path.clone();
             
         // Fallback for development (running via tauri dev)
         let fallback_path = std::env::current_dir()
@@ -35,6 +45,8 @@ pub fn start_singbox(config_json: &Value) -> Result<(), String> {
 
         let path_to_load = if lib_path.exists() {
             lib_path
+        } else if macos_resource_path.exists() {
+            macos_resource_path
         } else if fallback_path.exists() {
             fallback_path
         } else {

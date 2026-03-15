@@ -144,13 +144,23 @@ jobs:
           cp sing-box-${SB_VERSION}-${SB_ARCH}/sing-box src-tauri/
           chmod +x src-tauri/sing-box
 
-      # Setup external resources
-      - name: Setup external resources
+      # Ad-hoc codesign the external binaries so macOS doesn't quarantine them
+      - name: Codesign external binaries
         run: |
-          TARGET_DIR="src-tauri/target/${{ matrix.target }}/release"
-          mkdir -p "$TARGET_DIR/xray-core"
-          cp -r src-tauri/xray-core/* "$TARGET_DIR/xray-core/"
-          cp src-tauri/sing-box "$TARGET_DIR/" 2>/dev/null || true
+          # Remove quarantine attributes
+          xattr -cr src-tauri/xray-core/xray 2>/dev/null || true
+          xattr -cr src-tauri/sing-box 2>/dev/null || true
+          # Ad-hoc codesign (required for macOS to allow execution)
+          codesign --force --sign - src-tauri/xray-core/xray
+          codesign --force --sign - src-tauri/sing-box
+          # Verify
+          codesign -v src-tauri/xray-core/xray && echo "xray signed OK"
+          codesign -v src-tauri/sing-box && echo "sing-box signed OK"
+          # List what Tauri will bundle
+          echo "=== xray-core/ contents ==="
+          ls -la src-tauri/xray-core/
+          echo "=== sing-box ==="
+          ls -la src-tauri/sing-box
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0

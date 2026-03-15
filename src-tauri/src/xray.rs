@@ -1,6 +1,7 @@
 use std::io::BufRead;
 use std::process::{Child, Command};
 use std::sync::Mutex;
+use std::path::PathBuf;
 use lazy_static::lazy_static;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -10,6 +11,29 @@ lazy_static! {
     static ref XRAY_LOGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
     static ref LOG_CURSOR: Mutex<usize> = Mutex::new(0);
     static ref ACTIVITY_CURSOR: Mutex<usize> = Mutex::new(0);
+}
+
+/// Get the directory where xray-core resources are located.
+fn get_xray_resource_dir() -> PathBuf {
+    let exe_dir = std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    
+    #[cfg(target_os = "macos")]
+    {
+        // In a .app bundle: Contents/MacOS/ → Contents/Resources/
+        let resources_dir = exe_dir.parent()
+            .map(|p| p.join("Resources"))
+            .unwrap_or(exe_dir.clone());
+        let xray_in_resources = resources_dir.join("xray-core");
+        if xray_in_resources.exists() {
+            return resources_dir;
+        }
+    }
+    
+    exe_dir
 }
 
 pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
@@ -29,13 +53,20 @@ pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
         .parent()
         .unwrap()
         .to_path_buf();
+    
+    let resource_dir = get_xray_resource_dir();
 
     #[cfg(windows)]
     let xray_name = "xray.exe";
     #[cfg(not(windows))]
     let xray_name = "xray";
 
-    let xray_exe = exe_dir.join("xray-core").join(xray_name);
+    // Try resource dir first (for macOS .app bundle), then exe dir
+    let xray_exe = if resource_dir.join("xray-core").join(xray_name).exists() {
+        resource_dir.join("xray-core").join(xray_name)
+    } else {
+        exe_dir.join("xray-core").join(xray_name)
+    };
     if !xray_exe.exists() {
         return Err(format!("xray not found at {:?}", xray_exe));
     }
