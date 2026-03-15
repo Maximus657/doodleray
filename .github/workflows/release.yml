@@ -69,12 +69,18 @@ jobs:
           Copy-Item "src-tauri/sing-box.exe" "$targetDir/" -ErrorAction SilentlyContinue
         shell: pwsh
 
+      # Strip trailing whitespace/newlines from signing key
+      - name: Clean signing key
+        shell: bash
+        run: |
+          KEY=$(echo -n "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" | tr -d '\n\r ')
+          echo "TAURI_SIGNING_PRIVATE_KEY=$KEY" >> $GITHUB_ENV
+          echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" >> $GITHUB_ENV
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "DoodleRay ${{ github.ref_name }}"
@@ -162,12 +168,18 @@ jobs:
           echo "=== sing-box ==="
           ls -la src-tauri/sing-box
 
+      # Strip trailing whitespace/newlines from signing key
+      - name: Clean signing key
+        shell: bash
+        run: |
+          KEY=$(echo -n "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" | tr -d '\n\r ')
+          echo "TAURI_SIGNING_PRIVATE_KEY=$KEY" >> $GITHUB_ENV
+          echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" >> $GITHUB_ENV
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "DoodleRay ${{ github.ref_name }}"
