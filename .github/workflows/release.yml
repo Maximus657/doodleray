@@ -150,23 +150,49 @@ jobs:
           cp sing-box-${SB_VERSION}-${SB_ARCH}/sing-box src-tauri/
           chmod +x src-tauri/sing-box
 
+      # Build libsingbox.dylib from Go source
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: src-tauri/singbox-core/go.sum
+
+      - name: Build libsingbox.dylib
+        run: |
+          cd src-tauri/singbox-core
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            export GOARCH=arm64
+          else
+            export GOARCH=amd64
+          fi
+          export CGO_ENABLED=1
+          export GOOS=darwin
+          go build -buildmode=c-shared -o ../libsingbox.dylib .
+          echo "Built libsingbox.dylib:"
+          ls -la ../libsingbox.dylib
+
       # Ad-hoc codesign the external binaries so macOS doesn't quarantine them
       - name: Codesign external binaries
         run: |
           # Remove quarantine attributes
           xattr -cr src-tauri/xray-core/xray 2>/dev/null || true
           xattr -cr src-tauri/sing-box 2>/dev/null || true
+          xattr -cr src-tauri/libsingbox.dylib 2>/dev/null || true
           # Ad-hoc codesign (required for macOS to allow execution)
           codesign --force --sign - src-tauri/xray-core/xray
           codesign --force --sign - src-tauri/sing-box
+          codesign --force --sign - src-tauri/libsingbox.dylib
           # Verify
           codesign -v src-tauri/xray-core/xray && echo "xray signed OK"
           codesign -v src-tauri/sing-box && echo "sing-box signed OK"
+          codesign -v src-tauri/libsingbox.dylib && echo "libsingbox signed OK"
           # List what Tauri will bundle
           echo "=== xray-core/ contents ==="
           ls -la src-tauri/xray-core/
           echo "=== sing-box ==="
           ls -la src-tauri/sing-box
+          echo "=== libsingbox ==="
+          ls -la src-tauri/libsingbox.dylib
 
       # Strip trailing whitespace/newlines from signing key
       - name: Clean signing key
