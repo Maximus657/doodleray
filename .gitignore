@@ -30,6 +30,7 @@ src-tauri/keys/
 src-tauri/*.log
 src-tauri/*.bat
 src-tauri/*.sh
+src-tauri/.tauri/
 
 # Binaries (bundled separately)
 *.exe
@@ -37,11 +38,19 @@ src-tauri/*.sh
 *.dylib
 *.so
 xray-core/
-singbox-core/*.dll
-singbox-core/*.dylib
-singbox-core/*.so
-singbox-core/*.h
-singbox-core/build_log.txt
+src-tauri/singbox-core/*.dll
+src-tauri/singbox-core/*.dylib
+src-tauri/singbox-core/*.so
+src-tauri/singbox-core/*.h
+src-tauri/singbox-core/build_log.txt
+
+# Debug/test files
+*_debug_config.json
+test*.json
+xray_config.json
+error.log
+singbox-test.log
+src-tauri/build_err.txt
 
 # Workshop API (separate repo)
 workshop-api/

@@ -62,7 +62,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.26'
           cache-dependency-path: src-tauri/singbox-core/go.sum
 
       - name: Build libsingbox.dll
@@ -71,7 +71,7 @@ jobs:
           $env:CGO_ENABLED = "1"
           $env:GOOS = "windows"
           $env:GOARCH = "amd64"
-          go build -buildmode=c-shared -o ../libsingbox.dll .
+          go build -tags "with_quic,with_utls,with_reality_server,with_gvisor,with_dhcp,with_clash_api" -buildmode=c-shared -o ../libsingbox.dll .
           Write-Host "Built libsingbox.dll:"
           Get-Item ../libsingbox.dll
         shell: pwsh
@@ -171,7 +171,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.26'
           cache-dependency-path: src-tauri/singbox-core/go.sum
 
       - name: Build libsingbox.dylib
@@ -184,7 +184,7 @@ jobs:
           fi
           export CGO_ENABLED=1
           export GOOS=darwin
-          go build -buildmode=c-shared -o ../libsingbox.dylib .
+          go build -tags "with_quic,with_utls,with_reality_server,with_gvisor,with_dhcp,with_clash_api" -buildmode=c-shared -o ../libsingbox.dylib .
           echo "Built libsingbox.dylib:"
           ls -la ../libsingbox.dylib
 

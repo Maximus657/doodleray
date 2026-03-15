@@ -27,6 +27,12 @@ use tauri::{
 static CONNECTION_STATE: Mutex<bool> = Mutex::new(false);
 // Track which engine is active: "singbox" or "xray"
 static ACTIVE_ENGINE: Mutex<Option<String>> = Mutex::new(None);
+// sing-box clash API traffic tracking (previous totals for delta calculation)
+static SB_PREV_DOWN: Mutex<i64> = Mutex::new(0);
+static SB_PREV_UP: Mutex<i64> = Mutex::new(0);
+// sing-box seen connection IDs (to only log new connections)
+use std::collections::HashSet;
+static SB_SEEN_CONNS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ConnectRequest {
@@ -174,89 +180,117 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
             } else {
                 String::new()
             };
-            serde_json::json!({
-            "type": "vless",
-            "tag": "proxy",
-            "server": req.server_address,
-            "server_port": req.server_port,
-            "uuid": req.uuid.clone().unwrap_or_default(),
-            "flow": flow_value,
-            "tls": {
+
+            // Build TLS object — only include "reality" key when security == "reality"
+            let mut tls_obj = serde_json::json!({
                 "enabled": true,
                 "server_name": req.sni.clone().unwrap_or(req.server_address.clone()),
                 "utls": {
                     "enabled": true,
                     "fingerprint": req.fingerprint.clone().unwrap_or("chrome".into())
-                },
-                "reality": if req.security == "reality" {
-                    serde_json::json!({
-                        "enabled": true,
-                        "public_key": req.public_key.clone().unwrap_or_default(),
-                        "short_id": req.short_id.clone().unwrap_or_default()
-                    })
-                } else {
-                    serde_json::json!(null)
                 }
-            },
-            "transport": match req.transport.as_str() {
-                "ws" => serde_json::json!({
-                    "type": "ws",
-                    "path": req.path.clone().unwrap_or("/".into()),
-                    "headers": {
-                        "Host": req.host.clone().unwrap_or(req.server_address.clone())
-                    }
-                }),
-                "grpc" => serde_json::json!({
-                    "type": "grpc",
-                    "service_name": req.path.clone().unwrap_or_default()
-                }),
-                "xhttp" | "httpupgrade" => serde_json::json!({
-                    "type": "http",
-                    "path": req.path.clone().unwrap_or("/".into()),
-                    "host": [req.host.clone().unwrap_or(req.server_address.clone())]
-                }),
-                "h2" | "http" => serde_json::json!({
-                    "type": "http",
-                    "path": req.path.clone().unwrap_or("/".into()),
-                    "host": [req.host.clone().unwrap_or(req.server_address.clone())]
-                }),
-                _ => serde_json::json!(null)
+            });
+            if req.security == "reality" {
+                tls_obj["reality"] = serde_json::json!({
+                    "enabled": true,
+                    "public_key": req.public_key.clone().unwrap_or_default(),
+                    "short_id": req.short_id.clone().unwrap_or_default()
+                });
             }
-        })
+
+            // Build outbound — only include "transport" key when transport is NOT tcp/empty
+            let mut ob = serde_json::json!({
+                "type": "vless",
+                "tag": "proxy",
+                "server": req.server_address,
+                "server_port": req.server_port,
+                "uuid": req.uuid.clone().unwrap_or_default(),
+                "flow": flow_value,
+                "tls": tls_obj
+            });
+
+            // Add transport only for non-TCP (avoids "transport": null which crashes sing-box 1.13)
+            match req.transport.as_str() {
+                "ws" => {
+                    ob["transport"] = serde_json::json!({
+                        "type": "ws",
+                        "path": req.path.clone().unwrap_or("/".into()),
+                        "headers": {
+                            "Host": req.host.clone().unwrap_or(req.server_address.clone())
+                        }
+                    });
+                },
+                "grpc" => {
+                    ob["transport"] = serde_json::json!({
+                        "type": "grpc",
+                        "service_name": req.path.clone().unwrap_or_default()
+                    });
+                },
+                "httpupgrade" => {
+                    ob["transport"] = serde_json::json!({
+                        "type": "httpupgrade",
+                        "path": req.path.clone().unwrap_or("/".into()),
+                        "host": req.host.clone().unwrap_or(req.server_address.clone())
+                    });
+                },
+                "h2" | "http" => {
+                    ob["transport"] = serde_json::json!({
+                        "type": "http",
+                        "path": req.path.clone().unwrap_or("/".into()),
+                        "host": [req.host.clone().unwrap_or(req.server_address.clone())]
+                    });
+                },
+                _ => { /* TCP or empty — no transport field at all */ }
+            }
+            ob
         },
-        "vmess" => serde_json::json!({
-            "type": "vmess",
-            "tag": "proxy",
-            "server": req.server_address,
-            "server_port": req.server_port,
-            "uuid": req.uuid.clone().unwrap_or_default(),
-            "security": "auto",
-            "tls": {
-                "enabled": req.security == "tls",
-                "server_name": req.sni.clone().unwrap_or(req.server_address.clone()),
-            },
-            "transport": match req.transport.as_str() {
-                "ws" => serde_json::json!({
-                    "type": "ws",
-                    "path": req.path.clone().unwrap_or("/".into()),
-                }),
-                "grpc" => serde_json::json!({
-                    "type": "grpc",
-                    "service_name": req.path.clone().unwrap_or_default()
-                }),
-                "xhttp" | "httpupgrade" => serde_json::json!({
-                    "type": "http",
-                    "path": req.path.clone().unwrap_or("/".into()),
-                    "host": [req.host.clone().unwrap_or(req.server_address.clone())]
-                }),
-                "h2" | "http" => serde_json::json!({
-                    "type": "http",
-                    "path": req.path.clone().unwrap_or("/".into()),
-                    "host": [req.host.clone().unwrap_or(req.server_address.clone())]
-                }),
-                _ => serde_json::json!(null)
+        "vmess" => {
+            // Build outbound without transport first
+            let mut ob = serde_json::json!({
+                "type": "vmess",
+                "tag": "proxy",
+                "server": req.server_address,
+                "server_port": req.server_port,
+                "uuid": req.uuid.clone().unwrap_or_default(),
+                "security": "auto",
+                "tls": {
+                    "enabled": req.security == "tls",
+                    "server_name": req.sni.clone().unwrap_or(req.server_address.clone())
+                }
+            });
+
+            // Add transport only for non-TCP
+            match req.transport.as_str() {
+                "ws" => {
+                    ob["transport"] = serde_json::json!({
+                        "type": "ws",
+                        "path": req.path.clone().unwrap_or("/".into())
+                    });
+                },
+                "grpc" => {
+                    ob["transport"] = serde_json::json!({
+                        "type": "grpc",
+                        "service_name": req.path.clone().unwrap_or_default()
+                    });
+                },
+                "httpupgrade" => {
+                    ob["transport"] = serde_json::json!({
+                        "type": "httpupgrade",
+                        "path": req.path.clone().unwrap_or("/".into()),
+                        "host": req.host.clone().unwrap_or(req.server_address.clone())
+                    });
+                },
+                "h2" | "http" => {
+                    ob["transport"] = serde_json::json!({
+                        "type": "http",
+                        "path": req.path.clone().unwrap_or("/".into()),
+                        "host": [req.host.clone().unwrap_or(req.server_address.clone())]
+                    });
+                },
+                _ => { /* TCP or empty — no transport field */ }
             }
-        }),
+            ob
+        },
         "trojan" => serde_json::json!({
             "type": "trojan",
             "tag": "proxy",
@@ -345,6 +379,11 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
                 { "action": "sniff" },
                 { "protocol": "dns", "action": "hijack-dns" }
             ]
+        },
+        "experimental": {
+            "clash_api": {
+                "external_controller": "127.0.0.1:9191"
+            }
         }
     })
 }
@@ -570,6 +609,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
     let _ = xray::stop_xray();
     let _ = tun::stop_tun();
     let _ = sysproxy::unset_system_proxy();
+    reset_sb_traffic();
     // Wait for ports to be released
     std::thread::sleep(std::time::Duration::from_millis(500));
     
@@ -956,13 +996,97 @@ fn restart_as_admin() -> Result<(), String> {
     }
 }
 
-/// Returns new proxy log lines from xray-core since last call
+/// Returns new proxy log lines — dispatches to xray or sing-box
 #[tauri::command]
-fn get_proxy_logs() -> Vec<String> {
-    xray::get_new_logs()
+async fn get_proxy_logs() -> Vec<String> {
+    let engine = {
+        let e = ACTIVE_ENGINE.lock().unwrap();
+        e.clone().unwrap_or_default()
+    };
+
+    match engine.as_str() {
+        "singbox" | "singbox-tun" => {
+            // Query sing-box clash API /connections for new connections
+            let client = reqwest::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_millis(500))
+                .build()
+                .unwrap_or_default();
+
+            let resp = match client.get("http://127.0.0.1:9191/connections").send().await {
+                Ok(r) => r,
+                Err(_) => return vec![],
+            };
+            let text = match resp.text().await {
+                Ok(t) => t,
+                Err(_) => return vec![],
+            };
+            let json: serde_json::Value = match serde_json::from_str(&text) {
+                Ok(j) => j,
+                Err(_) => return vec![],
+            };
+
+            let connections = match json.get("connections").and_then(|c| c.as_array()) {
+                Some(c) => c,
+                None => return vec![],
+            };
+
+            let mut new_lines = Vec::new();
+            let mut seen = SB_SEEN_CONNS.lock().unwrap();
+            if seen.is_none() {
+                *seen = Some(HashSet::new());
+            }
+            let seen_set = seen.as_mut().unwrap();
+
+            for conn in connections {
+                let id = conn.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                if id.is_empty() || seen_set.contains(&id) {
+                    continue;
+                }
+                seen_set.insert(id);
+
+                let meta = match conn.get("metadata") {
+                    Some(m) => m,
+                    None => continue,
+                };
+                let host = meta.get("host").and_then(|v| v.as_str()).unwrap_or("");
+                let dst_ip = meta.get("destinationIP").and_then(|v| v.as_str()).unwrap_or("");
+                let dst_port = meta.get("destinationPort").and_then(|v| v.as_str()).unwrap_or("");
+                let network = meta.get("network").and_then(|v| v.as_str()).unwrap_or("tcp");
+                let chain = conn.get("chains").and_then(|c| c.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("direct");
+
+                let target = if !host.is_empty() { host } else { dst_ip };
+                if target.is_empty() { continue; }
+
+                // Only log proxy-routed connections (skip direct/dns)
+                if chain == "direct" { continue; }
+
+                let label = format!("tunneling request to {}:{}:{} [{}]", network, target, dst_port, chain);
+                new_lines.push(label);
+            }
+
+            // Limit seen set size to prevent memory leak
+            if seen_set.len() > 5000 {
+                seen_set.clear();
+            }
+
+            new_lines
+        },
+        _ => xray::get_new_logs(),
+    }
 }
 
-/// Get real traffic stats from xray-core stats API (byte counters)
+/// Reset sing-box traffic counters (call on connect/disconnect)
+fn reset_sb_traffic() {
+    *SB_PREV_DOWN.lock().unwrap() = 0;
+    *SB_PREV_UP.lock().unwrap() = 0;
+    *SB_SEEN_CONNS.lock().unwrap() = None;
+}
+
+/// Get real traffic stats — dispatches to xray or sing-box clash API based on active engine
 #[tauri::command]
 async fn get_traffic_stats() -> serde_json::Value {
     let is_connected = {
@@ -973,61 +1097,104 @@ async fn get_traffic_stats() -> serde_json::Value {
         return serde_json::json!({ "download": 0, "upload": 0 });
     }
 
-    let exe_dir = std::env::current_exe()
-        .unwrap_or_default()
-        .parent()
-        .unwrap_or(std::path::Path::new("."))
-        .to_path_buf();
-    let xray_exe = exe_dir.join("xray-core").join("xray.exe");
-    
-    if !xray_exe.exists() {
-        // Fallback to log-based estimation
-        let logs = xray::get_recent_activity();
-        return serde_json::json!({ "download": logs.0, "upload": logs.1 });
-    }
+    let engine = {
+        let e = ACTIVE_ENGINE.lock().unwrap();
+        e.clone().unwrap_or_default()
+    };
 
-    let mut dl: i64 = 0;
-    let mut ul: i64 = 0;
-
-    // Query xray stats API via CLI - reset counters each call to get delta
-    let mut cmd = std::process::Command::new(&xray_exe);
-    cmd.args(&["api", "statsquery", "-s", "127.0.0.1:10813", "-reset"]);
-    #[cfg(windows)]
-    cmd.creation_flags(0x08000000);
-    if let Ok(output) = cmd.output() 
-    {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        // xray outputs JSON: { "stat": [{ "name": "...", "value": "123" }, ...] }
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
-            if let Some(stats) = json.get("stat").and_then(|s| s.as_array()) {
-                for stat in stats {
-                    let name = stat.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                    let value = stat.get("value")
-                        .and_then(|v| v.as_str().map(|s| s.parse::<i64>().unwrap_or(0))
-                            .or_else(|| v.as_i64()))
-                        .unwrap_or(0);
-                    
-                    // Skip API inbound traffic
-                    if name.contains("api") { continue; }
-                    
-                    if name.contains("downlink") {
-                        dl += value;
-                    } else if name.contains("uplink") {
-                        ul += value;
+    match engine.as_str() {
+        "singbox" | "singbox-tun" => {
+            // Query sing-box clash API: GET /connections → { downloadTotal, uploadTotal }
+            let client = reqwest::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_millis(500))
+                .build()
+                .unwrap_or_default();
+            
+            if let Ok(resp) = client.get("http://127.0.0.1:9191/connections").send().await {
+                if let Ok(text) = resp.text().await {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                        let total_down = json.get("downloadTotal").and_then(|v| v.as_i64()).unwrap_or(0);
+                        let total_up = json.get("uploadTotal").and_then(|v| v.as_i64()).unwrap_or(0);
+                        
+                        // Calculate delta from previous poll
+                        let prev_down = {
+                            let mut p = SB_PREV_DOWN.lock().unwrap();
+                            let prev = *p;
+                            *p = total_down;
+                            prev
+                        };
+                        let prev_up = {
+                            let mut p = SB_PREV_UP.lock().unwrap();
+                            let prev = *p;
+                            *p = total_up;
+                            prev
+                        };
+                        
+                        // First poll (prev=0) → don't show huge spike
+                        let dl = if prev_down == 0 { 0 } else { (total_down - prev_down).max(0) };
+                        let ul = if prev_up == 0 { 0 } else { (total_up - prev_up).max(0) };
+                        
+                        return serde_json::json!({ "download": dl, "upload": ul });
                     }
                 }
             }
+            serde_json::json!({ "download": 0, "upload": 0 })
+        },
+        _ => {
+            // xray-core stats API
+            let exe_dir = std::env::current_exe()
+                .unwrap_or_default()
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .to_path_buf();
+            #[cfg(windows)]
+            let xray_exe = exe_dir.join("xray-core").join("xray.exe");
+            #[cfg(not(windows))]
+            let xray_exe = exe_dir.join("xray-core").join("xray");
+            
+            if !xray_exe.exists() {
+                let logs = xray::get_recent_activity();
+                return serde_json::json!({ "download": logs.0, "upload": logs.1 });
+            }
+
+            let mut dl: i64 = 0;
+            let mut ul: i64 = 0;
+
+            let mut cmd = std::process::Command::new(&xray_exe);
+            cmd.args(&["api", "statsquery", "-s", "127.0.0.1:10813", "-reset"]);
+            #[cfg(windows)]
+            cmd.creation_flags(0x08000000);
+            if let Ok(output) = cmd.output() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
+                    if let Some(stats) = json.get("stat").and_then(|s| s.as_array()) {
+                        for stat in stats {
+                            let name = stat.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                            let value = stat.get("value")
+                                .and_then(|v| v.as_str().map(|s| s.parse::<i64>().unwrap_or(0))
+                                    .or_else(|| v.as_i64()))
+                                .unwrap_or(0);
+                            if name.contains("api") { continue; }
+                            if name.contains("downlink") {
+                                dl += value;
+                            } else if name.contains("uplink") {
+                                ul += value;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if dl == 0 && ul == 0 {
+                let logs = xray::get_recent_activity();
+                dl = logs.0;
+                ul = logs.1;
+            }
+
+            serde_json::json!({ "download": dl, "upload": ul })
         }
     }
-
-    // If stats API didn't return data, fall back to log estimation
-    if dl == 0 && ul == 0 {
-        let logs = xray::get_recent_activity();
-        dl = logs.0;
-        ul = logs.1;
-    }
-
-    serde_json::json!({ "download": dl, "upload": ul })
 }
 
 /// Check what process is using a given port

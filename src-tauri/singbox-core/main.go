@@ -31,6 +31,7 @@ func StartSingBox(configJson *C.char) C.int {
 	configStr := C.GoString(configJson)
 
 	logError("=== StartSingBox called ===")
+	logError("Config: " + configStr)
 
 	// Use include.Context to register all protocol registries
 	ctx := include.Context(context.Background())
