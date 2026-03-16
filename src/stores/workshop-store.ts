@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import * as api from '../lib/workshop-api';
 
 // ========== Types — Routing Rules ==========
@@ -84,7 +85,7 @@ interface WorkshopState {
   getAllActiveRules: () => RoutingRule[];
 }
 
-export const useWorkshopStore = create<WorkshopState>((set, get) => ({
+export const useWorkshopStore = create<WorkshopState>()(persist((set, get) => ({
   myRules: [],
   appliedPresets: [],
   presets: [],
@@ -255,4 +256,12 @@ export const useWorkshopStore = create<WorkshopState>((set, get) => ({
     const customRules = s.myRules.filter((r) => r.enabled);
     return [...presetRules, ...customRules];
   },
-}));
+}),
+{
+  name: 'workshop-storage',
+  partialize: (state) => ({
+    myRules: state.myRules,
+    appliedPresets: state.appliedPresets,
+  }),
+}
+));

@@ -1,7 +1,6 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { isEnabled } from '@tauri-apps/plugin-autostart';
 import { Sidebar } from './components/layout/Sidebar';
 import Dashboard from './pages/Dashboard';
 import Servers from './pages/Servers';
@@ -12,31 +11,7 @@ import { useAppStore } from './stores/app-store';
 import './index.css';
 
 function App() {
-  const { alwaysRunAdmin } = useAppStore();
-
   useEffect(() => {
-    async function checkPrivileges() {
-      try {
-        if (alwaysRunAdmin) {
-          const isAdmin = await invoke<boolean>('is_admin');
-          if (!isAdmin) {
-            await invoke('restart_as_admin');
-          }
-        }
-      } catch (err) {
-        console.error('Failed to check or request admin privileges:', err);
-      }
-    }
-
-    async function checkAutostart() {
-      try {
-        const enabled = await isEnabled();
-        useAppStore.setState({ autoStart: enabled });
-      } catch (err) {
-        console.error('Failed to query autostart status:', err);
-      }
-    }
-
     async function syncSilentAdmin() {
       try {
         const silentEnabled: boolean = await invoke('check_silent_autostart');
@@ -46,10 +21,22 @@ function App() {
       }
     }
 
-    checkPrivileges();
-    checkAutostart();
+    async function checkForUpdates() {
+      try {
+        const { check } = await import('@tauri-apps/plugin-updater');
+        const update = await check();
+        if (update) {
+          useAppStore.getState().setAvailableUpdate(update.version);
+        }
+      } catch (e) {
+        console.log('Update check skipped:', e);
+      }
+    }
+
     syncSilentAdmin();
-  }, [alwaysRunAdmin]);
+    // Check for updates after a brief delay so UI loads first
+    setTimeout(checkForUpdates, 3000);
+  }, []);
 
   return (
     <Router>

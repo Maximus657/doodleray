@@ -184,11 +184,11 @@ export default function Servers() {
       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all duration-200 translate-x-4 group-hover:translate-x-0">
         <button
           onClick={(e) => { e.stopPropagation(); removeServer(server.id); }}
-          className={`p-2 rounded-xl transition-all cursor-pointer border-[3px] shadow-[2px_2px_0_#000] active:translate-x-1 active:translate-y-1 active:shadow-none
+          className={`group p-2 rounded-xl transition-all cursor-pointer border-[3px] shadow-[2px_2px_0_#000] active:translate-x-1 active:translate-y-1 active:shadow-none
             ${activeServer?.id === server.id ? 'bg-white text-danger border-white hover:bg-danger hover:text-white hover:border-black' : 'bg-black text-white border-black hover:bg-danger hover:border-black'}`}
           title="Delete server"
         >
-          <Trash2 className="w-5 h-5 stroke-[3px]" />
+          <Trash2 className="w-5 h-5 stroke-[3px] transition-transform duration-300 group-hover:scale-110 group-hover:rotate-12" />
         </button>
       </div>
     </div>
@@ -205,9 +205,9 @@ export default function Servers() {
           </h1>
           <button
             onClick={() => setShowAdd(!showAdd)}
-            className="flex items-center gap-2 px-5 py-3 text-sm bg-white text-black border-[3px] border-black rounded-xl font-black cursor-pointer shadow-[4px_4px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-[2px_2px_0_#000] uppercase tracking-widest transition-all"
+            className="group flex items-center gap-2 px-5 py-3 text-sm bg-white text-black border-[3px] border-black rounded-xl font-black cursor-pointer shadow-[4px_4px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-[2px_2px_0_#000] uppercase tracking-widest transition-all"
           >
-            <Plus className="w-5 h-5 stroke-[4px]" /> {t('addServer')}
+            <Plus className="w-5 h-5 stroke-[4px] transition-transform duration-300 group-hover:rotate-90 group-hover:scale-110" /> {t('addServer')}
           </button>
         </div>
 
@@ -234,8 +234,8 @@ export default function Servers() {
               </div>
               
               <div className="flex flex-wrap sm:flex-nowrap gap-3 shrink-0">
-                <button onClick={handlePaste} className="flex items-center justify-center px-4 py-3 bg-white border-[3px] border-black shadow-[2px_2px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none rounded-xl text-black cursor-pointer transition-all" title="Paste">
-                  <ClipboardPaste className="w-5 h-5 stroke-[3px]" />
+                <button onClick={handlePaste} className="group flex items-center justify-center px-4 py-3 bg-white border-[3px] border-black shadow-[2px_2px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none rounded-xl text-black cursor-pointer transition-all" title="Paste">
+                  <ClipboardPaste className="w-5 h-5 stroke-[3px] transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-6" />
                 </button>
                 <button
                   onClick={handleSmartAdd}
@@ -280,10 +280,10 @@ export default function Servers() {
                   <button
                     onClick={() => handleRefreshSub(group.sub.id)}
                     disabled={refreshingSub === group.sub.id}
-                    className="p-2 border-[3px] border-black disabled:bg-black/10 rounded-xl hover:bg-black hover:text-white transition-all cursor-pointer disabled:opacity-50"
+                    className="group p-2 border-[3px] border-black disabled:bg-black/10 rounded-xl hover:bg-black hover:text-white transition-all cursor-pointer disabled:opacity-50"
                     title="Refresh subscription"
                   >
-                    <RefreshCw className={`w-5 h-5 stroke-[3px] ${refreshingSub === group.sub.id ? 'animate-spin' : ''}`} />
+                    <RefreshCw className={`w-5 h-5 stroke-[3px] transition-transform duration-300 group-hover:rotate-180 ${refreshingSub === group.sub.id ? 'animate-spin' : ''}`} />
                   </button>
                   <button
                     onClick={() => handleTestGroup(group.sub.id, group.servers)}
@@ -294,10 +294,10 @@ export default function Servers() {
                   </button>
                   <button
                     onClick={() => handleRemoveSub(group.sub.id, group.sub.name)}
-                    className="p-2 border-[3px] border-black rounded-xl bg-danger text-white cursor-pointer ml-2 hover:-translate-y-0.5 hover:shadow-[2px_2px_0_#000] active:translate-y-0.5 active:shadow-none transition-all"
+                    className="group p-2 border-[3px] border-black rounded-xl bg-danger text-white cursor-pointer ml-2 hover:-translate-y-0.5 hover:shadow-[2px_2px_0_#000] active:translate-y-0.5 active:shadow-none transition-all"
                     title="Delete subscription"
                   >
-                    <Trash2 className="w-5 h-5 stroke-[3px]" />
+                    <Trash2 className="w-5 h-5 stroke-[3px] transition-transform duration-300 group-hover:rotate-12 group-hover:scale-110" />
                   </button>
                 </div>
               </div>

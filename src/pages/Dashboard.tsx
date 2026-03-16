@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
+  Zap,
   Power,
   ArrowDown,
   ArrowUp,
@@ -38,16 +39,18 @@ import { useTranslation } from '../locales';
 /* ═══════════════════════════════════════════════════════════ */
 function RetroBackground() {
   return (
-    <div className="absolute inset-0 overflow-hidden pointer-events-none select-none flex items-center justify-center opacity-10">
-      {/* Mascot watermark — large centered */}
-      <img src="/assets/mascot.png" alt=""
-        className="h-[85vh] w-auto drop-shadow-2xl"
-        draggable={false} />
-      {/* Brand name top-left */}
-      <span className="absolute top-5 left-5 text-2xl font-black tracking-tighter text-black/90 select-none">
-        DOODLE-RAY
+    <>
+      <div className="absolute inset-0 overflow-hidden pointer-events-none select-none flex items-center justify-center opacity-10">
+        {/* Mascot watermark — large centered */}
+        <img src="/assets/mascot.png" alt=""
+          className="h-[85vh] w-auto drop-shadow-2xl"
+          draggable={false} />
+      </div>
+      {/* Brand name — always visible */}
+      <span className="absolute top-4 left-4 text-lg font-black tracking-tight text-black/30 select-none pointer-events-none z-10">
+        DOODLERAY
       </span>
-    </div>
+    </>
   );
 }
 
@@ -424,64 +427,84 @@ export default function Dashboard() {
         {/* Retro background */}
         <RetroBackground />
 
-        {/* ── PROXY MODE TOGGLE ── */}
-        <div className="flex bg-black rounded-2xl p-1.5 gap-1 shadow-inner relative z-10 border-[3px] border-black">
-          <button onClick={() => handleModeSwitch('system-proxy')}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black transition-all duration-100 cursor-pointer
-              ${proxyMode === 'system-proxy' ? 'bg-bg-primary text-black border-2 border-black shadow-[2px_2px_0px_#000]' : 'text-white hover:bg-white/10'}`}>
-            <Globe className="w-4 h-4" /> {t('systemProxy')}
-          </button>
-          <button onClick={() => handleModeSwitch('tun')}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black transition-all duration-100 cursor-pointer
-              ${proxyMode === 'tun' ? 'bg-bg-primary text-black border-2 border-black shadow-[2px_2px_0px_#000]' : 'text-white hover:bg-white/10'}`}>
-            <Network className="w-4 h-4" /> {t('tunMode')}
-          </button>
-        </div>
-
-        {/* ── QUICK ADD (when no servers) ── */}
-        {servers.length === 0 && status === 'disconnected' && (
-          <div className="w-full max-w-sm mt-4 relative z-10 animate-slide-up">
-            <div className="bg-white border-[4px] border-black rounded-3xl p-5 shadow-[6px_6px_0_#000] space-y-3">
-              <div className="flex items-center gap-2 mb-1">
-                <Link className="w-5 h-5 text-black stroke-[3px]" />
-                <h3 className="text-sm font-black text-black uppercase tracking-widest">Quick Start</h3>
+        {/* ══════════════════════════════════════════════ */}
+        {/*  ONBOARDING: show only when zero servers      */}
+        {/* ══════════════════════════════════════════════ */}
+        {servers.length === 0 && status === 'disconnected' ? (
+          <div className="flex-1 flex flex-col items-center justify-center w-full max-w-md relative z-10 animate-slide-up gap-6 py-10">
+            {/* Logo */}
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-14 h-14 bg-black rounded-2xl flex items-center justify-center border-[3px] border-black shadow-[4px_4px_0_#000]">
+                <Zap className="w-7 h-7 text-white stroke-[3px]" />
               </div>
-              <p className="text-[10px] font-black text-black/50 uppercase tracking-wider">
-                Paste subscription URL or proxy link to get started
-              </p>
+              <div>
+                <h1 className="text-3xl font-black text-black tracking-tighter uppercase leading-none">DoodleRay</h1>
+                <p className="text-[10px] font-black text-black/40 uppercase tracking-widest">Fast & Secure VPN</p>
+              </div>
+            </div>
+
+            {/* Big onboarding card */}
+            <div className="w-full bg-white border-[4px] border-black rounded-3xl p-8 shadow-[8px_8px_0_#000] space-y-5">
+              <div className="text-center space-y-2">
+                <h2 className="text-xl font-black text-black uppercase tracking-tight">Welcome!</h2>
+                <p className="text-xs font-bold text-black/50 uppercase tracking-widest">
+                  Paste a subscription URL or proxy link to get started
+                </p>
+              </div>
+
               <div className="flex gap-2">
-                <div className="flex-1 relative">
-                  <input
-                    type="text"
-                    value={quickInput}
-                    onChange={(e) => setQuickInput(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleQuickAdd()}
-                    placeholder="https://... or vless://..."
-                    className="w-full bg-gray-50 border-[3px] border-black rounded-xl px-4 py-3 text-sm text-black placeholder:text-black/30 focus:outline-none font-bold tracking-tight"
-                  />
-                </div>
+                <input
+                  type="text"
+                  value={quickInput}
+                  onChange={(e) => setQuickInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleQuickAdd()}
+                  autoFocus
+                  placeholder="https://... or vless://..."
+                  className="flex-1 bg-gray-50 border-[3px] border-black rounded-xl px-4 py-4 text-sm text-black placeholder:text-black/25 focus:outline-none focus:shadow-[2px_2px_0_#000] font-bold tracking-tight transition-shadow"
+                />
                 <button
                   onClick={handleQuickPaste}
-                  className="p-3 bg-white border-[3px] border-black rounded-xl shadow-[2px_2px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none cursor-pointer transition-all hover:bg-gray-100"
+                  className="group p-4 bg-white border-[3px] border-black rounded-xl shadow-[2px_2px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none cursor-pointer transition-all hover:bg-gray-50"
                   title="Paste from clipboard"
                 >
-                  <ClipboardPaste className="w-5 h-5 text-black stroke-[2.5px]" />
+                  <ClipboardPaste className="w-5 h-5 text-black stroke-[2.5px] transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-6" />
                 </button>
               </div>
+
               <button
                 onClick={handleQuickAdd}
                 disabled={quickImporting || !quickInput.trim()}
-                className="w-full py-3 bg-black text-white border-[3px] border-black rounded-xl text-sm font-black uppercase tracking-widest cursor-pointer shadow-[4px_4px_0_#000] hover:-translate-y-0.5 hover:-translate-x-0.5 hover:shadow-[6px_6px_0_#000] active:translate-x-[4px] active:translate-y-[4px] active:shadow-none transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                className="w-full py-4 bg-black text-white border-[3px] border-black rounded-2xl text-sm font-black uppercase tracking-widest cursor-pointer shadow-[6px_6px_0_#000] hover:-translate-y-1 hover:-translate-x-1 hover:shadow-[8px_8px_0_#000] active:translate-x-[4px] active:translate-y-[4px] active:shadow-none transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 {quickImporting ? (
-                  <><Loader2 className="w-4 h-4 animate-spin" /> Loading...</>
+                  <><Loader2 className="w-5 h-5 animate-spin" /> Loading...</>
                 ) : (
-                  'Add & Connect'
+                  <><Link className="w-5 h-5 stroke-[3px]" /> Connect</>
                 )}
               </button>
             </div>
           </div>
-        )}
+        ) : (
+        <div className="contents">
+        {/* ── PROXY MODE TOGGLE ── */}
+        <div className="relative flex bg-black rounded-2xl p-1.5 shadow-inner z-10 w-full max-w-[340px] border-[3px] border-black">
+          {/* Sliding indicator */}
+          <div
+            className={`absolute top-1.5 bottom-1.5 w-[calc(50%-6px)] bg-bg-primary rounded-xl transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] shadow-[2px_2px_0_rgba(0,0,0,0.4)] border-[2px] border-black ${
+              proxyMode === 'tun' ? 'left-1/2' : 'left-1.5'
+            }`}
+          />
+          <button onClick={() => handleModeSwitch('system-proxy')}
+            className={`relative z-10 flex flex-1 items-center justify-center gap-2 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-widest cursor-pointer transition-colors duration-300 select-none
+              ${proxyMode === 'system-proxy' ? 'text-black' : 'text-white/40 hover:text-white/80'}`}>
+            <Globe className={`w-4 h-4 transition-transform duration-300 ${proxyMode === 'system-proxy' ? 'scale-110' : 'scale-100'}`} /> <span className="truncate">{t('systemProxy')}</span>
+          </button>
+          <button onClick={() => handleModeSwitch('tun')}
+            className={`relative z-10 flex flex-1 items-center justify-center gap-2 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-widest cursor-pointer transition-colors duration-300 select-none
+              ${proxyMode === 'tun' ? 'text-black' : 'text-white/40 hover:text-white/80'}`}>
+            <Network className={`w-4 h-4 transition-transform duration-300 ${proxyMode === 'tun' ? 'scale-110' : 'scale-100'}`} /> <span className="truncate">{t('tunMode')}</span>
+          </button>
+        </div>
 
         {/* ── SERVER SELECTOR ── */}
         <div className="w-full max-w-sm mt-4 relative z-10">
@@ -505,7 +528,7 @@ export default function Dashboard() {
                 <p className="text-sm font-black text-black uppercase">{t('selectServerHint')}</p>
               )}
             </div>
-            <ChevronDown className="w-6 h-6 text-black group-hover:scale-110 transition-transform stroke-[3px]" />
+            <ChevronDown className="w-6 h-6 text-black transition-transform duration-300 group-hover:scale-110 group-hover:-translate-y-1 stroke-[3px]" />
           </button>
         </div>
 
@@ -532,7 +555,7 @@ export default function Dashboard() {
                     ? 'bg-white text-black shadow-[8px_8px_0_#000] hover:shadow-[10px_10px_0_#000] hover:-translate-y-1 hover:-translate-x-1 active:shadow-[2px_2px_0_#000] active:translate-y-[6px] active:translate-x-[6px]'
                     : 'bg-white/50 text-black/30 shadow-[4px_4px_0_rgba(0,0,0,0.3)]'
               }`}>
-              <Power className={`w-16 h-16 transition-all duration-300 stroke-[3px] ${isConnecting ? 'animate-pulse' : 'group-hover:scale-110'}`} />
+              <Power className={`w-16 h-16 transition-all duration-300 stroke-[3px] ${isConnecting ? 'animate-pulse' : 'group-hover:scale-110 group-hover:rotate-[15deg]'}`} />
             </div>
           </button>
           
@@ -609,6 +632,8 @@ export default function Dashboard() {
           </div>
           );
         })()}
+        </div>
+        )}
       </div>
 
       {/* ── LOGS STRIP ── */}

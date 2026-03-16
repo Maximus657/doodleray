@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Settings as SettingsIcon, Trash2, RotateCcw, Database, Zap, Monitor, Download } from 'lucide-react';
-import { enable, disable } from '@tauri-apps/plugin-autostart';
+import { disable } from '@tauri-apps/plugin-autostart';
 import { useTranslation } from '../locales';
 import { useAppStore } from '../stores/app-store';
 
@@ -27,8 +27,6 @@ export default function Settings() {
     networkStack, setNetworkStack,
     dnsMode, setDnsMode,
     strictRoute, setStrictRoute,
-    alwaysRunAdmin, setAlwaysRunAdmin,
-    autoStart,
     silentAdminAutostart, setSilentAdminAutostart,
     language, setLanguage,
     addLog,
@@ -36,16 +34,6 @@ export default function Settings() {
     wipeData,
   } = useAppStore();
   const { t } = useTranslation();
-
-  const handleToggleAutoStart = async (val: boolean) => {
-    try {
-      if (val) await enable();
-      else await disable();
-      useAppStore.setState({ autoStart: val });
-    } catch (e) {
-      addLog('error', `Failed to change autostart: ${e}`);
-    }
-  };
 
   const handleWipeData = () => {
     if (confirm('Are you absolutely sure you want to delete ALL servers and subscriptions? This cannot be undone.')) {
@@ -61,18 +49,20 @@ export default function Settings() {
     }
   };
 
-  const handleSilentAdminToggle = async (val: boolean) => {
+  const handleAdminAutostartToggle = async (val: boolean) => {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('toggle_silent_autostart', { enable: val });
       setSilentAdminAutostart(val);
-      if (val && autoStart) {
-        // Disable regular autostart if we enable silent admin
-        await disable();
-        useAppStore.setState({ autoStart: false });
+      // When enabling silent admin autostart, disable regular autostart to avoid duplicates
+      if (val) {
+        try {
+          await disable();
+          useAppStore.setState({ autoStart: false });
+        } catch (_) { /* ignore if already disabled */ }
       }
     } catch (e) {
-      addLog('error', `Failed to toggle silent autostart: ${e}`);
+      addLog('error', `Failed to toggle admin autostart: ${e}`);
     }
   };
 
@@ -121,23 +111,10 @@ export default function Settings() {
             </h2>
             <div className="space-y-2">
               <Toggle
-                checked={autoStart}
-                onChange={handleToggleAutoStart}
+                checked={silentAdminAutostart}
+                onChange={handleAdminAutostartToggle}
                 label={t('launchStartup')}
                 description={t('launchStartupDesc')}
-              />
-              <Toggle
-                checked={silentAdminAutostart}
-                onChange={handleSilentAdminToggle}
-                label={t('launchSilentAdmin')}
-                description={t('launchSilentAdminDesc')}
-              />
-              <Toggle
-                checked={alwaysRunAdmin}
-                onChange={setAlwaysRunAdmin}
-                label={t('runAdmin')}
-                description={t('runAdminDesc')}
-                warning={t('runAdminWarning')}
               />
               <div className="flex items-center justify-between py-3 px-4 bg-white border-[3px] border-black shadow-[2px_2px_0_#000] rounded-xl">
                 <span className="text-sm font-black text-black uppercase tracking-tight">{t('language')}</span>
@@ -202,9 +179,9 @@ export default function Settings() {
               <Database className="w-5 h-5 text-black stroke-[3px]" /> {t('data')}
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <button onClick={handleClearLogs} className="flex items-center gap-4 bg-white border-[3px] border-black shadow-[4px_4px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none p-5 rounded-2xl transition-all cursor-pointer text-left">
+              <button onClick={handleClearLogs} className="group flex items-center gap-4 bg-white border-[3px] border-black shadow-[4px_4px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none p-5 rounded-2xl transition-all cursor-pointer text-left">
                 <div className="w-12 h-12 rounded-xl border-[3px] border-black bg-black text-white flex items-center justify-center shrink-0">
-                  <RotateCcw className="w-6 h-6 stroke-[3px]" />
+                  <RotateCcw className="w-6 h-6 stroke-[3px] transition-transform duration-500 group-hover:-rotate-180" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <h3 className="font-black text-black text-sm uppercase tracking-tight">{t('clearLogs')}</h3>
@@ -213,7 +190,7 @@ export default function Settings() {
               </button>
               <button onClick={handleWipeData} className="flex items-center gap-4 bg-white border-[3px] border-danger shadow-[4px_4px_0_#f87171] hover:bg-danger hover:border-black hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none p-5 rounded-2xl transition-all cursor-pointer group text-left">
                 <div className="w-12 h-12 rounded-xl border-[3px] border-danger group-hover:border-black bg-danger group-hover:bg-black text-white flex items-center justify-center shrink-0 transition-colors">
-                  <Trash2 className="w-6 h-6 stroke-[3px]" />
+                  <Trash2 className="w-6 h-6 stroke-[3px] transition-transform duration-300 group-hover:scale-110 group-hover:rotate-12" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <h3 className="font-black text-danger group-hover:text-black text-sm uppercase tracking-tight transition-colors">{t('factoryReset')}</h3>
@@ -228,15 +205,14 @@ export default function Settings() {
         {/* Footer */}
         <div className="mt-10 text-center pb-8">
           <button onClick={handleCheckUpdate}
-            className="inline-flex items-center gap-2 px-5 py-2.5 bg-white border-[3px] border-black shadow-[4px_4px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none rounded-xl transition-all cursor-pointer mb-4">
-            <Download className="w-4 h-4 stroke-[3px]" />
+            className="group inline-flex items-center gap-2 px-5 py-2.5 bg-white border-[3px] border-black shadow-[4px_4px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none rounded-xl transition-all cursor-pointer mb-4">
+            <Download className="w-4 h-4 stroke-[3px] transition-transform duration-300 group-hover:-translate-y-1" />
             <span className="text-xs font-black uppercase tracking-widest">{t('checkForUpdates')}</span>
           </button>
           {updateStatus && (
             <p className="text-[11px] font-black text-black/80 mb-3 uppercase tracking-widest">{updateStatus}</p>
           )}
           <p className="text-sm font-black text-text-on-orange-secondary/40 tracking-widest mt-3">DoodleRay v{appVersion}</p>
-          <p className="text-[10px] text-text-on-orange-secondary/30 mt-1 font-mono">{t('coreInfo')}</p>
         </div>
         
       </div>

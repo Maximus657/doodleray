@@ -97,6 +97,7 @@ export interface AppState {
   subAutoUpdateMinutes: number;
   connectedAt: number | null;
   alwaysRunAdmin: boolean;
+  availableUpdate: string | null;
 
   setStatus: (status: ConnectionStatus) => void;
   setActiveServer: (server: ServerConfig | null) => void;
@@ -129,6 +130,7 @@ export interface AppState {
   addLog: (level: LogEntry['level'], message: string) => void;
   clearLogs: () => void;
   wipeData: () => void;
+  setAvailableUpdate: (version: string | null) => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -149,7 +151,7 @@ export const useAppStore = create<AppState>()(
       autoStart: false,
       silentAdminAutostart: false,
       theme: 'dark',
-      language: 'ru',
+      language: 'en',
       networkStack: 'mixed',
       dnsMode: 'fakeip',
       strictRoute: true,
@@ -158,6 +160,7 @@ export const useAppStore = create<AppState>()(
       subAutoUpdateMinutes: 60,
       connectedAt: null,
       alwaysRunAdmin: false,
+      availableUpdate: null,
 
       setStatus: (status) => set({ status }),
       setActiveServer: (server) => set({ activeServer: server }),
@@ -253,11 +256,12 @@ export const useAppStore = create<AppState>()(
       })),
       clearLogs: () => set({ logs: [] }),
       wipeData: () => set({ servers: [], subscriptions: [], activeServer: null }),
+      setAvailableUpdate: (version) => set({ availableUpdate: version }),
     }),
     {
       name: 'doodleray-storage',
       partialize: (state) => Object.fromEntries(
-        Object.entries(state as any).filter(([key]) => !['status', 'speedHistory', 'currentDownload', 'currentUpload', 'logs'].includes(key))
+        Object.entries(state as any).filter(([key]) => !['status', 'speedHistory', 'currentDownload', 'currentUpload', 'logs', 'availableUpdate'].includes(key))
       ) as Partial<AppState>,
     }
   )

@@ -144,12 +144,12 @@ function MyRulesTab() {
                     </div>
                   </div>
                   <button onClick={() => setExpandedPreset(isExpanded ? null : ap.presetId)}
-                    className="flex items-center justify-center text-black bg-white border-[3px] border-black rounded-xl cursor-pointer p-2 shadow-[2px_2px_0_#000] hover:-translate-y-0.5 hover:shadow-[4px_4px_0_#000] active:translate-y-0.5 active:shadow-none transition-all">
-                    {isExpanded ? <ChevronUp className="w-5 h-5 stroke-[3px]" /> : <ChevronDown className="w-5 h-5 stroke-[3px]" />}
+                    className="group flex items-center justify-center text-black bg-white border-[3px] border-black rounded-xl cursor-pointer p-2 shadow-[2px_2px_0_#000] hover:-translate-y-0.5 hover:shadow-[4px_4px_0_#000] active:translate-y-0.5 active:shadow-none transition-all">
+                    {isExpanded ? <ChevronUp className="w-5 h-5 stroke-[3px] transition-transform duration-300 group-hover:-translate-y-0.5" /> : <ChevronDown className="w-5 h-5 stroke-[3px] transition-transform duration-300 group-hover:translate-y-0.5" />}
                   </button>
                   <button onClick={() => removeAppliedPreset(ap.presetId)}
-                    className="p-2 rounded-xl cursor-pointer border-[3px] border-black shadow-[2px_2px_0_#000] active:translate-x-1 active:translate-y-1 active:shadow-none bg-black text-white hover:bg-danger transition-all">
-                    <Trash2 className="w-4 h-4 stroke-[3px]" />
+                    className="group p-2 rounded-xl cursor-pointer border-[3px] border-black shadow-[2px_2px_0_#000] active:translate-x-1 active:translate-y-1 active:shadow-none bg-black text-white hover:bg-danger transition-all">
+                    <Trash2 className="w-4 h-4 stroke-[3px] transition-transform duration-300 group-hover:scale-110 group-hover:rotate-12" />
                   </button>
                 </div>
 
@@ -237,8 +237,8 @@ function MyRulesTab() {
               })}
             </div>
             <button onClick={handleAdd} disabled={!newValue.trim()}
-              className="px-6 py-2 bg-black text-white border-[3px] border-black shadow-[4px_4px_0_#000] active:translate-x-[4px] active:translate-y-[4px] active:shadow-none hover:-translate-y-1 hover:-translate-x-1 hover:shadow-[6px_6px_0_#000] rounded-xl text-sm font-black cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center">
-              <Plus className="w-5 h-5 stroke-[4px]" /> Add
+              className="group px-6 py-2 bg-black text-white border-[3px] border-black shadow-[4px_4px_0_#000] active:translate-x-[4px] active:translate-y-[4px] active:shadow-none hover:-translate-y-1 hover:-translate-x-1 hover:shadow-[6px_6px_0_#000] rounded-xl text-sm font-black cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center">
+              <Plus className="w-5 h-5 stroke-[4px] transition-transform duration-300 group-hover:rotate-90 group-hover:scale-110" /> Add
             </button>
           </div>
         </div>
@@ -281,8 +281,8 @@ function MyRulesTab() {
                 <div className={`absolute top-0.5 w-3.5 h-3.5 rounded-full border-[2px] border-black transition-all ${rule.enabled ? 'left-[calc(100%-1.125rem)] bg-white' : 'left-0.5 bg-black'}`} />
               </button>
               <button onClick={() => removeRule(rule.id)}
-                className="opacity-0 group-hover:opacity-100 p-2 rounded-xl transition-all cursor-pointer border-[3px] border-black shadow-[2px_2px_0_#000] active:translate-x-1 active:translate-y-1 active:shadow-none bg-black text-white hover:bg-danger">
-                <Trash2 className="w-4 h-4 stroke-[3px]" />
+                className="group opacity-0 group-hover:opacity-100 p-2 rounded-xl transition-all cursor-pointer border-[3px] border-black shadow-[2px_2px_0_#000] active:translate-x-1 active:translate-y-1 active:shadow-none bg-black text-white hover:bg-danger">
+                <Trash2 className="w-4 h-4 stroke-[3px] transition-transform duration-300 group-hover:scale-110 group-hover:rotate-12" />
               </button>
             </div>
           ))}
@@ -479,8 +479,8 @@ function BrowseTab() {
                       {appliedId === preset.id ? 'Applied! ✓' : 'Apply'}
                     </button>
                     <button onClick={() => handleExpand(preset.id)}
-                      className="flex items-center justify-center text-black bg-white border-[3px] border-black rounded-xl cursor-pointer p-2 shadow-[2px_2px_0_#000] hover:-translate-y-0.5 hover:shadow-[4px_4px_0_#000] active:translate-y-0.5 active:shadow-none transition-all">
-                      {isExpanded ? <ChevronUp className="w-5 h-5 stroke-[3px]" /> : <ChevronDown className="w-5 h-5 stroke-[3px]" />}
+                      className="group flex items-center justify-center text-black bg-white border-[3px] border-black rounded-xl cursor-pointer p-2 shadow-[2px_2px_0_#000] hover:-translate-y-0.5 hover:shadow-[4px_4px_0_#000] active:translate-y-0.5 active:shadow-none transition-all">
+                      {isExpanded ? <ChevronUp className="w-5 h-5 stroke-[3px] transition-transform duration-300 group-hover:-translate-y-0.5" /> : <ChevronDown className="w-5 h-5 stroke-[3px] transition-transform duration-300 group-hover:translate-y-0.5" />}
                     </button>
                   </div>
                 </div>
