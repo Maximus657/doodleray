@@ -71,7 +71,9 @@ pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
         return Err(format!("xray not found at {:?}", xray_exe));
     }
 
-    let config_path = exe_dir.join("xray_config.json");
+    let temp_dir = std::env::temp_dir().join("DoodleRay");
+    let _ = std::fs::create_dir_all(&temp_dir);
+    let config_path = temp_dir.join("xray_config.json");
     let config_str = serde_json::to_string_pretty(config_json)
         .map_err(|e| format!("Failed to serialize xray config: {}", e))?;
     std::fs::write(&config_path, &config_str)

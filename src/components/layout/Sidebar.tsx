@@ -4,7 +4,6 @@ import {
   Home,
   Server,
   Wrench,
-  Navigation,
   Settings,
   LogOut,
 } from 'lucide-react';
@@ -13,7 +12,7 @@ import { useAppStore } from '../../stores/app-store';
 const NAV_ITEMS = [
   { path: '/', icon: Home, label: 'Dashboard' },
   { path: '/servers', icon: Server, label: 'Servers' },
-  { path: '/routing', icon: Navigation, label: 'Routing' },
+
   { path: '/workshop', icon: Wrench, label: 'Workshop' },
   { path: '/settings', icon: Settings, label: 'Settings' },
 ];

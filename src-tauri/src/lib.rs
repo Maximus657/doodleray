@@ -598,11 +598,10 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
     let use_xray = request.transport == "xhttp";
     let is_tun = request.proxy_mode == "tun";
     
-    let debug_path = std::env::current_exe()
-        .unwrap_or_default()
-        .parent()
-        .unwrap_or(std::path::Path::new("."))
+    let debug_path = std::env::temp_dir()
+        .join("DoodleRay")
         .join("doodleray_debug_config.json");
+    let _ = std::fs::create_dir_all(debug_path.parent().unwrap_or(std::path::Path::new(".")));
     
     // Stop previous engine — only call stop_tun() (which needs admin password on macOS)
     // when TUN was actually active

@@ -5,7 +5,7 @@ import { persist } from 'zustand/middleware';
 // ========== Types ==========
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
-export type RoutingMode = 'global' | 'bypass' | 'app-split';
+
 export type ProxyMode = 'system-proxy' | 'tun';
 
 export interface ServerConfig {
@@ -76,8 +76,7 @@ export interface AppState {
   status: ConnectionStatus;
   activeServer: ServerConfig | null;
   proxyMode: ProxyMode;
-  routingMode: RoutingMode;
-  bypassApps: string[];
+
   servers: ServerConfig[];
   subscriptions: Subscription[];
   speedHistory: SpeedPoint[];
@@ -101,7 +100,7 @@ export interface AppState {
   setStatus: (status: ConnectionStatus) => void;
   setActiveServer: (server: ServerConfig | null) => void;
   setProxyMode: (mode: ProxyMode) => void;
-  setRoutingMode: (mode: RoutingMode) => void;
+
   setNetworkStack: (stack: 'mixed' | 'system' | 'gvisor') => void;
   setDnsMode: (mode: 'fakeip' | 'realip') => void;
   setStrictRoute: (strict: boolean) => void;
@@ -110,8 +109,7 @@ export interface AppState {
   setSubAutoUpdateMinutes: (mins: number) => void;
   setConnectedAt: (ts: number | null) => void;
   setAlwaysRunAdmin: (on: boolean) => void;
-  addBypassApp: (path: string) => void;
-  removeBypassApp: (path: string) => void;
+
   addServer: (server: ServerConfig) => void;
   removeServer: (id: string) => void;
   removeAllManualServers: () => void;
@@ -137,8 +135,7 @@ export const useAppStore = create<AppState>()(
       status: 'disconnected',
       activeServer: null,
       proxyMode: 'system-proxy',
-      routingMode: 'bypass',
-      bypassApps: [],
+
       servers: [],
       subscriptions: [],
       speedHistory: [],
@@ -162,7 +159,7 @@ export const useAppStore = create<AppState>()(
       setStatus: (status) => set({ status }),
       setActiveServer: (server) => set({ activeServer: server }),
       setProxyMode: (mode) => set({ proxyMode: mode }),
-      setRoutingMode: (mode) => set({ routingMode: mode }),
+
       setNetworkStack: (stack) => set({ networkStack: stack }),
       setDnsMode: (mode) => set({ dnsMode: mode }),
       setStrictRoute: (strict) => set({ strictRoute: strict }),
@@ -172,10 +169,7 @@ export const useAppStore = create<AppState>()(
       setConnectedAt: (ts) => set({ connectedAt: ts }),
       setAlwaysRunAdmin: (on) => set({ alwaysRunAdmin: on }),
 
-      addBypassApp: (path) => set((s) => ({ bypassApps: [...s.bypassApps, path] })),
-      removeBypassApp: (path) => set((s) => ({
-        bypassApps: s.bypassApps.filter((p) => p !== path),
-      })),
+
 
       addServer: (server) => set((s) => ({ servers: [...s.servers, server] })),
       removeServer: (id) => set((s) => ({

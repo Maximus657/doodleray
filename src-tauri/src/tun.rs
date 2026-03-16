@@ -54,20 +54,23 @@ pub fn start_tun_elevated(config_json: &serde_json::Value) -> Result<(), String>
         return Err(format!("{} not found at {:?} or {:?}", singbox_name, resource_dir.join(singbox_name), exe_dir.join(singbox_name)));
     }
 
-    // Write config to file
-    let config_path = exe_dir.join("tun_config.json");
+    // Write config/log/launcher to temp dir (exe_dir may be in Program Files = read-only)
+    let temp_dir = std::env::temp_dir().join("DoodleRay");
+    let _ = std::fs::create_dir_all(&temp_dir);
+
+    let config_path = temp_dir.join("tun_config.json");
     let config_str = serde_json::to_string_pretty(config_json)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
     std::fs::write(&config_path, &config_str)
         .map_err(|e| format!("Failed to write config: {}", e))?;
 
     // Write a launcher script that captures sing-box output to a log
-    let log_path = exe_dir.join("singbox_tun.log");
+    let log_path = temp_dir.join("singbox_tun.log");
     let _ = std::fs::write(&log_path, "");
 
     #[cfg(windows)]
     {
-        let bat_path = exe_dir.join("launch_singbox.bat");
+        let bat_path = temp_dir.join("launch_singbox.bat");
         let bat_content = format!(
             "@echo off\r\n\"{}\" run -c \"{}\" > \"{}\" 2>&1\r\n",
             singbox_exe.to_string_lossy(),
@@ -114,7 +117,7 @@ pub fn start_tun_elevated(config_json: &serde_json::Value) -> Result<(), String>
 
     #[cfg(target_os = "macos")]
     {
-        let sh_path = exe_dir.join("launch_singbox.sh");
+        let sh_path = temp_dir.join("launch_singbox.sh");
         let sh_content = format!(
             "#!/bin/bash\n\"{}\" run -c \"{}\" > \"{}\" 2>&1\n",
             singbox_exe.to_string_lossy(),

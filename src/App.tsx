@@ -6,7 +6,7 @@ import { Sidebar } from './components/layout/Sidebar';
 import Dashboard from './pages/Dashboard';
 import Servers from './pages/Servers';
 import Workshop from './pages/Workshop';
-import Routing from './pages/Routing';
+
 import Settings from './pages/Settings';
 import { useAppStore } from './stores/app-store';
 import './index.css';
@@ -49,7 +49,7 @@ function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/servers" element={<Servers />} />
           <Route path="/workshop" element={<Workshop />} />
-          <Route path="/routing" element={<Routing />} />
+
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </div>
