@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Settings as SettingsIcon, Trash2, RotateCcw, Database, Zap, Monitor, Download } from 'lucide-react';
 import { useAppStore } from '../stores/app-store';
 import { enable, disable } from '@tauri-apps/plugin-autostart';
@@ -58,6 +58,11 @@ export default function Settings() {
   };
 
   const [updateStatus, setUpdateStatus] = useState<string>('');
+  const [appVersion, setAppVersion] = useState<string>('...');
+
+  useEffect(() => {
+    import('@tauri-apps/api/app').then(({ getVersion }) => getVersion()).then(setAppVersion).catch(() => {});
+  }, []);
 
   const handleCheckUpdate = async () => {
     setUpdateStatus('Checking...');
@@ -196,7 +201,7 @@ export default function Settings() {
           {updateStatus && (
             <p className="text-[11px] font-black text-black/80 mb-3 uppercase tracking-widest">{updateStatus}</p>
           )}
-          <p className="text-sm font-black text-text-on-orange-secondary/40 tracking-widest mt-3">DoodleRay v2.0.0</p>
+          <p className="text-sm font-black text-text-on-orange-secondary/40 tracking-widest mt-3">DoodleRay v{appVersion}</p>
           <p className="text-[10px] text-text-on-orange-secondary/30 mt-1 font-mono">Core: sing-box + xray-core</p>
         </div>
         

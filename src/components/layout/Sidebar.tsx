@@ -1,4 +1,5 @@
 import { NavLink } from 'react-router-dom';
+import { useState, useEffect } from 'react';
 import {
   Zap,
   Home,
@@ -21,6 +22,11 @@ export function Sidebar() {
   const status = useAppStore((s) => s.status);
   const isConnected = status === 'connected';
   const isConnecting = status === 'connecting';
+  const [ver, setVer] = useState('');
+
+  useEffect(() => {
+    import('@tauri-apps/api/app').then(({ getVersion }) => getVersion()).then(v => setVer(`v${v}`)).catch(() => {});
+  }, []);
 
   return (
     <aside className="w-[80px] h-full bg-black flex flex-col items-center py-6 border-r-[4px] border-black/20">
@@ -82,7 +88,7 @@ export function Sidebar() {
         </span>
       </button>
 
-      <div className="text-[10px] text-white/30 font-black tracking-widest px-2 py-1 rotate-[-90deg] origin-center -translate-y-8 absolute left-[-24px] bottom-16 opacity-50">v2.0.0</div>
+      {ver && <div className="text-[10px] text-white/30 font-black tracking-widest px-2 py-1 rotate-[-90deg] origin-center -translate-y-8 absolute left-[-24px] bottom-16 opacity-50">{ver}</div>}
     </aside>
   );
 }
