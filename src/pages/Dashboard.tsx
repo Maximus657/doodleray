@@ -31,6 +31,7 @@ import { formatSpeed, formatTime, protocolLabel } from '../lib/utils';
 import { refreshSubscription, fetchSubscription } from '../lib/subscription';
 import { parseProxyLink } from '../lib/parser';
 import { useWorkshopStore } from '../stores/workshop-store';
+import { useTranslation } from '../locales';
 
 /* ═══════════════════════════════════════════════════════════ */
 /*  Animated Network Mesh Background                          */
@@ -77,6 +78,7 @@ export default function Dashboard() {
     addSubscription,
     addServer,
   } = useAppStore();
+  const { t } = useTranslation();
 
   const [connectTime, setConnectTime] = useState(0);
   const [showLogs, setShowLogs] = useState(false);
@@ -427,12 +429,12 @@ export default function Dashboard() {
           <button onClick={() => handleModeSwitch('system-proxy')}
             className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black transition-all duration-100 cursor-pointer
               ${proxyMode === 'system-proxy' ? 'bg-bg-primary text-black border-2 border-black shadow-[2px_2px_0px_#000]' : 'text-white hover:bg-white/10'}`}>
-            <Globe className="w-4 h-4" /> proxy
+            <Globe className="w-4 h-4" /> {t('systemProxy')}
           </button>
           <button onClick={() => handleModeSwitch('tun')}
             className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black transition-all duration-100 cursor-pointer
               ${proxyMode === 'tun' ? 'bg-bg-primary text-black border-2 border-black shadow-[2px_2px_0px_#000]' : 'text-white hover:bg-white/10'}`}>
-            <Network className="w-4 h-4" /> tun
+            <Network className="w-4 h-4" /> {t('tunMode')}
           </button>
         </div>
 
@@ -490,7 +492,7 @@ export default function Dashboard() {
             </div>
             <div className="flex-1 text-left min-w-0">
               <p className="text-[11px] font-black text-black/60 uppercase tracking-widest mb-0.5">
-                {activeServer ? 'Current Server' : 'Select Server'}
+                {activeServer ? t('activeServer') : t('noServerSelected')}
               </p>
               {activeServer ? (
                 <>
@@ -500,7 +502,7 @@ export default function Dashboard() {
                   </p>
                 </>
               ) : (
-                <p className="text-sm font-black text-black uppercase">Click to choose...</p>
+                <p className="text-sm font-black text-black uppercase">{t('selectServerHint')}</p>
               )}
             </div>
             <ChevronDown className="w-6 h-6 text-black group-hover:scale-110 transition-transform stroke-[3px]" />
@@ -537,7 +539,7 @@ export default function Dashboard() {
           {/* Status Label */}
           <p className={`text-sm font-black mt-3 tracking-widest uppercase transition-all duration-300
             ${isConnected ? 'text-emerald-700' : isConnecting ? 'text-amber-600' : 'text-text-on-orange-muted/60'}`}>
-            {isConnected ? `Connected · ${formatDuration(connectTime)}` : isConnecting ? 'Establishing Tunnel...' : 'Connect'}
+            {isConnected ? `${t('connected')} · ${formatDuration(connectTime)}` : isConnecting ? t('connecting') : t('connect')}
           </p>
         </div>
 
@@ -548,14 +550,14 @@ export default function Dashboard() {
             <div className="bg-white rounded-2xl p-3 text-center border-[3px] border-black shadow-[4px_4px_0_#000]">
               <ArrowDown className="w-5 h-5 mx-auto text-black mb-1 stroke-[3px]" />
               <p className="text-xl font-black text-black tabular-nums tracking-tighter">{formatSpeed(currentDownload)}</p>
-              <p className="text-[10px] font-black text-black/60 uppercase tracking-widest mt-0.5">Down</p>
+              <p className="text-[10px] font-black text-black/60 uppercase tracking-widest mt-0.5">{t('download')}</p>
               <p className="text-[10px] font-black font-mono text-black/40 mt-1">{formatTotal(totalDown)}</p>
             </div>
             {/* Upload */}
             <div className="bg-white rounded-2xl p-3 text-center border-[3px] border-black shadow-[4px_4px_0_#000]">
               <ArrowUp className="w-5 h-5 mx-auto text-black mb-1 stroke-[3px]" />
               <p className="text-xl font-black text-black tabular-nums tracking-tighter">{formatSpeed(currentUpload)}</p>
-              <p className="text-[10px] font-black text-black/60 uppercase tracking-widest mt-0.5">Up</p>
+              <p className="text-[10px] font-black text-black/60 uppercase tracking-widest mt-0.5">{t('upload')}</p>
               <p className="text-[10px] font-black font-mono text-black/40 mt-1">{formatTotal(totalUp)}</p>
             </div>
             {/* Session Info */}

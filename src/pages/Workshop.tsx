@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useWorkshopStore } from '../stores/workshop-store';
 import type { RoutingRule } from '../stores/workshop-store';
+import { useTranslation } from '../locales';
 
 const ACTION_CONFIG = {
   proxy:  { label: 'VPN',    icon: Shield, bg: 'bg-black', text: 'text-white' },
@@ -25,6 +26,7 @@ const ACTION_CONFIG = {
 export default function Workshop() {
   const [tab, setTab] = useState<'rules' | 'browse'>('rules');
   const init = useWorkshopStore((s) => s.init);
+  const { t } = useTranslation();
 
   useEffect(() => {
     init();
@@ -36,18 +38,18 @@ export default function Workshop() {
         <div className="flex items-center justify-between mb-8">
           <h1 className="text-3xl font-black text-black flex items-center gap-4 drop-shadow-[2px_2px_0_#fff] tracking-tighter uppercase">
             <span className="p-3 bg-black text-white rounded-xl shadow-[4px_4px_0_#000] border-[3px] border-black"><Wrench className="w-6 h-6 stroke-[3px]" /></span>
-            Workshop
+            {t('workshop')}
           </h1>
           <div className="flex bg-white border-[3px] border-black shadow-[4px_4px_0_#000] rounded-xl p-1 gap-1">
             <button onClick={() => setTab('rules')}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-widest cursor-pointer transition-all duration-150 border-[2px]
                 ${tab === 'rules' ? 'bg-black text-white border-black shadow-[2px_2px_0_rgba(0,0,0,0.5)] translate-x-[-1px] translate-y-[-1px]' : 'bg-transparent text-black border-transparent hover:bg-black/5'}`}>
-              <Sparkles className="w-4 h-4 stroke-[3px]" /> My Rules
+              <Sparkles className="w-4 h-4 stroke-[3px]" /> {t('myRules')}
             </button>
             <button onClick={() => setTab('browse')}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-widest cursor-pointer transition-all duration-150 border-[2px]
                 ${tab === 'browse' ? 'bg-black text-white border-black shadow-[2px_2px_0_rgba(0,0,0,0.5)] translate-x-[-1px] translate-y-[-1px]' : 'bg-transparent text-black border-transparent hover:bg-black/5'}`}>
-              <Users className="w-4 h-4 stroke-[3px]" /> Community
+              <Users className="w-4 h-4 stroke-[3px]" /> {t('community')}
             </button>
           </div>
         </div>

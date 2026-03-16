@@ -17,6 +17,7 @@ import { parseProxyLink } from '../lib/parser';
 import { fetchSubscription, refreshSubscription } from '../lib/subscription';
 import { formatPing, protocolLabel } from '../lib/utils';
 import type { ServerConfig } from '../stores/app-store';
+import { useTranslation } from '../locales';
 
 export default function Servers() {
   const {
@@ -33,6 +34,7 @@ export default function Servers() {
     addLog,
     removeAllManualServers,
   } = useAppStore();
+  const { t } = useTranslation();
 
   const [showAdd, setShowAdd] = useState(false);
   const [smartInput, setSmartInput] = useState('');
@@ -199,13 +201,13 @@ export default function Servers() {
         <div className="flex items-center justify-between mb-8">
           <h1 className="text-3xl font-black text-black flex items-center gap-4 drop-shadow-[2px_2px_0_#fff] tracking-tighter uppercase">
             <span className="p-3 bg-black text-white rounded-xl shadow-[4px_4px_0_#000] border-[3px] border-black"><FolderTree className="w-6 h-6 stroke-[3px]" /></span>
-            Groups & Servers
+            {t('servers')}
           </h1>
           <button
             onClick={() => setShowAdd(!showAdd)}
             className="flex items-center gap-2 px-5 py-3 text-sm bg-white text-black border-[3px] border-black rounded-xl font-black cursor-pointer shadow-[4px_4px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-[2px_2px_0_#000] uppercase tracking-widest transition-all"
           >
-            <Plus className="w-5 h-5 stroke-[4px]" /> Add
+            <Plus className="w-5 h-5 stroke-[4px]" /> {t('addServer')}
           </button>
         </div>
 
@@ -316,7 +318,7 @@ export default function Servers() {
             <div className="space-y-3 mb-6">
               <div className="flex items-center justify-between px-2 bg-white border-[3px] border-black rounded-xl p-3 shadow-[4px_4px_0_#000] mt-8">
                 <h3 className="text-lg font-black text-black uppercase tracking-tight flex items-center gap-3">
-                  <Server className="w-6 h-6 text-black stroke-[3px]" /> Manual Servers
+                  <Server className="w-6 h-6 text-black stroke-[3px]" /> {t('manualServers')}
                 </h3>
                 
                 <div className="flex items-center gap-2">

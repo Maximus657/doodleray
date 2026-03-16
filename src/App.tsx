@@ -37,8 +37,18 @@ function App() {
       }
     }
 
+    async function syncSilentAdmin() {
+      try {
+        const silentEnabled: boolean = await invoke('check_silent_autostart');
+        useAppStore.setState({ silentAdminAutostart: silentEnabled });
+      } catch (err) {
+        console.error('Failed to query silent autostart:', err);
+      }
+    }
+
     checkPrivileges();
     checkAutostart();
+    syncSilentAdmin();
   }, [alwaysRunAdmin]);
 
   return (

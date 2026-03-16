@@ -1413,6 +1413,64 @@ fn update_tray_disconnected(app: &tauri::AppHandle) {
     }
 }
 
+// ═══════════════════════════════════════════════════════════
+//  Silent Admin Autostart (UAC Bypass via Task Scheduler)
+// ═══════════════════════════════════════════════════════════
+
+#[tauri::command]
+async fn toggle_silent_autostart(enable: bool) -> Result<String, String> {
+    #[cfg(windows)]
+    {
+        let exe_path_buf = std::env::current_exe().map_err(|e| format!("Failed to get exe path: {}", e))?;
+        let exe_path = exe_path_buf.to_string_lossy().replace("'", "''");
+        
+        let script = if enable {
+            format!("Start-Process schtasks.exe -ArgumentList '/Create /TN ''DoodleRay_SilentStart'' /TR ''\\\"{}\\\" --minimized'' /SC ONLOGON /RL HIGHEST /F' -Verb RunAs -WindowStyle Hidden -Wait", exe_path)
+        } else {
+            "Start-Process schtasks.exe -ArgumentList '/Delete /TN ''DoodleRay_SilentStart'' /F' -Verb RunAs -WindowStyle Hidden -Wait".to_string()
+        };
+
+        let mut cmd = std::process::Command::new("powershell");
+        cmd.creation_flags(0x08000000);
+        let status = cmd
+            .args(&["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
+            .status()
+            .map_err(|e| format!("Failed to execute powershell: {}", e))?;
+
+        // Note: The outer powershell process exiting with success doesn't guarantee the UAC was accepted, 
+        // since Start-Process launches schtasks asynchronously or semi-synchronously. But it's good enough for our check.
+        if status.success() {
+            Ok(if enable { "Silent autostart enabled".into() } else { "Silent autostart disabled".into() })
+        } else {
+            Err("UAC prompt rejected or task modification failed. Please try again.".into())
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        Err("Silent autostart is only supported on Windows".into())
+    }
+}
+
+#[tauri::command]
+async fn check_silent_autostart() -> bool {
+    #[cfg(windows)]
+    {
+        let mut cmd = std::process::Command::new("schtasks");
+        cmd.args(&["/Query", "/TN", "DoodleRay_SilentStart"]);
+        cmd.creation_flags(0x08000000);
+        
+        if let Ok(out) = cmd.output() {
+            out.status.success()
+        } else {
+            false
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1437,6 +1495,8 @@ pub fn run() {
             is_admin,
             quit_app,
             workshop_api,
+            toggle_silent_autostart,
+            check_silent_autostart,
         ])
         .setup(|app| {
             // ── System Tray ──

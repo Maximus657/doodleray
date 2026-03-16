@@ -86,8 +86,9 @@ export interface AppState {
   socksPort: number;
   httpPort: number;
   autoStart: boolean;
+  silentAdminAutostart: boolean;
   theme: 'dark' | 'light';
-  language: 'ru' | 'en';
+  language: 'ru' | 'en' | 'zh';
   networkStack: 'mixed' | 'system' | 'gvisor';
   dnsMode: 'fakeip' | 'realip';
   strictRoute: boolean;
@@ -109,6 +110,7 @@ export interface AppState {
   setSubAutoUpdateMinutes: (mins: number) => void;
   setConnectedAt: (ts: number | null) => void;
   setAlwaysRunAdmin: (on: boolean) => void;
+  setSilentAdminAutostart: (on: boolean) => void;
 
   addServer: (server: ServerConfig) => void;
   removeServer: (id: string) => void;
@@ -123,7 +125,7 @@ export interface AppState {
   setSocksPort: (port: number) => void;
   setHttpPort: (port: number) => void;
   setTheme: (theme: 'dark' | 'light') => void;
-  setLanguage: (lang: 'ru' | 'en') => void;
+  setLanguage: (lang: 'ru' | 'en' | 'zh') => void;
   addLog: (level: LogEntry['level'], message: string) => void;
   clearLogs: () => void;
   wipeData: () => void;
@@ -145,6 +147,7 @@ export const useAppStore = create<AppState>()(
       socksPort: 10808,
       httpPort: 10809,
       autoStart: false,
+      silentAdminAutostart: false,
       theme: 'dark',
       language: 'ru',
       networkStack: 'mixed',
@@ -168,6 +171,7 @@ export const useAppStore = create<AppState>()(
       setSubAutoUpdateMinutes: (mins) => set({ subAutoUpdateMinutes: mins }),
       setConnectedAt: (ts) => set({ connectedAt: ts }),
       setAlwaysRunAdmin: (on) => set({ alwaysRunAdmin: on }),
+      setSilentAdminAutostart: (on) => set({ silentAdminAutostart: on }),
 
 
 

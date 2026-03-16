@@ -10,16 +10,18 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '../../stores/app-store';
 
-const NAV_ITEMS = [
-  { path: '/', icon: Home, label: 'Dashboard' },
-  { path: '/servers', icon: Server, label: 'Servers' },
+import { useTranslation } from '../../locales';
 
-  { path: '/workshop', icon: Wrench, label: 'Workshop' },
-  { path: '/settings', icon: Settings, label: 'Settings' },
+const NAV_ITEMS = [
+  { path: '/', icon: Home, labelKey: 'dashboard' },
+  { path: '/servers', icon: Server, labelKey: 'servers' },
+  { path: '/workshop', icon: Wrench, labelKey: 'workshop' },
+  { path: '/settings', icon: Settings, labelKey: 'settings' },
 ];
 
 export function Sidebar() {
   const status = useAppStore((s) => s.status);
+  const { t } = useTranslation();
   const isConnected = status === 'connected';
   const isConnecting = status === 'connecting';
   const [ver, setVer] = useState('');
@@ -44,7 +46,7 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex flex-col gap-4 flex-1 w-full px-3">
-        {NAV_ITEMS.map(({ path, icon: Icon, label }) => (
+        {NAV_ITEMS.map(({ path, icon: Icon, labelKey }) => (
           <NavLink
             key={path}
             to={path}
@@ -61,7 +63,7 @@ export function Sidebar() {
               <>
                 <Icon className={`w-6 h-6 relative z-10 transition-transform stroke-[2.5px] ${isActive ? 'scale-110 text-black' : 'group-hover:scale-110'}`} />
                 <span className="absolute left-full ml-4 px-3 py-2 text-[10px] font-black uppercase tracking-widest bg-white text-black border-[3px] border-black rounded-xl opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 whitespace-nowrap shadow-[4px_4px_0_#000] z-50 translate-x-[-10px] group-hover:translate-x-0">
-                  {label}
+                  {t(labelKey as any)}
                 </span>
                 <div className={`absolute left-0 top-1/2 -translate-y-1/2 w-1.5 h-1/2 bg-black rounded-r-full transition-all duration-300 ${isActive ? 'opacity-100 scale-y-100' : 'opacity-0 scale-y-0'}`} />
               </>
