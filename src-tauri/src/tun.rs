@@ -205,14 +205,14 @@ pub fn stop_tun() -> Result<(), String> {
     #[cfg(windows)]
     {
         let regular = Command::new("taskkill")
-            .args(&["/IM", "sing-box.exe", "/F"])
+            .args(&["/IM", "sing-box.exe", "/F", "/T"])
             .creation_flags(0x08000000)
             .output();
         
         if let Ok(output) = &regular {
             let stderr = String::from_utf8_lossy(&output.stderr);
             if stderr.contains("Access") || stderr.contains("Отказано") || stderr.contains("denied") {
-                let kill_cmd = "taskkill /IM sing-box.exe /F";
+                let kill_cmd = "taskkill /IM sing-box.exe /F /T";
                 let cmd_w: Vec<u16> = "cmd.exe\0".encode_utf16().collect();
                 let args = format!("/c {}\0", kill_cmd);
                 let args_w: Vec<u16> = args.encode_utf16().collect();
@@ -240,7 +240,21 @@ pub fn stop_tun() -> Result<(), String> {
                         0,
                     );
                 }
-                std::thread::sleep(std::time::Duration::from_millis(500));
+                
+                // Wait for the process to actually terminate
+                for _ in 0..20 {
+                    if !is_singbox_running() {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+            } else {
+                for _ in 0..10 {
+                    if !is_singbox_running() {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
             }
         }
     }

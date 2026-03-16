@@ -364,21 +364,93 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
         ])
     };
 
+    let mut proxy_domains = Vec::new();
+    let mut proxy_domain_suffixes = Vec::new();
+    let mut proxy_processes = Vec::new();
+    
+    let mut direct_domains = Vec::new();
+    let mut direct_domain_suffixes = Vec::new();
+    let mut direct_processes = Vec::new();
+
+    let mut block_domains = Vec::new();
+    let mut block_domain_suffixes = Vec::new();
+    let mut block_processes = Vec::new();
+
+    for rule in &req.routing_rules {
+        if rule.rule_type == "domain" {
+            let val = rule.value.clone();
+            if val.starts_with("*.") {
+                let suffix = val.trim_start_matches("*.").to_string();
+                match rule.action.as_str() {
+                    "proxy" => proxy_domain_suffixes.push(suffix),
+                    "direct" => direct_domain_suffixes.push(suffix),
+                    "block" => block_domain_suffixes.push(suffix),
+                    _ => {}
+                }
+            } else {
+                match rule.action.as_str() {
+                    "proxy" => proxy_domains.push(val),
+                    "direct" => direct_domains.push(val),
+                    "block" => block_domains.push(val),
+                    _ => {}
+                }
+            }
+        } else if rule.rule_type == "exe" {
+            let val = rule.value.clone();
+            match rule.action.as_str() {
+                "proxy" => proxy_processes.push(val),
+                "direct" => direct_processes.push(val),
+                "block" => block_processes.push(val),
+                _ => {}
+            }
+        }
+    }
+
+    let mut custom_rules = Vec::new();
+    
+    if !proxy_domains.is_empty() || !proxy_domain_suffixes.is_empty() || !proxy_processes.is_empty() {
+        let mut r = serde_json::json!({ "outbound": "proxy" });
+        if !proxy_domains.is_empty() { r["domain"] = proxy_domains.clone().into(); }
+        if !proxy_domain_suffixes.is_empty() { r["domain_suffix"] = proxy_domain_suffixes.clone().into(); }
+        if !proxy_processes.is_empty() { r["process_name"] = proxy_processes.clone().into(); }
+        custom_rules.push(r);
+    }
+    
+    if !direct_domains.is_empty() || !direct_domain_suffixes.is_empty() || !direct_processes.is_empty() {
+        let mut r = serde_json::json!({ "outbound": "direct" });
+        if !direct_domains.is_empty() { r["domain"] = direct_domains.clone().into(); }
+        if !direct_domain_suffixes.is_empty() { r["domain_suffix"] = direct_domain_suffixes.clone().into(); }
+        if !direct_processes.is_empty() { r["process_name"] = direct_processes.clone().into(); }
+        custom_rules.push(r);
+    }
+
+    if !block_domains.is_empty() || !block_domain_suffixes.is_empty() || !block_processes.is_empty() {
+        let mut r = serde_json::json!({ "outbound": "block" });
+        if !block_domains.is_empty() { r["domain"] = block_domains.clone().into(); }
+        if !block_domain_suffixes.is_empty() { r["domain_suffix"] = block_domain_suffixes.clone().into(); }
+        if !block_processes.is_empty() { r["process_name"] = block_processes.clone().into(); }
+        custom_rules.push(r);
+    }
+    
+    let mut rules = vec![
+        serde_json::json!({ "action": "sniff" }),
+        serde_json::json!({ "protocol": "dns", "action": "hijack-dns" })
+    ];
+    rules.extend(custom_rules);
+
     serde_json::json!({
         "log": { "level": "info" },
         "dns": dns,
         "inbounds": inbounds,
         "outbounds": [
             outbound,
-            { "type": "direct", "tag": "direct" }
+            { "type": "direct", "tag": "direct" },
+            { "type": "block", "tag": "block" }
         ],
         "route": {
             "auto_detect_interface": true,
             "default_domain_resolver": "dns-direct",
-            "rules": [
-                { "action": "sniff" },
-                { "protocol": "dns", "action": "hijack-dns" }
-            ]
+            "rules": rules
         },
         "experimental": {
             "clash_api": {

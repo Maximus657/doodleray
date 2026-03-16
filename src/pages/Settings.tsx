@@ -11,7 +11,7 @@ function Toggle({ checked, onChange, label, description, warning }: { checked: b
         {description && <span className="text-[10px] font-black text-black/60 block mt-0.5 tracking-widest uppercase">{description}</span>}
         {warning && !checked && <span className="text-[10px] text-red-600 font-black block mt-1 tracking-widest uppercase">{warning}</span>}
       </div>
-      <div className={`w-10 h-6 rounded-full p-1 transition-colors shrink-0 border-[3px] border-black ${checked ? 'bg-black' : 'bg-white'}`} onClick={() => onChange(!checked)}>
+      <div className={`w-10 h-6 rounded-full p-1 transition-colors shrink-0 border-[3px] border-black ${checked ? 'bg-black' : 'bg-white'}`}>
         <div className={`w-3 h-3 rounded-full transition-transform ${checked ? 'translate-x-4 bg-white' : 'translate-x-0 bg-black'}`} />
       </div>
       <input type="checkbox" className="hidden" checked={checked} onChange={(e) => onChange(e.target.checked)} />

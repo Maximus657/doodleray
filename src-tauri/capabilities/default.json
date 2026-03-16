@@ -11,6 +11,7 @@
     "updater:allow-download",
     "updater:allow-download-and-install",
     "process:allow-restart",
+    "autostart:default",
     {
       "identifier": "http:default",
       "allow": [
