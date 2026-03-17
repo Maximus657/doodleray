@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Trash2, RotateCcw, Database, Zap, Monitor, Download } from 'lucide-react';
+import { Settings as SettingsIcon, Trash2, RotateCcw, Database, Zap, Monitor, Download, ShieldCheck } from 'lucide-react';
 import { disable } from '@tauri-apps/plugin-autostart';
 import { useTranslation } from '../locales';
 import { useAppStore } from '../stores/app-store';
@@ -27,7 +27,9 @@ export default function Settings() {
     networkStack, setNetworkStack,
     dnsMode, setDnsMode,
     strictRoute, setStrictRoute,
+    killSwitch, setKillSwitch,
     silentAdminAutostart, setSilentAdminAutostart,
+    autoConnectOnStartup, setAutoConnectOnStartup,
     language, setLanguage,
     addLog,
     clearLogs,
@@ -46,6 +48,21 @@ export default function Settings() {
     if (confirm('Are you sure you want to clear all connection logs?')) {
       clearLogs();
       addLog('success', 'Runtime logs cleared by user.');
+    }
+  };
+
+  const [defenderStatus, setDefenderStatus] = useState<string | null>(null);
+  const handleDefenderExclusion = async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const result: string = await invoke('add_defender_exclusion');
+      setDefenderStatus(result);
+      const { useToastStore } = await import('../stores/toast-store');
+      useToastStore.getState().addToast('Defender exclusion added ✓', 'success');
+    } catch (e: any) {
+      setDefenderStatus('Failed: ' + (e?.toString() || 'Unknown error'));
+      const { useToastStore } = await import('../stores/toast-store');
+      useToastStore.getState().addToast('Defender exclusion failed (need admin)', 'error');
     }
   };
 
@@ -116,6 +133,12 @@ export default function Settings() {
                 label={t('launchStartup')}
                 description={t('launchStartupDesc')}
               />
+              <Toggle
+                checked={autoConnectOnStartup}
+                onChange={setAutoConnectOnStartup}
+                label={t('autoConnect')}
+                description={t('autoConnectDesc')}
+              />
               <div className="flex items-center justify-between py-3 px-4 bg-white border-[3px] border-black shadow-[2px_2px_0_#000] rounded-xl">
                 <span className="text-sm font-black text-black uppercase tracking-tight">{t('language')}</span>
                 <select value={language} onChange={(e) => setLanguage(e.target.value as any)}
@@ -170,6 +193,12 @@ export default function Settings() {
                 label={t('strictRoute')}
                 description={t('strictRouteDesc')}
               />
+              <Toggle
+                checked={killSwitch}
+                onChange={setKillSwitch}
+                label={t('killSwitch')}
+                description={t('killSwitchDesc')}
+              />
             </div>
           </div>
 
@@ -198,6 +227,18 @@ export default function Settings() {
                 </div>
               </button>
             </div>
+
+            {/* Windows Defender exclusion */}
+            <button onClick={handleDefenderExclusion} className="group flex items-center gap-4 bg-white border-[3px] border-black shadow-[4px_4px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none p-5 rounded-2xl transition-all cursor-pointer text-left col-span-full">
+              <div className="w-12 h-12 rounded-xl border-[3px] border-black bg-emerald-400 text-black flex items-center justify-center shrink-0">
+                <ShieldCheck className="w-6 h-6 stroke-[3px] transition-transform duration-300 group-hover:scale-110" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-black text-black text-sm uppercase tracking-tight">Windows Defender Exclusion</h3>
+                <p className="text-[10px] font-black tracking-widest uppercase text-black/60 mt-1">Add DoodleRay to Defender whitelist — prevents false positives</p>
+                {defenderStatus && <p className="text-[9px] font-bold text-emerald-600 mt-1">{defenderStatus}</p>}
+              </div>
+            </button>
           </div>
 
         </div>

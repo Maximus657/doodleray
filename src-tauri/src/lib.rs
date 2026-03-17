@@ -702,10 +702,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
         _ => {
             let _ = xray::stop_xray();
             // Try to clean up orphaned sing-box processes (e.g. from previous app session)
-            // Use regular pkill only — do NOT escalate to admin (no password prompt)
-            let _ = std::process::Command::new("pkill")
-                .args(["-f", "sing-box"])
-                .output();
+            let _ = tun::stop_tun();
         }
     }
     let _ = sysproxy::unset_system_proxy();
@@ -782,7 +779,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                 *state = true;
                 let mut engine = ACTIVE_ENGINE.lock().unwrap();
                 *engine = Some("xray+tun".into());
-                update_tray_connected(&app);
+                update_tray_connected(&app, &request.server_address);
                 ConnectResult {
                     success: true,
                     message: "TUN connected (xray-core + sing-box TUN bridge)".into(),
@@ -805,6 +802,8 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
         
         match xray::start_xray(&xray_config) {
             Ok(_) => {
+                // DNS Leak Prevention: wait for core to be ready before setting proxy
+                wait_for_port_ready(request.socks_port);
                 let mut state = CONNECTION_STATE.lock().unwrap();
                 *state = true;
                 let mut engine = ACTIVE_ENGINE.lock().unwrap();
@@ -868,7 +867,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                     
                     if let Ok(_) = tun::start_tun_elevated(&tun_bridge) {
                         *engine = Some("xray+app-proxy".into());
-                        update_tray_connected(&app);
+                        update_tray_connected(&app, &request.server_address);
                         return ConnectResult {
                             success: true,
                             message: format!("System Proxy + {} apps with UDP proxy", proxy_exes.len()),
@@ -876,7 +875,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                     }
                 }
                 
-                update_tray_connected(&app);
+                update_tray_connected(&app, &request.server_address);
                 ConnectResult {
                     success: true,
                     message: format!("Connected via System Proxy. SOCKS5: 127.0.0.1:{}, HTTP: 127.0.0.1:{}", request.socks_port, request.http_port),
@@ -895,7 +894,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                 *state = true;
                 let mut engine = ACTIVE_ENGINE.lock().unwrap();
                 *engine = Some("singbox-tun".into());
-                update_tray_connected(&app);
+                update_tray_connected(&app, &request.server_address);
                 ConnectResult {
                     success: true,
                     message: "TUN connected via sing-box".into(),
@@ -913,6 +912,8 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
         
         match singbox::start_singbox(&config) {
             Ok(_) => {
+                // DNS Leak Prevention: wait for core to be ready before setting proxy
+                wait_for_port_ready(request.socks_port);
                 let mut state = CONNECTION_STATE.lock().unwrap();
                 *state = true;
                 let mut engine = ACTIVE_ENGINE.lock().unwrap();
@@ -920,7 +921,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                 if let Err(e) = sysproxy::set_system_proxy(request.http_port) {
                     return ConnectResult { success: false, message: format!("sing-box started but failed to set system proxy: {}", e) };
                 }
-                update_tray_connected(&app);
+                update_tray_connected(&app, &request.server_address);
                 ConnectResult {
                     success: true,
                     message: format!("System proxy active. SOCKS5: 127.0.0.1:{}, HTTP: 127.0.0.1:{}", request.socks_port, request.http_port),
@@ -945,17 +946,20 @@ async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
         };
     }
 
-    // Stop both engines (whichever is active)
+    // Stop all engines — always clean up everything to prevent orphaned processes
     let active = {
         let engine = ACTIVE_ENGINE.lock().unwrap();
         engine.clone()
     };
     
+    // Always stop in-process libsingbox (safe even if not running)
+    let _ = singbox::stop_singbox();
+    
     match active.as_deref() {
         Some("xray") => {
             let _ = xray::stop_xray();
         }
-        Some("xray+tun") => {
+        Some("xray+tun") | Some("xray+app-proxy") => {
             let _ = tun::stop_tun();
             let _ = xray::stop_xray();
         }
@@ -963,7 +967,8 @@ async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
             let _ = tun::stop_tun();
         }
         _ => {
-            let _ = singbox::stop_singbox();
+            // Also try to stop any orphaned sing-box.exe processes
+            let _ = tun::stop_tun();
         }
     }
     
@@ -1093,6 +1098,64 @@ fn restart_as_admin() -> Result<(), String> {
     #[cfg(not(windows))]
     {
         Err("restart_as_admin is only supported on Windows. Use sudo on macOS.".into())
+    }
+}
+
+/// Scan installed applications on Windows (reads registry Uninstall keys)
+#[tauri::command]
+fn scan_installed_apps() -> Result<Vec<serde_json::Value>, String> {
+    #[cfg(windows)]
+    {
+        use std::collections::BTreeMap;
+        let mut apps: BTreeMap<String, String> = BTreeMap::new();
+        
+        let reg_paths = [
+            "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+            "SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+        ];
+        let hives = [
+            winreg::enums::HKEY_LOCAL_MACHINE,
+            winreg::enums::HKEY_CURRENT_USER,
+        ];
+        
+        for hive in &hives {
+            for reg_path in &reg_paths {
+                if let Ok(key) = winreg::RegKey::predef(*hive).open_subkey(reg_path) {
+                    for subkey_name in key.enum_keys().filter_map(|k| k.ok()) {
+                        if let Ok(subkey) = key.open_subkey(&subkey_name) {
+                            let name: String = subkey.get_value("DisplayName").unwrap_or_default();
+                            let install_location: String = subkey.get_value("InstallLocation").unwrap_or_default();
+                            let display_icon: String = subkey.get_value("DisplayIcon").unwrap_or_default();
+                            
+                            if name.is_empty() { continue; }
+                            
+                            // Try to find an exe path from DisplayIcon or InstallLocation
+                            let exe_path = if display_icon.ends_with(".exe") || display_icon.contains(".exe,") {
+                                display_icon.split(',').next().unwrap_or("").trim_matches('"').to_string()
+                            } else if !install_location.is_empty() {
+                                install_location.clone()
+                            } else {
+                                String::new()
+                            };
+                            
+                            if !apps.contains_key(&name) {
+                                apps.insert(name, exe_path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        let result: Vec<serde_json::Value> = apps.into_iter()
+            .map(|(name, path)| serde_json::json!({ "name": name, "path": path }))
+            .collect();
+        
+        Ok(result)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(vec![])
     }
 }
 
@@ -1401,15 +1464,94 @@ fn quit_app(app: tauri::AppHandle) {
 //  System Tray helpers
 // ═══════════════════════════════════════════════════════════
 
-fn update_tray_connected(app: &tauri::AppHandle) {
+fn update_tray_connected(app: &tauri::AppHandle, server: &str) {
     if let Some(tray) = app.tray_by_id("main-tray") {
-        let _ = tray.set_tooltip(Some("DoodleRay VPN — Connected ✓"));
+        let tip = format!("DoodleRay VPN — Connected ✓\n{}", server);
+        let _ = tray.set_tooltip(Some(&tip));
     }
 }
 
 fn update_tray_disconnected(app: &tauri::AppHandle) {
     if let Some(tray) = app.tray_by_id("main-tray") {
         let _ = tray.set_tooltip(Some("DoodleRay VPN — Disconnected"));
+    }
+}
+
+/// Wait for the SOCKS port to become ready (max 5s)
+/// Prevents DNS leaks by ensuring the core is actually listening before we set system proxy
+fn wait_for_port_ready(port: u16) {
+    use std::net::SocketAddr;
+    let addr: SocketAddr = format!("127.0.0.1:{}", port).parse().unwrap();
+    for _ in 0..50 {
+        if TcpStream::connect_timeout(&addr, Duration::from_millis(100)).is_ok() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    eprintln!("[warn] Port {} did not become ready in 5s", port);
+}
+
+/// Check connection health by testing if SOCKS port is alive
+#[tauri::command]
+fn check_connection_health(socks_port: u16) -> bool {
+    use std::net::SocketAddr;
+    let addr: SocketAddr = format!("127.0.0.1:{}", socks_port).parse().unwrap();
+    TcpStream::connect_timeout(&addr, Duration::from_millis(2000)).is_ok()
+}
+
+/// Add Windows Defender exclusion for the app directory (runs elevated)
+#[tauri::command]
+fn add_defender_exclusion() -> Result<String, String> {
+    #[cfg(windows)]
+    {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let dir = exe.parent().ok_or("Cannot get parent dir")?.to_string_lossy().to_string();
+        let cmd = format!("Add-MpPreference -ExclusionPath '{}'", dir);
+        
+        // Use ShellExecuteW with "runas" to elevate (shows UAC prompt)
+        use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
+        
+        fn to_wide(s: &str) -> Vec<u16> {
+            OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+        }
+        
+        unsafe {
+            #[link(name = "shell32")]
+            extern "system" {
+                fn ShellExecuteW(
+                    hwnd: *mut std::ffi::c_void,
+                    lpOperation: *const u16,
+                    lpFile: *const u16,
+                    lpParameters: *const u16,
+                    lpDirectory: *const u16,
+                    nShowCmd: i32,
+                ) -> isize;
+            }
+            
+            let verb = to_wide("runas");
+            let file = to_wide("powershell");
+            let params = to_wide(&format!("-WindowStyle Hidden -Command \"{}\"", cmd));
+            
+            let result = ShellExecuteW(
+                std::ptr::null_mut(),
+                verb.as_ptr(),
+                file.as_ptr(),
+                params.as_ptr(),
+                std::ptr::null(),
+                0, // SW_HIDE
+            );
+            
+            if result as usize > 32 {
+                Ok(format!("Added exclusion for {}", dir))
+            } else {
+                Err("UAC was cancelled or elevation failed".into())
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        Err("Not supported on this platform".into())
     }
 }
 
@@ -1471,8 +1613,37 @@ async fn check_silent_autostart() -> bool {
     }
 }
 
+/// Full cleanup — stop all engines, kill subprocesses, unset system proxy
+/// Safe to call multiple times (idempotent)
+fn full_cleanup() {
+    let _ = singbox::stop_singbox();
+    let _ = xray::stop_xray();
+    let _ = tun::stop_tun();
+    let _ = sysproxy::unset_system_proxy();
+    
+    // Reset connection state
+    if let Ok(mut state) = CONNECTION_STATE.lock() {
+        *state = false;
+    }
+    if let Ok(mut engine) = ACTIVE_ENGINE.lock() {
+        *engine = None;
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // ── Startup cleanup ──
+    // If previous session crashed, clean up orphaned processes and stale proxy
+    // This runs BEFORE the UI loads, so the user never sees broken internet
+    let _ = tun::stop_tun();           // Kill any orphaned sing-box.exe
+    let _ = sysproxy::unset_system_proxy(); // Clear stale system proxy
+    
+    // Ctrl+C handler (for dev mode)
+    let _ = ctrlc::set_handler(move || {
+        full_cleanup();
+        std::process::exit(0);
+    });
+
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -1497,6 +1668,10 @@ pub fn run() {
             workshop_api,
             toggle_silent_autostart,
             check_silent_autostart,
+            restart_as_admin,
+            scan_installed_apps,
+            check_connection_health,
+            add_defender_exclusion,
         ])
         .setup(|app| {
             // ── System Tray ──
@@ -1525,19 +1700,21 @@ pub fn run() {
                             }
                         }
                         "quit" => {
-                            // Disconnect VPN before quitting
-                            let is_connected = {
-                                let state = CONNECTION_STATE.lock().unwrap();
-                                *state
-                            };
-                            if is_connected {
-                                let _ = singbox::stop_singbox();
-                                #[cfg(windows)]
-                                { let _ = ipc::send_command_to_service("StopTun"); }
-                            }
+                            // Full cleanup before quitting
+                            full_cleanup();
                             app.exit(0);
                         }
                         _ => {}
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let tauri::tray::TrayIconEvent::Click { button: tauri::tray::MouseButton::Left, .. } = event {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.unminimize();
+                            let _ = window.set_focus();
+                        }
                     }
                 })
                 .build(app)?;
@@ -1558,6 +1735,13 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, event| {
+            // Catch ALL exit paths — OS shutdown, task manager kill, etc.
+            if let tauri::RunEvent::Exit = event {
+                full_cleanup();
+            }
+        });
 }
+

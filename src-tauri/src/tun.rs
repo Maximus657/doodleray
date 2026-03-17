@@ -3,6 +3,59 @@ use std::path::PathBuf;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
+/// Check if the current process is running with elevated (admin) privileges
+#[cfg(windows)]
+pub fn is_elevated() -> bool {
+    unsafe {
+        #[link(name = "advapi32")]
+        extern "system" {
+            fn OpenProcessToken(
+                ProcessHandle: *mut std::ffi::c_void,
+                DesiredAccess: u32,
+                TokenHandle: *mut *mut std::ffi::c_void,
+            ) -> i32;
+            fn GetTokenInformation(
+                TokenHandle: *mut std::ffi::c_void,
+                TokenInformationClass: u32,
+                TokenInformation: *mut std::ffi::c_void,
+                TokenInformationLength: u32,
+                ReturnLength: *mut u32,
+            ) -> i32;
+        }
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetCurrentProcess() -> *mut std::ffi::c_void;
+            fn CloseHandle(hObject: *mut std::ffi::c_void) -> i32;
+        }
+
+        let mut token: *mut std::ffi::c_void = std::ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), 0x0008, &mut token) == 0 {
+            return false;
+        }
+
+        let mut elevation: u32 = 0;
+        let mut return_length: u32 = 0;
+        let result = GetTokenInformation(
+            token,
+            20, // TokenElevation
+            &mut elevation as *mut u32 as *mut std::ffi::c_void,
+            std::mem::size_of::<u32>() as u32,
+            &mut return_length,
+        );
+        CloseHandle(token);
+
+        result != 0 && elevation != 0
+    }
+}
+
+#[cfg(not(windows))]
+pub fn is_elevated() -> bool {
+    unsafe {
+        extern "C" { fn getuid() -> u32; }
+        getuid() == 0
+    }
+}
+
 /// Get the directory where external resources (binaries) are located.
 /// On Windows: next to the .exe
 /// On macOS: Contents/Resources/ in the .app bundle, or next to the binary for dev
@@ -80,37 +133,47 @@ pub fn start_tun_elevated(config_json: &serde_json::Value) -> Result<(), String>
         std::fs::write(&bat_path, &bat_content)
             .map_err(|e| format!("Failed to write launcher bat: {}", e))?;
 
-        // Launch elevated via ShellExecuteW "runas"
-        let bat_str: Vec<u16> = bat_path.to_string_lossy()
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
-        let verb: Vec<u16> = "runas\0".encode_utf16().collect();
+        if is_elevated() {
+            // Already running as admin — launch sing-box directly, no UAC prompt
+            let bat_str = bat_path.to_string_lossy().to_string();
+            Command::new("cmd")
+                .args(["/c", &bat_str])
+                .creation_flags(0x08000000) // CREATE_NO_WINDOW
+                .spawn()
+                .map_err(|e| format!("Failed to launch sing-box: {}", e))?;
+        } else {
+            // Not elevated — need UAC prompt via ShellExecuteW "runas"
+            let bat_str: Vec<u16> = bat_path.to_string_lossy()
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
+            let verb: Vec<u16> = "runas\0".encode_utf16().collect();
 
-        unsafe {
-            #[link(name = "shell32")]
-            extern "system" {
-                fn ShellExecuteW(
-                    hwnd: *mut std::ffi::c_void,
-                    lpOperation: *const u16,
-                    lpFile: *const u16,
-                    lpParameters: *const u16,
-                    lpDirectory: *const u16,
-                    nShowCmd: i32,
-                ) -> isize;
-            }
+            unsafe {
+                #[link(name = "shell32")]
+                extern "system" {
+                    fn ShellExecuteW(
+                        hwnd: *mut std::ffi::c_void,
+                        lpOperation: *const u16,
+                        lpFile: *const u16,
+                        lpParameters: *const u16,
+                        lpDirectory: *const u16,
+                        nShowCmd: i32,
+                    ) -> isize;
+                }
 
-            let result = ShellExecuteW(
-                std::ptr::null_mut(),
-                verb.as_ptr(),
-                bat_str.as_ptr(),
-                std::ptr::null(),
-                std::ptr::null(),
-                0, // SW_HIDE
-            );
+                let result = ShellExecuteW(
+                    std::ptr::null_mut(),
+                    verb.as_ptr(),
+                    bat_str.as_ptr(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    0, // SW_HIDE
+                );
 
-            if result as usize <= 32 {
-                return Err("UAC was declined or ShellExecute failed. TUN requires admin privileges.".into());
+                if result as usize <= 32 {
+                    return Err("UAC was declined or ShellExecute failed. TUN requires admin privileges.".into());
+                }
             }
         }
     }

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   Plus,
   Trash2,
@@ -41,6 +41,32 @@ export default function Servers() {
   const [testingGroup, setTestingGroup] = useState<string | null>(null);
   const [refreshingSub, setRefreshingSub] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+
+  // Auto-ping all servers on mount (only those without a ping value)
+  useEffect(() => {
+    const unpinged = servers.filter(s => s.ping === undefined);
+    if (unpinged.length === 0) return;
+    
+    let cancelled = false;
+    (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        for (const server of unpinged) {
+          if (cancelled) break;
+          try {
+            const result: any = await invoke('ping_server', {
+              address: server.address, port: server.port, serverId: server.id,
+            });
+            updateServerPing(server.id, result.ping_ms);
+          } catch {
+            updateServerPing(server.id, -1);
+          }
+          await new Promise(r => setTimeout(r, 30));
+        }
+      } catch { /* not in tauri env */ }
+    })();
+    return () => { cancelled = true; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-detect input type
   const detectType = (input: string): 'sub' | 'link' | 'unknown' => {

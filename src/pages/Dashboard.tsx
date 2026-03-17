@@ -28,10 +28,10 @@ import {
   YAxis,
 } from 'recharts';
 import { useAppStore } from '../stores/app-store';
+import { useWorkshopStore } from '../stores/workshop-store';
 import { formatSpeed, formatTime, protocolLabel } from '../lib/utils';
 import { refreshSubscription, fetchSubscription } from '../lib/subscription';
 import { parseProxyLink } from '../lib/parser';
-import { useWorkshopStore } from '../stores/workshop-store';
 import { useTranslation } from '../locales';
 
 /* ═══════════════════════════════════════════════════════════ */
@@ -106,6 +106,38 @@ export default function Dashboard() {
       } catch { /* not in tauri env */ }
     })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Connection health monitor — prevents "connected but no internet" 
+  const healthFailRef = useRef(0);
+  useEffect(() => {
+    if (status !== 'connected') {
+      healthFailRef.current = 0;
+      return;
+    }
+    const healthCheck = setInterval(async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const healthy: boolean = await invoke('check_connection_health', { socksPort: socksPort });
+        if (healthy) {
+          healthFailRef.current = 0;
+        } else {
+          healthFailRef.current++;
+          if (healthFailRef.current >= 3) {
+            addLog('warning', 'Connection lost — SOCKS port not responding. Auto-reconnecting...');
+            const { useToastStore } = await import('../stores/toast-store');
+            useToastStore.getState().addToast('Connection lost — reconnecting...', 'warning');
+            // Auto-reconnect: disconnect then reconnect
+            try {
+              await invoke('vpn_disconnect');
+              setStatus('disconnected');
+              healthFailRef.current = 0;
+            } catch { /* ignore */ }
+          }
+        }
+      } catch { /* not in tauri env */ }
+    }, 30000); // check every 30s
+    return () => clearInterval(healthCheck);
+  }, [status, socksPort]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-scroll logs
   useEffect(() => {
@@ -234,6 +266,32 @@ export default function Dashboard() {
         return;
       }
       setStatus('connecting');
+
+      // If TUN mode, check if running as admin — offer one-time restart
+      if (proxyMode === 'tun') {
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          const admin: boolean = await invoke('is_admin');
+          if (!admin) {
+            const confirmRestart = window.confirm(
+              'TUN mode requires administrator privileges.\n\n' +
+              'Restart DoodleRay as Administrator?\n' +
+              '(You\'ll only need to do this once per session)\n\n' +
+              'Click Cancel to continue anyway (UAC will appear).'
+            );
+            if (confirmRestart) {
+              addLog('info', 'Restarting as administrator...');
+              try {
+                await invoke('restart_as_admin');
+                return;
+              } catch (err: any) {
+                addLog('warning', 'Could not restart as admin, continuing with per-toggle UAC');
+              }
+            }
+          }
+        } catch { /* not in tauri env */ }
+      }
+
       setConnectedAt(null);
       addLog('info', `Connecting to ${srv.name} (${srv.address}:${srv.port})`);
       addLog('info', `Protocol: ${srv.protocol} | Transport: ${srv.transport} | Security: ${srv.security}`);
@@ -357,17 +415,47 @@ export default function Dashboard() {
         const { invoke } = await import('@tauri-apps/api/core');
         await invoke('vpn_disconnect');
         await new Promise(r => setTimeout(r, 500));
+        
+        // Reconnect directly via invoke instead of fragile btn.click()
+        const srv = activeServer;
+        if (srv) {
+          const { networkStack, dnsMode, strictRoute } = useAppStore.getState();
+          const myRules = useWorkshopStore.getState().myRules.filter(r => r.enabled);
+          const routingRules = myRules.map(r => ({
+            rule_type: r.type, value: r.value, action: r.action,
+          }));
+          const result: any = await invoke('vpn_connect', {
+            request: {
+              server_address: srv.address, server_port: srv.port,
+              protocol: srv.protocol, uuid: srv.uuid || null,
+              password: srv.password || null, transport: srv.transport,
+              security: srv.security, sni: srv.sni || null,
+              host: srv.host || null, path: srv.path || null,
+              fingerprint: srv.fingerprint || null,
+              public_key: srv.publicKey || null,
+              short_id: srv.shortId || null, flow: srv.flow || null,
+              proxy_mode: mode, socks_port: socksPort, http_port: httpPort,
+              network_stack: networkStack, dns_mode: dnsMode,
+              strict_route: strictRoute, routing_rules: routingRules,
+            }
+          });
+          if (result.success) {
+            addLog('success', result.message);
+            setStatus('connected');
+            setConnectedAt(Date.now());
+          } else {
+            addLog('error', result.message);
+            setStatus('disconnected');
+          }
+        } else {
+          setStatus('disconnected');
+        }
+      } catch (err: any) {
+        addLog('error', `Reconnect failed: ${err.message || err}`);
         setStatus('disconnected');
-        setTimeout(() => {
-          const btn = document.getElementById('connect-button');
-          if (btn) btn.click();
-        }, 200);
-      } catch {
-        addLog('info', `Mode switched to ${mode === 'tun' ? 'TUN' : 'System Proxy'}`);
-        setStatus('connected');
       }
     }
-  }, [proxyMode, setProxyMode, status, setStatus, addLog]);
+  }, [proxyMode, setProxyMode, status, setStatus, addLog, activeServer, socksPort, httpPort, setConnectedAt]);
 
   const canConnect = activeServer || servers.length > 0;
 

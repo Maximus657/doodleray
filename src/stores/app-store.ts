@@ -97,6 +97,7 @@ export interface AppState {
   subAutoUpdateMinutes: number;
   connectedAt: number | null;
   alwaysRunAdmin: boolean;
+  autoConnectOnStartup: boolean;
   availableUpdate: string | null;
 
   setStatus: (status: ConnectionStatus) => void;
@@ -111,6 +112,7 @@ export interface AppState {
   setSubAutoUpdateMinutes: (mins: number) => void;
   setConnectedAt: (ts: number | null) => void;
   setAlwaysRunAdmin: (on: boolean) => void;
+  setAutoConnectOnStartup: (on: boolean) => void;
   setSilentAdminAutostart: (on: boolean) => void;
 
   addServer: (server: ServerConfig) => void;
@@ -160,6 +162,7 @@ export const useAppStore = create<AppState>()(
       subAutoUpdateMinutes: 60,
       connectedAt: null,
       alwaysRunAdmin: false,
+      autoConnectOnStartup: false,
       availableUpdate: null,
 
       setStatus: (status) => set({ status }),
@@ -174,6 +177,7 @@ export const useAppStore = create<AppState>()(
       setSubAutoUpdateMinutes: (mins) => set({ subAutoUpdateMinutes: mins }),
       setConnectedAt: (ts) => set({ connectedAt: ts }),
       setAlwaysRunAdmin: (on) => set({ alwaysRunAdmin: on }),
+      setAutoConnectOnStartup: (on) => set({ autoConnectOnStartup: on }),
       setSilentAdminAutostart: (on) => set({ silentAdminAutostart: on }),
 
 
