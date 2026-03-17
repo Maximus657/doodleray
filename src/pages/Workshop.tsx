@@ -114,9 +114,8 @@ function MyRulesTab() {
   }, []);
 
   const handleSelectApp = useCallback((app: {name: string, path: string}) => {
-    // Extract just the exe filename from path
-    const exeName = app.path ? app.path.split('\\').pop()?.split('/').pop() || app.name : app.name;
-    setNewValue(exeName.toLowerCase());
+    // path is already the exe basename (e.g. "steam.exe") from scan_installed_apps
+    setNewValue(app.path.toLowerCase());
     setNewType('exe');
     setNewComment(app.name);
     setShowAppScanner(false);
@@ -464,7 +463,7 @@ function MyRulesTab() {
 /* =================================================================== */
 
 function BrowseTab() {
-  const { presets, sortBy, setSortBy, applyPreset, ratePreset, comments, addComment, loadComments } = useWorkshopStore();
+  const { presets, sortBy, setSortBy, applyPreset, ratePreset, comments, addComment, loadComments, loading, loadPresets } = useWorkshopStore();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [appliedId, setAppliedId] = useState<string | null>(null);
   const [reviewingId, setReviewingId] = useState<string | null>(null);
@@ -516,6 +515,21 @@ function BrowseTab() {
           ))}
         </div>
       </div>
+
+      {loading ? (
+        <div className="text-center py-16">
+          <p className="text-sm font-black text-black/40 uppercase tracking-widest animate-pulse">Loading presets...</p>
+        </div>
+      ) : sorted.length === 0 ? (
+        <div className="text-center py-16 space-y-4">
+          <p className="text-sm font-black text-black/40 uppercase tracking-widest">No presets available</p>
+          <p className="text-xs text-black/30 font-bold">API may be unreachable. Check your connection.</p>
+          <button onClick={() => loadPresets()}
+            className="px-5 py-2 bg-black text-white border-[3px] border-black shadow-[4px_4px_0_#000] rounded-xl text-xs font-black uppercase tracking-widest cursor-pointer hover:-translate-y-1 hover:shadow-[6px_6px_0_#000] active:translate-y-1 active:shadow-none transition-all">
+            Retry
+          </button>
+        </div>
+      ) : null}
 
       <div className="space-y-2">
         {sorted.map((preset) => {

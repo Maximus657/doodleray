@@ -57,7 +57,43 @@ pub struct ConnectRequest {
     pub dns_mode: String,
     pub strict_route: bool,
     #[serde(default)]
+    pub kill_switch: bool,
+    #[serde(default)]
     pub routing_rules: Vec<RoutingRuleRequest>,
+    // Hysteria2
+    #[serde(default)]
+    pub obfs_type: Option<String>,
+    #[serde(default)]
+    pub obfs_password: Option<String>,
+    #[serde(default)]
+    pub up_mbps: Option<u32>,
+    #[serde(default)]
+    pub down_mbps: Option<u32>,
+    // TUIC
+    #[serde(default)]
+    pub congestion_control: Option<String>,
+    #[serde(default)]
+    pub udp_relay_mode: Option<String>,
+    #[serde(default)]
+    pub alpn: Option<Vec<String>>,
+    // WireGuard
+    #[serde(default)]
+    pub private_key: Option<String>,
+    #[serde(default)]
+    pub peer_public_key: Option<String>,
+    #[serde(default)]
+    pub pre_shared_key: Option<String>,
+    #[serde(default)]
+    pub local_address: Option<Vec<String>>,
+    #[serde(default)]
+    pub reserved: Option<Vec<u8>>,
+    #[serde(default)]
+    pub mtu: Option<u16>,
+    #[serde(default)]
+    pub workers: Option<u32>,
+    // Shadowsocks encryption method
+    #[serde(default)]
+    pub encryption: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -108,11 +144,33 @@ async fn fetch_url(url: String) -> Result<String, String> {
 /// Workshop API proxy — supports GET/POST with SSL bypass
 #[tauri::command]
 async fn workshop_api(url: String, method: String, body: Option<String>) -> Result<String, String> {
-    let client = reqwest::Client::builder()
+    // Extract host from URL for DNS pinning (crucial for TUN mode where DNS may fail)
+    let mut builder = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .no_proxy()  // IMPORTANT: bypass system proxy so API calls don't loop through VPN
-        .timeout(Duration::from_secs(15))
-        .build()
+        .timeout(Duration::from_secs(15));
+    
+    // Pin DNS for traefik.me domains (they embed the IP in the subdomain)
+    // e.g., "...-94-241-172-101.traefik.me" → 94.241.172.101
+    if url.contains("traefik.me") {
+        if let Some(host) = url.split("//").nth(1).and_then(|s| s.split('/').next()) {
+            // Extract IP from subdomain: take the 4 numbers before ".traefik.me"
+            let parts: Vec<&str> = host.trim_end_matches(".traefik.me").split('-').collect();
+            if parts.len() >= 4 {
+                let ip_parts = &parts[parts.len()-4..];
+                if let (Ok(a), Ok(b), Ok(c), Ok(d)) = (
+                    ip_parts[0].parse::<u8>(), ip_parts[1].parse::<u8>(),
+                    ip_parts[2].parse::<u8>(), ip_parts[3].parse::<u8>(),
+                ) {
+                    let ip = std::net::IpAddr::V4(std::net::Ipv4Addr::new(a, b, c, d));
+                    let addr = std::net::SocketAddr::new(ip, 443);
+                    builder = builder.resolve(host, addr);
+                }
+            }
+        }
+    }
+    
+    let client = builder.build()
         .map_err(|e| format!("HTTP client error: {}", e))?;
     
     let req = if method.to_uppercase() == "POST" {
@@ -308,12 +366,92 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
             "server": req.server_address,
             "server_port": req.server_port,
             "password": req.password.clone().unwrap_or_default(),
-            "method": "aes-256-gcm"
+            "method": req.encryption.clone().unwrap_or("aes-256-gcm".into())
         }),
-        _ => serde_json::json!({
-            "type": "direct",
-            "tag": "proxy"
-        })
+        "hysteria2" => {
+            let mut ob = serde_json::json!({
+                "type": "hysteria2",
+                "tag": "proxy",
+                "server": req.server_address,
+                "server_port": req.server_port,
+                "password": req.password.clone().unwrap_or_default(),
+                "tls": {
+                    "enabled": true,
+                    "server_name": req.sni.clone().unwrap_or(req.server_address.clone())
+                }
+            });
+            if let Some(ref obfs) = req.obfs_type {
+                if !obfs.is_empty() {
+                    ob["obfs"] = serde_json::json!({
+                        "type": obfs,
+                        "password": req.obfs_password.clone().unwrap_or_default()
+                    });
+                }
+            }
+            if let Some(up) = req.up_mbps {
+                ob["up_mbps"] = serde_json::json!(up);
+            }
+            if let Some(down) = req.down_mbps {
+                ob["down_mbps"] = serde_json::json!(down);
+            }
+            ob
+        },
+        "tuic" => {
+            let mut ob = serde_json::json!({
+                "type": "tuic",
+                "tag": "proxy",
+                "server": req.server_address,
+                "server_port": req.server_port,
+                "uuid": req.uuid.clone().unwrap_or_default(),
+                "password": req.password.clone().unwrap_or_default(),
+                "congestion_control": req.congestion_control.clone().unwrap_or("bbr".into()),
+                "udp_relay_mode": req.udp_relay_mode.clone().unwrap_or("native".into()),
+                "tls": {
+                    "enabled": true,
+                    "server_name": req.sni.clone().unwrap_or(req.server_address.clone())
+                }
+            });
+            if let Some(ref alpn) = req.alpn {
+                if !alpn.is_empty() {
+                    ob["tls"]["alpn"] = serde_json::json!(alpn);
+                }
+            }
+            ob
+        },
+        "wireguard" => {
+            let mut ob = serde_json::json!({
+                "type": "wireguard",
+                "tag": "proxy",
+                "server": req.server_address,
+                "server_port": req.server_port,
+                "private_key": req.private_key.clone().unwrap_or_default(),
+                "peer_public_key": req.peer_public_key.clone().unwrap_or_default(),
+                "local_address": req.local_address.clone().unwrap_or_else(|| vec!["10.0.0.2/32".into()]),
+                "mtu": req.mtu.unwrap_or(1408)
+            });
+            if let Some(ref psk) = req.pre_shared_key {
+                if !psk.is_empty() {
+                    ob["pre_shared_key"] = serde_json::json!(psk);
+                }
+            }
+            if let Some(ref reserved) = req.reserved {
+                if !reserved.is_empty() {
+                    ob["reserved"] = serde_json::json!(reserved);
+                }
+            }
+            if let Some(workers) = req.workers {
+                ob["workers"] = serde_json::json!(workers);
+            }
+            ob
+        },
+        unsupported => {
+            // Unknown protocol — return error outbound so user gets clear feedback
+            eprintln!("[error] Unsupported protocol: {}", unsupported);
+            serde_json::json!({
+                "type": "direct",
+                "tag": "proxy"
+            })
+        }
     };
 
     // DNS config — sing-box 1.13+ format
@@ -438,10 +576,40 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
     ];
     rules.extend(custom_rules);
 
+    // Kill Switch: if enabled + TUN mode, block all traffic that doesn't match proxy/direct rules
+    let final_outbound = if req.kill_switch && req.proxy_mode == "tun" {
+        "block"
+    } else {
+        "proxy"
+    };
+
+    // Kill Switch in TUN mode: force strict_route regardless of user setting
+    let effective_strict_route = if req.kill_switch && req.proxy_mode == "tun" {
+        true
+    } else {
+        req.strict_route
+    };
+
+    // Update inbounds strict_route if TUN mode
+    let effective_inbounds = if req.proxy_mode == "tun" {
+        serde_json::json!([
+            {
+                "type": "tun",
+                "tag": "tun-in",
+                "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
+                "auto_route": true,
+                "strict_route": effective_strict_route,
+                "stack": "system"
+            }
+        ])
+    } else {
+        inbounds
+    };
+
     serde_json::json!({
         "log": { "level": "info" },
         "dns": dns,
-        "inbounds": inbounds,
+        "inbounds": effective_inbounds,
         "outbounds": [
             outbound,
             { "type": "direct", "tag": "direct" },
@@ -450,6 +618,7 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
         "route": {
             "auto_detect_interface": true,
             "default_domain_resolver": "dns-direct",
+            "final": final_outbound,
             "rules": rules
         },
         "experimental": {
@@ -468,17 +637,45 @@ fn build_xray_config(req: &ConnectRequest) -> serde_json::Value {
         String::new()
     };
     
-    let outbound_settings = serde_json::json!({
-        "vnext": [{
-            "address": req.server_address,
-            "port": req.server_port,
-            "users": [{
-                "id": req.uuid.clone().unwrap_or_default(),
-                "encryption": "none",
-                "flow": flow_value
+    // Build xray outbound settings based on protocol
+    let outbound_settings = match req.protocol.as_str() {
+        "vmess" => serde_json::json!({
+            "vnext": [{
+                "address": req.server_address,
+                "port": req.server_port,
+                "users": [{
+                    "id": req.uuid.clone().unwrap_or_default(),
+                    "security": "auto"
+                }]
             }]
-        }]
-    });
+        }),
+        "trojan" => serde_json::json!({
+            "servers": [{
+                "address": req.server_address,
+                "port": req.server_port,
+                "password": req.password.clone().unwrap_or_default()
+            }]
+        }),
+        "shadowsocks" => serde_json::json!({
+            "servers": [{
+                "address": req.server_address,
+                "port": req.server_port,
+                "password": req.password.clone().unwrap_or_default(),
+                "method": req.encryption.clone().unwrap_or("aes-256-gcm".into())
+            }]
+        }),
+        _ => serde_json::json!({
+            "vnext": [{
+                "address": req.server_address,
+                "port": req.server_port,
+                "users": [{
+                    "id": req.uuid.clone().unwrap_or_default(),
+                    "encryption": "none",
+                    "flow": flow_value
+                }]
+            }]
+        }),
+    };
 
     let stream_settings = match req.transport.as_str() {
         "xhttp" => serde_json::json!({
@@ -640,7 +837,7 @@ fn build_xray_config(req: &ConnectRequest) -> serde_json::Value {
         "outbounds": [
             {
                 "tag": "proxy",
-                "protocol": "vless",
+                "protocol": req.protocol,
                 "settings": outbound_settings,
                 "streamSettings": stream_settings
             },
@@ -767,7 +964,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                 "rules": [
                     { "action": "sniff" },
                     { "protocol": "dns", "action": "hijack-dns" },
-                    { "process_name": ["sing-box.exe", "xray.exe", "DoodleRay.exe", "node.exe"], "outbound": "direct" },
+                    { "process_name": ["sing-box.exe", "xray.exe", "DoodleRay.exe", "node.exe", "adb.exe", "svchost.exe", "lsass.exe", "csrss.exe", "System"], "outbound": "direct" },
                     { "ip_is_private": true, "outbound": "direct" }
                 ]
             }
@@ -820,7 +1017,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                     .collect();
                 
                 if !proxy_exes.is_empty() {
-                    let exclude = vec!["sing-box.exe", "xray.exe", "DoodleRay.exe"];
+                    let exclude = vec!["sing-box.exe", "xray.exe", "DoodleRay.exe", "adb.exe", "svchost.exe", "lsass.exe", "csrss.exe", "System"];
                     let exclude_val: Vec<serde_json::Value> = exclude.iter()
                         .map(|s| serde_json::Value::String(s.to_string())).collect();
                     let proxy_val: Vec<serde_json::Value> = proxy_exes.iter()
@@ -1102,6 +1299,7 @@ fn restart_as_admin() -> Result<(), String> {
 }
 
 /// Scan installed applications on Windows (reads registry Uninstall keys)
+/// Returns: [{ name: "Steam", path: "steam.exe" }, ...]
 #[tauri::command]
 fn scan_installed_apps() -> Result<Vec<serde_json::Value>, String> {
     #[cfg(windows)]
@@ -1128,18 +1326,71 @@ fn scan_installed_apps() -> Result<Vec<serde_json::Value>, String> {
                             let display_icon: String = subkey.get_value("DisplayIcon").unwrap_or_default();
                             
                             if name.is_empty() { continue; }
+                            // Skip system/framework entries
+                            if name.contains("Microsoft Visual C++") || name.contains("Microsoft .NET") 
+                               || name.contains("Windows SDK") || name.contains("Redistributable") { continue; }
                             
-                            // Try to find an exe path from DisplayIcon or InstallLocation
-                            let exe_path = if display_icon.ends_with(".exe") || display_icon.contains(".exe,") {
-                                display_icon.split(',').next().unwrap_or("").trim_matches('"').to_string()
-                            } else if !install_location.is_empty() {
-                                install_location.clone()
-                            } else {
-                                String::new()
-                            };
+                            // Strategy: find the actual exe name (not uninstaller!)
+                            // 1. DisplayIcon often points to main exe: "C:\...\steam.exe,0"
+                            // 2. InstallLocation is the install directory
+                            let mut exe_name = String::new();
+                            
+                            // Try DisplayIcon first — strip comma suffix and quotes
+                            let icon_clean = display_icon
+                                .split(',').next().unwrap_or("")
+                                .trim_matches('"')
+                                .trim();
+                            
+                            if !icon_clean.is_empty() && icon_clean.to_lowercase().ends_with(".exe") {
+                                // Check it's not an uninstaller
+                                let basename = std::path::Path::new(icon_clean)
+                                    .file_name()
+                                    .map(|f| f.to_string_lossy().to_string())
+                                    .unwrap_or_default();
+                                let lower = basename.to_lowercase();
+                                if !lower.contains("unins") && !lower.contains("uninst") && !lower.contains("remove") {
+                                    exe_name = basename;
+                                }
+                            }
+                            
+                            // If DisplayIcon failed, try scanning InstallLocation for main exe
+                            if exe_name.is_empty() && !install_location.is_empty() {
+                                let dir = std::path::Path::new(&install_location);
+                                if dir.is_dir() {
+                                    // Look for .exe files in root of install dir (not recursive)
+                                    if let Ok(entries) = std::fs::read_dir(dir) {
+                                        for entry in entries.filter_map(|e| e.ok()) {
+                                            let fname = entry.file_name().to_string_lossy().to_string();
+                                            let lower = fname.to_lowercase();
+                                            if lower.ends_with(".exe") 
+                                               && !lower.contains("unins") && !lower.contains("uninst")
+                                               && !lower.contains("crash") && !lower.contains("update")
+                                               && !lower.contains("helper") && !lower.contains("launcher") {
+                                                exe_name = fname;
+                                                break; // take first non-helper exe
+                                            }
+                                        }
+                                        // If still nothing, take any .exe that's not an uninstaller
+                                        if exe_name.is_empty() {
+                                            if let Ok(entries) = std::fs::read_dir(dir) {
+                                                for entry in entries.filter_map(|e| e.ok()) {
+                                                    let fname = entry.file_name().to_string_lossy().to_string();
+                                                    let lower = fname.to_lowercase();
+                                                    if lower.ends_with(".exe") && !lower.contains("unins") {
+                                                        exe_name = fname;
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            if exe_name.is_empty() { continue; }
                             
                             if !apps.contains_key(&name) {
-                                apps.insert(name, exe_path);
+                                apps.insert(name, exe_name);
                             }
                         }
                     }
@@ -1231,9 +1482,11 @@ async fn get_proxy_logs() -> Vec<String> {
                 new_lines.push(label);
             }
 
-            // Limit seen set size to prevent memory leak
+            // Limit seen set size to prevent memory leak — evict older half
             if seen_set.len() > 5000 {
+                let to_keep: Vec<String> = seen_set.iter().skip(seen_set.len() / 2).cloned().collect();
                 seen_set.clear();
+                for id in to_keep { seen_set.insert(id); }
             }
 
             new_lines

@@ -66,6 +66,10 @@ export default function Dashboard() {
     speedHistory,
     currentDownload,
     currentUpload,
+    totalDown,
+    totalUp,
+    addTraffic,
+    resetTraffic,
     addSpeedPoint,
     setCurrentSpeed,
     logs,
@@ -77,21 +81,34 @@ export default function Dashboard() {
     updateSubscription,
     autoSelectFastest,
     subAutoUpdateMinutes,
+    connectedAt,
     setConnectedAt,
     addSubscription,
     addServer,
   } = useAppStore();
   const { t } = useTranslation();
 
-  const [connectTime, setConnectTime] = useState(0);
   const [showLogs, setShowLogs] = useState(false);
   const [showServerPicker, setShowServerPicker] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [totalDown, setTotalDown] = useState(0);
-  const [totalUp, setTotalUp] = useState(0);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const [quickInput, setQuickInput] = useState('');
   const [quickImporting, setQuickImporting] = useState(false);
+
+  // Compute connection time from stored timestamp (survives page navigation)
+  const [connectTime, setConnectTime] = useState(0);
+  useEffect(() => {
+    if (status !== 'connected' || !connectedAt) {
+      setConnectTime(0);
+      return;
+    }
+    // Initialize from stored timestamp
+    setConnectTime(Math.floor((Date.now() - connectedAt) / 1000));
+    const interval = setInterval(() => {
+      setConnectTime(Math.floor((Date.now() - connectedAt) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [status, connectedAt]);
 
   // Sync connection state from backend on mount (handles WebView/HMR reloads)
   useEffect(() => {
@@ -131,6 +148,11 @@ export default function Dashboard() {
               await invoke('vpn_disconnect');
               setStatus('disconnected');
               healthFailRef.current = 0;
+              // Auto-reconnect after brief delay
+              setTimeout(() => {
+                const btn = document.getElementById('connect-button');
+                if (btn) btn.click();
+              }, 2000);
             } catch { /* ignore */ }
           }
         }
@@ -198,22 +220,14 @@ export default function Dashboard() {
         const dl = stats.download || 0;
         const ul = stats.upload || 0;
         setCurrentSpeed(dl, ul);
-        setTotalDown(p => p + dl);
-        setTotalUp(p => p + ul);
+        addTraffic(dl, ul);
         addSpeedPoint({ time: formatTime(new Date()), download: dl / 1024, upload: ul / 1024 });
       } catch {
         // Not in tauri env
       }
     }, 1000);
     return () => clearInterval(interval);
-  }, [status, addSpeedPoint, setCurrentSpeed]);
-
-  // Timer
-  useEffect(() => {
-    if (status !== 'connected') { setConnectTime(0); setTotalDown(0); setTotalUp(0); return; }
-    const interval = setInterval(() => setConnectTime((t) => t + 1), 1000);
-    return () => clearInterval(interval);
-  }, [status]);
+  }, [status, addSpeedPoint, setCurrentSpeed, addTraffic]);
 
   // Subscription auto-update
   useEffect(() => {
@@ -331,6 +345,26 @@ export default function Dashboard() {
             dns_mode: dnsMode,
             strict_route: strictRoute,
             routing_rules: routingRules,
+            kill_switch: useAppStore.getState().killSwitch,
+            // Hysteria2
+            obfs_type: srv.obfsType || null,
+            obfs_password: srv.obfsPassword || null,
+            up_mbps: srv.upMbps || null,
+            down_mbps: srv.downMbps || null,
+            // TUIC
+            congestion_control: srv.congestionControl || null,
+            udp_relay_mode: srv.udpRelayMode || null,
+            alpn: srv.alpn || null,
+            // WireGuard
+            private_key: srv.privateKey || null,
+            peer_public_key: srv.peerPublicKey || null,
+            pre_shared_key: srv.preSharedKey || null,
+            local_address: srv.localAddress || null,
+            reserved: srv.reserved || null,
+            mtu: srv.mtu || null,
+            workers: srv.workers || null,
+            // Shadowsocks
+            encryption: srv.encryption || null,
           }
         });
 
@@ -400,8 +434,9 @@ export default function Dashboard() {
       }
       setStatus('disconnected');
       setCurrentSpeed(0, 0);
+      resetTraffic();
     }
-  }, [status, setStatus, setCurrentSpeed, activeServer, servers, setActiveServer, addLog, proxyMode, socksPort, httpPort, autoSelectFastest, setConnectedAt]);
+  }, [status, setStatus, setCurrentSpeed, resetTraffic, activeServer, servers, setActiveServer, addLog, proxyMode, socksPort, httpPort, autoSelectFastest, setConnectedAt]);
 
   const handleModeSwitch = useCallback(async (mode: 'system-proxy' | 'tun') => {
     if (proxyMode === mode) return;
@@ -437,6 +472,15 @@ export default function Dashboard() {
               proxy_mode: mode, socks_port: socksPort, http_port: httpPort,
               network_stack: networkStack, dns_mode: dnsMode,
               strict_route: strictRoute, routing_rules: routingRules,
+              kill_switch: useAppStore.getState().killSwitch,
+              obfs_type: srv.obfsType || null, obfs_password: srv.obfsPassword || null,
+              up_mbps: srv.upMbps || null, down_mbps: srv.downMbps || null,
+              congestion_control: srv.congestionControl || null,
+              udp_relay_mode: srv.udpRelayMode || null, alpn: srv.alpn || null,
+              private_key: srv.privateKey || null, peer_public_key: srv.peerPublicKey || null,
+              pre_shared_key: srv.preSharedKey || null, local_address: srv.localAddress || null,
+              reserved: srv.reserved || null, mtu: srv.mtu || null, workers: srv.workers || null,
+              encryption: srv.encryption || null,
             }
           });
           if (result.success) {

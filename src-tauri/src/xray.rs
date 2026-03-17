@@ -10,7 +10,6 @@ lazy_static! {
     static ref XRAY_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
     static ref XRAY_LOGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
     static ref LOG_CURSOR: Mutex<usize> = Mutex::new(0);
-    static ref ACTIVITY_CURSOR: Mutex<usize> = Mutex::new(0);
 }
 
 /// Get the directory where xray-core resources are located.
@@ -44,8 +43,6 @@ pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
         logs.clear();
         let mut cursor = LOG_CURSOR.lock().unwrap();
         *cursor = 0;
-        let mut acursor = ACTIVITY_CURSOR.lock().unwrap();
-        *acursor = 0;
     }
 
     let exe_dir = std::env::current_exe()
@@ -110,11 +107,8 @@ pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
                 let mut logs = XRAY_LOGS.lock().unwrap();
                 if logs.len() > 1000 {
                     logs.drain(0..500);
-                    // Adjust cursors so they don't point past the end
+                    // Adjust cursor so it doesn't point past the end
                     if let Ok(mut c) = LOG_CURSOR.lock() {
-                        *c = c.saturating_sub(500).min(logs.len());
-                    }
-                    if let Ok(mut c) = ACTIVITY_CURSOR.lock() {
                         *c = c.saturating_sub(500).min(logs.len());
                     }
                 }
@@ -139,9 +133,6 @@ pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
                 if logs.len() > 1000 {
                     logs.drain(0..500);
                     if let Ok(mut c) = LOG_CURSOR.lock() {
-                        *c = c.saturating_sub(500).min(logs.len());
-                    }
-                    if let Ok(mut c) = ACTIVITY_CURSOR.lock() {
                         *c = c.saturating_sub(500).min(logs.len());
                     }
                 }
@@ -195,34 +186,9 @@ pub fn get_new_logs() -> Vec<String> {
     new_lines
 }
 
-/// Estimate traffic by counting proxy connections in recent logs
+/// Return (0, 0) when stats API is unavailable — no fake traffic estimation.
+/// Previously this used heuristic magic numbers (15KB/3KB per log line) which
+/// showed fabricated speeds to the user. Honest zeros are better than lies.
 pub fn get_recent_activity() -> (i64, i64) {
-    let logs = XRAY_LOGS.lock().unwrap();
-    let mut activity_cursor = ACTIVITY_CURSOR.lock().unwrap();
-    
-    // Clamp cursor to valid range
-    let start = (*activity_cursor).min(logs.len());
-    
-    let mut dl: i64 = 0;
-    let mut ul: i64 = 0;
-    
-    for line in logs[start..].iter() {
-        // Skip API/dokodemo lines
-        if line.contains("api-in") || line.contains("dokodemo") || line.contains("api]") {
-            continue;
-        }
-        // "tunneling request" = outgoing proxy connection established
-        if line.contains("tunneling request") {
-            dl += 15000; // ~15KB download per connection avg
-            ul += 3000;  // ~3KB upload per connection avg
-        }
-        // "accepted" with "proxy" = incoming traffic accepted to proxy
-        if line.contains("accepted") && line.contains("proxy") {
-            dl += 5000;
-            ul += 1500;
-        }
-    }
-    
-    *activity_cursor = logs.len();
-    (dl, ul)
+    (0, 0)
 }

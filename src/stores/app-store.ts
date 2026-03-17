@@ -82,6 +82,8 @@ export interface AppState {
   speedHistory: SpeedPoint[];
   currentDownload: number;
   currentUpload: number;
+  totalDown: number;
+  totalUp: number;
   logs: LogEntry[];
   socksPort: number;
   httpPort: number;
@@ -133,6 +135,8 @@ export interface AppState {
   clearLogs: () => void;
   wipeData: () => void;
   setAvailableUpdate: (version: string | null) => void;
+  addTraffic: (dl: number, ul: number) => void;
+  resetTraffic: () => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -147,6 +151,8 @@ export const useAppStore = create<AppState>()(
       speedHistory: [],
       currentDownload: 0,
       currentUpload: 0,
+      totalDown: 0,
+      totalUp: 0,
       logs: [],
       socksPort: 10808,
       httpPort: 10809,
@@ -261,11 +267,13 @@ export const useAppStore = create<AppState>()(
       clearLogs: () => set({ logs: [] }),
       wipeData: () => set({ servers: [], subscriptions: [], activeServer: null }),
       setAvailableUpdate: (version) => set({ availableUpdate: version }),
+      addTraffic: (dl, ul) => set((s) => ({ totalDown: s.totalDown + dl, totalUp: s.totalUp + ul })),
+      resetTraffic: () => set({ totalDown: 0, totalUp: 0, speedHistory: [], currentDownload: 0, currentUpload: 0 }),
     }),
     {
       name: 'doodleray-storage',
       partialize: (state) => Object.fromEntries(
-        Object.entries(state as any).filter(([key]) => !['status', 'speedHistory', 'currentDownload', 'currentUpload', 'logs', 'availableUpdate'].includes(key))
+        Object.entries(state as any).filter(([key]) => !['status', 'speedHistory', 'currentDownload', 'currentUpload', 'totalDown', 'totalUp', 'logs', 'availableUpdate'].includes(key))
       ) as Partial<AppState>,
     }
   )
