@@ -1752,59 +1752,103 @@ fn check_connection_health(socks_port: u16) -> bool {
     TcpStream::connect_timeout(&addr, Duration::from_millis(2000)).is_ok()
 }
 
-/// Add Windows Defender exclusion for the app directory (runs elevated)
+/// Add Windows Defender exclusion for the app directory
+/// If already running as admin — runs directly. Otherwise elevates via UAC.
 #[tauri::command]
 fn add_defender_exclusion() -> Result<String, String> {
     #[cfg(windows)]
     {
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let dir = exe.parent().ok_or("Cannot get parent dir")?.to_string_lossy().to_string();
-        let cmd = format!("Add-MpPreference -ExclusionPath '{}'", dir);
+        let add_cmd = format!("Add-MpPreference -ExclusionPath '{}'", dir);
         
-        // Use ShellExecuteW with "runas" to elevate (shows UAC prompt)
-        use std::ffi::OsStr;
-        use std::os::windows::ffi::OsStrExt;
+        // Check if already admin
+        let already_admin = is_admin();
         
-        fn to_wide(s: &str) -> Vec<u16> {
-            OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+        if already_admin {
+            // Run directly without UAC
+            let mut cmd = std::process::Command::new("powershell");
+            cmd.creation_flags(0x08000000);
+            let status = cmd
+                .args(&["-NoProfile", "-WindowStyle", "Hidden", "-Command", &add_cmd])
+                .status()
+                .map_err(|e| format!("Failed to run powershell: {}", e))?;
+            
+            if !status.success() {
+                return Err(format!("PowerShell exited with code: {:?}", status.code()));
+            }
+        } else {
+            // Need elevation — use Start-Process -Verb RunAs and wait
+            let script = format!(
+                "Start-Process powershell -ArgumentList '-NoProfile','-WindowStyle','Hidden','-Command','{}' -Verb RunAs -Wait",
+                add_cmd.replace("'", "''")
+            );
+            let mut cmd = std::process::Command::new("powershell");
+            cmd.creation_flags(0x08000000);
+            let status = cmd
+                .args(&["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
+                .status()
+                .map_err(|e| format!("Failed to run powershell: {}", e))?;
+            
+            if !status.success() {
+                return Err("UAC was cancelled or elevation failed".into());
+            }
         }
         
-        unsafe {
-            #[link(name = "shell32")]
-            extern "system" {
-                fn ShellExecuteW(
-                    hwnd: *mut std::ffi::c_void,
-                    lpOperation: *const u16,
-                    lpFile: *const u16,
-                    lpParameters: *const u16,
-                    lpDirectory: *const u16,
-                    nShowCmd: i32,
-                ) -> isize;
-            }
-            
-            let verb = to_wide("runas");
-            let file = to_wide("powershell");
-            let params = to_wide(&format!("-WindowStyle Hidden -Command \"{}\"", cmd));
-            
-            let result = ShellExecuteW(
-                std::ptr::null_mut(),
-                verb.as_ptr(),
-                file.as_ptr(),
-                params.as_ptr(),
-                std::ptr::null(),
-                0, // SW_HIDE
-            );
-            
-            if result as usize > 32 {
-                Ok(format!("Added exclusion for {}", dir))
-            } else {
-                Err("UAC was cancelled or elevation failed".into())
-            }
+        // Verify the exclusion was actually added
+        std::thread::sleep(Duration::from_millis(500));
+        let verified = check_defender_exclusion_inner();
+        if verified {
+            Ok(format!("✓ Exclusion added for {}", dir))
+        } else {
+            Err("Exclusion command ran but could not verify — UAC may have been declined".into())
         }
     }
     #[cfg(not(windows))]
     {
         Err("Not supported on this platform".into())
+    }
+}
+
+/// Check if app directory is in Defender exclusion list
+#[cfg(windows)]
+fn check_defender_exclusion_inner() -> bool {
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(_) => return false,
+    };
+    let dir = match exe.parent() {
+        Some(d) => d.to_string_lossy().to_string(),
+        None => return false,
+    };
+    
+    let mut cmd = std::process::Command::new("powershell");
+    cmd.creation_flags(0x08000000);
+    let output = cmd
+        .args(&["-NoProfile", "-WindowStyle", "Hidden", "-Command",
+            "(Get-MpPreference).ExclusionPath -join '|'"])
+        .output();
+    
+    match output {
+        Ok(out) => {
+            let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
+            let dir_lower = dir.to_lowercase();
+            text.contains(&dir_lower)
+        }
+        Err(_) => false,
+    }
+}
+
+/// Tauri command to check Defender exclusion status
+#[tauri::command]
+fn check_defender_exclusion() -> bool {
+    #[cfg(windows)]
+    {
+        check_defender_exclusion_inner()
+    }
+    #[cfg(not(windows))]
+    {
+        false
     }
 }
 
@@ -1818,26 +1862,68 @@ async fn toggle_silent_autostart(enable: bool) -> Result<String, String> {
     {
         let exe_path_buf = std::env::current_exe().map_err(|e| format!("Failed to get exe path: {}", e))?;
         let exe_path = exe_path_buf.to_string_lossy().replace("'", "''");
+        let already_admin = is_admin();
         
-        let script = if enable {
-            format!("Start-Process schtasks.exe -ArgumentList '/Create /TN ''DoodleRay_SilentStart'' /TR ''\\\"{}\\\" --minimized'' /SC ONLOGON /RL HIGHEST /F' -Verb RunAs -WindowStyle Hidden -Wait", exe_path)
+        if enable {
+            if already_admin {
+                // Already admin — create task directly without UAC
+                let mut cmd = std::process::Command::new("schtasks");
+                cmd.creation_flags(0x08000000);
+                let status = cmd
+                    .args(&["/Create", "/TN", "DoodleRay_SilentStart",
+                        "/TR", &format!("\"{}\" --minimized", exe_path_buf.to_string_lossy()),
+                        "/SC", "ONLOGON", "/RL", "HIGHEST", "/F"])
+                    .status()
+                    .map_err(|e| format!("schtasks failed: {}", e))?;
+                
+                if !status.success() {
+                    return Err("schtasks /Create failed".into());
+                }
+            } else {
+                // Need elevation
+                let script = format!(
+                    "Start-Process schtasks.exe -ArgumentList '/Create /TN ''DoodleRay_SilentStart'' /TR ''\\\"{}\\\" --minimized'' /SC ONLOGON /RL HIGHEST /F' -Verb RunAs -WindowStyle Hidden -Wait",
+                    exe_path
+                );
+                let mut cmd = std::process::Command::new("powershell");
+                cmd.creation_flags(0x08000000);
+                let _ = cmd
+                    .args(&["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
+                    .status();
+            }
+            
+            // Verify the task was actually created
+            std::thread::sleep(std::time::Duration::from_millis(800));
+            let exists = check_silent_autostart_inner();
+            if exists {
+                Ok("Silent autostart enabled".into())
+            } else {
+                Err("Task was not created — UAC may have been declined".into())
+            }
         } else {
-            "Start-Process schtasks.exe -ArgumentList '/Delete /TN ''DoodleRay_SilentStart'' /F' -Verb RunAs -WindowStyle Hidden -Wait".to_string()
-        };
-
-        let mut cmd = std::process::Command::new("powershell");
-        cmd.creation_flags(0x08000000);
-        let status = cmd
-            .args(&["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
-            .status()
-            .map_err(|e| format!("Failed to execute powershell: {}", e))?;
-
-        // Note: The outer powershell process exiting with success doesn't guarantee the UAC was accepted, 
-        // since Start-Process launches schtasks asynchronously or semi-synchronously. But it's good enough for our check.
-        if status.success() {
-            Ok(if enable { "Silent autostart enabled".into() } else { "Silent autostart disabled".into() })
-        } else {
-            Err("UAC prompt rejected or task modification failed. Please try again.".into())
+            if already_admin {
+                let mut cmd = std::process::Command::new("schtasks");
+                cmd.creation_flags(0x08000000);
+                let _ = cmd
+                    .args(&["/Delete", "/TN", "DoodleRay_SilentStart", "/F"])
+                    .status();
+            } else {
+                let script = "Start-Process schtasks.exe -ArgumentList '/Delete /TN ''DoodleRay_SilentStart'' /F' -Verb RunAs -WindowStyle Hidden -Wait".to_string();
+                let mut cmd = std::process::Command::new("powershell");
+                cmd.creation_flags(0x08000000);
+                let _ = cmd
+                    .args(&["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
+                    .status();
+            }
+            
+            // Verify deletion
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            let still_exists = check_silent_autostart_inner();
+            if !still_exists {
+                Ok("Silent autostart disabled".into())
+            } else {
+                Err("Task was not removed — UAC may have been declined".into())
+            }
         }
     }
     #[cfg(not(windows))]
@@ -1846,19 +1932,23 @@ async fn toggle_silent_autostart(enable: bool) -> Result<String, String> {
     }
 }
 
+#[cfg(windows)]
+fn check_silent_autostart_inner() -> bool {
+    let mut cmd = std::process::Command::new("schtasks");
+    cmd.args(&["/Query", "/TN", "DoodleRay_SilentStart"]);
+    cmd.creation_flags(0x08000000);
+    if let Ok(out) = cmd.output() {
+        out.status.success()
+    } else {
+        false
+    }
+}
+
 #[tauri::command]
 async fn check_silent_autostart() -> bool {
     #[cfg(windows)]
     {
-        let mut cmd = std::process::Command::new("schtasks");
-        cmd.args(&["/Query", "/TN", "DoodleRay_SilentStart"]);
-        cmd.creation_flags(0x08000000);
-        
-        if let Ok(out) = cmd.output() {
-            out.status.success()
-        } else {
-            false
-        }
+        check_silent_autostart_inner()
     }
     #[cfg(not(windows))]
     {
@@ -1925,6 +2015,7 @@ pub fn run() {
             scan_installed_apps,
             check_connection_health,
             add_defender_exclusion,
+            check_defender_exclusion,
         ])
         .setup(|app| {
             // ── System Tray ──

@@ -52,7 +52,23 @@ export default function Settings() {
   };
 
   const [defenderStatus, setDefenderStatus] = useState<string | null>(null);
+  const [defenderLoading, setDefenderLoading] = useState(false);
+
+  // Check Defender exclusion status on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const isExcluded: boolean = await invoke('check_defender_exclusion');
+        if (isExcluded) {
+          setDefenderStatus('✓ DoodleRay is whitelisted in Windows Defender');
+        }
+      } catch { /* not in tauri env */ }
+    })();
+  }, []);
+
   const handleDefenderExclusion = async () => {
+    setDefenderLoading(true);
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       const result: string = await invoke('add_defender_exclusion');
@@ -63,14 +79,17 @@ export default function Settings() {
       setDefenderStatus('Failed: ' + (e?.toString() || 'Unknown error'));
       const { useToastStore } = await import('../stores/toast-store');
       useToastStore.getState().addToast('Defender exclusion failed (need admin)', 'error');
+    } finally {
+      setDefenderLoading(false);
     }
   };
 
   const handleAdminAutostartToggle = async (val: boolean) => {
+    // Optimistically update UI
+    setSilentAdminAutostart(val);
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('toggle_silent_autostart', { enable: val });
-      setSilentAdminAutostart(val);
       // When enabling silent admin autostart, disable regular autostart to avoid duplicates
       if (val) {
         try {
@@ -78,8 +97,20 @@ export default function Settings() {
           useAppStore.setState({ autoStart: false });
         } catch (_) { /* ignore if already disabled */ }
       }
-    } catch (e) {
+      const { useToastStore } = await import('../stores/toast-store');
+      useToastStore.getState().addToast(
+        val ? 'Admin autostart enabled ✓' : 'Admin autostart disabled',
+        'success'
+      );
+    } catch (e: any) {
+      // Revert on failure (e.g. UAC declined)
+      setSilentAdminAutostart(!val);
       addLog('error', `Failed to toggle admin autostart: ${e}`);
+      const { useToastStore } = await import('../stores/toast-store');
+      useToastStore.getState().addToast(
+        `Autostart failed: ${e?.toString()?.replace('Error: ', '') || 'UAC declined'}`,
+        'error'
+      );
     }
   };
 
@@ -229,14 +260,16 @@ export default function Settings() {
             </div>
 
             {/* Windows Defender exclusion */}
-            <button onClick={handleDefenderExclusion} className="group flex items-center gap-4 bg-white border-[3px] border-black shadow-[4px_4px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none p-5 rounded-2xl transition-all cursor-pointer text-left col-span-full">
-              <div className="w-12 h-12 rounded-xl border-[3px] border-black bg-emerald-400 text-black flex items-center justify-center shrink-0">
-                <ShieldCheck className="w-6 h-6 stroke-[3px] transition-transform duration-300 group-hover:scale-110" />
+            <button onClick={handleDefenderExclusion} disabled={defenderLoading} className={`group flex items-center gap-4 bg-white border-[3px] border-black shadow-[4px_4px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none p-5 rounded-2xl transition-all cursor-pointer text-left col-span-full ${defenderLoading ? 'opacity-60 cursor-wait' : ''}`}>
+              <div className={`w-12 h-12 rounded-xl border-[3px] border-black ${defenderStatus?.startsWith('✓') ? 'bg-emerald-500' : 'bg-emerald-400'} text-black flex items-center justify-center shrink-0`}>
+                <ShieldCheck className={`w-6 h-6 stroke-[3px] transition-transform duration-300 group-hover:scale-110 ${defenderLoading ? 'animate-pulse' : ''}`} />
               </div>
               <div className="flex-1 min-w-0">
                 <h3 className="font-black text-black text-sm uppercase tracking-tight">Windows Defender Exclusion</h3>
-                <p className="text-[10px] font-black tracking-widest uppercase text-black/60 mt-1">Add DoodleRay to Defender whitelist — prevents false positives</p>
-                {defenderStatus && <p className="text-[9px] font-bold text-emerald-600 mt-1">{defenderStatus}</p>}
+                <p className="text-[10px] font-black tracking-widest uppercase text-black/60 mt-1">
+                  {defenderLoading ? 'Applying exclusion...' : 'Add DoodleRay to Defender whitelist — prevents false positives'}
+                </p>
+                {defenderStatus && <p className={`text-[9px] font-bold mt-1 ${defenderStatus.startsWith('✓') ? 'text-emerald-600' : 'text-red-600'}`}>{defenderStatus}</p>}
               </div>
             </button>
           </div>
