@@ -217,6 +217,12 @@ function App() {
     const updateInterval = setInterval(checkForUpdates, 30 * 60 * 1000);
     // Auto-connect if enabled
     autoConnectIfEnabled();
+    
+    // Analytics — report launch + start heartbeat
+    import('./lib/workshop-api').then(({ reportLaunch, startHeartbeat }) => {
+      reportLaunch();
+      startHeartbeat();
+    }).catch(() => { /* silent */ });
 
     return () => {
       unsubscribe();

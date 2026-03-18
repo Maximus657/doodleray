@@ -135,3 +135,60 @@ export async function postComment(presetId: string, text: string, stars: number)
     return null;
   }
 }
+
+// ══════════ Analytics ══════════
+
+async function getAppVersion(): Promise<string> {
+  try {
+    const { getVersion } = await import('@tauri-apps/api/app');
+    return await getVersion();
+  } catch {
+    return 'unknown';
+  }
+}
+
+function getOS(): string {
+  const ua = navigator.userAgent.toLowerCase();
+  if (ua.includes('windows')) return 'windows';
+  if (ua.includes('mac')) return 'macos';
+  if (ua.includes('linux')) return 'linux';
+  return 'unknown';
+}
+
+// Report app launch (called once on startup)
+export async function reportLaunch(): Promise<void> {
+  try {
+    const version = await getAppVersion();
+    await apiPost('/analytics/launch', {
+      device_id: getFingerprint(),
+      app_version: version,
+      os: getOS(),
+    });
+  } catch {
+    // silent — analytics should never break the app
+  }
+}
+
+// Start heartbeat (called once on startup, runs every 60s)
+let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+
+export function startHeartbeat(): void {
+  if (heartbeatInterval) return; // already running
+  
+  const sendHeartbeat = async () => {
+    try {
+      const version = await getAppVersion();
+      await apiPost('/analytics/heartbeat', {
+        device_id: getFingerprint(),
+        app_version: version,
+        os: getOS(),
+      });
+    } catch {
+      // silent
+    }
+  };
+  
+  // Send immediately, then every 60s
+  sendHeartbeat();
+  heartbeatInterval = setInterval(sendHeartbeat, 60_000);
+}
