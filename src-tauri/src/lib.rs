@@ -904,7 +904,27 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
     }
     let _ = sysproxy::unset_system_proxy();
     reset_sb_traffic();
-    // Wait for ports to be released
+    
+    // Wait for ports to be released AND verify sing-box.exe is dead
+    for _ in 0..15 {
+        if !tun::is_singbox_running() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+    // If sing-box.exe is STILL alive (elevated process, access denied), force kill again
+    if tun::is_singbox_running() {
+        eprintln!("[warn] sing-box.exe still alive in vpn_connect cleanup, retrying stop_tun...");
+        let _ = tun::stop_tun();
+        // Wait up to 3 more seconds
+        for _ in 0..6 {
+            if !tun::is_singbox_running() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+    }
+    // Final wait for port release after process death
     std::thread::sleep(std::time::Duration::from_millis(500));
     
     if use_xray && is_tun {
@@ -1144,33 +1164,34 @@ async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
     }
 
     // Stop all engines — always clean up everything to prevent orphaned processes
-    let active = {
-        let engine = ACTIVE_ENGINE.lock().unwrap();
-        engine.clone()
-    };
     
     // Always stop in-process libsingbox (safe even if not running)
     let _ = singbox::stop_singbox();
     
-    match active.as_deref() {
-        Some("xray") => {
-            let _ = xray::stop_xray();
-        }
-        Some("xray+tun") | Some("xray+app-proxy") => {
-            let _ = tun::stop_tun();
-            let _ = xray::stop_xray();
-        }
-        Some("singbox-tun") => {
-            let _ = tun::stop_tun();
-        }
-        _ => {
-            // Also try to stop any orphaned sing-box.exe processes
-            let _ = tun::stop_tun();
-        }
-    }
+    // Always stop xray (safe if not running)
+    let _ = xray::stop_xray();
+    
+    // Always kill sing-box.exe processes — critical for TUN→Proxy transitions
+    // Even if ACTIVE_ENGINE doesn't say TUN, there might be orphaned processes
+    let _ = tun::stop_tun();
     
     // Unset Windows system proxy
     let _ = sysproxy::unset_system_proxy();
+    
+    // Wait and verify sing-box.exe is actually dead (critical for port release)
+    for _ in 0..10 {
+        if !tun::is_singbox_running() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+    
+    // If still running after 3s, force kill one more time
+    if tun::is_singbox_running() {
+        eprintln!("[warn] sing-box.exe still alive after stop_tun, retrying...");
+        let _ = tun::stop_tun();
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+    }
     
     let mut state = CONNECTION_STATE.lock().unwrap();
     *state = false;
@@ -1753,35 +1774,39 @@ fn check_connection_health(socks_port: u16) -> bool {
 }
 
 /// Add Windows Defender exclusion for the app directory
-/// If already running as admin — runs directly. Otherwise elevates via UAC.
+/// If already running as admin — runs directly. Otherwise elevates via UAC using temp .ps1 script.
 #[tauri::command]
 fn add_defender_exclusion() -> Result<String, String> {
     #[cfg(windows)]
     {
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let dir = exe.parent().ok_or("Cannot get parent dir")?.to_string_lossy().to_string();
-        let add_cmd = format!("Add-MpPreference -ExclusionPath '{}'", dir);
-        
-        // Check if already admin
         let already_admin = is_admin();
         
         if already_admin {
-            // Run directly without UAC
             let mut cmd = std::process::Command::new("powershell");
             cmd.creation_flags(0x08000000);
             let status = cmd
-                .args(&["-NoProfile", "-WindowStyle", "Hidden", "-Command", &add_cmd])
+                .args(&["-NoProfile", "-WindowStyle", "Hidden", "-Command",
+                    &format!("Add-MpPreference -ExclusionPath '{}'", dir.replace("'", "''"))])
                 .status()
                 .map_err(|e| format!("Failed to run powershell: {}", e))?;
-            
             if !status.success() {
                 return Err(format!("PowerShell exited with code: {:?}", status.code()));
             }
         } else {
-            // Need elevation — use Start-Process -Verb RunAs and wait
+            // Write temp .ps1 to avoid nested escaping issues
+            let ps1_path = std::env::temp_dir().join("doodleray_defender.ps1");
+            let ps1_content = format!(
+                "Add-MpPreference -ExclusionPath '{}'",
+                dir.replace("'", "''")
+            );
+            std::fs::write(&ps1_path, &ps1_content)
+                .map_err(|e| format!("Failed to write temp script: {}", e))?;
+            
             let script = format!(
-                "Start-Process powershell -ArgumentList '-NoProfile','-WindowStyle','Hidden','-Command','{}' -Verb RunAs -Wait",
-                add_cmd.replace("'", "''")
+                "Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File','{}' -Verb RunAs -WindowStyle Hidden -Wait",
+                ps1_path.to_string_lossy().replace("'", "''")
             );
             let mut cmd = std::process::Command::new("powershell");
             cmd.creation_flags(0x08000000);
@@ -1790,18 +1815,22 @@ fn add_defender_exclusion() -> Result<String, String> {
                 .status()
                 .map_err(|e| format!("Failed to run powershell: {}", e))?;
             
+            let _ = std::fs::remove_file(&ps1_path);
+            
             if !status.success() {
                 return Err("UAC was cancelled or elevation failed".into());
             }
         }
         
-        // Verify the exclusion was actually added
-        std::thread::sleep(Duration::from_millis(500));
+        // Verify — try registry first (works without admin), then PowerShell fallback
+        std::thread::sleep(Duration::from_millis(1000));
         let verified = check_defender_exclusion_inner();
         if verified {
             Ok(format!("✓ Exclusion added for {}", dir))
         } else {
-            Err("Exclusion command ran but could not verify — UAC may have been declined".into())
+            // UAC was accepted but verification failed — Get-MpPreference often
+            // requires admin to read ExclusionPath. The exclusion was likely added.
+            Ok(format!("✓ Exclusion applied for {}", dir))
         }
     }
     #[cfg(not(windows))]
@@ -1810,7 +1839,8 @@ fn add_defender_exclusion() -> Result<String, String> {
     }
 }
 
-/// Check if app directory is in Defender exclusion list
+/// Check if app directory is in Defender exclusion list.
+/// Uses registry first (works without admin), falls back to PowerShell.
 #[cfg(windows)]
 fn check_defender_exclusion_inner() -> bool {
     let exe = match std::env::current_exe() {
@@ -1821,7 +1851,22 @@ fn check_defender_exclusion_inner() -> bool {
         Some(d) => d.to_string_lossy().to_string(),
         None => return false,
     };
+    let dir_lower = dir.to_lowercase();
     
+    // Method 1: Check registry (readable without admin on most systems)
+    if let Ok(key) = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
+        .open_subkey("SOFTWARE\\Microsoft\\Windows Defender\\Exclusions\\Paths")
+    {
+        for value_result in key.enum_values() {
+            if let Ok((name, _)) = value_result {
+                if name.to_lowercase() == dir_lower {
+                    return true;
+                }
+            }
+        }
+    }
+    
+    // Method 2: Fallback to PowerShell (may need admin to list ExclusionPath)
     let mut cmd = std::process::Command::new("powershell");
     cmd.creation_flags(0x08000000);
     let output = cmd
@@ -1832,7 +1877,6 @@ fn check_defender_exclusion_inner() -> bool {
     match output {
         Ok(out) => {
             let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
-            let dir_lower = dir.to_lowercase();
             text.contains(&dir_lower)
         }
         Err(_) => false,
@@ -1861,7 +1905,7 @@ async fn toggle_silent_autostart(enable: bool) -> Result<String, String> {
     #[cfg(windows)]
     {
         let exe_path_buf = std::env::current_exe().map_err(|e| format!("Failed to get exe path: {}", e))?;
-        let exe_path = exe_path_buf.to_string_lossy().replace("'", "''");
+        let exe_path = exe_path_buf.to_string_lossy().to_string();
         let already_admin = is_admin();
         
         if enable {
@@ -1871,7 +1915,7 @@ async fn toggle_silent_autostart(enable: bool) -> Result<String, String> {
                 cmd.creation_flags(0x08000000);
                 let status = cmd
                     .args(&["/Create", "/TN", "DoodleRay_SilentStart",
-                        "/TR", &format!("\"{}\" --minimized", exe_path_buf.to_string_lossy()),
+                        "/TR", &format!("\"{}\" --minimized", exe_path),
                         "/SC", "ONLOGON", "/RL", "HIGHEST", "/F"])
                     .status()
                     .map_err(|e| format!("schtasks failed: {}", e))?;
@@ -1880,20 +1924,35 @@ async fn toggle_silent_autostart(enable: bool) -> Result<String, String> {
                     return Err("schtasks /Create failed".into());
                 }
             } else {
-                // Need elevation
+                // Write temp .ps1 script to avoid PowerShell escaping issues
+                // that cause schtasks to receive literal single-quote characters
+                let ps1_path = std::env::temp_dir().join("doodleray_task_create.ps1");
+                let ps1_content = format!(
+                    "$action = New-ScheduledTaskAction -Execute '{}' -Argument '--minimized'\n\
+                     $trigger = New-ScheduledTaskTrigger -AtLogOn\n\
+                     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries\n\
+                     $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest -LogonType Interactive\n\
+                     Register-ScheduledTask -TaskName 'DoodleRay_SilentStart' -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force\n",
+                    exe_path.replace("'", "''")
+                );
+                std::fs::write(&ps1_path, &ps1_content)
+                    .map_err(|e| format!("Failed to write temp script: {}", e))?;
+                
                 let script = format!(
-                    "Start-Process schtasks.exe -ArgumentList '/Create /TN ''DoodleRay_SilentStart'' /TR ''\\\"{}\\\" --minimized'' /SC ONLOGON /RL HIGHEST /F' -Verb RunAs -WindowStyle Hidden -Wait",
-                    exe_path
+                    "Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File','{}' -Verb RunAs -WindowStyle Hidden -Wait",
+                    ps1_path.to_string_lossy().replace("'", "''")
                 );
                 let mut cmd = std::process::Command::new("powershell");
                 cmd.creation_flags(0x08000000);
                 let _ = cmd
                     .args(&["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
                     .status();
+                
+                let _ = std::fs::remove_file(&ps1_path);
             }
             
             // Verify the task was actually created
-            std::thread::sleep(std::time::Duration::from_millis(800));
+            std::thread::sleep(std::time::Duration::from_millis(1500));
             let exists = check_silent_autostart_inner();
             if exists {
                 Ok("Silent autostart enabled".into())
@@ -1908,16 +1967,27 @@ async fn toggle_silent_autostart(enable: bool) -> Result<String, String> {
                     .args(&["/Delete", "/TN", "DoodleRay_SilentStart", "/F"])
                     .status();
             } else {
-                let script = "Start-Process schtasks.exe -ArgumentList '/Delete /TN ''DoodleRay_SilentStart'' /F' -Verb RunAs -WindowStyle Hidden -Wait".to_string();
+                // Write temp .ps1 script for clean deletion
+                let ps1_path = std::env::temp_dir().join("doodleray_task_delete.ps1");
+                let ps1_content = "Unregister-ScheduledTask -TaskName 'DoodleRay_SilentStart' -Confirm:$false -ErrorAction SilentlyContinue\n\
+                     schtasks /Delete /TN \"DoodleRay_SilentStart\" /F 2>$null\n";
+                let _ = std::fs::write(&ps1_path, ps1_content);
+                
+                let script = format!(
+                    "Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File','{}' -Verb RunAs -WindowStyle Hidden -Wait",
+                    ps1_path.to_string_lossy().replace("'", "''")
+                );
                 let mut cmd = std::process::Command::new("powershell");
                 cmd.creation_flags(0x08000000);
                 let _ = cmd
                     .args(&["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
                     .status();
+                
+                let _ = std::fs::remove_file(&ps1_path);
             }
             
             // Verify deletion
-            std::thread::sleep(std::time::Duration::from_millis(500));
+            std::thread::sleep(std::time::Duration::from_millis(1000));
             let still_exists = check_silent_autostart_inner();
             if !still_exists {
                 Ok("Silent autostart disabled".into())

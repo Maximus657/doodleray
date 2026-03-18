@@ -281,26 +281,27 @@ export default function Dashboard() {
       }
       setStatus('connecting');
 
-      // If TUN mode, check if running as admin — offer one-time restart
+      // If TUN mode, MUST be running as admin — no "continue anyway"
+      // Running sing-box.exe elevated while app is not admin causes orphaned processes
       if (proxyMode === 'tun') {
         try {
           const { invoke } = await import('@tauri-apps/api/core');
           const admin: boolean = await invoke('is_admin');
           if (!admin) {
-            const confirmRestart = window.confirm(
-              'TUN mode requires administrator privileges.\n\n' +
-              'Restart DoodleRay as Administrator?\n' +
-              '(You\'ll only need to do this once per session)\n\n' +
-              'Click Cancel to continue anyway (UAC will appear).'
-            );
-            if (confirmRestart) {
-              addLog('info', 'Restarting as administrator...');
-              try {
-                await invoke('restart_as_admin');
-                return;
-              } catch (err: any) {
-                addLog('warning', 'Could not restart as admin, continuing with per-toggle UAC');
-              }
+            addLog('warning', 'TUN mode requires administrator privileges. Restarting...');
+            try {
+              await invoke('restart_as_admin');
+              return; // App will exit and relaunch as admin
+            } catch (err: any) {
+              addLog('error', 'Could not restart as admin — switching to System Proxy mode');
+              const { useToastStore } = await import('../stores/toast-store');
+              useToastStore.getState().addToast(
+                'Admin required for TUN mode — switched to System Proxy',
+                'warning'
+              );
+              setProxyMode('system-proxy');
+              setStatus('disconnected');
+              return;
             }
           }
         } catch { /* not in tauri env */ }
@@ -440,6 +441,33 @@ export default function Dashboard() {
 
   const handleModeSwitch = useCallback(async (mode: 'system-proxy' | 'tun') => {
     if (proxyMode === mode) return;
+    
+    // Switching TO TUN — app MUST be admin, otherwise restart
+    if (mode === 'tun') {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const admin: boolean = await invoke('is_admin');
+        if (!admin) {
+          addLog('warning', 'TUN mode requires admin. Disconnecting and restarting as admin...');
+          // Disconnect first, then restart
+          if (status === 'connected') {
+            await invoke('vpn_disconnect');
+          }
+          setProxyMode(mode); // Save the preference so after restart it uses TUN
+          try {
+            await invoke('restart_as_admin');
+            return;
+          } catch {
+            addLog('error', 'Could not restart as admin — staying on System Proxy');
+            const { useToastStore } = await import('../stores/toast-store');
+            useToastStore.getState().addToast('Admin required for TUN mode', 'warning');
+            setProxyMode('system-proxy');
+            return;
+          }
+        }
+      } catch { /* not in tauri */ }
+    }
+    
     setProxyMode(mode);
     addLog('info', `Switched routing mode to ${mode === 'tun' ? 'TUN' : 'System Proxy'}`);
     
@@ -449,7 +477,9 @@ export default function Dashboard() {
       try {
         const { invoke } = await import('@tauri-apps/api/core');
         await invoke('vpn_disconnect');
-        await new Promise(r => setTimeout(r, 500));
+        // Wait long enough for sing-box.exe to die and ports to be released
+        // This is critical when switching from TUN (elevated process) to System Proxy
+        await new Promise(r => setTimeout(r, 2000));
         
         // Reconnect directly via invoke instead of fragile btn.click()
         const srv = activeServer;
@@ -502,6 +532,67 @@ export default function Dashboard() {
   }, [proxyMode, setProxyMode, status, setStatus, addLog, activeServer, socksPort, httpPort, setConnectedAt]);
 
   const canConnect = activeServer || servers.length > 0;
+
+  // Handle server selection — auto-reconnect if currently connected
+  const handleServerSelect = useCallback(async (server: typeof activeServer) => {
+    if (!server) return;
+    const isSameServer = activeServer?.id === server.id;
+    setActiveServer(server);
+    setShowServerPicker(false);
+    setSearchQuery('');
+    
+    // If connected and selected a DIFFERENT server, auto-reconnect
+    if (status === 'connected' && !isSameServer) {
+      addLog('warning', `Switching to ${server.name}...`);
+      setStatus('connecting');
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('vpn_disconnect');
+        await new Promise(r => setTimeout(r, 2000));
+        
+        const { networkStack, dnsMode, strictRoute } = useAppStore.getState();
+        const myRules = useWorkshopStore.getState().myRules.filter(r => r.enabled);
+        const routingRules = myRules.map(r => ({
+          rule_type: r.type, value: r.value, action: r.action,
+        }));
+        const result: any = await invoke('vpn_connect', {
+          request: {
+            server_address: server.address, server_port: server.port,
+            protocol: server.protocol, uuid: server.uuid || null,
+            password: server.password || null, transport: server.transport,
+            security: server.security, sni: server.sni || null,
+            host: server.host || null, path: server.path || null,
+            fingerprint: server.fingerprint || null,
+            public_key: server.publicKey || null,
+            short_id: server.shortId || null, flow: server.flow || null,
+            proxy_mode: proxyMode, socks_port: socksPort, http_port: httpPort,
+            network_stack: networkStack, dns_mode: dnsMode,
+            strict_route: strictRoute, routing_rules: routingRules,
+            kill_switch: useAppStore.getState().killSwitch,
+            obfs_type: (server as any).obfsType || null, obfs_password: (server as any).obfsPassword || null,
+            up_mbps: (server as any).upMbps || null, down_mbps: (server as any).downMbps || null,
+            congestion_control: (server as any).congestionControl || null,
+            udp_relay_mode: (server as any).udpRelayMode || null, alpn: (server as any).alpn || null,
+            private_key: (server as any).privateKey || null, peer_public_key: (server as any).peerPublicKey || null,
+            pre_shared_key: (server as any).preSharedKey || null, local_address: (server as any).localAddress || null,
+            reserved: (server as any).reserved || null, mtu: (server as any).mtu || null, workers: (server as any).workers || null,
+            encryption: (server as any).encryption || null,
+          }
+        });
+        if (result.success) {
+          addLog('success', result.message);
+          setStatus('connected');
+          setConnectedAt(Date.now());
+        } else {
+          addLog('error', result.message);
+          setStatus('disconnected');
+        }
+      } catch (err: any) {
+        addLog('error', `Server switch failed: ${err.message || err}`);
+        setStatus('disconnected');
+      }
+    }
+  }, [status, setStatus, activeServer, setActiveServer, addLog, proxyMode, socksPort, httpPort, setConnectedAt]);
 
   // Quick add handler for Dashboard input
   const handleQuickAdd = useCallback(async () => {
@@ -838,7 +929,7 @@ export default function Dashboard() {
                       ? server.ping < 100 ? 'text-emerald-700' : server.ping < 300 ? 'text-amber-700' : 'text-red-700'
                       : 'text-black/50';
                     return (
-                      <button key={server.id} onClick={() => { setActiveServer(server); setShowServerPicker(false); setSearchQuery(''); }}
+                      <button key={server.id} onClick={() => handleServerSelect(server)}
                         className={`w-full p-4 rounded-3xl flex items-center gap-4 transition-all duration-150 overflow-hidden relative cursor-pointer
                           ${isActive ? 'bg-black text-white border-[4px] border-black scale-[1.02] shadow-[6px_6px_0_rgba(0,0,0,0.4)]' : 'bg-white text-black border-[4px] border-black shadow-[4px_4px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-[2px_2px_0_#000]'}`}>
                         <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 border-[3px] ${isActive ? 'bg-white border-white' : 'bg-black border-black'}`}>

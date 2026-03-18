@@ -102,6 +102,24 @@ export default function Settings() {
         val ? 'Admin autostart enabled ✓' : 'Admin autostart disabled',
         'success'
       );
+      
+      // If enabling and not already admin, offer to restart as admin right now
+      if (val) {
+        try {
+          const isAdmin: boolean = await invoke('is_admin');
+          if (!isAdmin) {
+            const shouldRestart = window.confirm(
+              'Admin autostart is set for next login.\n\n' +
+              'Restart as Administrator now?\n' +
+              'This will give full access to TUN mode and other admin features immediately.'
+            );
+            if (shouldRestart) {
+              addLog('info', 'Restarting as administrator...');
+              await invoke('restart_as_admin');
+            }
+          }
+        } catch (_) { /* ignore */ }
+      }
     } catch (e: any) {
       // Revert on failure (e.g. UAC declined)
       setSilentAdminAutostart(!val);
