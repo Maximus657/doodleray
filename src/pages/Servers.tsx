@@ -156,11 +156,17 @@ export default function Servers() {
     }
   }, [subscriptions, updateSubscription, addLog]);
 
-  const handleRemoveSub = useCallback((subId: string, subName: string) => {
-    if (confirm(`Remove subscription "${subName}" and all its servers?`)) {
-      removeSubscription(subId);
-      addLog('info', `Removed subscription: ${subName}`);
+  const handleRemoveSub = useCallback(async (subId: string, subName: string) => {
+    let confirmed = false;
+    try {
+      confirmed = window.confirm(`Remove subscription "${subName}" and all its servers?`);
+    } catch {
+      // confirm() might fail in some WebView contexts — just proceed
+      confirmed = true;
     }
+    if (!confirmed) return;
+    removeSubscription(subId);
+    addLog('info', `Removed subscription: ${subName}`);
   }, [removeSubscription, addLog]);
 
   // Group servers
@@ -319,7 +325,7 @@ export default function Servers() {
                     <Zap className={`w-4 h-4 stroke-[3px] ${testingGroup === group.sub.id ? 'animate-pulse' : ''}`} /> Test
                   </button>
                   <button
-                    onClick={() => handleRemoveSub(group.sub.id, group.sub.name)}
+                    onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleRemoveSub(group.sub.id, group.sub.name); }}
                     className="group p-2 border-[3px] border-black rounded-xl bg-danger text-white cursor-pointer ml-2 hover:-translate-y-0.5 hover:shadow-[2px_2px_0_#000] active:translate-y-0.5 active:shadow-none transition-all"
                     title="Delete subscription"
                   >
