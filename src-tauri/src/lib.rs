@@ -934,6 +934,10 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
         Some("singbox-tun") => {
             let _ = tun::stop_tun();
         }
+        Some("singbox+app-proxy") => {
+            let _ = tun::stop_tun();
+            // in-process singbox already stopped above
+        }
         Some("singbox") => {
             // already stopped above
         }
@@ -1068,12 +1072,27 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                     return ConnectResult { success: false, message: format!("xray started but failed to set system proxy: {}", e) };
                 }
                 
-                // If Workshop has exe-type rules, start per-app TUN bridge
-                // so those apps get full TCP+UDP proxying (e.g. Discord voice)
-                let proxy_exes: Vec<String> = request.routing_rules.iter()
+                // Per-app TUN bridge: route specific apps through SOCKS5 for full TCP+UDP proxying
+                // Discord is included by default so it works out-of-the-box
+                let mut proxy_exes: Vec<String> = request.routing_rules.iter()
                     .filter(|r| r.rule_type == "exe" && r.action == "proxy")
                     .map(|r| r.value.clone())
                     .collect();
+                
+                // Check if user has explicitly set Discord to "direct" in Workshop
+                let direct_exes: Vec<String> = request.routing_rules.iter()
+                    .filter(|r| r.rule_type == "exe" && r.action == "direct")
+                    .map(|r| r.value.clone())
+                    .collect();
+                
+                // Add Discord by default unless user explicitly set it to direct
+                let default_apps = vec!["Discord.exe", "discord.exe"];
+                for app_name in &default_apps {
+                    let app_str = app_name.to_string();
+                    if !proxy_exes.contains(&app_str) && !direct_exes.contains(&app_str) {
+                        proxy_exes.push(app_str);
+                    }
+                }
                 
                 if !proxy_exes.is_empty() {
                     let exclude = vec!["sing-box.exe", "xray.exe", "DoodleRay.exe", "adb.exe", "svchost.exe", "lsass.exe", "csrss.exe", "System"];
@@ -1177,6 +1196,85 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                 if let Err(e) = sysproxy::set_system_proxy(request.http_port) {
                     return ConnectResult { success: false, message: format!("sing-box started but failed to set system proxy: {}", e) };
                 }
+                
+                // Per-app TUN bridge: route specific apps through SOCKS5 for full TCP+UDP proxying
+                // Discord is included by default so it works out-of-the-box
+                let mut proxy_exes: Vec<String> = request.routing_rules.iter()
+                    .filter(|r| r.rule_type == "exe" && r.action == "proxy")
+                    .map(|r| r.value.clone())
+                    .collect();
+                
+                // Check if user has explicitly set Discord to "direct" in Workshop
+                let direct_exes: Vec<String> = request.routing_rules.iter()
+                    .filter(|r| r.rule_type == "exe" && r.action == "direct")
+                    .map(|r| r.value.clone())
+                    .collect();
+                
+                // Add Discord by default unless user explicitly set it to direct
+                let default_apps = vec!["Discord.exe", "discord.exe"];
+                for app_name in &default_apps {
+                    let app_str = app_name.to_string();
+                    if !proxy_exes.contains(&app_str) && !direct_exes.contains(&app_str) {
+                        proxy_exes.push(app_str);
+                    }
+                }
+                
+                if !proxy_exes.is_empty() {
+                    let exclude = vec!["sing-box.exe", "DoodleRay.exe", "adb.exe", "svchost.exe", "lsass.exe", "csrss.exe", "System"];
+                    let exclude_val: Vec<serde_json::Value> = exclude.iter()
+                        .map(|s| serde_json::Value::String(s.to_string())).collect();
+                    let proxy_val: Vec<serde_json::Value> = proxy_exes.iter()
+                        .map(|s| serde_json::Value::String(s.to_string())).collect();
+                    
+                    let tun_bridge = serde_json::json!({
+                        "log": { "level": "info" },
+                        "dns": {
+                            "servers": [
+                                {
+                                    "tag": "dns-direct",
+                                    "type": "tcp",
+                                    "server": "8.8.8.8"
+                                }
+                            ],
+                            "strategy": "prefer_ipv4"
+                        },
+                        "inbounds": [{
+                            "type": "tun",
+                            "tag": "tun-in",
+                            "address": ["172.19.0.1/30"],
+                            "auto_route": true,
+                            "strict_route": false,
+                            "stack": "mixed",
+                        }],
+                        "outbounds": [
+                            { "type": "direct", "tag": "direct" },
+                            {
+                                "type": "socks",
+                                "tag": "proxy",
+                                "server": "127.0.0.1",
+                                "server_port": request.socks_port
+                            }
+                        ],
+                        "route": {
+                            "auto_detect_interface": true,
+                            "default_domain_resolver": "dns-direct",
+                            "rules": [
+                                { "process_name": exclude_val, "outbound": "direct" },
+                                { "process_name": proxy_val, "outbound": "proxy" }
+                            ]
+                        }
+                    });
+                    
+                    if let Ok(_) = tun::start_tun_elevated(&tun_bridge) {
+                        *engine = Some("singbox+app-proxy".into());
+                        update_tray_connected(&app, &request.server_address);
+                        return ConnectResult {
+                            success: true,
+                            message: format!("System Proxy + {} apps with full proxy (TCP+UDP)", proxy_exes.len()),
+                        };
+                    }
+                }
+                
                 update_tray_connected(&app, &request.server_address);
                 ConnectResult {
                     success: true,
