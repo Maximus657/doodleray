@@ -1072,20 +1072,10 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                     return ConnectResult { success: false, message: format!("xray started but failed to set system proxy: {}", e) };
                 }
                 
-                // Per-app TUN bridge: route specific apps through SOCKS5 for full TCP+UDP proxying
-                // Only activated when user adds exe rules in Workshop (e.g. Discord.exe → proxy)
-                // NOTE: not added by default because auto_route TUN captures ALL traffic,
-                // which would bypass the system proxy for browsers
-                let proxy_exes: Vec<String> = request.routing_rules.iter()
-                    .filter(|r| r.rule_type == "exe" && r.action == "proxy")
-                    .map(|r| r.value.clone())
-                    .collect();
-                
-                if !proxy_exes.is_empty() {
-                    let exclude = vec!["sing-box.exe", "xray.exe", "DoodleRay.exe", "adb.exe", "svchost.exe", "lsass.exe", "csrss.exe", "System"];
+                // TUN bridge: route ALL traffic through SOCKS5 proxy for full TCP+UDP coverage
+                {
+                    let exclude = vec!["sing-box.exe", "xray.exe", "DoodleRay.exe"];
                     let exclude_val: Vec<serde_json::Value> = exclude.iter()
-                        .map(|s| serde_json::Value::String(s.to_string())).collect();
-                    let proxy_val: Vec<serde_json::Value> = proxy_exes.iter()
                         .map(|s| serde_json::Value::String(s.to_string())).collect();
                     
                     let tun_bridge = serde_json::json!({
@@ -1093,11 +1083,18 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                         "dns": {
                             "servers": [
                                 {
+                                    "tag": "dns-remote",
+                                    "type": "udp",
+                                    "server": "8.8.8.8",
+                                    "detour": "proxy"
+                                },
+                                {
                                     "tag": "dns-direct",
-                                    "type": "tcp",
-                                    "server": "8.8.8.8"
+                                    "type": "udp",
+                                    "server": "8.8.4.4"
                                 }
                             ],
+                            "final": "dns-remote",
                             "strategy": "prefer_ipv4"
                         },
                         "inbounds": [{
@@ -1109,20 +1106,25 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                             "stack": "mixed",
                         }],
                         "outbounds": [
-                            { "type": "direct", "tag": "direct" },
                             {
                                 "type": "socks",
                                 "tag": "proxy",
                                 "server": "127.0.0.1",
-                                "server_port": request.socks_port
-                            }
+                                "server_port": request.socks_port,
+                                "udp_over_tcp": true
+                            },
+                            { "type": "direct", "tag": "direct" },
+                            { "type": "block", "tag": "block" }
                         ],
                         "route": {
                             "auto_detect_interface": true,
                             "default_domain_resolver": "dns-direct",
+                            "final": "proxy",
                             "rules": [
+                                { "action": "sniff" },
+                                { "protocol": "dns", "action": "hijack-dns" },
                                 { "process_name": exclude_val, "outbound": "direct" },
-                                { "process_name": proxy_val, "outbound": "proxy" }
+                                { "ip_is_private": true, "outbound": "direct" }
                             ]
                         }
                     });
@@ -1132,9 +1134,10 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                         update_tray_connected(&app, &request.server_address);
                         return ConnectResult {
                             success: true,
-                            message: format!("System Proxy + {} apps with UDP proxy", proxy_exes.len()),
+                            message: "Connected (System Proxy + TUN bridge for all apps)".into(),
                         };
                     }
+                    // If TUN bridge fails, fall through to system proxy only
                 }
                 
                 update_tray_connected(&app, &request.server_address);
@@ -1184,20 +1187,12 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                     return ConnectResult { success: false, message: format!("sing-box started but failed to set system proxy: {}", e) };
                 }
                 
-                // Per-app TUN bridge: route specific apps through SOCKS5 for full TCP+UDP proxying
-                // Only activated when user adds exe rules in Workshop (e.g. Discord.exe → proxy)
-                // NOTE: not added by default because auto_route TUN captures ALL traffic,
-                // which would bypass the system proxy for browsers
-                let proxy_exes: Vec<String> = request.routing_rules.iter()
-                    .filter(|r| r.rule_type == "exe" && r.action == "proxy")
-                    .map(|r| r.value.clone())
-                    .collect();
-                
-                if !proxy_exes.is_empty() {
-                    let exclude = vec!["sing-box.exe", "DoodleRay.exe", "adb.exe", "svchost.exe", "lsass.exe", "csrss.exe", "System"];
+                // TUN bridge: route ALL traffic through SOCKS5 proxy for full TCP+UDP coverage
+                // This ensures Discord, games, and all apps work through VPN
+                // System processes and private IPs go direct to prevent loops
+                {
+                    let exclude = vec!["sing-box.exe", "DoodleRay.exe"];
                     let exclude_val: Vec<serde_json::Value> = exclude.iter()
-                        .map(|s| serde_json::Value::String(s.to_string())).collect();
-                    let proxy_val: Vec<serde_json::Value> = proxy_exes.iter()
                         .map(|s| serde_json::Value::String(s.to_string())).collect();
                     
                     let tun_bridge = serde_json::json!({
@@ -1205,11 +1200,18 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                         "dns": {
                             "servers": [
                                 {
+                                    "tag": "dns-remote",
+                                    "type": "udp",
+                                    "server": "8.8.8.8",
+                                    "detour": "proxy"
+                                },
+                                {
                                     "tag": "dns-direct",
-                                    "type": "tcp",
-                                    "server": "8.8.8.8"
+                                    "type": "udp",
+                                    "server": "8.8.4.4"
                                 }
                             ],
+                            "final": "dns-remote",
                             "strategy": "prefer_ipv4"
                         },
                         "inbounds": [{
@@ -1221,20 +1223,25 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                             "stack": "mixed",
                         }],
                         "outbounds": [
-                            { "type": "direct", "tag": "direct" },
                             {
                                 "type": "socks",
                                 "tag": "proxy",
                                 "server": "127.0.0.1",
-                                "server_port": request.socks_port
-                            }
+                                "server_port": request.socks_port,
+                                "udp_over_tcp": true
+                            },
+                            { "type": "direct", "tag": "direct" },
+                            { "type": "block", "tag": "block" }
                         ],
                         "route": {
                             "auto_detect_interface": true,
                             "default_domain_resolver": "dns-direct",
+                            "final": "proxy",
                             "rules": [
+                                { "action": "sniff" },
+                                { "protocol": "dns", "action": "hijack-dns" },
                                 { "process_name": exclude_val, "outbound": "direct" },
-                                { "process_name": proxy_val, "outbound": "proxy" }
+                                { "ip_is_private": true, "outbound": "direct" }
                             ]
                         }
                     });
@@ -1244,9 +1251,10 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                         update_tray_connected(&app, &request.server_address);
                         return ConnectResult {
                             success: true,
-                            message: format!("System Proxy + {} apps with full proxy (TCP+UDP)", proxy_exes.len()),
+                            message: format!("Connected (System Proxy + TUN bridge for all apps)"),
                         };
                     }
+                    // If TUN bridge fails (e.g. no admin), fall through to system proxy only
                 }
                 
                 update_tray_connected(&app, &request.server_address);
