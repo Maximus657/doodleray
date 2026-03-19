@@ -286,16 +286,18 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
                 });
             }
 
-            // Build outbound — only include "transport" key when transport is NOT tcp/empty
+            // Build outbound — only include "flow" when actually set (empty string "" can cause issues in sing-box 1.13)
             let mut ob = serde_json::json!({
                 "type": "vless",
                 "tag": "proxy",
                 "server": req.server_address,
                 "server_port": req.server_port,
                 "uuid": req.uuid.clone().unwrap_or_default(),
-                "flow": flow_value,
                 "tls": tls_obj
             });
+            if !flow_value.is_empty() {
+                ob["flow"] = serde_json::json!(flow_value);
+            }
 
             // Add transport only for non-TCP (avoids "transport": null which crashes sing-box 1.13)
             match req.transport.as_str() {

@@ -208,11 +208,16 @@ pub fn start_tun_elevated(config_json: &serde_json::Value) -> Result<(), String>
             .map_err(|e| format!("Failed to launch with admin: {}", e))?;
     }
 
-    // Give sing-box time to start TUN adapter
-    std::thread::sleep(std::time::Duration::from_millis(3000));
+    // Wait for sing-box to actually start (poll instead of hardcoded sleep)
+    for _ in 0..10 {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        if is_singbox_running() {
+            return Ok(());
+        }
+    }
 
-    // Verify sing-box is actually running
-    for attempt in 0..8 {
+    // If not running after 3s, check log for errors
+    for attempt in 0..5 {
         if is_singbox_running() {
             return Ok(());
         }
@@ -305,18 +310,18 @@ pub fn stop_tun() -> Result<(), String> {
                 }
                 
                 // Wait for the process to actually terminate
-                for _ in 0..20 {
+                for _ in 0..8 {
                     if !is_singbox_running() {
                         break;
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    std::thread::sleep(std::time::Duration::from_millis(250));
                 }
             } else {
-                for _ in 0..10 {
+                for _ in 0..6 {
                     if !is_singbox_running() {
                         break;
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    std::thread::sleep(std::time::Duration::from_millis(250));
                 }
             }
         }
