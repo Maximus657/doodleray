@@ -512,7 +512,8 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
                 "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
                 "auto_route": true,
                 "strict_route": req.strict_route,
-                "stack": "system"
+                "stack": "mixed",
+                "anti_leak": true
             }
         ])
     } else {
@@ -604,6 +605,17 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
         serde_json::json!({ "action": "sniff" }),
         serde_json::json!({ "protocol": "dns", "action": "hijack-dns" })
     ];
+
+    // TUN mode: private IPs (LAN, localhost) must go direct — they're unreachable via VPN server.
+    // NOTE: sing-box's own outbound to the VPN server is already protected from TUN loop
+    // by `auto_detect_interface: true` in route config — no process_name exclusion needed.
+    if req.proxy_mode == "tun" {
+        rules.push(serde_json::json!({
+            "ip_is_private": true,
+            "outbound": "direct"
+        }));
+    }
+
     rules.extend(custom_rules);
 
     // Kill Switch: if enabled + TUN mode, block all traffic that doesn't match proxy/direct rules
@@ -629,7 +641,8 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
                 "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
                 "auto_route": true,
                 "strict_route": effective_strict_route,
-                "stack": "system"
+                "stack": "mixed",
+                "anti_leak": true
             }
         ])
     } else {
@@ -995,8 +1008,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                 "auto_route": true,
                 "strict_route": false,
                 "stack": "mixed",
-                "sniff": true,
-                "sniff_override_destination": true
+                "anti_leak": true
             }],
             "outbounds": [
                 {
@@ -1091,7 +1103,8 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                             "address": ["172.19.0.1/30"],
                             "auto_route": true,
                             "strict_route": false,
-                            "stack": "mixed"
+                            "stack": "mixed",
+                            "anti_leak": true
                         }],
                         "outbounds": [
                             { "type": "direct", "tag": "direct" },
