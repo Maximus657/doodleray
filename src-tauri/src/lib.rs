@@ -1073,26 +1073,13 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                 }
                 
                 // Per-app TUN bridge: route specific apps through SOCKS5 for full TCP+UDP proxying
-                // Discord is included by default so it works out-of-the-box
-                let mut proxy_exes: Vec<String> = request.routing_rules.iter()
+                // Only activated when user adds exe rules in Workshop (e.g. Discord.exe → proxy)
+                // NOTE: not added by default because auto_route TUN captures ALL traffic,
+                // which would bypass the system proxy for browsers
+                let proxy_exes: Vec<String> = request.routing_rules.iter()
                     .filter(|r| r.rule_type == "exe" && r.action == "proxy")
                     .map(|r| r.value.clone())
                     .collect();
-                
-                // Check if user has explicitly set Discord to "direct" in Workshop
-                let direct_exes: Vec<String> = request.routing_rules.iter()
-                    .filter(|r| r.rule_type == "exe" && r.action == "direct")
-                    .map(|r| r.value.clone())
-                    .collect();
-                
-                // Add Discord by default unless user explicitly set it to direct
-                let default_apps = vec!["Discord.exe", "discord.exe"];
-                for app_name in &default_apps {
-                    let app_str = app_name.to_string();
-                    if !proxy_exes.contains(&app_str) && !direct_exes.contains(&app_str) {
-                        proxy_exes.push(app_str);
-                    }
-                }
                 
                 if !proxy_exes.is_empty() {
                     let exclude = vec!["sing-box.exe", "xray.exe", "DoodleRay.exe", "adb.exe", "svchost.exe", "lsass.exe", "csrss.exe", "System"];
@@ -1198,26 +1185,13 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                 }
                 
                 // Per-app TUN bridge: route specific apps through SOCKS5 for full TCP+UDP proxying
-                // Discord is included by default so it works out-of-the-box
-                let mut proxy_exes: Vec<String> = request.routing_rules.iter()
+                // Only activated when user adds exe rules in Workshop (e.g. Discord.exe → proxy)
+                // NOTE: not added by default because auto_route TUN captures ALL traffic,
+                // which would bypass the system proxy for browsers
+                let proxy_exes: Vec<String> = request.routing_rules.iter()
                     .filter(|r| r.rule_type == "exe" && r.action == "proxy")
                     .map(|r| r.value.clone())
                     .collect();
-                
-                // Check if user has explicitly set Discord to "direct" in Workshop
-                let direct_exes: Vec<String> = request.routing_rules.iter()
-                    .filter(|r| r.rule_type == "exe" && r.action == "direct")
-                    .map(|r| r.value.clone())
-                    .collect();
-                
-                // Add Discord by default unless user explicitly set it to direct
-                let default_apps = vec!["Discord.exe", "discord.exe"];
-                for app_name in &default_apps {
-                    let app_str = app_name.to_string();
-                    if !proxy_exes.contains(&app_str) && !direct_exes.contains(&app_str) {
-                        proxy_exes.push(app_str);
-                    }
-                }
                 
                 if !proxy_exes.is_empty() {
                     let exclude = vec!["sing-box.exe", "DoodleRay.exe", "adb.exe", "svchost.exe", "lsass.exe", "csrss.exe", "System"];
