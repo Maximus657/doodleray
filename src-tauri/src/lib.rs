@@ -950,27 +950,33 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
     let _ = sysproxy::unset_system_proxy();
     reset_sb_traffic();
     
-    // Wait for ports to be released AND verify sing-box.exe is dead
-    for _ in 0..15 {
-        if !tun::is_singbox_running() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(300));
-    }
-    // If sing-box.exe is STILL alive (elevated process, access denied), force kill again
-    if tun::is_singbox_running() {
-        eprintln!("[warn] sing-box.exe still alive in vpn_connect cleanup, retrying stop_tun...");
-        let _ = tun::stop_tun();
-        // Wait up to 3 more seconds
-        for _ in 0..6 {
+    // Only wait for sing-box.exe process death when TUN was active (external process)
+    // For in-process singbox/xray, no external process to wait for
+    let needs_process_wait = matches!(
+        prev_engine.as_deref(),
+        Some("singbox-tun") | Some("singbox+app-proxy") | Some("xray+tun") | Some("xray+app-proxy") | None
+    );
+    
+    if needs_process_wait {
+        for _ in 0..10 {
             if !tun::is_singbox_running() {
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(500));
+            std::thread::sleep(std::time::Duration::from_millis(200));
         }
+        if tun::is_singbox_running() {
+            eprintln!("[warn] sing-box.exe still alive, retrying stop_tun...");
+            let _ = tun::stop_tun();
+            for _ in 0..4 {
+                if !tun::is_singbox_running() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            }
+        }
+        // Brief wait for port release after process death
+        std::thread::sleep(std::time::Duration::from_millis(200));
     }
-    // Final wait for port release after process death
-    std::thread::sleep(std::time::Duration::from_millis(500));
     
     if use_xray && is_tun {
         // ═══ xhttp + TUN: xray-core (SOCKS5) + sing-box (TUN bridge) ═══
@@ -1275,6 +1281,10 @@ async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
     }
 
     // Stop all engines — always clean up everything to prevent orphaned processes
+    let prev_engine = {
+        let engine = ACTIVE_ENGINE.lock().unwrap();
+        engine.clone()
+    };
     
     // Always stop in-process libsingbox (safe even if not running)
     let _ = singbox::stop_singbox();
@@ -1282,27 +1292,29 @@ async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
     // Always stop xray (safe if not running)
     let _ = xray::stop_xray();
     
-    // Always kill sing-box.exe processes — critical for TUN→Proxy transitions
-    // Even if ACTIVE_ENGINE doesn't say TUN, there might be orphaned processes
-    let _ = tun::stop_tun();
+    // Only kill external sing-box.exe and wait if TUN was active
+    let had_tun = matches!(
+        prev_engine.as_deref(),
+        Some("singbox-tun") | Some("singbox+app-proxy") | Some("xray+tun") | Some("xray+app-proxy") | None
+    );
+    
+    if had_tun {
+        let _ = tun::stop_tun();
+        for _ in 0..8 {
+            if !tun::is_singbox_running() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        if tun::is_singbox_running() {
+            eprintln!("[warn] sing-box.exe still alive after stop_tun, retrying...");
+            let _ = tun::stop_tun();
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+    }
     
     // Unset Windows system proxy
     let _ = sysproxy::unset_system_proxy();
-    
-    // Wait and verify sing-box.exe is actually dead (critical for port release)
-    for _ in 0..10 {
-        if !tun::is_singbox_running() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(300));
-    }
-    
-    // If still running after 3s, force kill one more time
-    if tun::is_singbox_running() {
-        eprintln!("[warn] sing-box.exe still alive after stop_tun, retrying...");
-        let _ = tun::stop_tun();
-        std::thread::sleep(std::time::Duration::from_millis(1000));
-    }
     
     let mut state = CONNECTION_STATE.lock().unwrap();
     *state = false;
@@ -1862,18 +1874,18 @@ fn update_tray_disconnected(app: &tauri::AppHandle) {
     }
 }
 
-/// Wait for the SOCKS port to become ready (max 5s)
+/// Wait for the SOCKS port to become ready (max 2s)
 /// Prevents DNS leaks by ensuring the core is actually listening before we set system proxy
 fn wait_for_port_ready(port: u16) {
     use std::net::SocketAddr;
     let addr: SocketAddr = format!("127.0.0.1:{}", port).parse().unwrap();
-    for _ in 0..50 {
-        if TcpStream::connect_timeout(&addr, Duration::from_millis(100)).is_ok() {
+    for _ in 0..20 {
+        if TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok() {
             return;
         }
-        std::thread::sleep(Duration::from_millis(100));
+        std::thread::sleep(Duration::from_millis(50));
     }
-    eprintln!("[warn] Port {} did not become ready in 5s", port);
+    eprintln!("[warn] Port {} did not become ready in 2s", port);
 }
 
 /// Check connection health by testing if SOCKS port is alive
