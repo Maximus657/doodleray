@@ -513,7 +513,6 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
                 "auto_route": true,
                 "strict_route": req.strict_route,
                 "stack": "mixed",
-                "anti_leak": true
             }
         ])
     } else {
@@ -642,7 +641,6 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
                 "auto_route": true,
                 "strict_route": effective_strict_route,
                 "stack": "mixed",
-                "anti_leak": true
             }
         ])
     } else {
@@ -1008,7 +1006,6 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                 "auto_route": true,
                 "strict_route": false,
                 "stack": "mixed",
-                "anti_leak": true
             }],
             "outbounds": [
                 {
@@ -1104,7 +1101,6 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                             "auto_route": true,
                             "strict_route": false,
                             "stack": "mixed",
-                            "anti_leak": true
                         }],
                         "outbounds": [
                             { "type": "direct", "tag": "direct" },
