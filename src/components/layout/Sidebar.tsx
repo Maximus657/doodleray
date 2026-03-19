@@ -4,7 +4,7 @@ import {
   Zap,
   Home,
   Server,
-  Wrench,
+  Clock,
   Settings,
   LogOut,
   Download,
@@ -17,7 +17,7 @@ import { useTranslation } from '../../locales';
 const NAV_ITEMS = [
   { path: '/', icon: Home, labelKey: 'dashboard' },
   { path: '/servers', icon: Server, labelKey: 'servers' },
-  { path: '/workshop', icon: Wrench, labelKey: 'workshop' },
+  { path: '/workshop', icon: Clock, labelKey: 'workshop' },
   { path: '/settings', icon: Settings, labelKey: 'settings' },
 ];
 
@@ -99,13 +99,13 @@ export function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex flex-col gap-4 flex-1 w-full px-3">
+      <nav className="flex flex-col gap-3 flex-1 w-full px-3">
         {NAV_ITEMS.map(({ path, icon: Icon, labelKey }) => (
           <NavLink
             key={path}
             to={path}
             className={({ isActive }) =>
-              `group relative flex items-center justify-center w-full h-14 rounded-2xl transition-all duration-150 overflow-hidden cursor-pointer
+              `group relative flex flex-col items-center justify-center w-full h-16 rounded-2xl transition-all duration-150 overflow-hidden cursor-pointer gap-1
               ${
                 isActive
                   ? 'bg-bg-primary border-[3px] border-black shadow-[4px_4px_0_rgba(255,255,255,0.2)]'
@@ -115,8 +115,8 @@ export function Sidebar() {
           >
             {({ isActive }) => (
               <>
-                <Icon className={`w-6 h-6 relative z-10 transition-transform stroke-[2.5px] ${isActive ? 'scale-110 text-black' : 'group-hover:scale-110'}`} />
-                <span className="absolute left-full ml-4 px-3 py-2 text-[10px] font-black uppercase tracking-widest bg-white text-black border-[3px] border-black rounded-xl opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 whitespace-nowrap shadow-[4px_4px_0_#000] z-50 translate-x-[-10px] group-hover:translate-x-0">
+                <Icon className={`w-5 h-5 relative z-10 transition-transform stroke-[2.5px] ${isActive ? 'scale-110 text-black' : 'group-hover:scale-110'}`} />
+                <span className={`text-[8px] font-black uppercase tracking-wider relative z-10 leading-none ${isActive ? 'text-black' : ''}`}>
                   {t(labelKey as any)}
                 </span>
                 <div className={`absolute left-0 top-1/2 -translate-y-1/2 w-1.5 h-1/2 bg-black rounded-r-full transition-all duration-300 ${isActive ? 'opacity-100 scale-y-100' : 'opacity-0 scale-y-0'}`} />
