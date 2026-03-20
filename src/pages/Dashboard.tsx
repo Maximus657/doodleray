@@ -1023,23 +1023,23 @@ export default function Dashboard() {
                         {sub.servers.length}
                       </span>
                     </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex items-center gap-1.5 shrink-0 px-1">
                       <button onClick={() => handleUpdateSubscription(sub)} 
-                        className="w-6 h-6 flex items-center justify-center bg-white border-[2px] border-black rounded-lg cursor-pointer hover:bg-black hover:text-white transition-colors">
-                        <RefreshCw className="w-3 h-3 stroke-[3px]" />
+                        className="w-7 h-7 flex items-center justify-center bg-white border-[2px] border-black rounded-lg cursor-pointer text-black transition-all shadow-[2px_2px_0_#000] hover:-translate-y-[1px] hover:-translate-x-[1px] hover:shadow-[3px_3px_0_#000] active:translate-y-[1px] active:translate-x-[1px] active:shadow-none" title="Refresh Subscription">
+                        <RefreshCw className="w-3.5 h-3.5 stroke-[3px]" />
                       </button>
                       <button onClick={() => handleTestSubscription(sub)}
-                        className="h-6 px-2 flex items-center justify-center gap-1 bg-emerald-400 border-[2px] border-black rounded-lg text-black cursor-pointer hover:bg-black hover:text-white transition-colors">
-                        <Activity className="w-3 h-3 stroke-[3px]" />
-                        <span className="text-[9px] font-black tracking-widest uppercase">Test</span>
+                        className="h-7 px-2.5 flex items-center justify-center gap-1 bg-emerald-400 border-[2px] border-black rounded-lg text-black cursor-pointer transition-all shadow-[2px_2px_0_#000] hover:-translate-y-[1px] hover:-translate-x-[1px] hover:shadow-[3px_3px_0_#000] active:translate-y-[1px] active:translate-x-[1px] active:shadow-none" title="Test Latency">
+                        <Activity className="w-3.5 h-3.5 stroke-[3px]" />
+                        <span className="text-[10px] font-black tracking-widest uppercase">Test</span>
                       </button>
                       <button onClick={() => { 
                           if(confirm(`Delete subscription "${sub.name}" and all its servers?`)) {
                             removeSubscription(sub.id);
                           }
                         }}
-                        className="w-6 h-6 flex items-center justify-center bg-danger border-[2px] border-black rounded-lg text-white cursor-pointer hover:bg-black transition-colors">
-                        <Trash2 className="w-3 h-3 stroke-[3px]" />
+                        className="w-7 h-7 flex items-center justify-center bg-red-400 border-[2px] border-black rounded-lg text-white cursor-pointer transition-all shadow-[2px_2px_0_#000] hover:-translate-y-[1px] hover:-translate-x-[1px] hover:shadow-[3px_3px_0_#000] active:translate-y-[1px] active:translate-x-[1px] active:shadow-none" title="Delete Subscription">
+                        <Trash2 className="w-3.5 h-3.5 stroke-[3px]" />
                       </button>
                     </div>
                   </div>
@@ -1107,11 +1107,11 @@ export default function Dashboard() {
                         {standalone.length}
                       </span>
                     </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex items-center gap-1.5 shrink-0 px-1">
                       <button onClick={() => handleTestCustomServers()}
-                        className="h-6 px-2 flex items-center justify-center gap-1 bg-emerald-400 border-[2px] border-black rounded-lg text-black cursor-pointer hover:bg-black hover:text-white transition-colors">
-                        <Activity className="w-3 h-3 stroke-[3px]" />
-                        <span className="text-[9px] font-black tracking-widest uppercase">Test</span>
+                        className="h-7 px-2.5 flex items-center justify-center gap-1 bg-emerald-400 border-[2px] border-black rounded-lg text-black cursor-pointer transition-all shadow-[2px_2px_0_#000] hover:-translate-y-[1px] hover:-translate-x-[1px] hover:shadow-[3px_3px_0_#000] active:translate-y-[1px] active:translate-x-[1px] active:shadow-none" title="Test Latency">
+                        <Activity className="w-3.5 h-3.5 stroke-[3px]" />
+                        <span className="text-[10px] font-black tracking-widest uppercase">Test</span>
                       </button>
                       <button onClick={() => { 
                           if(confirm('Delete all custom servers?')) {
@@ -1119,8 +1119,8 @@ export default function Dashboard() {
                             addLog('info', 'Removed all custom servers');
                           }
                         }}
-                        className="w-6 h-6 flex items-center justify-center bg-danger border-[2px] border-black rounded-lg text-white cursor-pointer hover:bg-black transition-colors">
-                        <Trash2 className="w-3 h-3 stroke-[3px]" />
+                        className="w-7 h-7 flex items-center justify-center bg-red-400 border-[2px] border-black rounded-lg text-white cursor-pointer transition-all shadow-[2px_2px_0_#000] hover:-translate-y-[1px] hover:-translate-x-[1px] hover:shadow-[3px_3px_0_#000] active:translate-y-[1px] active:translate-x-[1px] active:shadow-none" title="Delete All Custom Servers">
+                        <Trash2 className="w-3.5 h-3.5 stroke-[3px]" />
                       </button>
                     </div>
                   </div>
