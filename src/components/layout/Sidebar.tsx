@@ -114,7 +114,7 @@ export function Sidebar() {
             {({ isActive }) => (
               <>
                 <Icon className={`w-5 h-5 relative z-10 transition-transform stroke-[2.5px] ${isActive ? 'scale-110 text-black' : 'group-hover:scale-110'}`} />
-                <span className={`text-[8px] font-black uppercase tracking-wider relative z-10 leading-none ${isActive ? 'text-black' : ''}`}>
+                <span className={`text-[7px] font-black uppercase tracking-wide relative z-10 leading-none truncate max-w-full px-1 ${isActive ? 'text-black' : ''}`}>
                   {t(labelKey as any)}
                 </span>
                 <div className={`absolute left-0 top-1/2 -translate-y-1/2 w-1.5 h-1/2 bg-black rounded-r-full transition-all duration-300 ${isActive ? 'opacity-100 scale-y-100' : 'opacity-0 scale-y-0'}`} />
