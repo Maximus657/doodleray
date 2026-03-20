@@ -1032,10 +1032,8 @@ export default function Dashboard() {
               return (
                 <div key={sub.id} className="w-full">
                   {/* Subscription Header */}
-                  <button 
-                    onClick={() => setCollapsedGroups(prev => ({ ...prev, [sub.id]: !prev[sub.id] }))}
-                    className="w-full flex items-center justify-between bg-white border-[3px] border-black rounded-xl p-2.5 mb-2 shadow-[2px_2px_0_#000] cursor-pointer hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[3px_3px_0_#000] active:translate-x-[1px] active:translate-y-[1px] active:shadow-[1px_1px_0_#000] transition-all">
-                    <div className="flex items-center gap-2 min-w-0 pr-2">
+                  <div className="w-full flex items-center justify-between bg-white border-[3px] border-black rounded-xl p-2.5 mb-2 shadow-[2px_2px_0_#000]">
+                    <div className="flex items-center gap-2 min-w-0 pr-2 cursor-pointer select-none" onClick={() => setCollapsedGroups(prev => ({ ...prev, [sub.id]: !prev[sub.id] }))}>
                       <ChevronDown className={`w-4 h-4 text-black shrink-0 stroke-[3px] transition-transform duration-300 ${collapsedGroups[sub.id] ? '-rotate-90' : 'rotate-0'}`} />
                       <Rss className="w-3.5 h-3.5 text-black shrink-0 stroke-[3px]" />
                       <span className="text-[10px] font-black text-black uppercase tracking-widest truncate">
@@ -1046,17 +1044,16 @@ export default function Dashboard() {
                       </span>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
-                      <button onClick={(e) => { e.stopPropagation(); handleUpdateSubscription(sub); }} 
+                      <button onClick={() => handleUpdateSubscription(sub)} 
                         className="w-6 h-6 flex items-center justify-center bg-white border-[2px] border-black rounded-lg cursor-pointer hover:bg-black hover:text-white transition-colors">
                         <RefreshCw className="w-3 h-3 stroke-[3px]" />
                       </button>
-                      <button onClick={(e) => { e.stopPropagation(); handleTestSubscription(sub); }}
+                      <button onClick={() => handleTestSubscription(sub)}
                         className="h-6 px-2 flex items-center justify-center gap-1 bg-emerald-400 border-[2px] border-black rounded-lg text-black cursor-pointer hover:bg-black hover:text-white transition-colors">
                         <Activity className="w-3 h-3 stroke-[3px]" />
                         <span className="text-[9px] font-black tracking-widest uppercase">Test</span>
                       </button>
-                      <button onClick={(e) => { 
-                          e.stopPropagation(); 
+                      <button onClick={() => { 
                           if(confirm(`Delete subscription "${sub.name}" and all its servers?`)) {
                             removeSubscription(sub.id);
                           }
@@ -1065,7 +1062,7 @@ export default function Dashboard() {
                         <Trash2 className="w-3 h-3 stroke-[3px]" />
                       </button>
                     </div>
-                  </button>
+                  </div>
                   
                   {/* Servers List for this Sub */}
                   {!collapsedGroups[sub.id] && (
@@ -1119,10 +1116,8 @@ export default function Dashboard() {
 
               return (
                 <div className="w-full mt-2">
-                  <button
-                    onClick={() => setCollapsedGroups(prev => ({ ...prev, '__custom__': !prev['__custom__'] }))}
-                    className="w-full flex items-center justify-between bg-white border-[3px] border-black rounded-xl p-2.5 mb-2 shadow-[2px_2px_0_#000] cursor-pointer hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[3px_3px_0_#000] active:translate-x-[1px] active:translate-y-[1px] active:shadow-[1px_1px_0_#000] transition-all">
-                    <div className="flex items-center gap-2 min-w-0 pr-2" onClick={(e) => { e.stopPropagation(); setCollapsedGroups(prev => ({ ...prev, '__custom__': !prev['__custom__'] })); }}>
+                  <div className="w-full flex items-center justify-between bg-white border-[3px] border-black rounded-xl p-2.5 mb-2 shadow-[2px_2px_0_#000]">
+                    <div className="flex items-center gap-2 min-w-0 pr-2 cursor-pointer select-none" onClick={() => setCollapsedGroups(prev => ({ ...prev, '__custom__': !prev['__custom__'] }))}>
                       <ChevronDown className={`w-4 h-4 text-black shrink-0 stroke-[3px] transition-transform duration-300 ${collapsedGroups['__custom__'] ? '-rotate-90' : 'rotate-0'}`} />
                       <SettingsIcon className="w-3.5 h-3.5 text-black shrink-0 stroke-[3px]" />
                       <span className="text-[10px] font-black text-black uppercase tracking-widest truncate">
@@ -1133,13 +1128,12 @@ export default function Dashboard() {
                       </span>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
-                      <button onClick={(e) => { e.stopPropagation(); handleTestCustomServers(); }}
+                      <button onClick={() => handleTestCustomServers()}
                         className="h-6 px-2 flex items-center justify-center gap-1 bg-emerald-400 border-[2px] border-black rounded-lg text-black cursor-pointer hover:bg-black hover:text-white transition-colors">
                         <Activity className="w-3 h-3 stroke-[3px]" />
                         <span className="text-[9px] font-black tracking-widest uppercase">Test</span>
                       </button>
-                      <button onClick={(e) => { 
-                          e.stopPropagation(); 
+                      <button onClick={() => { 
                           if(confirm('Delete all custom servers?')) {
                             removeAllManualServers();
                             addLog('info', 'Removed all custom servers');
@@ -1149,7 +1143,7 @@ export default function Dashboard() {
                         <Trash2 className="w-3 h-3 stroke-[3px]" />
                       </button>
                     </div>
-                  </button>
+                  </div>
                   {!collapsedGroups['__custom__'] && (
                   <div className="flex flex-col gap-2 pl-2 border-l-[3px] border-black/10 ml-2">
                     {standalone.map((server) => {
