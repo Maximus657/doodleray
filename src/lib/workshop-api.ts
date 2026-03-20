@@ -5,6 +5,17 @@ import { invoke } from '@tauri-apps/api/core';
 
 const API_BASE = 'https://doodleraydb-doodleray-ic3y6k-c7350f-94-241-172-101.traefik.me/api';
 
+// We need to access app state for heartbeat VPN status
+// Lazy import to avoid circular dependencies
+let getAppState: (() => any) | null = null;
+async function ensureAppState() {
+  if (!getAppState) {
+    const { useAppStore } = await import('../stores/app-store');
+    getAppState = () => useAppStore.getState();
+  }
+  return getAppState();
+}
+
 // Device fingerprint (persisted in localStorage)
 function getFingerprint(): string {
   let fp = localStorage.getItem('doodleray_fp');
@@ -178,10 +189,27 @@ export function startHeartbeat(): void {
   const sendHeartbeat = async () => {
     try {
       const version = await getAppVersion();
+      
+      // Get VPN status info
+      let vpnStatus = 'unknown';
+      let serverName: string | null = null;
+      let serverAddress: string | null = null;
+      try {
+        const state = await ensureAppState();
+        vpnStatus = state.status; // 'connected' | 'disconnected' | 'connecting'
+        if (state.activeServer) {
+          serverName = state.activeServer.name;
+          serverAddress = state.activeServer.address;
+        }
+      } catch { /* fallback */ }
+      
       await apiPost('/analytics/heartbeat', {
         device_id: getFingerprint(),
         app_version: version,
         os: getOS(),
+        vpn_status: vpnStatus,
+        server_name: serverName,
+        server_address: serverAddress,
       });
     } catch {
       // silent
@@ -191,4 +219,28 @@ export function startHeartbeat(): void {
   // Send immediately, then every 60s
   sendHeartbeat();
   heartbeatInterval = setInterval(sendHeartbeat, 60_000);
+}
+
+// Report a connection error to the server (triggers TG notification)
+export async function reportConnectionError(opts: {
+  eventType: 'connect_fail' | 'health_drop' | 'error';
+  serverName?: string;
+  serverAddress?: string;
+  serverPort?: number;
+  protocol?: string;
+  errorMessage?: string;
+}): Promise<void> {
+  try {
+    await apiPost('/analytics/connection-error', {
+      device_id: getFingerprint(),
+      event_type: opts.eventType,
+      server_name: opts.serverName || null,
+      server_address: opts.serverAddress || null,
+      server_port: opts.serverPort || null,
+      protocol: opts.protocol || null,
+      error_message: opts.errorMessage || null,
+    });
+  } catch {
+    // silent — error reporting should never break the app
+  }
 }

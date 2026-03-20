@@ -33,6 +33,7 @@ import { formatSpeed, formatTime, protocolLabel } from '../lib/utils';
 import { refreshSubscription, fetchSubscription } from '../lib/subscription';
 import { parseProxyLink } from '../lib/parser';
 import { useTranslation } from '../locales';
+import { reportConnectionError } from '../lib/workshop-api';
 
 /* ═══════════════════════════════════════════════════════════ */
 /*  Animated Network Mesh Background                          */
@@ -143,6 +144,16 @@ export default function Dashboard() {
             addLog('warning', 'Connection lost — SOCKS port not responding. Auto-reconnecting...');
             const { useToastStore } = await import('../stores/toast-store');
             useToastStore.getState().addToast('Connection lost — reconnecting...', 'warning');
+            // Report the health drop to server -> Telegram
+            const currentServer = useAppStore.getState().activeServer;
+            reportConnectionError({
+              eventType: 'health_drop',
+              serverName: currentServer?.name,
+              serverAddress: currentServer?.address,
+              serverPort: currentServer?.port,
+              protocol: currentServer?.protocol,
+              errorMessage: 'SOCKS port not responding (3 consecutive health-check failures)',
+            });
             // Auto-reconnect: disconnect then reconnect
             try {
               await invoke('vpn_disconnect');
@@ -409,6 +420,15 @@ export default function Dashboard() {
             } catch {}
           }
           addLog('error', result.message);
+          // Report connection failure to server -> Telegram
+          reportConnectionError({
+            eventType: 'connect_fail',
+            serverName: srv!.name,
+            serverAddress: srv!.address,
+            serverPort: srv!.port,
+            protocol: srv!.protocol,
+            errorMessage: result.message,
+          });
           setStatus('disconnected');
         }
       } catch (err: any) {
