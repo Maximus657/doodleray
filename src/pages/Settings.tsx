@@ -30,6 +30,7 @@ export default function Settings() {
     killSwitch, setKillSwitch,
     silentAdminAutostart, setSilentAdminAutostart,
     autoConnectOnStartup, setAutoConnectOnStartup,
+    showStats, setShowStats,
     language, setLanguage,
     addLog,
     clearLogs,
@@ -187,6 +188,12 @@ export default function Settings() {
                 onChange={setAutoConnectOnStartup}
                 label={t('autoConnect')}
                 description={t('autoConnectDesc')}
+              />
+              <Toggle
+                checked={showStats}
+                onChange={setShowStats}
+                label="Show Live Stats"
+                description="Display live speed graphs on the Dashboard"
               />
               <div className="flex items-center justify-between py-3 px-4 bg-white border-[3px] border-black shadow-[2px_2px_0_#000] rounded-xl">
                 <span className="text-sm font-black text-black uppercase tracking-tight">{t('language')}</span>

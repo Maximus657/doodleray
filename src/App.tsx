@@ -4,7 +4,6 @@ import { invoke } from '@tauri-apps/api/core';
 import { Download, Loader2 } from 'lucide-react';
 import { Sidebar } from './components/layout/Sidebar';
 import Dashboard from './pages/Dashboard';
-import Servers from './pages/Servers';
 import Workshop from './pages/Workshop';
 
 import Settings from './pages/Settings';
@@ -238,7 +237,6 @@ function App() {
           <UpdateBanner />
           <Routes>
             <Route path="/" element={<Dashboard />} />
-            <Route path="/servers" element={<Servers />} />
             <Route path="/workshop" element={<Workshop />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>

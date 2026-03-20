@@ -3,7 +3,6 @@ import { useState, useEffect } from 'react';
 import {
   Zap,
   Home,
-  Server,
   Clock,
   Settings,
   LogOut,
@@ -16,7 +15,6 @@ import { useTranslation } from '../../locales';
 
 const NAV_ITEMS = [
   { path: '/', icon: Home, labelKey: 'dashboard' },
-  { path: '/servers', icon: Server, labelKey: 'servers' },
   { path: '/workshop', icon: Clock, labelKey: 'workshop' },
   { path: '/settings', icon: Settings, labelKey: 'settings' },
 ];

@@ -101,6 +101,7 @@ export interface AppState {
   alwaysRunAdmin: boolean;
   autoConnectOnStartup: boolean;
   availableUpdate: string | null;
+  showStats: boolean; // Hide/show statistics on dashboard
 
   setStatus: (status: ConnectionStatus) => void;
   setActiveServer: (server: ServerConfig | null) => void;
@@ -116,6 +117,7 @@ export interface AppState {
   setAlwaysRunAdmin: (on: boolean) => void;
   setAutoConnectOnStartup: (on: boolean) => void;
   setSilentAdminAutostart: (on: boolean) => void;
+  setShowStats: (show: boolean) => void;
 
   addServer: (server: ServerConfig) => void;
   removeServer: (id: string) => void;
@@ -170,6 +172,7 @@ export const useAppStore = create<AppState>()(
       alwaysRunAdmin: false,
       autoConnectOnStartup: false,
       availableUpdate: null,
+      showStats: false,
 
       setStatus: (status) => set({ status }),
       setActiveServer: (server) => set({ activeServer: server }),
@@ -185,6 +188,7 @@ export const useAppStore = create<AppState>()(
       setAlwaysRunAdmin: (on) => set({ alwaysRunAdmin: on }),
       setAutoConnectOnStartup: (on) => set({ autoConnectOnStartup: on }),
       setSilentAdminAutostart: (on) => set({ silentAdminAutostart: on }),
+      setShowStats: (show) => set({ showStats: show }),
 
 
 

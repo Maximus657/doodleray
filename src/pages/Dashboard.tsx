@@ -10,8 +10,6 @@ import {
   ScrollText,
   ChevronDown,
   ChevronUp,
-  Server as ServerIcon,
-  X,
   Search,
   Timer,
   Wifi,
@@ -19,6 +17,12 @@ import {
   ClipboardPaste,
   Link,
   Loader2,
+  Rss,
+  RefreshCw,
+  Activity,
+  Settings as SettingsIcon,
+  Trash2,
+  Plus,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -80,21 +84,51 @@ export default function Dashboard() {
     httpPort,
     subscriptions,
     updateSubscription,
+    removeSubscription,
     autoSelectFastest,
     subAutoUpdateMinutes,
     connectedAt,
     setConnectedAt,
     addSubscription,
     addServer,
+    removeServer,
+    removeAllManualServers,
+    updateServerPing,
+    showStats,
   } = useAppStore();
   const { t } = useTranslation();
 
   const [showLogs, setShowLogs] = useState(false);
-  const [showServerPicker, setShowServerPicker] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const logsEndRef = useRef<HTMLDivElement>(null);
   const [quickInput, setQuickInput] = useState('');
   const [quickImporting, setQuickImporting] = useState(false);
+
+  // Auto-ping unpinged servers on mount
+  useEffect(() => {
+    const unpinged = servers.filter(s => s.ping === undefined);
+    if (unpinged.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        for (const server of unpinged) {
+          if (cancelled) break;
+          try {
+            const result: any = await invoke('ping_server', {
+              address: server.address, port: server.port, serverId: server.id,
+            });
+            updateServerPing(server.id, result.ping_ms);
+          } catch {
+            updateServerPing(server.id, -1);
+          }
+          await new Promise(r => setTimeout(r, 30));
+        }
+      } catch { /* not in tauri env */ }
+    })();
+    return () => { cancelled = true; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Compute connection time from stored timestamp (survives page navigation)
   const [connectTime, setConnectTime] = useState(0);
@@ -558,7 +592,6 @@ export default function Dashboard() {
     if (!server) return;
     const isSameServer = activeServer?.id === server.id;
     setActiveServer(server);
-    setShowServerPicker(false);
     setSearchQuery('');
     
     // If connected and selected a DIFFERENT server, auto-reconnect
@@ -654,6 +687,115 @@ export default function Dashboard() {
     } catch { /* */ }
   }, []);
 
+  // One-click clipboard add: read clipboard, show confirm, auto-add
+  const handleQuickClipboardAdd = useCallback(async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      const trimmed = text?.trim();
+      if (!trimmed) {
+        addLog('warning', 'Clipboard is empty');
+        return;
+      }
+      
+      // Determine what it is
+      let label = trimmed;
+      if (trimmed.length > 60) label = trimmed.substring(0, 60) + '...';
+      
+      const isSubscription = /^https?:\/\//.test(trimmed);
+      const isProxy = /^(vless|vmess|trojan|ss|hy2|tuic|wg):\/\//.test(trimmed);
+      
+      if (!isSubscription && !isProxy) {
+        addLog('error', 'Clipboard doesn\'t contain a valid link');
+        return;
+      }
+      
+      const type = isSubscription ? 'subscription' : 'proxy server';
+      const ok = confirm(`Add ${type} from clipboard?\n\n${label}`);
+      if (!ok) return;
+      
+      setQuickInput(trimmed);
+      // Use setTimeout to let state update, then trigger add
+      setTimeout(() => {
+        // Inline the add logic
+        (async () => {
+          setQuickImporting(true);
+          try {
+            if (isSubscription) {
+              const sub = await fetchSubscription(trimmed);
+              addSubscription(sub);
+              if (sub.servers.length > 0 && !useAppStore.getState().activeServer) {
+                setActiveServer(sub.servers[0]);
+              }
+              addLog('success', `Added subscription: ${sub.servers.length} servers`);
+            } else {
+              const server = parseProxyLink(trimmed);
+              if (server) {
+                addServer(server);
+                addLog('success', `Added server: ${server.name}`);
+              } else {
+                addLog('error', 'Invalid proxy link format');
+              }
+            }
+          } catch (err: any) {
+            addLog('error', `Error: ${err.message || err}`);
+          } finally {
+            setQuickImporting(false);
+            setQuickInput('');
+          }
+        })();
+      }, 50);
+    } catch {
+      addLog('error', 'Failed to read clipboard');
+    }
+  }, [addLog, addSubscription, addServer, setActiveServer]);
+
+  const handleTestSubscription = async (sub: any) => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const serversToUpdate = servers.filter(s => s.subscriptionId === sub.id);
+      addLog('warning', `Testing ${serversToUpdate.length} servers...`);
+      for (const s of serversToUpdate) {
+        if (!s.address) continue;
+        const res: { latency: number } = await invoke('ping_server', { host: s.address, port: s.port || 443 });
+        if (res.latency > 0) {
+          useAppStore.getState().updateServerPing(s.id, res.latency);
+        } else {
+          useAppStore.getState().updateServerPing(s.id, -1);
+        }
+      }
+      addLog('success', 'Ping test complete');
+    } catch { /* */ }
+  };
+  
+  const handleUpdateSubscription = async (sub: any) => {
+    try {
+      addLog('info', `Updating subscription: ${sub.name}...`);
+      const updated = await refreshSubscription(sub);
+      updateSubscription(sub.id, updated);
+      addLog('success', `Updated ${sub.name}: ${updated.servers.length} servers`);
+    } catch (err: any) {
+      addLog('error', `Failed to update ${sub.name}: ${err.message || err}`);
+    }
+  };
+
+  const handleTestCustomServers = async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const customServers = servers.filter(s => !s.subscriptionId);
+      addLog('warning', `Testing ${customServers.length} custom servers...`);
+      for (const s of customServers) {
+        if (!s.address) continue;
+        const res: { latency: number } = await invoke('ping_server', { host: s.address, port: s.port || 443 });
+        if (res.latency > 0) {
+          useAppStore.getState().updateServerPing(s.id, res.latency);
+        } else {
+          useAppStore.getState().updateServerPing(s.id, -1);
+        }
+      }
+      addLog('success', 'Custom servers ping test complete');
+    } catch { /* */ }
+  };
+
   const renderFlag = (code?: string) => {
     if (!code || code.length !== 2) return <Globe className="w-4 h-4 text-text-on-orange-muted" />;
     return <img src={`https://flagcdn.com/w40/${code.toLowerCase()}.png`} alt={code} className="w-6 h-4 object-cover rounded-sm shadow-sm" />;
@@ -669,6 +811,16 @@ export default function Dashboard() {
         
         {/* Retro background */}
         <RetroBackground />
+
+        {/* + Add button in top-right corner */}
+        <button
+          onClick={handleQuickClipboardAdd}
+          disabled={quickImporting}
+          className="absolute top-4 right-4 z-30 w-10 h-10 flex items-center justify-center bg-white border-[3px] border-black rounded-xl shadow-[3px_3px_0_#000] cursor-pointer hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[4px_4px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none transition-all disabled:opacity-50"
+          title="Add from clipboard"
+        >
+          {quickImporting ? <Loader2 className="w-5 h-5 text-black animate-spin stroke-[3px]" /> : <Plus className="w-5 h-5 text-black stroke-[3px]" />}
+        </button>
 
         {/* ══════════════════════════════════════════════ */}
         {/*  ONBOARDING: show only when zero servers      */}
@@ -730,7 +882,7 @@ export default function Dashboard() {
         ) : (
         <div className="contents">
         {/* ── PROXY MODE TOGGLE ── */}
-        <div className="relative flex bg-black rounded-2xl p-1.5 shadow-inner z-10 w-full max-w-[340px] border-[3px] border-black">
+        <div className="relative flex bg-black rounded-2xl p-1.5 shadow-inner w-full max-w-sm border-[3px] border-black shrink-0 mt-2 z-10">
           {/* Sliding indicator */}
           <div
             className={`absolute top-1.5 bottom-1.5 w-[calc(50%-6px)] bg-bg-primary rounded-xl transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] shadow-[2px_2px_0_rgba(0,0,0,0.4)] border-[2px] border-black ${
@@ -738,45 +890,19 @@ export default function Dashboard() {
             }`}
           />
           <button onClick={() => handleModeSwitch('system-proxy')}
-            className={`relative z-10 flex flex-1 items-center justify-center gap-2 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-widest cursor-pointer transition-colors duration-300 select-none
+            className={`relative z-10 flex flex-1 items-center justify-center gap-2 py-2 text-[11px] font-black uppercase tracking-widest cursor-pointer transition-colors duration-300 select-none
               ${proxyMode === 'system-proxy' ? 'text-black' : 'text-white/40 hover:text-white/80'}`}>
             <Globe className={`w-4 h-4 transition-transform duration-300 ${proxyMode === 'system-proxy' ? 'scale-110' : 'scale-100'}`} /> <span className="truncate">{t('systemProxy')}</span>
           </button>
           <button onClick={() => handleModeSwitch('tun')}
-            className={`relative z-10 flex flex-1 items-center justify-center gap-2 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-widest cursor-pointer transition-colors duration-300 select-none
+            className={`relative z-10 flex flex-1 items-center justify-center gap-2 py-2 text-[11px] font-black uppercase tracking-widest cursor-pointer transition-colors duration-300 select-none
               ${proxyMode === 'tun' ? 'text-black' : 'text-white/40 hover:text-white/80'}`}>
             <Network className={`w-4 h-4 transition-transform duration-300 ${proxyMode === 'tun' ? 'scale-110' : 'scale-100'}`} /> <span className="truncate">{t('tunMode')}</span>
           </button>
         </div>
 
-        {/* ── SERVER SELECTOR ── */}
-        <div className="w-full max-w-sm mt-4 relative z-10">
-          <button onClick={() => setShowServerPicker(true)}
-            className="w-full bg-white border-[4px] border-black rounded-3xl p-4 flex items-center gap-4 cursor-pointer hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0px_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-[2px_2px_0px_#000] transition-all shadow-[4px_4px_0px_#000] group">
-            <div className="w-12 h-12 rounded-2xl bg-black flex items-center justify-center shrink-0 border-2 border-black">
-              {activeServer ? renderFlag(activeServer.countryCode) : <ServerIcon className="w-6 h-6 text-white" />}
-            </div>
-            <div className="flex-1 text-left min-w-0">
-              <p className="text-[11px] font-black text-black/60 uppercase tracking-widest mb-0.5">
-                {activeServer ? t('activeServer') : t('noServerSelected')}
-              </p>
-              {activeServer ? (
-                <>
-                  <p className="text-xl font-black text-black truncate tracking-tight uppercase leading-none mt-1">{activeServer.name}</p>
-                  <p className="text-[10px] font-black text-bg-primary uppercase mt-1.5 tracking-wide">
-                    {protocolLabel(activeServer.protocol, activeServer.transport)}
-                  </p>
-                </>
-              ) : (
-                <p className="text-sm font-black text-black uppercase">{t('selectServerHint')}</p>
-              )}
-            </div>
-            <ChevronDown className="w-6 h-6 text-black transition-transform duration-300 group-hover:scale-110 group-hover:-translate-y-1 stroke-[3px]" />
-          </button>
-        </div>
-
         {/* ── POWER BUTTON ── */}
-        <div className="flex flex-col items-center mt-6 relative z-10">
+        <div className="flex flex-col items-center mt-2 relative z-10 shrink-0">
           <button id="connect-button" onClick={handleConnect}
             disabled={isConnecting || !canConnect}
             className="group relative w-40 h-40 flex items-center justify-center transition-all duration-150 cursor-pointer border-0 bg-transparent disabled:cursor-not-allowed">
@@ -810,8 +936,8 @@ export default function Dashboard() {
         </div>
 
         {/* ── STATS CARDS (when connected) ── */}
-        {isConnected && (
-          <div className="grid grid-cols-3 gap-4 w-full max-w-md mt-6 animate-slide-up relative z-10">
+        {showStats && isConnected && (
+          <div className="grid grid-cols-3 gap-4 w-full max-w-md mt-4 shrink-0 animate-slide-up relative z-10">
             {/* Download */}
             <div className="bg-white rounded-2xl p-3 text-center border-[3px] border-black shadow-[4px_4px_0_#000]">
               <ArrowDown className="w-5 h-5 mx-auto text-black mb-1 stroke-[3px]" />
@@ -839,10 +965,10 @@ export default function Dashboard() {
         )}
 
         {/* ── SPEED GRAPH (when connected) ── */}
-        {isConnected && speedHistory.length > 2 && (() => {
+        {showStats && isConnected && speedHistory.length > 2 && (() => {
           const displayData = speedHistory.slice(-30); // Last 30 seconds
           return (
-          <div className="w-full max-w-md card rounded-2xl p-3 animate-slide-up relative z-10 pointer-events-none">
+          <div className="w-full max-w-md card rounded-2xl p-3 shrink-0 animate-slide-up relative z-10 pointer-events-none">
             <div className="flex items-center justify-between mb-2 px-1">
               <span className="text-[10px] font-bold text-text-on-dark-muted uppercase tracking-widest flex items-center gap-1">
                 <Wifi className="w-3 h-3" /> Live Throughput
@@ -875,6 +1001,213 @@ export default function Dashboard() {
           </div>
           );
         })()}
+
+
+
+        {/* ── INLINE SERVERS LIST ── */}
+        <div className="w-full max-w-sm mt-4 relative z-10 pb-4">
+          <div className="mb-2 px-1 flex items-center justify-between">
+            <span className="text-[11px] font-black text-black/50 uppercase tracking-widest pl-1">{t('activeServer')}</span>
+            {servers.length > 5 && (
+              <div className="relative w-32">
+                <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-black/50 stroke-[3px]" />
+                <input type="text" placeholder="Search..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full bg-black/5 rounded-lg pl-7 pr-2 py-1 text-[10px] font-black text-black focus:outline-none placeholder:text-black/30 uppercase tracking-widest focus:bg-white focus:border-black border-[2px] border-transparent" />
+              </div>
+            )}
+          </div>
+          
+          <div className="flex flex-col gap-4 relative z-20">
+            {/* Map over subscriptions to create grouped lists */}
+            {subscriptions.map(sub => {
+              const subServers = servers.filter(
+                s => s.subscriptionId === sub.id && 
+                (s.name.toLowerCase().includes(searchQuery.toLowerCase()) || s.countryCode?.toLowerCase() === searchQuery.toLowerCase())
+              );
+              
+              if (subServers.length === 0 && searchQuery) return null; // hide empty groups when searching
+
+              return (
+                <div key={sub.id} className="w-full">
+                  {/* Subscription Header */}
+                  <button 
+                    onClick={() => setCollapsedGroups(prev => ({ ...prev, [sub.id]: !prev[sub.id] }))}
+                    className="w-full flex items-center justify-between bg-white border-[3px] border-black rounded-xl p-2.5 mb-2 shadow-[2px_2px_0_#000] cursor-pointer hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[3px_3px_0_#000] active:translate-x-[1px] active:translate-y-[1px] active:shadow-[1px_1px_0_#000] transition-all">
+                    <div className="flex items-center gap-2 min-w-0 pr-2">
+                      <ChevronDown className={`w-4 h-4 text-black shrink-0 stroke-[3px] transition-transform duration-300 ${collapsedGroups[sub.id] ? '-rotate-90' : 'rotate-0'}`} />
+                      <Rss className="w-3.5 h-3.5 text-black shrink-0 stroke-[3px]" />
+                      <span className="text-[10px] font-black text-black uppercase tracking-widest truncate">
+                        {sub.name}
+                      </span>
+                      <span className="text-[9px] font-black bg-black text-white px-1.5 py-0.5 rounded-md uppercase tracking-widest shrink-0">
+                        {sub.servers.length}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button onClick={(e) => { e.stopPropagation(); handleUpdateSubscription(sub); }} 
+                        className="w-6 h-6 flex items-center justify-center bg-white border-[2px] border-black rounded-lg cursor-pointer hover:bg-black hover:text-white transition-colors">
+                        <RefreshCw className="w-3 h-3 stroke-[3px]" />
+                      </button>
+                      <button onClick={(e) => { e.stopPropagation(); handleTestSubscription(sub); }}
+                        className="h-6 px-2 flex items-center justify-center gap-1 bg-emerald-400 border-[2px] border-black rounded-lg text-black cursor-pointer hover:bg-black hover:text-white transition-colors">
+                        <Activity className="w-3 h-3 stroke-[3px]" />
+                        <span className="text-[9px] font-black tracking-widest uppercase">Test</span>
+                      </button>
+                      <button onClick={(e) => { 
+                          e.stopPropagation(); 
+                          if(confirm(`Delete subscription "${sub.name}" and all its servers?`)) {
+                            removeSubscription(sub.id);
+                          }
+                        }}
+                        className="w-6 h-6 flex items-center justify-center bg-danger border-[2px] border-black rounded-lg text-white cursor-pointer hover:bg-black transition-colors">
+                        <Trash2 className="w-3 h-3 stroke-[3px]" />
+                      </button>
+                    </div>
+                  </button>
+                  
+                  {/* Servers List for this Sub */}
+                  {!collapsedGroups[sub.id] && (
+                  <div className="flex flex-col gap-2 pl-2 border-l-[3px] border-black/10 ml-2 animate-slide-up">
+                    {subServers.map((server) => {
+                      const isActive = activeServer?.id === server.id;
+                      const pingColor = server.ping && server.ping > 0
+                        ? server.ping < 100 ? 'text-emerald-600' : server.ping < 300 ? 'text-amber-600' : 'text-red-600'
+                        : server.ping === -1 ? 'text-red-600' : 'text-black/40';
+                      
+                      return (
+                        <button key={server.id} onClick={() => handleServerSelect(server)}
+                          className={`w-full p-2.5 rounded-2xl flex items-center gap-3 transition-all duration-150 overflow-hidden relative cursor-pointer
+                            ${isActive 
+                              ? 'bg-black text-white border-[3px] border-black shadow-[4px_4px_0_rgba(0,0,0,0.4)] translate-x-[-1px] translate-y-[-1px]' 
+                              : 'bg-white text-black border-[3px] border-black shadow-[2px_2px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[4px_4px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none'}`}>
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border-[2px] ${isActive ? 'bg-white border-white' : 'bg-black border-black'}`}>
+                            {renderFlag(server.countryCode)}
+                          </div>
+                          <div className="flex-1 text-left min-w-0 flex items-center justify-between">
+                            <div className="min-w-0 pr-2">
+                              <p className="text-sm font-black truncate tracking-tight py-0 uppercase leading-tight">{server.name}</p>
+                              <p className={`text-[9px] font-black uppercase tracking-widest mt-0.5 ${isActive ? 'text-emerald-400' : 'text-black/50'}`}>
+                                {protocolLabel(server.protocol, server.transport)}
+                              </p>
+                            </div>
+                            {server.ping !== undefined && (
+                              <span className={`text-[10px] whitespace-nowrap font-black uppercase tracking-widest ${isActive ? 'text-white/80' : pingColor}`}>
+                                {server.ping === -1 ? 'ERROR' : `${server.ping}ms`}
+                              </span>
+                            )}
+                          </div>
+                          {isActive && <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 ml-1 stroke-[3px]" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* Standalone Servers (Custom) */}
+            {(() => {
+              const standalone = servers.filter(
+                s => !s.subscriptionId && 
+                (s.name.toLowerCase().includes(searchQuery.toLowerCase()) || s.countryCode?.toLowerCase() === searchQuery.toLowerCase())
+              );
+              
+              if (standalone.length === 0) return null;
+
+              return (
+                <div className="w-full mt-2">
+                  <button
+                    onClick={() => setCollapsedGroups(prev => ({ ...prev, '__custom__': !prev['__custom__'] }))}
+                    className="w-full flex items-center justify-between bg-white border-[3px] border-black rounded-xl p-2.5 mb-2 shadow-[2px_2px_0_#000] cursor-pointer hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[3px_3px_0_#000] active:translate-x-[1px] active:translate-y-[1px] active:shadow-[1px_1px_0_#000] transition-all">
+                    <div className="flex items-center gap-2 min-w-0 pr-2" onClick={(e) => { e.stopPropagation(); setCollapsedGroups(prev => ({ ...prev, '__custom__': !prev['__custom__'] })); }}>
+                      <ChevronDown className={`w-4 h-4 text-black shrink-0 stroke-[3px] transition-transform duration-300 ${collapsedGroups['__custom__'] ? '-rotate-90' : 'rotate-0'}`} />
+                      <SettingsIcon className="w-3.5 h-3.5 text-black shrink-0 stroke-[3px]" />
+                      <span className="text-[10px] font-black text-black uppercase tracking-widest truncate">
+                        Custom Servers
+                      </span>
+                      <span className="text-[9px] font-black bg-black text-white px-1.5 py-0.5 rounded-md uppercase tracking-widest shrink-0">
+                        {standalone.length}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button onClick={(e) => { e.stopPropagation(); handleTestCustomServers(); }}
+                        className="h-6 px-2 flex items-center justify-center gap-1 bg-emerald-400 border-[2px] border-black rounded-lg text-black cursor-pointer hover:bg-black hover:text-white transition-colors">
+                        <Activity className="w-3 h-3 stroke-[3px]" />
+                        <span className="text-[9px] font-black tracking-widest uppercase">Test</span>
+                      </button>
+                      <button onClick={(e) => { 
+                          e.stopPropagation(); 
+                          if(confirm('Delete all custom servers?')) {
+                            removeAllManualServers();
+                            addLog('info', 'Removed all custom servers');
+                          }
+                        }}
+                        className="w-6 h-6 flex items-center justify-center bg-danger border-[2px] border-black rounded-lg text-white cursor-pointer hover:bg-black transition-colors">
+                        <Trash2 className="w-3 h-3 stroke-[3px]" />
+                      </button>
+                    </div>
+                  </button>
+                  {!collapsedGroups['__custom__'] && (
+                  <div className="flex flex-col gap-2 pl-2 border-l-[3px] border-black/10 ml-2">
+                    {standalone.map((server) => {
+                      const isActive = activeServer?.id === server.id;
+                      const pingColor = server.ping && server.ping > 0
+                        ? server.ping < 100 ? 'text-emerald-600' : server.ping < 300 ? 'text-amber-600' : 'text-red-600'
+                        : server.ping === -1 ? 'text-red-600' : 'text-black/40';
+                      
+                      return (
+                        <button key={server.id} onClick={() => handleServerSelect(server)}
+                          className={`w-full p-2.5 rounded-2xl flex items-center gap-3 transition-all duration-150 overflow-hidden relative cursor-pointer
+                            ${isActive 
+                              ? 'bg-black text-white border-[3px] border-black shadow-[4px_4px_0_rgba(0,0,0,0.4)] translate-x-[-1px] translate-y-[-1px]' 
+                              : 'bg-white text-black border-[3px] border-black shadow-[2px_2px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[4px_4px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none'}`}>
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border-[2px] ${isActive ? 'bg-white border-white' : 'bg-black border-black'}`}>
+                            {renderFlag(server.countryCode)}
+                          </div>
+                          <div className="flex-1 text-left min-w-0 flex items-center justify-between mr-1">
+                            <div className="min-w-0 pr-1 truncate">
+                              <p className="text-sm font-black truncate tracking-tight py-0 uppercase leading-tight">{server.name}</p>
+                              <p className={`text-[9px] font-black uppercase tracking-widest mt-0.5 ${isActive ? 'text-emerald-400' : 'text-black/50'}`}>
+                                {protocolLabel(server.protocol, server.transport)}
+                              </p>
+                            </div>
+                            {server.ping !== undefined && (
+                              <span className={`text-[10px] whitespace-nowrap font-black uppercase tracking-widest pl-1 shrink-0 ${isActive ? 'text-white/80' : pingColor}`}>
+                                {server.ping === -1 ? 'ERROR' : `${server.ping}ms`}
+                              </span>
+                            )}
+                          </div>
+                          
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button onClick={(e) => {
+                                e.stopPropagation();
+                                if(confirm(`Delete custom server "${server.name}"?`)) {
+                                  if (activeServer?.id === server.id) {
+                                    handleConnect(); // disconnect first
+                                    setActiveServer(null);
+                                  }
+                                  removeServer(server.id);
+                                }
+                              }}
+                              className="w-8 h-8 flex items-center justify-center bg-danger/10 hover:bg-danger text-danger hover:text-white rounded-xl transition-colors cursor-pointer"
+                              title="Delete server">
+                              <Trash2 className="w-4 h-4 stroke-[3px]" />
+                            </button>
+                            {isActive && <CheckCircle2 className="w-5 h-5 text-emerald-400 stroke-[3px]" />}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
         </div>
         )}
       </div>
@@ -915,66 +1248,6 @@ export default function Dashboard() {
           <div ref={logsEndRef} />
         </div>
       </div>
-
-      {/* ── SERVER PICKER MODAL ── */}
-      {showServerPicker && (
-        <div className="absolute inset-0 z-50 flex flex-col bg-bg-primary">
-          <div className="flex items-center justify-between p-6 border-b-[4px] border-black bg-white">
-            <h2 className="text-2xl font-black text-black tracking-tighter uppercase">Select Server</h2>
-            <button onClick={() => setShowServerPicker(false)}
-              className="w-10 h-10 bg-black hover:bg-black/80 rounded-xl flex items-center justify-center text-white border-[3px] border-black shadow-[2px_2px_0_#000] cursor-pointer active:translate-x-1 active:translate-y-1 active:shadow-none">
-              <X className="w-6 h-6 stroke-[3px]" />
-            </button>
-          </div>
-          <div className="px-6 py-6 flex-1 flex flex-col min-h-0">
-            <div className="relative w-full mb-6 shrink-0">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-6 h-6 text-black stroke-[3px]" />
-              <input type="text" placeholder="Search servers..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-white border-[4px] border-black shadow-[4px_4px_0_#000] rounded-2xl pl-12 pr-4 py-4 text-sm font-black text-black focus:outline-none focus:translate-x-[-2px] focus:translate-y-[-2px] focus:shadow-[6px_6px_0_#000] placeholder:text-black/40 uppercase" />
-            </div>
-            <div className="flex-1 overflow-y-auto pr-2 space-y-4">
-              {servers.length === 0 ? (
-                <div className="text-center py-12 bg-white border-[4px] border-black shadow-[4px_4px_0_#000] rounded-3xl">
-                  <p className="text-black font-black uppercase text-xl">No servers available.</p>
-                  <p className="text-xs text-black/60 mt-2 font-black uppercase">Go to the Servers tab to add a link.</p>
-                </div>
-              ) : (
-                servers
-                  .filter(s => s.name.toLowerCase().includes(searchQuery.toLowerCase()) || s.countryCode?.toLowerCase() === searchQuery.toLowerCase())
-                  .map((server) => {
-                    const isActive = activeServer?.id === server.id;
-                    const pingColor = server.ping
-                      ? server.ping < 100 ? 'text-emerald-700' : server.ping < 300 ? 'text-amber-700' : 'text-red-700'
-                      : 'text-black/50';
-                    return (
-                      <button key={server.id} onClick={() => handleServerSelect(server)}
-                        className={`w-full p-4 rounded-3xl flex items-center gap-4 transition-all duration-150 overflow-hidden relative cursor-pointer
-                          ${isActive ? 'bg-black text-white border-[4px] border-black scale-[1.02] shadow-[6px_6px_0_rgba(0,0,0,0.4)]' : 'bg-white text-black border-[4px] border-black shadow-[4px_4px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-[2px_2px_0_#000]'}`}>
-                        <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 border-[3px] ${isActive ? 'bg-white border-white' : 'bg-black border-black'}`}>
-                          {renderFlag(server.countryCode)}
-                        </div>
-                        <div className="flex-1 text-left min-w-0">
-                          <p className="text-lg font-black truncate tracking-tighter uppercase leading-none">{server.name}</p>
-                          <p className={`text-[10px] font-black uppercase tracking-widest mt-2 ${isActive ? 'text-white/60' : 'text-black/50'}`}>
-                            {protocolLabel(server.protocol, server.transport)}
-                          </p>
-                        </div>
-                        {server.ping && (
-                          <span className={`text-sm font-black uppercase tracking-widest ${isActive ? 'text-white' : pingColor}`}>
-                            {server.ping}ms
-                          </span>
-                        )}
-                        {isActive && <CheckCircle2 className="w-6 h-6 text-white shrink-0 ml-2 stroke-[3px]" />}
-                      </button>
-                    );
-                  })
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
