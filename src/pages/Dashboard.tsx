@@ -104,6 +104,7 @@ export default function Dashboard() {
   const logsEndRef = useRef<HTMLDivElement>(null);
   const [quickInput, setQuickInput] = useState('');
   const [quickImporting, setQuickImporting] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
 
   // Auto-ping unpinged servers on mount
   useEffect(() => {
@@ -687,67 +688,6 @@ export default function Dashboard() {
     } catch { /* */ }
   }, []);
 
-  // One-click clipboard add: read clipboard, show confirm, auto-add
-  const handleQuickClipboardAdd = useCallback(async () => {
-    try {
-      const text = await navigator.clipboard.readText();
-      const trimmed = text?.trim();
-      if (!trimmed) {
-        addLog('warning', 'Clipboard is empty');
-        return;
-      }
-      
-      // Determine what it is
-      let label = trimmed;
-      if (trimmed.length > 60) label = trimmed.substring(0, 60) + '...';
-      
-      const isSubscription = /^https?:\/\//.test(trimmed);
-      const isProxy = /^(vless|vmess|trojan|ss|hy2|tuic|wg):\/\//.test(trimmed);
-      
-      if (!isSubscription && !isProxy) {
-        addLog('error', 'Clipboard doesn\'t contain a valid link');
-        return;
-      }
-      
-      const type = isSubscription ? 'subscription' : 'proxy server';
-      const ok = confirm(`Add ${type} from clipboard?\n\n${label}`);
-      if (!ok) return;
-      
-      setQuickInput(trimmed);
-      // Use setTimeout to let state update, then trigger add
-      setTimeout(() => {
-        // Inline the add logic
-        (async () => {
-          setQuickImporting(true);
-          try {
-            if (isSubscription) {
-              const sub = await fetchSubscription(trimmed);
-              addSubscription(sub);
-              if (sub.servers.length > 0 && !useAppStore.getState().activeServer) {
-                setActiveServer(sub.servers[0]);
-              }
-              addLog('success', `Added subscription: ${sub.servers.length} servers`);
-            } else {
-              const server = parseProxyLink(trimmed);
-              if (server) {
-                addServer(server);
-                addLog('success', `Added server: ${server.name}`);
-              } else {
-                addLog('error', 'Invalid proxy link format');
-              }
-            }
-          } catch (err: any) {
-            addLog('error', `Error: ${err.message || err}`);
-          } finally {
-            setQuickImporting(false);
-            setQuickInput('');
-          }
-        })();
-      }, 50);
-    } catch {
-      addLog('error', 'Failed to read clipboard');
-    }
-  }, [addLog, addSubscription, addServer, setActiveServer]);
 
   const handleTestSubscription = async (sub: any) => {
     try {
@@ -814,13 +754,45 @@ export default function Dashboard() {
 
         {/* + Add button in top-right corner */}
         <button
-          onClick={handleQuickClipboardAdd}
+          onClick={() => { setShowAddModal(!showAddModal); if (!showAddModal) { handleQuickPaste(); } }}
           disabled={quickImporting}
           className="absolute top-4 right-4 z-30 w-10 h-10 flex items-center justify-center bg-white border-[3px] border-black rounded-xl shadow-[3px_3px_0_#000] cursor-pointer hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[4px_4px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none transition-all disabled:opacity-50"
-          title="Add from clipboard"
+          title="Add server or subscription"
         >
           {quickImporting ? <Loader2 className="w-5 h-5 text-black animate-spin stroke-[3px]" /> : <Plus className="w-5 h-5 text-black stroke-[3px]" />}
         </button>
+
+        {/* Add Modal Popup */}
+        {showAddModal && (
+          <div className="absolute top-16 right-4 z-40 w-72 bg-white border-[3px] border-black rounded-2xl p-4 shadow-[6px_6px_0_#000] animate-slide-up space-y-3">
+            <p className="text-[10px] font-black text-black uppercase tracking-widest">Add subscription or server</p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={quickInput}
+                onChange={(e) => setQuickInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { handleQuickAdd(); setShowAddModal(false); } }}
+                autoFocus
+                placeholder="https://... or vless://..."
+                className="flex-1 min-w-0 bg-gray-50 border-[2px] border-black rounded-lg px-3 py-2 text-xs text-black placeholder:text-black/30 focus:outline-none font-bold tracking-tight"
+              />
+              <button
+                onClick={handleQuickPaste}
+                className="w-9 h-9 flex items-center justify-center bg-white border-[2px] border-black rounded-lg cursor-pointer hover:bg-black hover:text-white transition-colors shrink-0"
+                title="Paste from clipboard"
+              >
+                <ClipboardPaste className="w-4 h-4 stroke-[2.5px]" />
+              </button>
+            </div>
+            <button
+              onClick={() => { handleQuickAdd(); setShowAddModal(false); }}
+              disabled={quickImporting || !quickInput.trim()}
+              className="w-full py-2.5 bg-black text-white border-[2px] border-black rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer shadow-[3px_3px_0_#000] hover:-translate-y-0.5 hover:shadow-[4px_4px_0_#000] active:translate-y-1 active:shadow-none transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {quickImporting ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Adding...</> : <><Plus className="w-3.5 h-3.5 stroke-[3px]" /> Add</>}
+            </button>
+          </div>
+        )}
 
         {/* ══════════════════════════════════════════════ */}
         {/*  ONBOARDING: show only when zero servers      */}
@@ -924,15 +896,23 @@ export default function Dashboard() {
                     ? 'bg-white text-black shadow-[8px_8px_0_#000] hover:shadow-[10px_10px_0_#000] hover:-translate-y-1 hover:-translate-x-1 active:shadow-[2px_2px_0_#000] active:translate-y-[6px] active:translate-x-[6px]'
                     : 'bg-white/50 text-black/30 shadow-[4px_4px_0_rgba(0,0,0,0.3)]'
               }`}>
-              <Power className={`w-16 h-16 transition-all duration-300 stroke-[3px] ${isConnecting ? 'animate-pulse' : 'group-hover:scale-110 group-hover:rotate-[15deg]'}`} />
+              <Power className={`w-16 h-16 transition-all duration-300 stroke-[3px] ${isConnecting ? 'animate-pulse' : ''}`} />
             </div>
           </button>
           
           {/* Status Label */}
-          <p className={`text-sm font-black mt-3 tracking-widest uppercase transition-all duration-300
-            ${isConnected ? 'text-emerald-700' : isConnecting ? 'text-amber-600' : 'text-text-on-orange-muted/60'}`}>
-            {isConnected ? `${t('connected')} · ${formatDuration(connectTime)}` : isConnecting ? t('connecting') : t('connect')}
-          </p>
+          {isConnected ? (
+            <div className="mt-4 px-5 py-2.5 bg-black rounded-2xl border-[3px] border-black shadow-[4px_4px_0_rgba(0,0,0,0.3)]">
+              <p className="text-base font-black tracking-widest uppercase text-emerald-400 text-center">
+                {t('connected')} · {formatDuration(connectTime)}
+              </p>
+            </div>
+          ) : (
+            <p className={`text-lg font-black mt-4 tracking-widest uppercase transition-all duration-300
+              ${isConnecting ? 'text-amber-600 animate-pulse' : 'text-black/40'}`}>
+              {isConnecting ? t('connecting') : t('connect')}
+            </p>
+          )}
         </div>
 
         {/* ── STATS CARDS (when connected) ── */}

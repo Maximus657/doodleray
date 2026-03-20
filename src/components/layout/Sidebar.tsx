@@ -1,7 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import {
-  Zap,
   Home,
   Clock,
   Settings,
@@ -50,18 +49,12 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="w-[80px] h-full bg-black flex flex-col items-center py-6 border-r-[4px] border-black/20">
-      {/* Logo + connection status indicator */}
-      <div className="mb-8 relative shrink-0">
-        <div
-          className={`flex items-center justify-center w-12 h-12 rounded-xl shadow-[4px_4px_0_rgba(255,255,255,0.2)] bg-bg-primary border-[3px] border-white ${availableUpdate ? 'cursor-pointer' : ''}`}
-          onClick={() => availableUpdate && setShowUpdatePopup(!showUpdatePopup)}
-        >
-          <Zap className="w-6 h-6 text-black stroke-[3px]" />
-        </div>
+    <aside className="w-[92px] h-full bg-black flex flex-col items-center py-4 border-r-[4px] border-black/20 text-white">
+      {/* Connection status indicator + update badge */}
+      <div className="mb-4 relative shrink-0 w-12 h-4 flex items-center justify-center">
         {/* Green dot = connected, amber pulse = connecting */}
         {(isConnected || isConnecting) && (
-          <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-[3px] border-black
+          <div className={`w-3 h-3 rounded-full border-[2px] border-white/30
             ${isConnected ? 'bg-[#4ade80]' : 'bg-[#fbbf24] animate-pulse'}`} />
         )}
         {/* Update badge */}
@@ -97,13 +90,13 @@ export function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex flex-col gap-3 flex-1 w-full px-3">
+      <nav className="flex flex-col gap-3 flex-1 w-full items-center">
         {NAV_ITEMS.map(({ path, icon: Icon, labelKey }) => (
           <NavLink
             key={path}
             to={path}
             className={({ isActive }) =>
-              `group relative flex flex-col items-center justify-center w-full h-16 rounded-2xl transition-all duration-150 overflow-hidden cursor-pointer gap-1
+              `group relative flex flex-col items-center justify-center w-16 h-16 rounded-2xl transition-all duration-150 overflow-hidden cursor-pointer gap-1
               ${
                 isActive
                   ? 'bg-bg-primary border-[3px] border-black shadow-[4px_4px_0_rgba(255,255,255,0.2)]'
@@ -114,7 +107,7 @@ export function Sidebar() {
             {({ isActive }) => (
               <>
                 <Icon className={`w-5 h-5 relative z-10 transition-transform stroke-[2.5px] ${isActive ? 'scale-110 text-black' : 'group-hover:scale-110'}`} />
-                <span className={`text-[7px] font-black uppercase tracking-wide relative z-10 leading-none truncate max-w-full px-1 ${isActive ? 'text-black' : ''}`}>
+                <span className={`text-[7px] font-black uppercase tracking-wider relative z-10 leading-none text-center whitespace-nowrap ${isActive ? 'text-black' : ''}`}>
                   {t(labelKey as any)}
                 </span>
                 <div className={`absolute left-0 top-1/2 -translate-y-1/2 w-1.5 h-1/2 bg-black rounded-r-full transition-all duration-300 ${isActive ? 'opacity-100 scale-y-100' : 'opacity-0 scale-y-0'}`} />
@@ -133,7 +126,7 @@ export function Sidebar() {
             window.close();
           }
         }}
-        className="group relative flex items-center justify-center w-14 h-14 rounded-2xl bg-black text-danger hover:bg-danger hover:text-black border-[3px] border-danger hover:border-black shadow-[4px_4px_0_rgba(248,113,113,0.3)] hover:shadow-[4px_4px_0_#f87171] transition-all duration-150 cursor-pointer mb-4"
+        className="group relative flex items-center justify-center w-16 h-16 rounded-2xl bg-black text-danger hover:bg-danger hover:text-black border-[3px] border-danger hover:border-black shadow-[4px_4px_0_rgba(248,113,113,0.3)] hover:shadow-[4px_4px_0_#f87171] transition-all duration-150 cursor-pointer mb-4"
         title="Quit DoodleRay"
       >
         <LogOut className="w-6 h-6 transition-transform group-hover:scale-110 stroke-[2.5px]" />
