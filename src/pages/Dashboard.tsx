@@ -107,6 +107,7 @@ export default function Dashboard() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [testingSubId, setTestingSubId] = useState<string | null>(null);
   const [refreshingSubId, setRefreshingSubId] = useState<string | null>(null);
+  const [pingingServerId, setPingingServerId] = useState<string | null>(null);
 
   // Auto-ping unpinged servers on mount
   useEffect(() => {
@@ -699,6 +700,7 @@ export default function Dashboard() {
       addLog('warning', `Testing ${serversToUpdate.length} servers...`);
       for (const s of serversToUpdate) {
         if (!s.address) continue;
+        setPingingServerId(s.id);
         const res: { latency: number } = await invoke('ping_server', { host: s.address, port: s.port || 443 });
         if (res.latency > 0) {
           useAppStore.getState().updateServerPing(s.id, res.latency);
@@ -708,6 +710,7 @@ export default function Dashboard() {
       }
       addLog('success', 'Ping test complete');
     } catch { /* */ } finally {
+      setPingingServerId(null);
       setTestingSubId(null);
     }
   };
@@ -734,6 +737,7 @@ export default function Dashboard() {
       addLog('warning', `Testing ${customServers.length} custom servers...`);
       for (const s of customServers) {
         if (!s.address) continue;
+        setPingingServerId(s.id);
         const res: { latency: number } = await invoke('ping_server', { host: s.address, port: s.port || 443 });
         if (res.latency > 0) {
           useAppStore.getState().updateServerPing(s.id, res.latency);
@@ -743,6 +747,7 @@ export default function Dashboard() {
       }
       addLog('success', 'Custom servers ping test complete');
     } catch { /* */ } finally {
+      setPingingServerId(null);
       setTestingSubId(null);
     }
   };
@@ -1083,9 +1088,16 @@ export default function Dashboard() {
                               </p>
                             </div>
                             {server.ping !== undefined && (
-                              <span className={`text-[10px] whitespace-nowrap font-black uppercase tracking-widest ${isActive ? 'text-white/80' : pingColor}`}>
-                                {server.ping === -1 ? 'ERROR' : `${server.ping}ms`}
-                              </span>
+                              pingingServerId === server.id ? (
+                                <Loader2 className={`w-4 h-4 animate-spin shrink-0 ${isActive ? 'text-white/80' : 'text-black/40'}`} />
+                              ) : (
+                                <span className={`text-[10px] whitespace-nowrap font-black uppercase tracking-widest ${isActive ? 'text-white/80' : pingColor}`}>
+                                  {server.ping === -1 ? 'ERROR' : `${server.ping}ms`}
+                                </span>
+                              )
+                            )}
+                            {server.ping === undefined && pingingServerId === server.id && (
+                              <Loader2 className={`w-4 h-4 animate-spin shrink-0 ${isActive ? 'text-white/80' : 'text-black/40'}`} />
                             )}
                           </div>
                           {isActive && <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 ml-1 stroke-[3px]" />}
