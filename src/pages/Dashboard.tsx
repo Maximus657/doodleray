@@ -105,6 +105,8 @@ export default function Dashboard() {
   const [quickInput, setQuickInput] = useState('');
   const [quickImporting, setQuickImporting] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [testingSubId, setTestingSubId] = useState<string | null>(null);
+  const [refreshingSubId, setRefreshingSubId] = useState<string | null>(null);
 
   // Auto-ping unpinged servers on mount
   useEffect(() => {
@@ -690,6 +692,7 @@ export default function Dashboard() {
 
 
   const handleTestSubscription = async (sub: any) => {
+    setTestingSubId(sub.id);
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       const serversToUpdate = servers.filter(s => s.subscriptionId === sub.id);
@@ -704,10 +707,13 @@ export default function Dashboard() {
         }
       }
       addLog('success', 'Ping test complete');
-    } catch { /* */ }
+    } catch { /* */ } finally {
+      setTestingSubId(null);
+    }
   };
   
   const handleUpdateSubscription = async (sub: any) => {
+    setRefreshingSubId(sub.id);
     try {
       addLog('info', `Updating subscription: ${sub.name}...`);
       const updated = await refreshSubscription(sub);
@@ -715,10 +721,13 @@ export default function Dashboard() {
       addLog('success', `Updated ${sub.name}: ${updated.servers.length} servers`);
     } catch (err: any) {
       addLog('error', `Failed to update ${sub.name}: ${err.message || err}`);
+    } finally {
+      setRefreshingSubId(null);
     }
   };
 
   const handleTestCustomServers = async () => {
+    setTestingSubId('__custom__');
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       const customServers = servers.filter(s => !s.subscriptionId);
@@ -733,7 +742,9 @@ export default function Dashboard() {
         }
       }
       addLog('success', 'Custom servers ping test complete');
-    } catch { /* */ }
+    } catch { /* */ } finally {
+      setTestingSubId(null);
+    }
   };
 
   const renderFlag = (code?: string) => {
@@ -1024,14 +1035,16 @@ export default function Dashboard() {
                       </span>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0 px-1">
-                      <button onClick={() => handleUpdateSubscription(sub)} 
-                        className="w-7 h-7 flex items-center justify-center bg-white border-[2px] border-black rounded-lg cursor-pointer text-black transition-all shadow-[2px_2px_0_#000] hover:-translate-y-[1px] hover:-translate-x-[1px] hover:shadow-[3px_3px_0_#000] active:translate-y-[1px] active:translate-x-[1px] active:shadow-none" title="Refresh Subscription">
-                        <RefreshCw className="w-3.5 h-3.5 stroke-[3px]" />
+                      <button onClick={() => handleUpdateSubscription(sub)}
+                        disabled={refreshingSubId === sub.id}
+                        className={`w-7 h-7 flex items-center justify-center bg-white border-[2px] border-black rounded-lg cursor-pointer text-black transition-all shadow-[2px_2px_0_#000] hover:-translate-y-[1px] hover:-translate-x-[1px] hover:shadow-[3px_3px_0_#000] active:translate-y-[1px] active:translate-x-[1px] active:shadow-none ${refreshingSubId === sub.id ? 'opacity-70 cursor-wait' : ''}`} title="Refresh Subscription">
+                        <RefreshCw className={`w-3.5 h-3.5 stroke-[3px] ${refreshingSubId === sub.id ? 'animate-spin' : ''}`} />
                       </button>
                       <button onClick={() => handleTestSubscription(sub)}
-                        className="h-7 px-2.5 flex items-center justify-center gap-1 bg-emerald-400 border-[2px] border-black rounded-lg text-black cursor-pointer transition-all shadow-[2px_2px_0_#000] hover:-translate-y-[1px] hover:-translate-x-[1px] hover:shadow-[3px_3px_0_#000] active:translate-y-[1px] active:translate-x-[1px] active:shadow-none" title="Test Latency">
-                        <Activity className="w-3.5 h-3.5 stroke-[3px]" />
-                        <span className="text-[10px] font-black tracking-widest uppercase">Test</span>
+                        disabled={testingSubId === sub.id}
+                        className={`h-7 px-2.5 flex items-center justify-center gap-1 bg-emerald-400 border-[2px] border-black rounded-lg text-black cursor-pointer transition-all shadow-[2px_2px_0_#000] hover:-translate-y-[1px] hover:-translate-x-[1px] hover:shadow-[3px_3px_0_#000] active:translate-y-[1px] active:translate-x-[1px] active:shadow-none ${testingSubId === sub.id ? 'opacity-70 cursor-wait' : ''}`} title="Test Latency">
+                        {testingSubId === sub.id ? <Loader2 className="w-3.5 h-3.5 stroke-[3px] animate-spin" /> : <Activity className="w-3.5 h-3.5 stroke-[3px]" />}
+                        <span className="text-[10px] font-black tracking-widest uppercase">{testingSubId === sub.id ? 'Testing...' : 'Test'}</span>
                       </button>
                       <button onClick={() => { 
                           if(confirm(`Delete subscription "${sub.name}" and all its servers?`)) {
@@ -1109,9 +1122,10 @@ export default function Dashboard() {
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0 px-1">
                       <button onClick={() => handleTestCustomServers()}
-                        className="h-7 px-2.5 flex items-center justify-center gap-1 bg-emerald-400 border-[2px] border-black rounded-lg text-black cursor-pointer transition-all shadow-[2px_2px_0_#000] hover:-translate-y-[1px] hover:-translate-x-[1px] hover:shadow-[3px_3px_0_#000] active:translate-y-[1px] active:translate-x-[1px] active:shadow-none" title="Test Latency">
-                        <Activity className="w-3.5 h-3.5 stroke-[3px]" />
-                        <span className="text-[10px] font-black tracking-widest uppercase">Test</span>
+                        disabled={testingSubId === '__custom__'}
+                        className={`h-7 px-2.5 flex items-center justify-center gap-1 bg-emerald-400 border-[2px] border-black rounded-lg text-black cursor-pointer transition-all shadow-[2px_2px_0_#000] hover:-translate-y-[1px] hover:-translate-x-[1px] hover:shadow-[3px_3px_0_#000] active:translate-y-[1px] active:translate-x-[1px] active:shadow-none ${testingSubId === '__custom__' ? 'opacity-70 cursor-wait' : ''}`} title="Test Latency">
+                        {testingSubId === '__custom__' ? <Loader2 className="w-3.5 h-3.5 stroke-[3px] animate-spin" /> : <Activity className="w-3.5 h-3.5 stroke-[3px]" />}
+                        <span className="text-[10px] font-black tracking-widest uppercase">{testingSubId === '__custom__' ? 'Testing...' : 'Test'}</span>
                       </button>
                       <button onClick={() => { 
                           if(confirm('Delete all custom servers?')) {
