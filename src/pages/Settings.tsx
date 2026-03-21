@@ -285,7 +285,7 @@ export default function Settings() {
             </div>
 
             {/* Windows Defender exclusion */}
-            <button onClick={handleDefenderExclusion} disabled={defenderLoading} className={`group flex items-center gap-4 bg-white border-[3px] border-black shadow-[4px_4px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none p-5 rounded-2xl transition-all cursor-pointer text-left col-span-full ${defenderLoading ? 'opacity-60 cursor-wait' : ''}`}>
+            <button onClick={handleDefenderExclusion} disabled={defenderLoading} className={`group flex items-center gap-4 bg-white border-[3px] border-black shadow-[4px_4px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none p-5 rounded-2xl transition-all cursor-pointer text-left mt-4 col-span-full ${defenderLoading ? 'opacity-60 cursor-wait' : ''}`}>
               <div className={`w-12 h-12 rounded-xl border-[3px] border-black ${defenderStatus?.startsWith('✓') ? 'bg-emerald-500' : 'bg-emerald-400'} text-black flex items-center justify-center shrink-0`}>
                 <ShieldCheck className={`w-6 h-6 stroke-[3px] transition-transform duration-300 group-hover:scale-110 ${defenderLoading ? 'animate-pulse' : ''}`} />
               </div>

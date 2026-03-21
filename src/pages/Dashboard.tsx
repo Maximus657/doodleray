@@ -1047,7 +1047,11 @@ export default function Dashboard() {
                       </button>
                       <button onClick={() => handleTestSubscription(sub)}
                         disabled={testingSubId === sub.id}
-                        className={`h-7 px-2.5 flex items-center justify-center gap-1 bg-emerald-400 border-[2px] border-black rounded-lg text-black cursor-pointer transition-all shadow-[2px_2px_0_#000] hover:-translate-y-[1px] hover:-translate-x-[1px] hover:shadow-[3px_3px_0_#000] active:translate-y-[1px] active:translate-x-[1px] active:shadow-none ${testingSubId === sub.id ? 'opacity-70 cursor-wait' : ''}`} title="Test Latency">
+                        className={`h-7 px-2.5 flex items-center justify-center gap-1 border-[2px] border-black rounded-lg cursor-pointer transition-all shadow-[2px_2px_0_#000] ${
+                          testingSubId === sub.id 
+                            ? 'bg-amber-400 animate-pulse text-black cursor-wait' 
+                            : 'bg-emerald-400 text-black hover:-translate-y-[1px] hover:-translate-x-[1px] hover:shadow-[3px_3px_0_#000] active:translate-y-[1px] active:translate-x-[1px] active:shadow-none'
+                        }`} title="Test Latency">
                         {testingSubId === sub.id ? <Loader2 className="w-3.5 h-3.5 stroke-[3px] animate-spin" /> : <Activity className="w-3.5 h-3.5 stroke-[3px]" />}
                         <span className="text-[10px] font-black tracking-widest uppercase">{testingSubId === sub.id ? 'Testing...' : 'Test'}</span>
                       </button>
@@ -1135,7 +1139,11 @@ export default function Dashboard() {
                     <div className="flex items-center gap-1.5 shrink-0 px-1">
                       <button onClick={() => handleTestCustomServers()}
                         disabled={testingSubId === '__custom__'}
-                        className={`h-7 px-2.5 flex items-center justify-center gap-1 bg-emerald-400 border-[2px] border-black rounded-lg text-black cursor-pointer transition-all shadow-[2px_2px_0_#000] hover:-translate-y-[1px] hover:-translate-x-[1px] hover:shadow-[3px_3px_0_#000] active:translate-y-[1px] active:translate-x-[1px] active:shadow-none ${testingSubId === '__custom__' ? 'opacity-70 cursor-wait' : ''}`} title="Test Latency">
+                        className={`h-7 px-2.5 flex items-center justify-center gap-1 border-[2px] border-black rounded-lg cursor-pointer transition-all shadow-[2px_2px_0_#000] ${
+                          testingSubId === '__custom__' 
+                            ? 'bg-amber-400 animate-pulse text-black cursor-wait' 
+                            : 'bg-emerald-400 text-black hover:-translate-y-[1px] hover:-translate-x-[1px] hover:shadow-[3px_3px_0_#000] active:translate-y-[1px] active:translate-x-[1px] active:shadow-none'
+                        }`} title="Test Latency">
                         {testingSubId === '__custom__' ? <Loader2 className="w-3.5 h-3.5 stroke-[3px] animate-spin" /> : <Activity className="w-3.5 h-3.5 stroke-[3px]" />}
                         <span className="text-[10px] font-black tracking-widest uppercase">{testingSubId === '__custom__' ? 'Testing...' : 'Test'}</span>
                       </button>
