@@ -701,15 +701,19 @@ export default function Dashboard() {
       for (const s of serversToUpdate) {
         if (!s.address) continue;
         setPingingServerId(s.id);
-        const res: { latency: number } = await invoke('ping_server', { host: s.address, port: s.port || 443 });
-        if (res.latency > 0) {
-          useAppStore.getState().updateServerPing(s.id, res.latency);
-        } else {
+        try {
+          const result: any = await invoke('ping_server', {
+            address: s.address, port: s.port || 443, serverId: s.id,
+          });
+          useAppStore.getState().updateServerPing(s.id, result.ping_ms);
+        } catch {
           useAppStore.getState().updateServerPing(s.id, -1);
         }
       }
       addLog('success', 'Ping test complete');
-    } catch { /* */ } finally {
+    } catch (err: any) {
+      addLog('error', `Ping test failed: ${err?.message || err}`);
+    } finally {
       setPingingServerId(null);
       setTestingSubId(null);
     }
@@ -738,15 +742,19 @@ export default function Dashboard() {
       for (const s of customServers) {
         if (!s.address) continue;
         setPingingServerId(s.id);
-        const res: { latency: number } = await invoke('ping_server', { host: s.address, port: s.port || 443 });
-        if (res.latency > 0) {
-          useAppStore.getState().updateServerPing(s.id, res.latency);
-        } else {
+        try {
+          const result: any = await invoke('ping_server', {
+            address: s.address, port: s.port || 443, serverId: s.id,
+          });
+          useAppStore.getState().updateServerPing(s.id, result.ping_ms);
+        } catch {
           useAppStore.getState().updateServerPing(s.id, -1);
         }
       }
       addLog('success', 'Custom servers ping test complete');
-    } catch { /* */ } finally {
+    } catch (err: any) {
+      addLog('error', `Custom ping test failed: ${err?.message || err}`);
+    } finally {
       setPingingServerId(null);
       setTestingSubId(null);
     }
