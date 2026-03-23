@@ -224,27 +224,9 @@ export default function Dashboard() {
         const lines: string[] = await invoke('get_proxy_logs');
         for (const line of lines) {
           if (!line.trim()) continue;
-          // Helper to identify apps by IP or domain
-          const identifyTarget = (addr: string) => {
-            const lower = addr.toLowerCase();
-            if (lower.includes('149.154.') || lower.includes('91.108.') || lower.includes('95.161.')) return `[Telegram] ${addr}`;
-            if (lower.includes('discord') || lower.includes('162.159.')) return `[Discord] ${addr}`;
-            if (lower.includes('spotify') || lower.includes('scdn.co')) return `[Spotify] ${addr}`;
-            if (lower.includes('vkvideo') || lower.includes('vk.com')) return `[VK] ${addr}`;
-            if (lower.includes('google') || lower.includes('youtube') || lower.includes('ytimg') || lower.includes('googlevideo')) return `[Google] ${addr}`;
-            return addr;
-          };
-
-          // Extract useful info from xray log lines
-          const tunnelingMatch = line.match(/tunneling request to tcp:([^\s]+)/);
-          if (tunnelingMatch) {
-            addLog('success', `→ ${identifyTarget(tunnelingMatch[1])}`);
-            continue;
-          }
           
-          const acceptedMatch = line.match(/accepted (?:tcp|udp):([^\s]+) \[([^\]]+)\]/);
-          if (acceptedMatch) {
-            addLog('info', `⇄ ${identifyTarget(acceptedMatch[1])} [${acceptedMatch[2]}]`);
+          // Ignore routine connection logs to keep things super friendly and simple
+          if (line.match(/tunneling request to tcp|accepted (?:tcp|udp)/)) {
             continue;
           }
           
@@ -277,6 +259,39 @@ export default function Dashboard() {
     }, 1000);
     return () => clearInterval(interval);
   }, [status, addSpeedPoint, setCurrentSpeed, addTraffic]);
+
+  const lastSuggestedRef = useRef<string>('');
+
+  // Point 5: Auto-detect clipboard links
+  useEffect(() => {
+    const checkClipboard = async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        const trimmed = text.trim();
+        if (/^(vless|vmess|trojan|ss|hy2|tuic|wg):\/\//.test(trimmed) || trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+          if (lastSuggestedRef.current !== trimmed) {
+             lastSuggestedRef.current = trimmed;
+             setQuickInput(trimmed);
+             const { useToastStore } = await import('../stores/toast-store');
+             
+             if (useAppStore.getState().servers.length > 0) {
+               setShowAddModal(true);
+             }
+             useToastStore.getState().addToast('Clipboard key detected! Ready to connect.', 'success');
+             addLog('info', 'Found key in clipboard and pre-filled the input.');
+          }
+        }
+      } catch (e) { /* ignore */ }
+    };
+    
+    window.addEventListener('focus', checkClipboard);
+    const timer = setTimeout(checkClipboard, 1500);
+    
+    return () => {
+      window.removeEventListener('focus', checkClipboard);
+      clearTimeout(timer);
+    };
+  }, [addLog]);
 
   // Subscription auto-update
   useEffect(() => {
@@ -357,8 +372,7 @@ export default function Dashboard() {
       }
 
       setConnectedAt(null);
-      addLog('info', `Connecting to ${srv.name} (${srv.address}:${srv.port})`);
-      addLog('info', `Protocol: ${srv.protocol} | Transport: ${srv.transport} | Security: ${srv.security}`);
+      addLog('info', `Starting connection to ${srv.name}...`);
 
       const { networkStack, dnsMode, strictRoute } = useAppStore.getState();
       
@@ -420,11 +434,8 @@ export default function Dashboard() {
 
         if (result.success) {
           addLog('success', result.message);
-          if (proxyMode === 'tun') {
-            addLog('info', `TUN adapter initialized with ${networkStack} stack`);
-          } else {
-            addLog('info', `SOCKS5 → 127.0.0.1:${socksPort} | HTTP → 127.0.0.1:${httpPort}`);
-          }
+          // Human friendly logs
+          addLog('success', 'Protected & Working ✅');
           setStatus('connected');
           setConnectedAt(Date.now());
         } else {
@@ -433,10 +444,8 @@ export default function Dashboard() {
             try {
               const portInfo: any = await invoke('check_port', { port: socksPort });
               if (portInfo.busy) {
-                addLog('error', `⚠ Port ${socksPort} is busy: ${portInfo.process} (PID ${portInfo.pid})`);
-                addLog('warning', 'Attempting to free the port...');
+                addLog('warning', 'Fixing connection route automatically...');
                 await invoke('force_free_port', { port: socksPort });
-                addLog('info', 'Port freed! Retrying connection in 1 second...');
                 await new Promise(r => setTimeout(r, 1000));
                 // Retry
                 const retry: any = await invoke('vpn_connect', {
@@ -926,16 +935,21 @@ export default function Dashboard() {
           
           {/* Status Label */}
           {isConnected ? (
-            <div className="mt-4 px-5 py-2.5 bg-black rounded-2xl border-[3px] border-black shadow-[4px_4px_0_rgba(0,0,0,0.3)]">
-              <p className="text-base font-black tracking-widest uppercase text-emerald-400 text-center">
-                {t('connected')} · {formatDuration(connectTime)}
+            <div className="mt-4 px-6 py-3 bg-black rounded-2xl border-[3px] border-black shadow-[4px_4px_0_rgba(0,0,0,0.3)] hover:-translate-y-0.5 hover:shadow-[6px_6px_0_rgba(0,0,0,0.4)] transition-all">
+              <p className="text-[13px] font-black tracking-widest uppercase text-emerald-400 text-center flex items-center justify-center gap-2">
+                Protected & Working <CheckCircle2 className="w-5 h-5 inline stroke-[3px]" />
+              </p>
+              <p className="text-[10px] text-emerald-400/50 text-center mt-1 uppercase tracking-widest font-bold">
+                Time Valid: {formatDuration(connectTime)}
               </p>
             </div>
           ) : (
-            <p className={`text-lg font-black mt-4 tracking-widest uppercase transition-all duration-300
-              ${isConnecting ? 'text-amber-600 animate-pulse' : 'text-black/40'}`}>
-              {isConnecting ? t('connecting') : t('connect')}
-            </p>
+            <div className={`mt-4 px-6 py-3 rounded-2xl border-[3px] border-transparent transition-all duration-300 ${isConnecting ? 'bg-amber-100/50 border-amber-400/30' : ''}`}>
+              <p className={`text-[13px] font-black tracking-widest uppercase flex items-center justify-center gap-2
+                ${isConnecting ? 'text-amber-600 animate-pulse' : 'text-black/40'}`}>
+                {isConnecting ? <><Loader2 className="w-4 h-4 inline animate-spin stroke-[3px]" /> Connecting...</> : 'Not Connected ❌'}
+              </p>
+            </div>
           )}
         </div>
 
