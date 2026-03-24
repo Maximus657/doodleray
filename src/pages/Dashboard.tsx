@@ -172,14 +172,17 @@ export default function Dashboard() {
       try {
         const text = await navigator.clipboard.readText();
         const trimmed = text.trim();
-        if (/^(vless|vmess|trojan|ss|hy2|tuic|wg):\/\//.test(trimmed) || trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-          if (lastSuggestedRef.current !== trimmed) {
-            lastSuggestedRef.current = trimmed;
-            setQuickInput(trimmed);
+        const isProxyLink = /^(vless|vmess|trojan|ss|hy2|tuic|wg):\/\//.test(trimmed);
+        const isHttpLink = trimmed.startsWith('http://') || trimmed.startsWith('https://');
+        if ((isProxyLink || isHttpLink) && lastSuggestedRef.current !== trimmed) {
+          lastSuggestedRef.current = trimmed;
+          setQuickInput(trimmed);
+          // Only auto-open the popup for actual VPN proxy links (not random https:// URLs)
+          if (isProxyLink) {
             const { useToastStore } = await import('../stores/toast-store');
             if (useAppStore.getState().servers.length > 0) setShowAddModal(true);
             useToastStore.getState().addToast('Clipboard key detected! Ready to connect.', 'success');
-            addLog('info', 'Found key in clipboard and pre-filled the input.');
+            addLog('info', 'Found VPN key in clipboard and pre-filled the input.');
           }
         }
       } catch { /* ignore */ }
