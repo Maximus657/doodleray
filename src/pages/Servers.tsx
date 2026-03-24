@@ -15,7 +15,7 @@ import {
 import { useAppStore } from '../stores/app-store';
 import { parseProxyLink } from '../lib/parser';
 import { fetchSubscription, refreshSubscription } from '../lib/subscription';
-import { formatPing, protocolLabel } from '../lib/utils';
+import { formatPing, protocolLabel, pingServerSmart } from '../lib/utils';
 import type { ServerConfig } from '../stores/app-store';
 import { useTranslation } from '../locales';
 
@@ -54,10 +54,8 @@ export default function Servers() {
         for (const server of unpinged) {
           if (cancelled) break;
           try {
-            const result: any = await invoke('ping_server', {
-              address: server.address, port: server.port, serverId: server.id,
-            });
-            updateServerPing(server.id, result.ping_ms);
+            const ping = await pingServerSmart(server, invoke);
+            updateServerPing(server.id, ping);
           } catch {
             updateServerPing(server.id, -1);
           }
@@ -125,12 +123,8 @@ export default function Servers() {
     const { invoke } = await import('@tauri-apps/api/core');
     for (const server of groupServers) {
       try {
-        const result: any = await invoke('ping_server', {
-          address: server.address,
-          port: server.port,
-          serverId: server.id,
-        });
-        updateServerPing(server.id, result.ping_ms);
+        const ping = await pingServerSmart(server, invoke);
+        updateServerPing(server.id, ping);
       } catch {
         updateServerPing(server.id, -1);
       }

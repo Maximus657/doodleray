@@ -181,6 +181,7 @@ function App() {
             mtu: srv.mtu || null,
             workers: srv.workers || null,
             encryption: srv.encryption || null,
+            raw_xray_config: srv.rawConfig || null,
           }
         });
         

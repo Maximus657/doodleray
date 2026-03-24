@@ -60,3 +60,75 @@ export function formatTime(date: Date): string {
     second: '2-digit',
   });
 }
+
+// Extract all unique server addresses from a raw xray config
+// Used to ping multiple backends for multi-outbound configs (DoodleVPN)
+export function getRawConfigAddresses(rawConfig: any): { address: string; port: number }[] {
+  if (!rawConfig?.outbounds) return [];
+  const seen = new Set<string>();
+  const results: { address: string; port: number }[] = [];
+  for (const ob of rawConfig.outbounds) {
+    // Skip non-proxy outbounds
+    if (['direct', 'block', 'dns', 'freedom', 'blackhole'].includes(ob.protocol)) continue;
+    if (['direct', 'block', 'dns-out', 'api'].includes(ob.tag)) continue;
+    const vnext = ob.settings?.vnext;
+    if (vnext) {
+      for (const v of vnext) {
+        const key = `${v.address}:${v.port}`;
+        if (!seen.has(key) && v.address) {
+          seen.add(key);
+          results.push({ address: v.address, port: v.port || 443 });
+        }
+      }
+    }
+    const servers = ob.settings?.servers;
+    if (servers) {
+      for (const s of servers) {
+        const key = `${s.address}:${s.port}`;
+        if (!seen.has(key) && s.address) {
+          seen.add(key);
+          results.push({ address: s.address, port: s.port || 443 });
+        }
+      }
+    }
+  }
+  return results;
+}
+
+// Smart ping: for servers with rawConfig (multi-outbound), try all backend
+// addresses and return the best ping. Falls back to primary address for simple servers.
+export async function pingServerSmart(
+  server: { address: string; port: number; id: string; rawConfig?: any },
+  invoke: (cmd: string, args: any) => Promise<any>
+): Promise<number> {
+  // Collect addresses to try: primary first, then all from rawConfig
+  const addresses: { address: string; port: number }[] = [
+    { address: server.address, port: server.port },
+  ];
+
+  if (server.rawConfig) {
+    const extras = getRawConfigAddresses(server.rawConfig);
+    for (const e of extras) {
+      if (e.address !== server.address || e.port !== server.port) {
+        addresses.push(e);
+      }
+    }
+  }
+
+  // Try all addresses, return best ping
+  let bestPing = -1;
+  for (const addr of addresses) {
+    try {
+      const result: any = await invoke('ping_server', {
+        address: addr.address, port: addr.port, serverId: server.id,
+      });
+      if (result.ping_ms > 0 && (bestPing < 0 || result.ping_ms < bestPing)) {
+        bestPing = result.ping_ms;
+        break; // Got a good ping, no need to try more
+      }
+    } catch {
+      // continue to next address
+    }
+  }
+  return bestPing;
+}

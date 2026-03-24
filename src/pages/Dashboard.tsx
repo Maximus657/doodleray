@@ -33,7 +33,7 @@ import {
 } from 'recharts';
 import { useAppStore } from '../stores/app-store';
 import { useWorkshopStore } from '../stores/workshop-store';
-import { formatSpeed, formatTime, protocolLabel } from '../lib/utils';
+import { formatSpeed, formatTime, protocolLabel, pingServerSmart } from '../lib/utils';
 import { refreshSubscription, fetchSubscription } from '../lib/subscription';
 import { parseProxyLink } from '../lib/parser';
 import { useTranslation } from '../locales';
@@ -120,10 +120,8 @@ export default function Dashboard() {
         for (const server of unpinged) {
           if (cancelled) break;
           try {
-            const result: any = await invoke('ping_server', {
-              address: server.address, port: server.port, serverId: server.id,
-            });
-            updateServerPing(server.id, result.ping_ms);
+            const ping = await pingServerSmart(server, invoke);
+            updateServerPing(server.id, ping);
           } catch {
             updateServerPing(server.id, -1);
           }
@@ -429,6 +427,8 @@ export default function Dashboard() {
             workers: srv.workers || null,
             // Shadowsocks
             encryption: srv.encryption || null,
+            // Full raw xray config (DoodleVPN subscriptions)
+            raw_xray_config: srv.rawConfig || null,
           }
         });
 
@@ -455,6 +455,7 @@ export default function Dashboard() {
                     public_key: srv!.publicKey, short_id: srv!.shortId, host: srv!.host, path: srv!.path,
                     service_name: (srv as any)?.serviceName || '', proxy_mode: proxyMode, socks_port: socksPort, http_port: httpPort,
                     network_stack: networkStack, dns_mode: dnsMode, strict_route: strictRoute,
+                    raw_xray_config: srv!.rawConfig || null,
                   }
                 });
                 if (retry.success) {
@@ -578,6 +579,7 @@ export default function Dashboard() {
               pre_shared_key: srv.preSharedKey || null, local_address: srv.localAddress || null,
               reserved: srv.reserved || null, mtu: srv.mtu || null, workers: srv.workers || null,
               encryption: srv.encryption || null,
+              raw_xray_config: srv.rawConfig || null,
             }
           });
           if (result.success) {
@@ -643,6 +645,7 @@ export default function Dashboard() {
             pre_shared_key: (server as any).preSharedKey || null, local_address: (server as any).localAddress || null,
             reserved: (server as any).reserved || null, mtu: (server as any).mtu || null, workers: (server as any).workers || null,
             encryption: (server as any).encryption || null,
+            raw_xray_config: (server as any).rawConfig || null,
           }
         });
         if (result.success) {
@@ -711,10 +714,8 @@ export default function Dashboard() {
         if (!s.address) continue;
         setPingingServerId(s.id);
         try {
-          const result: any = await invoke('ping_server', {
-            address: s.address, port: s.port || 443, serverId: s.id,
-          });
-          useAppStore.getState().updateServerPing(s.id, result.ping_ms);
+          const ping = await pingServerSmart(s, invoke);
+          useAppStore.getState().updateServerPing(s.id, ping);
         } catch {
           useAppStore.getState().updateServerPing(s.id, -1);
         }
@@ -752,10 +753,8 @@ export default function Dashboard() {
         if (!s.address) continue;
         setPingingServerId(s.id);
         try {
-          const result: any = await invoke('ping_server', {
-            address: s.address, port: s.port || 443, serverId: s.id,
-          });
-          useAppStore.getState().updateServerPing(s.id, result.ping_ms);
+          const ping = await pingServerSmart(s, invoke);
+          useAppStore.getState().updateServerPing(s.id, ping);
         } catch {
           useAppStore.getState().updateServerPing(s.id, -1);
         }

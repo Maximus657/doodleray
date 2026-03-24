@@ -94,6 +94,10 @@ pub struct ConnectRequest {
     // Shadowsocks encryption method
     #[serde(default)]
     pub encryption: Option<String>,
+    // Full raw xray JSON config — when present, passed directly to xray-core
+    // instead of building a simplified single-server config
+    #[serde(default)]
+    pub raw_xray_config: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -672,6 +676,85 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
     })
 }
 
+/// Take a raw xray JSON config (from DoodleVPN subscription) and inject
+/// DoodleRay's inbounds (SOCKS, HTTP, stats API) so it uses the correct ports.
+/// Preserves all outbounds, routing, observatory, balancing etc. from the original.
+fn inject_xray_inbounds(mut config: serde_json::Value, req: &ConnectRequest) -> serde_json::Value {
+    // Replace or add inbounds with DoodleRay's SOCKS/HTTP/API ports
+    let inbounds = serde_json::json!([
+        {
+            "tag": "socks-in",
+            "port": req.socks_port,
+            "listen": "127.0.0.1",
+            "protocol": "socks",
+            "settings": { "udp": true },
+            "sniffing": {
+                "enabled": true,
+                "destOverride": ["http", "tls", "quic", "fakedns"],
+                "routeOnly": true
+            }
+        },
+        {
+            "tag": "http-in",
+            "port": req.http_port,
+            "listen": "127.0.0.1",
+            "protocol": "http"
+        },
+        {
+            "tag": "api",
+            "port": 10813,
+            "listen": "127.0.0.1",
+            "protocol": "dokodemo-door",
+            "settings": { "address": "127.0.0.1" }
+        }
+    ]);
+    config["inbounds"] = inbounds;
+    
+    // Ensure stats/api/policy exist for traffic monitoring
+    if config.get("stats").is_none() {
+        config["stats"] = serde_json::json!({});
+    }
+    if config.get("api").is_none() {
+        config["api"] = serde_json::json!({
+            "tag": "api",
+            "services": ["StatsService"]
+        });
+    }
+    if config.get("policy").is_none() {
+        config["policy"] = serde_json::json!({
+            "system": {
+                "statsInboundUplink": true,
+                "statsInboundDownlink": true,
+                "statsOutboundUplink": true,
+                "statsOutboundDownlink": true
+            }
+        });
+    }
+    
+    // Make sure routing rules include the API rule
+    if let Some(routing) = config.get_mut("routing") {
+        if let Some(rules) = routing.get_mut("rules") {
+            if let Some(rules_arr) = rules.as_array_mut() {
+                let has_api_rule = rules_arr.iter().any(|r| {
+                    r.get("inboundTag")
+                        .and_then(|t| t.as_array())
+                        .map(|arr| arr.iter().any(|v| v.as_str() == Some("api")))
+                        .unwrap_or(false)
+                });
+                if !has_api_rule {
+                    rules_arr.insert(0, serde_json::json!({
+                        "type": "field",
+                        "inboundTag": ["api"],
+                        "outboundTag": "api"
+                    }));
+                }
+            }
+        }
+    }
+    
+    config
+}
+
 /// Build the xray-core JSON config (for xhttp transport)
 fn build_xray_config(req: &ConnectRequest) -> serde_json::Value {
     let flow_value = if req.transport == "tcp" || req.transport == "xhttp" || req.transport.is_empty() {
@@ -907,7 +990,8 @@ fn build_xray_config(req: &ConnectRequest) -> serde_json::Value {
 
 #[tauri::command]
 async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectResult {
-    let use_xray = request.transport == "xhttp";
+    let has_raw_config = request.raw_xray_config.is_some();
+    let use_xray = request.transport == "xhttp" || has_raw_config;
     let is_tun = request.proxy_mode == "tun";
     
     let debug_path = std::env::temp_dir()
@@ -981,8 +1065,12 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
     }
     
     if use_xray && is_tun {
-        // ═══ xhttp + TUN: xray-core (SOCKS5) + sing-box (TUN bridge) ═══
-        let xray_config = build_xray_config(&request);
+        // ═══ xray + TUN: xray-core (SOCKS5) + sing-box (TUN bridge) ═══
+        let xray_config = if let Some(ref raw) = request.raw_xray_config {
+            inject_xray_inbounds(raw.clone(), &request)
+        } else {
+            build_xray_config(&request)
+        };
         let _ = std::fs::write(&debug_path, serde_json::to_string_pretty(&xray_config).unwrap_or_default());
         
         if let Err(e) = xray::start_xray(&xray_config) {
@@ -1062,10 +1150,14 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
             }
         }
     } else if use_xray {
-        // ═══ xhttp + System Proxy ═══
+        // ═══ xray + System Proxy ═══
         // Sets Windows system proxy → browsers, Electron apps (Discord, Telegram Desktop) 
         // will use it. UDP (Discord voice) won't go through proxy.
-        let xray_config = build_xray_config(&request);
+        let xray_config = if let Some(ref raw) = request.raw_xray_config {
+            inject_xray_inbounds(raw.clone(), &request)
+        } else {
+            build_xray_config(&request)
+        };
         let _ = std::fs::write(&debug_path, serde_json::to_string_pretty(&xray_config).unwrap_or_default());
         
         match xray::start_xray(&xray_config) {

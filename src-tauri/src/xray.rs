@@ -101,7 +101,9 @@ pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
                     || line.contains("The feature VLESS") 
                     || line.contains("An established connection was aborted by the software")
                     || line.contains("dns-out")
-                    || line.contains("cannot find the pending request") {
+                    || line.contains("cannot find the pending request")
+                    || line.contains("app/observatory/burst")
+                    || line.contains("REALITY: received real certificate") {
                     continue;
                 }
                 let mut logs = XRAY_LOGS.lock().unwrap();
@@ -126,7 +128,9 @@ pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
                     || line.contains("172.19.0.2:53") 
                     || line.contains("dokodemo") 
                     || line.contains("The feature VLESS")
-                    || line.contains("An established connection was aborted by the software") {
+                    || line.contains("An established connection was aborted by the software")
+                    || line.contains("app/observatory/burst")
+                    || line.contains("REALITY: received real certificate") {
                     continue;
                 }
                 let mut logs = XRAY_LOGS.lock().unwrap();
