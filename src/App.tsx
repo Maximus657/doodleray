@@ -9,6 +9,7 @@ import Workshop from './pages/Workshop';
 import Settings from './pages/Settings';
 import { useAppStore } from './stores/app-store';
 import { useToastStore } from './stores/toast-store';
+import { buildConnectRequestFromState } from './lib/connect-helpers';
 import './index.css';
 
 function ToastContainer() {
@@ -113,7 +114,6 @@ function App() {
       if (!state.autoConnectOnStartup) return;
       if (state.status === 'connected' || state.status === 'connecting') return;
       
-      // Pick server: active or first available
       let srv = state.activeServer;
       if (!srv && state.servers.length > 0) {
         if (state.autoSelectFastest) {
@@ -127,7 +127,6 @@ function App() {
       }
       if (!srv) return;
 
-      // Wait a bit for Tauri to be fully ready
       await new Promise(r => setTimeout(r, 2000));
       
       try {
@@ -135,55 +134,8 @@ function App() {
         state.addLog('info', `Auto-connecting to ${srv.name}...`);
         
         const { invoke } = await import('@tauri-apps/api/core');
-        const { useWorkshopStore } = await import('./stores/workshop-store');
-        const freshState = useAppStore.getState();
-        const myRules = useWorkshopStore.getState().myRules.filter(r => r.enabled);
-        const routingRules = myRules.map(r => ({
-          rule_type: r.type, value: r.value, action: r.action,
-        }));
-        
-        const result: any = await invoke('vpn_connect', {
-          request: {
-            server_address: srv.address,
-            server_port: srv.port,
-            protocol: srv.protocol,
-            uuid: srv.uuid || null,
-            password: srv.password || null,
-            transport: srv.transport,
-            security: srv.security,
-            sni: srv.sni || null,
-            host: srv.host || null,
-            path: srv.path || null,
-            fingerprint: srv.fingerprint || null,
-            public_key: srv.publicKey || null,
-            short_id: srv.shortId || null,
-            flow: srv.flow || null,
-            proxy_mode: freshState.proxyMode,
-            socks_port: freshState.socksPort,
-            http_port: freshState.httpPort,
-            network_stack: freshState.networkStack,
-            dns_mode: freshState.dnsMode,
-            strict_route: freshState.strictRoute,
-            routing_rules: routingRules,
-            kill_switch: freshState.killSwitch,
-            obfs_type: srv.obfsType || null,
-            obfs_password: srv.obfsPassword || null,
-            up_mbps: srv.upMbps || null,
-            down_mbps: srv.downMbps || null,
-            congestion_control: srv.congestionControl || null,
-            udp_relay_mode: srv.udpRelayMode || null,
-            alpn: srv.alpn || null,
-            private_key: srv.privateKey || null,
-            peer_public_key: srv.peerPublicKey || null,
-            pre_shared_key: srv.preSharedKey || null,
-            local_address: srv.localAddress || null,
-            reserved: srv.reserved || null,
-            mtu: srv.mtu || null,
-            workers: srv.workers || null,
-            encryption: srv.encryption || null,
-            raw_xray_config: srv.rawConfig || null,
-          }
-        });
+        const request = await buildConnectRequestFromState(srv);
+        const result: any = await invoke('vpn_connect', { request });
         
         if (result.success) {
           useAppStore.setState({ status: 'connected', connectedAt: Date.now() });

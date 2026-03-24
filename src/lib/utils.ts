@@ -62,6 +62,21 @@ export function formatTime(date: Date): string {
 }
 
 // Extract all unique server addresses from a raw xray config
+/** Format seconds as HH:MM:SS */
+export function formatDuration(s: number): string {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+}
+
+/** Format bytes as KB / MB / GB */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
 // Used to ping multiple backends for multi-outbound configs (DoodleVPN)
 export function getRawConfigAddresses(rawConfig: any): { address: string; port: number }[] {
   if (!rawConfig?.outbounds) return [];

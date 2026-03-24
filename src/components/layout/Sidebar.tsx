@@ -68,10 +68,10 @@ export function Sidebar() {
             <div className="bg-white border-[3px] border-black rounded-2xl p-4 shadow-[6px_6px_0_#000] w-56 space-y-3">
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
-                <p className="text-[10px] font-black text-black uppercase tracking-widest">New Update</p>
+                <p className="text-[10px] font-black text-black uppercase tracking-widest">{t('newUpdate')}</p>
               </div>
               <p className="text-xs font-bold text-black/70">
-                Version <span className="font-black text-black">v{availableUpdate}</span> is available!
+                v{availableUpdate} {t('versionAvailable')}
               </p>
               <button
                 onClick={handleInstallUpdate}
@@ -79,9 +79,9 @@ export function Sidebar() {
                 className="w-full py-2.5 bg-black text-white border-[3px] border-black rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer shadow-[3px_3px_0_#000] hover:-translate-y-0.5 hover:shadow-[5px_5px_0_#000] active:translate-y-1 active:shadow-none transition-all disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {installing ? (
-                  <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Installing...</>
+                  <><Loader2 className="w-3.5 h-3.5 animate-spin" /> {t('installingUpdate')}</>
                 ) : (
-                  <><Download className="w-3.5 h-3.5 stroke-[3px]" /> Install & Restart</>
+                  <><Download className="w-3.5 h-3.5 stroke-[3px]" /> {t('installRestart')}</>
                 )}
               </button>
             </div>
@@ -131,7 +131,7 @@ export function Sidebar() {
       >
         <LogOut className="w-6 h-6 transition-transform group-hover:scale-110 stroke-[2.5px]" />
         <span className="absolute left-full ml-4 px-3 py-2 text-[10px] font-black uppercase tracking-widest bg-white text-danger border-[3px] border-danger rounded-xl opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 whitespace-nowrap shadow-[4px_4px_0_#f87171] z-50 translate-x-[-10px] group-hover:translate-x-0">
-          Quit
+          {t('quit')}
         </span>
       </button>
 

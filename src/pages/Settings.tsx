@@ -192,8 +192,8 @@ export default function Settings() {
               <Toggle
                 checked={showStats}
                 onChange={setShowStats}
-                label="Show Live Stats"
-                description="Display live speed graphs on the Dashboard"
+                label={t('showLiveStats')}
+                description={t('showLiveStatsDesc')}
               />
               <div className="flex items-center justify-between py-3 px-4 bg-white border-[3px] border-black shadow-[2px_2px_0_#000] rounded-xl">
                 <span className="text-sm font-black text-black uppercase tracking-tight">{t('language')}</span>
@@ -290,9 +290,9 @@ export default function Settings() {
                 <ShieldCheck className={`w-6 h-6 stroke-[3px] transition-transform duration-300 group-hover:scale-110 ${defenderLoading ? 'animate-pulse' : ''}`} />
               </div>
               <div className="flex-1 min-w-0">
-                <h3 className="font-black text-black text-sm uppercase tracking-tight">Windows Defender Exclusion</h3>
+                <h3 className="font-black text-black text-sm uppercase tracking-tight">{t('defenderExclusion')}</h3>
                 <p className="text-[10px] font-black tracking-widest uppercase text-black/60 mt-1">
-                  {defenderLoading ? 'Applying exclusion...' : 'Add DoodleRay to Defender whitelist — prevents false positives'}
+                  {defenderLoading ? t('applyingExclusion') : t('defenderExclusionDesc')}
                 </p>
                 {defenderStatus && <p className={`text-[9px] font-bold mt-1 ${defenderStatus.startsWith('✓') ? 'text-emerald-600' : 'text-red-600'}`}>{defenderStatus}</p>}
               </div>
