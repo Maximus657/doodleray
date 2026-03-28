@@ -9,6 +9,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { useAppStore } from '../../stores/app-store';
+import { getCachedUpdate, setCachedUpdate } from '../../App';
 
 import { useTranslation } from '../../locales';
 
@@ -35,10 +36,14 @@ export function Sidebar() {
   const handleInstallUpdate = async () => {
     setInstalling(true);
     try {
-      const { check } = await import('@tauri-apps/plugin-updater');
-      const update = await check();
+      let update = getCachedUpdate();
+      if (!update) {
+        const { check } = await import('@tauri-apps/plugin-updater');
+        update = await check();
+      }
       if (update) {
         await update.downloadAndInstall();
+        setCachedUpdate(null);
         const { relaunch } = await import('@tauri-apps/plugin-process');
         await relaunch();
       }

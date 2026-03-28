@@ -3,6 +3,7 @@ import { Settings as SettingsIcon, Trash2, RotateCcw, Database, Zap, Monitor, Do
 import { disable } from '@tauri-apps/plugin-autostart';
 import { useTranslation } from '../locales';
 import { useAppStore } from '../stores/app-store';
+import { getCachedUpdate, setCachedUpdate } from '../App';
 
 function Toggle({ checked, onChange, label, description, warning }: { checked: boolean; onChange: (v: boolean) => void; label: string; description?: string; warning?: string }) {
   return (
@@ -143,11 +144,15 @@ export default function Settings() {
   const handleCheckUpdate = async () => {
     setUpdateStatus('Checking...');
     try {
-      const { check } = await import('@tauri-apps/plugin-updater');
-      const update = await check();
+      let update = getCachedUpdate();
+      if (!update) {
+        const { check } = await import('@tauri-apps/plugin-updater');
+        update = await check();
+      }
       if (update) {
         setUpdateStatus(`v${update.version} available! Downloading...`);
         await update.downloadAndInstall();
+        setCachedUpdate(null);
         setUpdateStatus('Update installed! Restarting...');
         const { relaunch } = await import('@tauri-apps/plugin-process');
         await relaunch();
