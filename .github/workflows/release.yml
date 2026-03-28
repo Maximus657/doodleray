@@ -101,7 +101,28 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "DoodleRay ${{ github.ref_name }}"
-          releaseBody: "Download the installer for your platform below."
+          releaseBody: |
+            ## 📦 Downloads
+
+            Pick the right installer for your operating system:
+
+            ### 🪟 Windows
+            | File | Description |
+            |------|-------------|
+            | `DoodleRay_x.x.x_x64-setup.exe` | Windows installer (64-bit) — **recommended** |
+            | `DoodleRay_x.x.x_x64-setup.nsis.zip` | Portable NSIS archive |
+
+            ### 🍎 macOS
+            | File | Description |
+            |------|-------------|
+            | `DoodleRay_x.x.x_aarch64.dmg` | macOS installer for Apple Silicon (M1/M2/M3/M4) — **recommended for modern Macs** |
+            | `DoodleRay_x.x.x_x64.dmg` | macOS installer for Intel Macs |
+
+            ### 🔄 Auto-update
+            `latest.json` is used by the built-in updater — you don't need to download it manually.
+
+            ---
+            > **Tip:** If you're not sure which file to pick — on **Windows** grab the `.exe`, on **Mac** grab the `.dmg` matching your chip (Apple Silicon = `aarch64`, Intel = `x64`).
           releaseDraft: false
           prerelease: false
 
@@ -226,7 +247,28 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "DoodleRay ${{ github.ref_name }}"
-          releaseBody: "Download the installer for your platform below."
+          releaseBody: |
+            ## 📦 Downloads
+
+            Pick the right installer for your operating system:
+
+            ### 🪟 Windows
+            | File | Description |
+            |------|-------------|
+            | `DoodleRay_x.x.x_x64-setup.exe` | Windows installer (64-bit) — **recommended** |
+            | `DoodleRay_x.x.x_x64-setup.nsis.zip` | Portable NSIS archive |
+
+            ### 🍎 macOS
+            | File | Description |
+            |------|-------------|
+            | `DoodleRay_x.x.x_aarch64.dmg` | macOS installer for Apple Silicon (M1/M2/M3/M4) — **recommended for modern Macs** |
+            | `DoodleRay_x.x.x_x64.dmg` | macOS installer for Intel Macs |
+
+            ### 🔄 Auto-update
+            `latest.json` is used by the built-in updater — you don't need to download it manually.
+
+            ---
+            > **Tip:** If you're not sure which file to pick — on **Windows** grab the `.exe`, on **Mac** grab the `.dmg` matching your chip (Apple Silicon = `aarch64`, Intel = `x64`).
           releaseDraft: false
           prerelease: false
           args: --target ${{ matrix.target }}
