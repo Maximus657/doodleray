@@ -127,8 +127,10 @@ jobs:
           prerelease: false
 
   build-macos:
+    needs: build-windows
     runs-on: macos-latest
     strategy:
+      max-parallel: 1
       matrix:
         include:
           - target: aarch64-apple-darwin
