@@ -40,6 +40,13 @@ export default function Dashboard() {
   const [refreshingSubId, setRefreshingSubId] = useState<string | null>(null);
   const [pingingServerId, setPingingServerId] = useState<string | null>(null);
 
+  const [confirmModal, setConfirmModal] = useState<{
+    show: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({ show: false, title: '', message: '', onConfirm: () => {} });
+
   // ═══════════════════════════════════════════════════
   //  Effects
   // ═══════════════════════════════════════════════════
@@ -391,22 +398,44 @@ export default function Dashboard() {
   };
 
   const handleRemoveServer = useCallback((serverId: string, serverName: string) => {
-    if (!confirm(`Delete custom server "${serverName}"?`)) return;
-    if (activeServer?.id === serverId) { handleConnect(); setActiveServer(null); }
-    removeServer(serverId);
-  }, [activeServer, handleConnect, setActiveServer, removeServer]);
+    setConfirmModal({
+      show: true,
+      title: t('deleteServer'),
+      message: `Delete custom server "${serverName}"?`,
+      onConfirm: () => {
+        if (activeServer?.id === serverId) { handleConnect(); setActiveServer(null); }
+        removeServer(serverId);
+        setConfirmModal(prev => ({ ...prev, show: false }));
+      }
+    });
+  }, [activeServer, handleConnect, setActiveServer, removeServer, t]);
 
   const handleRemoveAllCustom = useCallback(() => {
-    if (!confirm('Delete all custom servers?')) return;
-    removeAllManualServers();
-    addLog('info', 'Removed all custom servers');
-  }, [removeAllManualServers, addLog]);
+    setConfirmModal({
+      show: true,
+      title: t('deleteAllProfiles'),
+      message: 'Delete all manual profiles?',
+      onConfirm: () => {
+        removeAllManualServers();
+        addLog('info', 'Removed all custom servers');
+        setConfirmModal(prev => ({ ...prev, show: false }));
+      }
+    });
+  }, [removeAllManualServers, addLog, t]);
 
   const handleRemoveSubscription = useCallback((subId: string) => {
     const sub = subscriptions.find(s => s.id === subId);
-    if (!confirm(`Delete subscription "${sub?.name}" and all its servers?`)) return;
-    removeSubscription(subId);
-  }, [subscriptions, removeSubscription]);
+    if (!sub) return;
+    setConfirmModal({
+      show: true,
+      title: t('deleteSub'),
+      message: `Delete subscription "${sub.name}" and all its servers?`,
+      onConfirm: () => {
+        removeSubscription(subId);
+        setConfirmModal(prev => ({ ...prev, show: false }));
+      }
+    });
+  }, [subscriptions, removeSubscription, t]);
 
   const canConnect = !!activeServer || servers.length > 0;
   const isConnected = status === 'connected';
@@ -504,6 +533,32 @@ export default function Dashboard() {
         onToggleLogs={() => setShowLogs(!showLogs)}
         onClearLogs={clearLogs} logsEndRef={logsEndRef} t={t}
       />
+
+      {/* ── CUSTOM CONFIRM MODAL ── */}
+      {confirmModal.show && (
+        <>
+          <div className="fixed inset-0 z-[60] bg-black/40 backdrop-blur-sm"
+            onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))} />
+          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[70] w-72 bg-white border-[3px] border-black rounded-2xl p-5 shadow-[6px_6px_0_#000] animate-slide-up flex flex-col gap-4">
+            <div>
+              <h3 className="text-xs font-black uppercase tracking-widest leading-tight">{confirmModal.title}</h3>
+              <p className="text-xs text-black/60 font-bold mt-2 leading-relaxed">{confirmModal.message}</p>
+            </div>
+            <div className="flex gap-2 mt-2">
+              <button 
+                onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
+                className="flex-1 py-2 bg-white text-black border-[2px] border-black rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer hover:bg-black/5 hover:-translate-y-0.5 active:translate-y-0 transition-all">
+                {t('cancel')}
+              </button>
+              <button 
+                onClick={confirmModal.onConfirm}
+                className="flex-1 py-2 bg-danger text-white border-[2px] border-black rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer shadow-[2px_2px_0_#000] hover:shadow-[3px_3px_0_#000] hover:-translate-y-0.5 active:translate-y-1 active:shadow-none transition-all">
+                {t('deleteServer').split(' ')[0]} {/* Grab 'Delete' mostly */}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

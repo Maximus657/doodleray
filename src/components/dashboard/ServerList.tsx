@@ -89,8 +89,26 @@ export default function ServerList({
 
   return (
     <div className="w-full max-w-sm mt-4 relative z-10 pb-4">
-      <div className="mb-2 px-1 flex items-center justify-between">
+      {/* Active Server Dedicated Block */}
+      <div className="mb-2 px-1">
         <span className="text-[11px] font-black text-black/50 uppercase tracking-widest pl-1">{t('activeServer')}</span>
+      </div>
+      
+      <div className="mb-6 relative z-30">
+        {activeServer ? (
+          <div className="pointer-events-none">
+            {renderServerItem(activeServer)}
+          </div>
+        ) : (
+          <div className="w-full p-4 rounded-2xl border-[3px] border-dashed border-black/20 flex flex-col items-center justify-center gap-2 bg-white/50 backdrop-blur-sm">
+            <Globe className="w-6 h-6 text-black/20" />
+            <span className="text-[10px] font-black uppercase text-black/40 tracking-widest">{t('noServerSelected')}</span>
+          </div>
+        )}
+      </div>
+
+      <div className="mb-2 px-1 flex items-center justify-between">
+        <span className="text-[11px] font-black text-black/50 uppercase tracking-widest pl-1">{t('servers')}</span>
         {servers.length > 5 && (
           <div className="relative w-32">
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-black/50 stroke-[3px]" />

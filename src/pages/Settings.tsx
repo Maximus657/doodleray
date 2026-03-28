@@ -39,18 +39,37 @@ export default function Settings() {
   } = useAppStore();
   const { t } = useTranslation();
 
+  const [confirmModal, setConfirmModal] = useState<{
+    show: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({ show: false, title: '', message: '', onConfirm: () => {} });
+
   const handleWipeData = () => {
-    if (confirm('Are you absolutely sure you want to delete ALL servers and subscriptions? This cannot be undone.')) {
-      wipeData();
-      addLog('warning', 'All server configurations have been wiped from the device.');
-    }
+    setConfirmModal({
+      show: true,
+      title: t('factoryReset'),
+      message: 'Are you absolutely sure you want to delete ALL servers and subscriptions? This cannot be undone.',
+      onConfirm: () => {
+        wipeData();
+        addLog('warning', 'All server configurations have been wiped from the device.');
+        setConfirmModal(prev => ({ ...prev, show: false }));
+      }
+    });
   };
 
   const handleClearLogs = () => {
-    if (confirm('Are you sure you want to clear all connection logs?')) {
-      clearLogs();
-      addLog('success', 'Runtime logs cleared by user.');
-    }
+    setConfirmModal({
+      show: true,
+      title: t('clearLogs'),
+      message: 'Are you sure you want to clear all connection logs?',
+      onConfirm: () => {
+        clearLogs();
+        addLog('success', 'Runtime logs cleared by user.');
+        setConfirmModal(prev => ({ ...prev, show: false }));
+      }
+    });
   };
 
   const [defenderStatus, setDefenderStatus] = useState<string | null>(null);
@@ -110,15 +129,16 @@ export default function Settings() {
         try {
           const isAdmin: boolean = await invoke('is_admin');
           if (!isAdmin) {
-            const shouldRestart = window.confirm(
-              'Admin autostart is set for next login.\n\n' +
-              'Restart as Administrator now?\n' +
-              'This will give full access to TUN mode and other admin features immediately.'
-            );
-            if (shouldRestart) {
-              addLog('info', 'Restarting as administrator...');
-              await invoke('restart_as_admin');
-            }
+            setConfirmModal({
+              show: true,
+              title: 'Restart Required',
+              message: 'Admin autostart is set for next login.\n\nRestart as Administrator now?\nThis will give full access to TUN mode and other admin features immediately.',
+              onConfirm: async () => {
+                addLog('info', 'Restarting as administrator...');
+                await invoke('restart_as_admin');
+                setConfirmModal(prev => ({ ...prev, show: false }));
+              }
+            });
           }
         } catch (_) { /* ignore */ }
       }
@@ -320,6 +340,32 @@ export default function Settings() {
         </div>
         
       </div>
+
+      {/* ── CUSTOM CONFIRM MODAL ── */}
+      {confirmModal.show && (
+        <>
+          <div className="fixed inset-0 z-[60] bg-black/40 backdrop-blur-sm"
+            onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))} />
+          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[70] w-72 bg-white border-[3px] border-black rounded-2xl p-5 shadow-[6px_6px_0_#000] animate-slide-up flex flex-col gap-4">
+            <div>
+              <h3 className="text-xs font-black uppercase tracking-widest leading-tight">{confirmModal.title}</h3>
+              <p className="text-xs text-black/60 font-bold mt-2 leading-relaxed whitespace-pre-wrap">{confirmModal.message}</p>
+            </div>
+            <div className="flex gap-2 mt-2">
+              <button 
+                onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
+                className="flex-1 py-2 bg-white text-black border-[2px] border-black rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer hover:bg-black/5 hover:-translate-y-0.5 active:translate-y-0 transition-all">
+                {t('cancel')}
+              </button>
+              <button 
+                onClick={confirmModal.onConfirm}
+                className="flex-1 py-2 bg-black text-white border-[2px] border-black rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer shadow-[2px_2px_0_#000] hover:shadow-[3px_3px_0_#000] hover:-translate-y-0.5 active:translate-y-1 active:shadow-none transition-all">
+                OK
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
