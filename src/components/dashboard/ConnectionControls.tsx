@@ -15,11 +15,13 @@ interface Props {
 export default function ConnectionControls({ status, proxyMode, canConnect, connectTime, onConnect, onModeSwitch, t }: Props) {
   const isConnected = status === 'connected';
   const isConnecting = status === 'connecting';
+  const isMac = typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('mac');
 
   return (
     <>
       {/* ── PROXY MODE TOGGLE ── */}
-      <div className="relative flex bg-black rounded-2xl p-1.5 shadow-inner w-full max-w-sm border-[3px] border-black shrink-0 mt-2 z-10">
+      {!isMac && (
+        <div className="relative flex bg-black rounded-2xl p-1.5 shadow-inner w-full max-w-sm border-[3px] border-black shrink-0 mt-2 z-10">
         <div
           className={`absolute top-1.5 bottom-1.5 w-[calc(50%-6px)] bg-bg-primary rounded-xl transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] shadow-[2px_2px_0_rgba(0,0,0,0.4)] border-[2px] border-black ${
             proxyMode === 'tun' ? 'left-1/2' : 'left-1.5'
@@ -33,9 +35,10 @@ export default function ConnectionControls({ status, proxyMode, canConnect, conn
         <button onClick={() => onModeSwitch('tun')}
           className={`relative z-10 flex flex-1 items-center justify-center gap-2 py-2 text-[11px] font-black uppercase tracking-widest cursor-pointer transition-colors duration-300 select-none
             ${proxyMode === 'tun' ? 'text-black' : 'text-white/40 hover:text-white/80'}`}>
-          <Network className={`w-4 h-4 transition-transform duration-300 ${proxyMode === 'tun' ? 'scale-110' : 'scale-100'}`} /> <span className="truncate">{t('tunMode')}</span>
-        </button>
-      </div>
+            <Network className={`w-4 h-4 transition-transform duration-300 ${proxyMode === 'tun' ? 'scale-110' : 'scale-100'}`} /> <span className="truncate">{t('tunMode')}</span>
+          </button>
+        </div>
+      )}
 
       {/* ── POWER BUTTON ── */}
       <div className="flex flex-col items-center mt-2 relative z-10 shrink-0">

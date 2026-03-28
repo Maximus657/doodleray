@@ -7,6 +7,7 @@ import {
   LogOut,
   Download,
   Loader2,
+  HelpCircle,
 } from 'lucide-react';
 import { useAppStore } from '../../stores/app-store';
 import { getCachedUpdate, setCachedUpdate } from '../../App';
@@ -121,6 +122,25 @@ export function Sidebar() {
           </NavLink>
         ))}
       </nav>
+
+      <button
+        onClick={async () => {
+          try {
+            const { openUrl } = await import('@tauri-apps/plugin-opener');
+            await openUrl('https://t.me/doodlevpn_support');
+          } catch (e) {
+            console.error(e);
+          }
+        }}
+        className="group relative flex items-center justify-center w-16 h-16 rounded-2xl bg-black text-[#8b5cf6] hover:bg-[#8b5cf6] hover:text-black border-[3px] border-[#8b5cf6] hover:border-black shadow-[4px_4px_0_rgba(139,92,246,0.3)] hover:shadow-[4px_4px_0_#8b5cf6] transition-all duration-150 cursor-pointer mb-3"
+        title="Support"
+      >
+        <HelpCircle className="w-6 h-6 transition-transform group-hover:scale-110 stroke-[2.5px]" />
+        <span className="absolute left-full ml-4 px-3 py-2 text-[10px] font-black uppercase tracking-widest bg-white text-[#8b5cf6] border-[3px] border-[#8b5cf6] rounded-xl opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 whitespace-nowrap shadow-[4px_4px_0_#8b5cf6] z-50 translate-x-[-10px] group-hover:translate-x-0">
+          {t('support' as any)}
+        </span>
+      </button>
+
       <button
         onClick={async () => {
           try {

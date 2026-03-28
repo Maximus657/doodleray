@@ -165,33 +165,7 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, [status, addSpeedPoint, setCurrentSpeed, addTraffic]);
 
-  // Auto-detect clipboard links
-  const lastSuggestedRef = useRef<string>('');
-  useEffect(() => {
-    const checkClipboard = async () => {
-      try {
-        const text = await navigator.clipboard.readText();
-        const trimmed = text.trim();
-        const isProxyLink = /^(vless|vmess|trojan|ss|hy2|tuic|wg):\/\//.test(trimmed);
-        const isHttpLink = trimmed.startsWith('http://') || trimmed.startsWith('https://');
-        if ((isProxyLink || isHttpLink) && lastSuggestedRef.current !== trimmed) {
-          lastSuggestedRef.current = trimmed;
-          setQuickInput(trimmed);
-          // Only auto-open the popup for actual VPN proxy links (not random https:// URLs)
-          if (isProxyLink) {
-            const { useToastStore } = await import('../stores/toast-store');
-            if (useAppStore.getState().servers.length > 0) setShowAddModal(true);
-            useToastStore.getState().addToast('Clipboard key detected! Ready to connect.', 'success');
-            addLog('info', 'Found VPN key in clipboard and pre-filled the input.');
-          }
-        }
-      } catch { /* ignore */ }
-    };
-    window.addEventListener('focus', checkClipboard);
-    const timer = setTimeout(checkClipboard, 1500);
-    return () => { window.removeEventListener('focus', checkClipboard); clearTimeout(timer); };
-  }, [addLog]);
-
+  // Auto-detect clipboard links removed to prevent macOS permission spam
   // Subscription auto-update
   useEffect(() => {
     if (subAutoUpdateMinutes <= 0 || subscriptions.length === 0) return;
@@ -447,7 +421,7 @@ export default function Dashboard() {
 
         {/* + Add button */}
         <button
-          onClick={() => { setShowAddModal(!showAddModal); if (!showAddModal) handleQuickPaste(); }}
+          onClick={() => setShowAddModal(!showAddModal)}
           disabled={quickImporting}
           className="absolute top-4 right-4 z-30 w-10 h-10 flex items-center justify-center bg-white border-[3px] border-black rounded-xl shadow-[3px_3px_0_#000] cursor-pointer hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[4px_4px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none transition-all disabled:opacity-50"
           title={t('addSubOrServer')}
@@ -455,26 +429,32 @@ export default function Dashboard() {
           {quickImporting ? <Loader2 className="w-5 h-5 text-black animate-spin stroke-[3px]" /> : <Plus className="w-5 h-5 text-black stroke-[3px]" />}
         </button>
 
-        {/* Add Modal */}
         {showAddModal && (
-          <div className="absolute top-16 right-4 z-40 w-72 bg-white border-[3px] border-black rounded-2xl p-4 shadow-[6px_6px_0_#000] animate-slide-up space-y-3">
-            <p className="text-[10px] font-black text-black uppercase tracking-widest">{t('addSubOrServer')}</p>
-            <div className="flex gap-2">
-              <input type="text" value={quickInput} onChange={(e) => setQuickInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') { handleQuickAdd(); setShowAddModal(false); } }}
-                autoFocus placeholder={t('pasteHint')}
-                className="flex-1 min-w-0 bg-gray-50 border-[2px] border-black rounded-lg px-3 py-2 text-xs text-black placeholder:text-black/30 focus:outline-none font-bold tracking-tight" />
-              <button onClick={handleQuickPaste}
-                className="w-9 h-9 flex items-center justify-center bg-white border-[2px] border-black rounded-lg cursor-pointer hover:bg-black hover:text-white transition-colors shrink-0">
-                <ClipboardPaste className="w-4 h-4 stroke-[2.5px]" />
+          <>
+            {/* Invisible overlay to close modal when clicking outside */}
+            <div 
+              className="fixed inset-0 z-30" 
+              onClick={() => setShowAddModal(false)}
+            />
+            <div className="absolute top-16 right-4 z-40 w-72 bg-white border-[3px] border-black rounded-2xl p-4 shadow-[6px_6px_0_#000] animate-slide-up space-y-3">
+              <p className="text-[10px] font-black text-black uppercase tracking-widest">{t('addSubOrServer')}</p>
+              <div className="flex gap-2">
+                <input type="text" value={quickInput} onChange={(e) => setQuickInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { handleQuickAdd(); setShowAddModal(false); } }}
+                  autoFocus placeholder={t('pasteHint')}
+                  className="flex-1 min-w-0 bg-gray-50 border-[2px] border-black rounded-lg px-3 py-2 text-xs text-black placeholder:text-black/30 focus:outline-none font-bold tracking-tight" />
+                <button onClick={handleQuickPaste}
+                  className="w-9 h-9 flex items-center justify-center bg-white border-[2px] border-black rounded-lg cursor-pointer hover:bg-black hover:text-white transition-colors shrink-0">
+                  <ClipboardPaste className="w-4 h-4 stroke-[2.5px]" />
+                </button>
+              </div>
+              <button onClick={() => { handleQuickAdd(); setShowAddModal(false); }}
+                disabled={quickImporting || !quickInput.trim()}
+                className="w-full py-2.5 bg-black text-white border-[2px] border-black rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer shadow-[3px_3px_0_#000] hover:-translate-y-0.5 hover:shadow-[4px_4px_0_#000] active:translate-y-1 active:shadow-none transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                {quickImporting ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> {t('adding')}</> : <><Plus className="w-3.5 h-3.5 stroke-[3px]" /> {t('add')}</>}
               </button>
             </div>
-            <button onClick={() => { handleQuickAdd(); setShowAddModal(false); }}
-              disabled={quickImporting || !quickInput.trim()}
-              className="w-full py-2.5 bg-black text-white border-[2px] border-black rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer shadow-[3px_3px_0_#000] hover:-translate-y-0.5 hover:shadow-[4px_4px_0_#000] active:translate-y-1 active:shadow-none transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-              {quickImporting ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> {t('adding')}</> : <><Plus className="w-3.5 h-3.5 stroke-[3px]" /> {t('add')}</>}
-            </button>
-          </div>
+          </>
         )}
 
         {/* ═══ MAIN CONTENT ═══ */}

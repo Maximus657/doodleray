@@ -150,6 +150,7 @@ export const translations = {
     updateNow: 'Update Now',
     updating: 'Updating...',
     updateFailed: 'Update failed — try again later',
+    support: 'Support',
   },
   ru: {
     // General
@@ -300,6 +301,7 @@ export const translations = {
     updateNow: 'Обновить сейчас',
     updating: 'Обновление...',
     updateFailed: 'Ошибка обновления — попробуйте позже',
+    support: 'Поддержка',
   },
   zh: {
     // General
@@ -450,6 +452,7 @@ export const translations = {
     updateNow: '立即更新',
     updating: '更新中...',
     updateFailed: '更新失败——请稍后重试',
+    support: '技术支持',
   }
 };
 
