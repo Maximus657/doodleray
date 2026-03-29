@@ -1079,7 +1079,18 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
         };
         let _ = std::fs::write(&debug_path, serde_json::to_string_pretty(&xray_config).unwrap_or_default());
         
-        if let Err(e) = xray::start_xray(&xray_config) {
+        let mut start_result = xray::start_xray(&xray_config);
+        if let Err(e) = &start_result {
+            if e.to_lowercase().contains("bind") || e.to_lowercase().contains("listen") || e.to_lowercase().contains("socket") {
+                let _ = force_free_port(request.socks_port).await;
+                let _ = force_free_port(request.http_port).await;
+                let _ = force_free_port(10813).await;
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+                start_result = xray::start_xray(&xray_config);
+            }
+        }
+        
+        if let Err(e) = start_result {
             return ConnectResult { success: false, message: format!("Failed to start xray-core: {}", e) };
         }
         
@@ -1166,7 +1177,18 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
         };
         let _ = std::fs::write(&debug_path, serde_json::to_string_pretty(&xray_config).unwrap_or_default());
         
-        match xray::start_xray(&xray_config) {
+        let mut start_result = xray::start_xray(&xray_config);
+        if let Err(e) = &start_result {
+            if e.to_lowercase().contains("bind") || e.to_lowercase().contains("listen") || e.to_lowercase().contains("socket") {
+                let _ = force_free_port(request.socks_port).await;
+                let _ = force_free_port(request.http_port).await;
+                let _ = force_free_port(10813).await;
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+                start_result = xray::start_xray(&xray_config);
+            }
+        }
+        
+        match start_result {
             Ok(_) => {
                 // DNS Leak Prevention: wait for core to be ready before setting proxy
                 wait_for_port_ready(request.socks_port);

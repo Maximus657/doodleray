@@ -150,7 +150,30 @@ pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
         *proc = Some(child);
     }
 
-    std::thread::sleep(std::time::Duration::from_millis(300));
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // Check if the process crashed immediately (e.g. port bind error)
+    {
+        let mut proc = XRAY_PROCESS.lock().unwrap();
+        if let Some(ref mut child) = *proc {
+            if let Ok(Some(status)) = child.try_wait() {
+                // Process died early. Get the reason from logs.
+                let logs = XRAY_LOGS.lock().unwrap();
+                let mut reason = format!("Process exited with status: {}", status);
+                
+                // Find the most relevant error line
+                for line in logs.iter().rev() {
+                    if line.contains("Failed to start") || line.contains("bind") || line.contains("error") {
+                        reason = line.clone();
+                        break;
+                    }
+                }
+                *proc = None;
+                return Err(reason);
+            }
+        }
+    }
+
     Ok(())
 }
 
