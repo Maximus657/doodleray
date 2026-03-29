@@ -1036,6 +1036,12 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
     let _ = sysproxy::unset_system_proxy();
     reset_sb_traffic();
     
+    // Forcefully release local ports to prevent "Only one usage of each socket address is normally permitted"
+    // caused by zombie processes (or double React Strict Mode invocations) locking the ports.
+    let _ = force_free_port(request.socks_port).await;
+    let _ = force_free_port(request.http_port).await;
+    let _ = force_free_port(10813).await;
+    
     // Only wait for sing-box.exe process death when TUN was active (external process)
     // For in-process singbox/xray, no external process to wait for
     let needs_process_wait = matches!(

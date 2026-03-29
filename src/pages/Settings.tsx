@@ -171,7 +171,38 @@ export default function Settings() {
       }
       if (update) {
         setUpdateStatus(`v${update.version} available! Downloading...`);
-        await update.downloadAndInstall();
+        let downloaded = 0;
+        let contentLength = 0;
+        await update.download((event: any) => {
+          switch (event.event) {
+            case 'Started':
+              contentLength = event.data.contentLength || 0;
+              break;
+            case 'Progress':
+              downloaded += event.data.chunkLength;
+              if (contentLength > 0) {
+                const percent = Math.round((downloaded / contentLength) * 100);
+                setUpdateStatus(`Downloading... ${percent}%`);
+              }
+              break;
+            case 'Finished':
+              setUpdateStatus('Closing background processes...');
+              break;
+          }
+        });
+        
+        try {
+          // Preemptively release file locks (important for Windows NSIS overwriting xray.exe)
+          const { invoke } = await import('@tauri-apps/api/core');
+          await invoke('vpn_disconnect');
+          // Wait briefly to ensure files are fully released by the OS
+          await new Promise(r => setTimeout(r, 1000));
+        } catch (e) {
+          console.warn("Could not disconnect VPN before update:", e);
+        }
+
+        setUpdateStatus('Installing...');
+        await update.install();
         setCachedUpdate(null);
         setUpdateStatus('Update installed! Restarting...');
         const { relaunch } = await import('@tauri-apps/plugin-process');

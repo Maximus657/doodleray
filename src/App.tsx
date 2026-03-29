@@ -140,10 +140,12 @@ function App() {
       }
       if (!srv) return;
 
+      // Prevent concurrent executions by setting status immediately before the sleep delay
+      useAppStore.setState({ status: 'connecting', activeServer: srv });
+
       await new Promise(r => setTimeout(r, 2000));
       
       try {
-        useAppStore.setState({ status: 'connecting', activeServer: srv });
         state.addLog('info', `Auto-connecting to ${srv.name}...`);
         
         const { invoke } = await import('@tauri-apps/api/core');
