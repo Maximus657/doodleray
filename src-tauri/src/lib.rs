@@ -923,6 +923,13 @@ fn build_xray_config(req: &ConnectRequest) -> serde_json::Value {
             "services": ["StatsService"]
         },
         "policy": {
+            "levels": {
+                "0": {
+                    "connIdle": 600,
+                    "uplinkOnly": 0,
+                    "downlinkOnly": 0
+                }
+            },
             "system": {
                 "statsInboundUplink": true,
                 "statsInboundDownlink": true,
@@ -1006,17 +1013,9 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
         engine.clone()
     };
     
-    // Hot-switch optimization: when switching servers in app-proxy mode,
-    // keep the TUN bridge alive — it routes to localhost SOCKS port, not tied to any server.
-    // This prevents game disconnections on server switch.
-    let keep_tun_bridge = matches!(
-        prev_engine.as_deref(),
-        Some("xray+app-proxy") | Some("singbox+app-proxy")
-    );
-    
     // Always stop in-process libsingbox (safe, no admin needed)
     let _ = singbox::stop_singbox();
-    
+
     match prev_engine.as_deref() {
         Some("xray") => {
             let _ = xray::stop_xray();
@@ -1026,14 +1025,16 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
             let _ = xray::stop_xray();
         }
         Some("xray+app-proxy") => {
-            // Keep TUN bridge alive — only restart xray proxy engine
+            // Always restart TUN bridge to apply updated routing rules
+            let _ = tun::stop_tun();
             let _ = xray::stop_xray();
         }
         Some("singbox-tun") => {
             let _ = tun::stop_tun();
         }
         Some("singbox+app-proxy") => {
-            // Keep TUN bridge alive — in-process singbox already stopped above
+            // Always restart TUN bridge to apply updated routing rules
+            let _ = tun::stop_tun();
         }
         Some("singbox") => {
             // already stopped above
@@ -1053,10 +1054,10 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
     let _ = force_free_port(request.http_port).await;
     let _ = force_free_port(10813).await;
     
-    // Only wait for sing-box.exe process death when TUN was killed (not preserved)
-    let needs_process_wait = !keep_tun_bridge && matches!(
+    // Wait for sing-box.exe process death whenever TUN was active
+    let needs_process_wait = matches!(
         prev_engine.as_deref(),
-        Some("singbox-tun") | Some("xray+tun") | None
+        Some("singbox-tun") | Some("xray+tun") | Some("xray+app-proxy") | Some("singbox+app-proxy") | None
     );
     
     if needs_process_wait {
@@ -1131,8 +1132,9 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                 "interface_name": "tun0",
                 "address": ["172.19.0.1/30"],
                 "auto_route": true,
-                "strict_route": false,
-                "stack": "mixed",
+                "strict_route": true,
+                "stack": "system",
+                "udp_timeout": "5m0s",
             }],
             "outbounds": [
                 {
@@ -1229,10 +1231,14 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                 
                 if has_exe_rules {
                     let exclude = vec!["sing-box.exe", "xray.exe", "DoodleRay.exe", "adb.exe", "svchost.exe", "lsass.exe", "csrss.exe", "System"];
-                    
+
                     // Build routing rules for the TUN bridge
                     let mut tun_rules: Vec<serde_json::Value> = Vec::new();
-                    
+
+                    // 0. Protocol sniffing + DNS hijack (must be first)
+                    tun_rules.push(serde_json::json!({ "action": "sniff" }));
+                    tun_rules.push(serde_json::json!({ "protocol": "dns", "action": "hijack-dns" }));
+
                     // 1. System processes always bypass TUN
                     let exclude_val: Vec<serde_json::Value> = exclude.iter()
                         .map(|s| serde_json::Value::String(s.to_string())).collect();
@@ -1268,7 +1274,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                             "servers": [
                                 {
                                     "tag": "dns-direct",
-                                    "type": "tcp",
+                                    "type": "udp",
                                     "server": "8.8.8.8"
                                 }
                             ],
@@ -1279,8 +1285,9 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                             "tag": "tun-in",
                             "address": ["172.19.0.1/30"],
                             "auto_route": true,
-                            "strict_route": false,
-                            "stack": "mixed",
+                            "strict_route": true,
+                            "stack": "system",
+                            "udp_timeout": "5m0s",
                         }],
                         "outbounds": [
                             { "type": "direct", "tag": "direct" },
@@ -1298,19 +1305,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                             "rules": tun_rules
                         }
                     });
-                    
-                    // Hot-switch: if TUN bridge is already running from previous session, reuse it
-                    // (it routes to localhost SOCKS port which didn't change)
-                    if tun::is_singbox_running() {
-                        *engine = Some("xray+app-proxy".into());
-                        update_tray_connected(&app, &request.server_address);
-                        let total = proxy_exes.len() + direct_exes.len() + block_exes.len();
-                        return ConnectResult {
-                            success: true,
-                            message: format!("Server switched (TUN bridge preserved, {} app rules active)", total),
-                        };
-                    }
-                    
+
                     if let Ok(_) = tun::start_tun_elevated(&tun_bridge) {
                         *engine = Some("xray+app-proxy".into());
                         update_tray_connected(&app, &request.server_address);
@@ -1389,10 +1384,14 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                 
                 if has_exe_rules {
                     let exclude = vec!["sing-box.exe", "DoodleRay.exe", "adb.exe", "svchost.exe", "lsass.exe", "csrss.exe", "System"];
-                    
+
                     // Build routing rules for the TUN bridge
                     let mut tun_rules: Vec<serde_json::Value> = Vec::new();
-                    
+
+                    // 0. Protocol sniffing + DNS hijack (must be first)
+                    tun_rules.push(serde_json::json!({ "action": "sniff" }));
+                    tun_rules.push(serde_json::json!({ "protocol": "dns", "action": "hijack-dns" }));
+
                     // 1. System processes always bypass TUN
                     let exclude_val: Vec<serde_json::Value> = exclude.iter()
                         .map(|s| serde_json::Value::String(s.to_string())).collect();
@@ -1428,7 +1427,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                             "servers": [
                                 {
                                     "tag": "dns-direct",
-                                    "type": "tcp",
+                                    "type": "udp",
                                     "server": "8.8.8.8"
                                 }
                             ],
@@ -1439,8 +1438,9 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                             "tag": "tun-in",
                             "address": ["172.19.0.1/30"],
                             "auto_route": true,
-                            "strict_route": false,
-                            "stack": "mixed",
+                            "strict_route": true,
+                            "stack": "system",
+                            "udp_timeout": "5m0s",
                         }],
                         "outbounds": [
                             { "type": "direct", "tag": "direct" },
@@ -1458,18 +1458,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                             "rules": tun_rules
                         }
                     });
-                    
-                    // Hot-switch: if TUN bridge is already running from previous session, reuse it
-                    if tun::is_singbox_running() {
-                        *engine = Some("singbox+app-proxy".into());
-                        update_tray_connected(&app, &request.server_address);
-                        let total = proxy_exes.len() + direct_exes.len() + block_exes.len();
-                        return ConnectResult {
-                            success: true,
-                            message: format!("Server switched (TUN bridge preserved, {} app rules active)", total),
-                        };
-                    }
-                    
+
                     if let Ok(_) = tun::start_tun_elevated(&tun_bridge) {
                         *engine = Some("singbox+app-proxy".into());
                         update_tray_connected(&app, &request.server_address);
