@@ -1006,6 +1006,14 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
         engine.clone()
     };
     
+    // Hot-switch optimization: when switching servers in app-proxy mode,
+    // keep the TUN bridge alive — it routes to localhost SOCKS port, not tied to any server.
+    // This prevents game disconnections on server switch.
+    let keep_tun_bridge = matches!(
+        prev_engine.as_deref(),
+        Some("xray+app-proxy") | Some("singbox+app-proxy")
+    );
+    
     // Always stop in-process libsingbox (safe, no admin needed)
     let _ = singbox::stop_singbox();
     
@@ -1013,16 +1021,19 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
         Some("xray") => {
             let _ = xray::stop_xray();
         }
-        Some("xray+tun") | Some("xray+app-proxy") => {
+        Some("xray+tun") => {
             let _ = tun::stop_tun();
+            let _ = xray::stop_xray();
+        }
+        Some("xray+app-proxy") => {
+            // Keep TUN bridge alive — only restart xray proxy engine
             let _ = xray::stop_xray();
         }
         Some("singbox-tun") => {
             let _ = tun::stop_tun();
         }
         Some("singbox+app-proxy") => {
-            let _ = tun::stop_tun();
-            // in-process singbox already stopped above
+            // Keep TUN bridge alive — in-process singbox already stopped above
         }
         Some("singbox") => {
             // already stopped above
@@ -1042,11 +1053,10 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
     let _ = force_free_port(request.http_port).await;
     let _ = force_free_port(10813).await;
     
-    // Only wait for sing-box.exe process death when TUN was active (external process)
-    // For in-process singbox/xray, no external process to wait for
-    let needs_process_wait = matches!(
+    // Only wait for sing-box.exe process death when TUN was killed (not preserved)
+    let needs_process_wait = !keep_tun_bridge && matches!(
         prev_engine.as_deref(),
-        Some("singbox-tun") | Some("singbox+app-proxy") | Some("xray+tun") | Some("xray+app-proxy") | None
+        Some("singbox-tun") | Some("xray+tun") | None
     );
     
     if needs_process_wait {
@@ -1200,21 +1210,58 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                     return ConnectResult { success: false, message: format!("xray started but failed to set system proxy: {}", e) };
                 }
                 
-                // Per-app TUN bridge: route specific apps through SOCKS5 for full TCP+UDP proxying
-                // Only activated when user adds exe rules in Workshop (e.g. Discord.exe → proxy)
-                // NOTE: not added by default because auto_route TUN captures ALL traffic,
-                // which would bypass the system proxy for browsers
+                // Per-app TUN bridge: route specific apps via process_name matching
+                // Activated when user adds ANY exe rules in Workshop (proxy, direct, or block)
+                // sing-box TUN captures all traffic and routes by process name,
+                // while xray handles the actual proxy connection via SOCKS5
                 let proxy_exes: Vec<String> = request.routing_rules.iter()
                     .filter(|r| r.rule_type == "exe" && r.action == "proxy")
                     .map(|r| r.value.clone())
                     .collect();
+                let direct_exes: Vec<String> = request.routing_rules.iter()
+                    .filter(|r| r.rule_type == "exe" && r.action == "direct")
+                    .map(|r| r.value.clone())
+                    .collect();
+                let block_exes: Vec<String> = request.routing_rules.iter()
+                    .filter(|r| r.rule_type == "exe" && r.action == "block")
+                    .map(|r| r.value.clone())
+                    .collect();
+                let has_exe_rules = !proxy_exes.is_empty() || !direct_exes.is_empty() || !block_exes.is_empty();
                 
-                if !proxy_exes.is_empty() {
+                if has_exe_rules {
                     let exclude = vec!["sing-box.exe", "xray.exe", "DoodleRay.exe", "adb.exe", "svchost.exe", "lsass.exe", "csrss.exe", "System"];
+                    
+                    // Build routing rules for the TUN bridge
+                    let mut tun_rules: Vec<serde_json::Value> = Vec::new();
+                    
+                    // 1. System processes always bypass TUN
                     let exclude_val: Vec<serde_json::Value> = exclude.iter()
                         .map(|s| serde_json::Value::String(s.to_string())).collect();
-                    let proxy_val: Vec<serde_json::Value> = proxy_exes.iter()
-                        .map(|s| serde_json::Value::String(s.to_string())).collect();
+                    tun_rules.push(serde_json::json!({ "process_name": exclude_val, "outbound": "direct" }));
+                    
+                    // 2. Blocked apps
+                    if !block_exes.is_empty() {
+                        let block_val: Vec<serde_json::Value> = block_exes.iter()
+                            .map(|s| serde_json::Value::String(s.to_string())).collect();
+                        tun_rules.push(serde_json::json!({ "process_name": block_val, "outbound": "block" }));
+                    }
+                    
+                    // 3. Direct apps — bypass VPN entirely (games, etc.)
+                    if !direct_exes.is_empty() {
+                        let direct_val: Vec<serde_json::Value> = direct_exes.iter()
+                            .map(|s| serde_json::Value::String(s.to_string())).collect();
+                        tun_rules.push(serde_json::json!({ "process_name": direct_val, "outbound": "direct" }));
+                    }
+                    
+                    // 4. Proxy apps — route through xray SOCKS5
+                    if !proxy_exes.is_empty() {
+                        let proxy_val: Vec<serde_json::Value> = proxy_exes.iter()
+                            .map(|s| serde_json::Value::String(s.to_string())).collect();
+                        tun_rules.push(serde_json::json!({ "process_name": proxy_val, "outbound": "proxy" }));
+                    }
+                    
+                    // 5. Private IPs always go direct
+                    tun_rules.push(serde_json::json!({ "ip_is_private": true, "outbound": "direct" }));
                     
                     let tun_bridge = serde_json::json!({
                         "log": { "level": "info" },
@@ -1243,24 +1290,36 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                                 "tag": "proxy",
                                 "server": "127.0.0.1",
                                 "server_port": request.socks_port
-                            }
+                            },
+                            { "type": "block", "tag": "block" }
                         ],
                         "route": {
                             "auto_detect_interface": true,
                             "default_domain_resolver": "dns-direct",
-                            "rules": [
-                                { "process_name": exclude_val, "outbound": "direct" },
-                                { "process_name": proxy_val, "outbound": "proxy" }
-                            ]
+                            "rules": tun_rules
                         }
                     });
+                    
+                    // Hot-switch: if TUN bridge is already running from previous session, reuse it
+                    // (it routes to localhost SOCKS port which didn't change)
+                    if tun::is_singbox_running() {
+                        *engine = Some("xray+app-proxy".into());
+                        update_tray_connected(&app, &request.server_address);
+                        let total = proxy_exes.len() + direct_exes.len() + block_exes.len();
+                        return ConnectResult {
+                            success: true,
+                            message: format!("Server switched (TUN bridge preserved, {} app rules active)", total),
+                        };
+                    }
                     
                     if let Ok(_) = tun::start_tun_elevated(&tun_bridge) {
                         *engine = Some("xray+app-proxy".into());
                         update_tray_connected(&app, &request.server_address);
+                        let total = proxy_exes.len() + direct_exes.len() + block_exes.len();
                         return ConnectResult {
                             success: true,
-                            message: format!("System Proxy + {} apps with UDP proxy", proxy_exes.len()),
+                            message: format!("System Proxy + TUN app routing ({} rules: {} proxy, {} direct, {} block)", 
+                                total, proxy_exes.len(), direct_exes.len(), block_exes.len()),
                         };
                     }
                 }
@@ -1312,21 +1371,57 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                     return ConnectResult { success: false, message: format!("sing-box started but failed to set system proxy: {}", e) };
                 }
                 
-                // Per-app TUN bridge: route specific apps through SOCKS5 for full TCP+UDP proxying
-                // Only activated when user adds exe rules in Workshop (e.g. Discord.exe → proxy)
-                // NOTE: not added by default because auto_route TUN captures ALL traffic,
-                // which would bypass the system proxy for browsers
+                // Per-app TUN bridge: route specific apps via process_name matching
+                // Activated when user adds ANY exe rules in Workshop (proxy, direct, or block)
+                // sing-box TUN captures all traffic and routes by process name
                 let proxy_exes: Vec<String> = request.routing_rules.iter()
                     .filter(|r| r.rule_type == "exe" && r.action == "proxy")
                     .map(|r| r.value.clone())
                     .collect();
+                let direct_exes: Vec<String> = request.routing_rules.iter()
+                    .filter(|r| r.rule_type == "exe" && r.action == "direct")
+                    .map(|r| r.value.clone())
+                    .collect();
+                let block_exes: Vec<String> = request.routing_rules.iter()
+                    .filter(|r| r.rule_type == "exe" && r.action == "block")
+                    .map(|r| r.value.clone())
+                    .collect();
+                let has_exe_rules = !proxy_exes.is_empty() || !direct_exes.is_empty() || !block_exes.is_empty();
                 
-                if !proxy_exes.is_empty() {
+                if has_exe_rules {
                     let exclude = vec!["sing-box.exe", "DoodleRay.exe", "adb.exe", "svchost.exe", "lsass.exe", "csrss.exe", "System"];
+                    
+                    // Build routing rules for the TUN bridge
+                    let mut tun_rules: Vec<serde_json::Value> = Vec::new();
+                    
+                    // 1. System processes always bypass TUN
                     let exclude_val: Vec<serde_json::Value> = exclude.iter()
                         .map(|s| serde_json::Value::String(s.to_string())).collect();
-                    let proxy_val: Vec<serde_json::Value> = proxy_exes.iter()
-                        .map(|s| serde_json::Value::String(s.to_string())).collect();
+                    tun_rules.push(serde_json::json!({ "process_name": exclude_val, "outbound": "direct" }));
+                    
+                    // 2. Blocked apps
+                    if !block_exes.is_empty() {
+                        let block_val: Vec<serde_json::Value> = block_exes.iter()
+                            .map(|s| serde_json::Value::String(s.to_string())).collect();
+                        tun_rules.push(serde_json::json!({ "process_name": block_val, "outbound": "block" }));
+                    }
+                    
+                    // 3. Direct apps — bypass VPN entirely (games, etc.)
+                    if !direct_exes.is_empty() {
+                        let direct_val: Vec<serde_json::Value> = direct_exes.iter()
+                            .map(|s| serde_json::Value::String(s.to_string())).collect();
+                        tun_rules.push(serde_json::json!({ "process_name": direct_val, "outbound": "direct" }));
+                    }
+                    
+                    // 4. Proxy apps — route through SOCKS5
+                    if !proxy_exes.is_empty() {
+                        let proxy_val: Vec<serde_json::Value> = proxy_exes.iter()
+                            .map(|s| serde_json::Value::String(s.to_string())).collect();
+                        tun_rules.push(serde_json::json!({ "process_name": proxy_val, "outbound": "proxy" }));
+                    }
+                    
+                    // 5. Private IPs always go direct
+                    tun_rules.push(serde_json::json!({ "ip_is_private": true, "outbound": "direct" }));
                     
                     let tun_bridge = serde_json::json!({
                         "log": { "level": "info" },
@@ -1355,24 +1450,35 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                                 "tag": "proxy",
                                 "server": "127.0.0.1",
                                 "server_port": request.socks_port
-                            }
+                            },
+                            { "type": "block", "tag": "block" }
                         ],
                         "route": {
                             "auto_detect_interface": true,
                             "default_domain_resolver": "dns-direct",
-                            "rules": [
-                                { "process_name": exclude_val, "outbound": "direct" },
-                                { "process_name": proxy_val, "outbound": "proxy" }
-                            ]
+                            "rules": tun_rules
                         }
                     });
+                    
+                    // Hot-switch: if TUN bridge is already running from previous session, reuse it
+                    if tun::is_singbox_running() {
+                        *engine = Some("singbox+app-proxy".into());
+                        update_tray_connected(&app, &request.server_address);
+                        let total = proxy_exes.len() + direct_exes.len() + block_exes.len();
+                        return ConnectResult {
+                            success: true,
+                            message: format!("Server switched (TUN bridge preserved, {} app rules active)", total),
+                        };
+                    }
                     
                     if let Ok(_) = tun::start_tun_elevated(&tun_bridge) {
                         *engine = Some("singbox+app-proxy".into());
                         update_tray_connected(&app, &request.server_address);
+                        let total = proxy_exes.len() + direct_exes.len() + block_exes.len();
                         return ConnectResult {
                             success: true,
-                            message: format!("System Proxy + {} apps with full proxy (TCP+UDP)", proxy_exes.len()),
+                            message: format!("System Proxy + TUN app routing ({} rules: {} proxy, {} direct, {} block)", 
+                                total, proxy_exes.len(), direct_exes.len(), block_exes.len()),
                         };
                     }
                 }

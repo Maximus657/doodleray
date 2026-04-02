@@ -318,8 +318,8 @@ export default function Dashboard() {
       setStatus('connecting');
       try {
         const { invoke } = await import('@tauri-apps/api/core');
-        await invoke('vpn_disconnect');
-        await new Promise(r => setTimeout(r, 2000));
+        // Don't call vpn_disconnect — vpn_connect handles cleanup internally
+        // and preserves the TUN bridge to avoid game disconnections
         const request = await buildConnectRequestFromState(server);
         const result: any = await invoke('vpn_connect', { request });
         if (result.success) { addLog('success', result.message); setStatus('connected'); setConnectedAt(Date.now()); }
