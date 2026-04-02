@@ -1139,8 +1139,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                     "type": "socks",
                     "tag": "proxy",
                     "server": "127.0.0.1",
-                    "server_port": request.socks_port,
-                    "udp_over_tcp": true
+                    "server_port": request.socks_port
                 },
                 { "type": "direct", "tag": "direct" }
             ],
