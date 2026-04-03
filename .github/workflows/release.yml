@@ -49,8 +49,8 @@ jobs:
           Invoke-WebRequest -Uri $wintunUrl -OutFile wintun.zip
           $wintunHash = (Get-FileHash -Path wintun.zip -Algorithm SHA256).Hash
           Write-Host "wintun SHA256: $wintunHash"
-          if ($wintunHash -ne "07C256185D6EE3652E09FA55C0B673B2571B6A693C4B5E9B4540552547F1E0F5") {
-            Write-Error "wintun checksum mismatch! Expected 07C256185D6EE3652E09FA55C0B673B2571B6A693C4B5E9B4540552547F1E0F5, got $wintunHash"
+          if ($wintunHash -ne "07C256185D6EE3652E09FA55C0B673E2624B565E02C4B9091C79CA7D2F24EF51") {
+            Write-Error "wintun checksum mismatch! Expected 07C256185D6EE3652E09FA55C0B673E2624B565E02C4B9091C79CA7D2F24EF51, got $wintunHash"
             exit 1
           }
           Expand-Archive -Path wintun.zip -DestinationPath wintun-tmp
