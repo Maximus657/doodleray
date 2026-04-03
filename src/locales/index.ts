@@ -21,7 +21,7 @@ export const translations = {
     testing: 'Testing...',
     loading: 'Loading...',
     retry: 'Retry',
-    errorLabel: 'ERROR',
+    errorLabel: 'N/A',
 
     // Dashboard
     activeServer: 'Active Server',

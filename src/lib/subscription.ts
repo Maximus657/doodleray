@@ -134,8 +134,9 @@ export async function fetchSubscription(
       const { invoke } = await import('@tauri-apps/api/core');
       text = await invoke('fetch_url', { url });
     } else {
-      // Dev mode fallback — browser fetch
-      const response = await fetch(url);
+      // Dev mode fallback — use Vite CORS proxy to bypass browser restrictions
+      const proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
+      const response = await fetch(proxyUrl);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }

@@ -7,6 +7,8 @@ import { parseProxyLink } from '../lib/parser';
 import { useTranslation } from '../locales';
 import { reportConnectionError } from '../lib/workshop-api';
 import { buildConnectRequestFromState } from '../lib/connect-helpers';
+import { TIMING } from '../lib/constants';
+import ConfirmModal, { EMPTY_CONFIRM, type ConfirmModalState } from '../components/ConfirmModal';
 
 // Sub-components
 import RetroBackground from '../components/dashboard/RetroBackground';
@@ -40,12 +42,7 @@ export default function Dashboard() {
   const [refreshingSubId, setRefreshingSubId] = useState<string | null>(null);
   const [pingingServerId, setPingingServerId] = useState<string | null>(null);
 
-  const [confirmModal, setConfirmModal] = useState<{
-    show: boolean;
-    title: string;
-    message: string;
-    onConfirm: () => void;
-  }>({ show: false, title: '', message: '', onConfirm: () => {} });
+  const [confirmModal, setConfirmModal] = useState<ConfirmModalState>(EMPTY_CONFIRM);
 
   // ═══════════════════════════════════════════════════
   //  Effects
@@ -108,7 +105,7 @@ export default function Dashboard() {
         if (healthy) { healthFailRef.current = 0; }
         else {
           healthFailRef.current++;
-          if (healthFailRef.current >= 3) {
+          if (healthFailRef.current >= TIMING.HEALTH_FAIL_THRESHOLD) {
             addLog('warning', 'Connection lost — SOCKS port not responding. Auto-reconnecting...');
             const { useToastStore } = await import('../stores/toast-store');
             useToastStore.getState().addToast('Connection lost — reconnecting...', 'warning');
@@ -128,7 +125,7 @@ export default function Dashboard() {
           }
         }
       } catch { /* not in tauri env */ }
-    }, 30000);
+    }, TIMING.HEALTH_CHECK_INTERVAL);
     return () => clearInterval(healthCheck);
   }, [status, socksPort]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -534,31 +531,11 @@ export default function Dashboard() {
         onClearLogs={clearLogs} logsEndRef={logsEndRef} t={t}
       />
 
-      {/* ── CUSTOM CONFIRM MODAL ── */}
-      {confirmModal.show && (
-        <>
-          <div className="fixed inset-0 z-[60] bg-black/40 backdrop-blur-sm"
-            onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))} />
-          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[70] w-72 bg-white border-[3px] border-black rounded-2xl p-5 shadow-[6px_6px_0_#000] animate-slide-up flex flex-col gap-4">
-            <div>
-              <h3 className="text-xs font-black uppercase tracking-widest leading-tight">{confirmModal.title}</h3>
-              <p className="text-xs text-black/60 font-bold mt-2 leading-relaxed">{confirmModal.message}</p>
-            </div>
-            <div className="flex gap-2 mt-2">
-              <button 
-                onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
-                className="flex-1 py-2 bg-white text-black border-[2px] border-black rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer hover:bg-black/5 hover:-translate-y-0.5 active:translate-y-0 transition-all">
-                {t('cancel')}
-              </button>
-              <button 
-                onClick={confirmModal.onConfirm}
-                className="flex-1 py-2 bg-danger text-white border-[2px] border-black rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer shadow-[2px_2px_0_#000] hover:shadow-[3px_3px_0_#000] hover:-translate-y-0.5 active:translate-y-1 active:shadow-none transition-all">
-                {t('deleteServer').split(' ')[0]} {/* Grab 'Delete' mostly */}
-              </button>
-            </div>
-          </div>
-        </>
-      )}
+      <ConfirmModal
+        {...confirmModal}
+        cancelLabel={t('cancel')}
+        onClose={() => setConfirmModal(prev => ({ ...prev, show: false }))}
+      />
     </div>
   );
 }

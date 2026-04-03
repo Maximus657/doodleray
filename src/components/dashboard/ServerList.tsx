@@ -51,7 +51,7 @@ export default function ServerList({
     const isActive = activeServer?.id === server.id;
     const pingColor = server.ping && server.ping > 0
       ? server.ping < 100 ? 'text-emerald-600' : server.ping < 300 ? 'text-amber-600' : 'text-red-600'
-      : server.ping === -1 ? 'text-red-600' : 'text-black/40';
+      : server.ping === -1 ? 'text-black/30' : 'text-black/40';
 
     return (
       <button key={server.id} onClick={() => onServerSelect(server)}
@@ -192,7 +192,7 @@ export default function ServerList({
                     const isActive = activeServer?.id === server.id;
                     const pingColor = server.ping && server.ping > 0
                       ? server.ping < 100 ? 'text-emerald-600' : server.ping < 300 ? 'text-amber-600' : 'text-red-600'
-                      : server.ping === -1 ? 'text-red-600' : 'text-black/40';
+                      : server.ping === -1 ? 'text-black/30' : 'text-black/40';
                     return (
                       <button key={server.id} onClick={() => onServerSelect(server)}
                         className={`w-full p-2.5 rounded-2xl flex items-center gap-3 transition-all duration-150 overflow-hidden relative cursor-pointer

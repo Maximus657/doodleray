@@ -38,6 +38,18 @@ export default defineConfig(async () => ({
     },
   ],
 
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom', 'react-router-dom'],
+          ui: ['lucide-react', 'recharts'],
+          state: ['zustand'],
+        },
+      },
+    },
+  },
+
   clearScreen: false,
   server: {
     port: 1420,

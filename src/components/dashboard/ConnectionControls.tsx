@@ -1,3 +1,4 @@
+import { useRef, useCallback } from 'react';
 import { Power, Globe, Network, CheckCircle2, Loader2 } from 'lucide-react';
 import type { ConnectionStatus, ProxyMode } from '../../stores/app-store';
 import { formatDuration } from '../../lib/utils';
@@ -15,6 +16,15 @@ interface Props {
 export default function ConnectionControls({ status, proxyMode, canConnect, connectTime, onConnect, onModeSwitch, t }: Props) {
   const isConnected = status === 'connected';
   const isConnecting = status === 'connecting';
+
+  // Double-click protection: ignore rapid clicks within 1s
+  const lastClickRef = useRef(0);
+  const handleConnect = useCallback(() => {
+    const now = Date.now();
+    if (now - lastClickRef.current < 1000) return;
+    lastClickRef.current = now;
+    onConnect();
+  }, [onConnect]);
 
   return (
     <>
@@ -39,7 +49,7 @@ export default function ConnectionControls({ status, proxyMode, canConnect, conn
 
       {/* ── POWER BUTTON ── */}
       <div className="flex flex-col items-center mt-2 relative z-10 shrink-0">
-        <button id="connect-button" onClick={onConnect}
+        <button id="connect-button" onClick={handleConnect}
           disabled={isConnecting || !canConnect}
           className="group relative w-40 h-40 flex items-center justify-center transition-all duration-150 cursor-pointer border-0 bg-transparent disabled:cursor-not-allowed">
           

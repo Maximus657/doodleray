@@ -10,6 +10,7 @@ import Settings from './pages/Settings';
 import { useAppStore } from './stores/app-store';
 import { useToastStore } from './stores/toast-store';
 import { buildConnectRequestFromState } from './lib/connect-helpers';
+import { TIMING } from './lib/constants';
 import './index.css';
 
 // Cache the Update object so we don't call check() again when user clicks install.
@@ -143,7 +144,7 @@ function App() {
       // Prevent concurrent executions by setting status immediately before the sleep delay
       useAppStore.setState({ status: 'connecting', activeServer: srv });
 
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, TIMING.AUTO_CONNECT_DELAY));
       
       try {
         state.addLog('info', `Auto-connecting to ${srv.name}...`);
@@ -179,9 +180,9 @@ function App() {
 
     syncSilentAdmin();
     // Check for updates after a brief delay so UI loads first
-    setTimeout(checkForUpdates, 3000);
+    setTimeout(checkForUpdates, TIMING.INITIAL_UPDATE_CHECK_DELAY);
     // Re-check for updates every 30 minutes
-    const updateInterval = setInterval(checkForUpdates, 30 * 60 * 1000);
+    const updateInterval = setInterval(checkForUpdates, TIMING.UPDATE_CHECK_INTERVAL);
     // Auto-connect if enabled
     autoConnectIfEnabled();
     
