@@ -196,48 +196,17 @@ async fn workshop_api(url: String, method: String, body: Option<String>) -> Resu
         .map_err(|e| format!("Failed to read body: {}", e))
 }
 
-/// Ping server via HTTP GET — measures real latency including DNS + TCP + HTTP response.
-/// Sends a GET request to the server and measures time to first byte.
-/// Falls back to TCP connect if HTTP doesn't respond.
+/// Ping server via TCP connect — measures real latency (DNS + TCP handshake).
+/// This matches how v2rayN and other VPN clients measure server latency.
+/// TCP connect is more accurate than HTTP GET for proxy servers because VLESS/VMess
+/// servers on port 443 can reject HTTP instantly (giving fake 1ms readings).
 #[tauri::command]
 async fn ping_server(address: String, port: u16, server_id: String) -> PingResult {
     let sid = server_id.clone();
-    
-    // Try HTTP GET first (most accurate)
-    let url = if port == 443 {
-        format!("https://{}:{}/", address, port)
-    } else {
-        format!("http://{}:{}/", address, port)
-    };
-    
-    let start = Instant::now();
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(4))
-        .danger_accept_invalid_certs(true)
-        .no_proxy()
-        .build()
-        .unwrap_or_default();
-    
-    let http_ms = match client.get(&url).send().await {
-        Ok(_) => start.elapsed().as_millis() as i32,
-        Err(e) => {
-            // If it's a timeout or connection error, try TCP fallback
-            if e.is_timeout() || e.is_connect() {
-                -1i32
-            } else {
-                // Server responded but with an error (still means it's reachable)
-                start.elapsed().as_millis() as i32
-            }
-        }
-    };
-    
-    if http_ms >= 0 {
-        return PingResult { server_id: sid, ping_ms: http_ms };
-    }
-    
-    // Fallback: raw TCP connect
     let addr = address.clone();
     let p = port;
+
+    // TCP connect — measures actual network round-trip to the server
     let tcp_result = tokio::task::spawn_blocking(move || {
         let target = format!("{}:{}", addr, p);
         let sock_addr = match std::net::ToSocketAddrs::to_socket_addrs(&target) {
@@ -247,9 +216,9 @@ async fn ping_server(address: String, port: u16, server_id: String) -> PingResul
             },
             Err(_) => return -1i32,
         };
-        
+
         let start = Instant::now();
-        match TcpStream::connect_timeout(&sock_addr, Duration::from_secs(3)) {
+        match TcpStream::connect_timeout(&sock_addr, Duration::from_secs(4)) {
             Ok(conn) => {
                 let ms = start.elapsed().as_millis() as i32;
                 drop(conn);
@@ -258,7 +227,7 @@ async fn ping_server(address: String, port: u16, server_id: String) -> PingResul
             Err(_) => -1,
         }
     }).await.unwrap_or(-1);
-    
+
     PingResult { server_id: sid, ping_ms: tcp_result }
 }
 

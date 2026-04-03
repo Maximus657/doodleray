@@ -16,7 +16,14 @@ interface XrayJsonConfig {
           id?: string;
           encryption?: string;
           flow?: string;
+          security?: string;
         }>;
+      }>;
+      servers?: Array<{
+        address?: string;
+        port?: number;
+        password?: string;
+        method?: string;
       }>;
     };
     streamSettings?: {
@@ -36,6 +43,10 @@ interface XrayJsonConfig {
         path?: string;
         headers?: { Host?: string };
       };
+      tlsSettings?: {
+        serverName?: string;
+        fingerprint?: string;
+      };
     };
   }>;
   routing?: {
@@ -50,31 +61,34 @@ interface XrayJsonConfig {
 function parseXrayJsonConfig(json: XrayJsonConfig): ServerConfig | null {
   try {
     const name = json.remarks || 'Unknown Server';
+    const proxyProtocols = ['vless', 'vmess', 'trojan', 'shadowsocks'];
+    const skipTags = ['direct', 'block', 'dns-out', 'api'];
+
+    // Find the proxy outbound — by tag or by protocol
     const proxyOutbound = json.outbounds?.find(
-      (o) => o.tag === 'proxy' || (o.protocol === 'vless' && o.tag !== 'direct' && o.tag !== 'block' && o.tag !== 'dns-out')
+      (o) => o.tag === 'proxy' || (proxyProtocols.includes(o.protocol || '') && !skipTags.includes(o.tag || ''))
     );
+    if (!proxyOutbound) return null;
 
-    if (!proxyOutbound || !proxyOutbound.settings?.vnext?.[0]) {
-      // Try multi-outbound (like the Антивайтлист config)
-      const firstVless = json.outbounds?.find((o) => o.protocol === 'vless');
-      if (!firstVless || !firstVless.settings?.vnext?.[0]) return null;
+    const protocol = (proxyOutbound.protocol || 'vless') as ServerConfig['protocol'];
+    const stream = proxyOutbound.streamSettings;
+    const country = detectCountry(name);
 
-      const vnext = firstVless.settings.vnext[0];
-      const stream = firstVless.streamSettings;
-      const country = detectCountry(name);
-
+    // vnext-based protocols (vless, vmess)
+    const vnext = proxyOutbound.settings?.vnext?.[0];
+    if (vnext) {
       return {
         id: crypto.randomUUID(),
         name,
-        protocol: 'vless',
+        protocol,
         address: vnext.address || '',
         port: vnext.port || 443,
         uuid: vnext.users?.[0]?.id,
         transport: stream?.network || 'tcp',
         security: stream?.security || 'none',
-        fingerprint: stream?.realitySettings?.fingerprint,
+        fingerprint: stream?.realitySettings?.fingerprint || stream?.tlsSettings?.fingerprint,
         publicKey: stream?.realitySettings?.publicKey,
-        sni: stream?.realitySettings?.serverName,
+        sni: stream?.realitySettings?.serverName || stream?.tlsSettings?.serverName,
         shortId: stream?.realitySettings?.shortId,
         path: stream?.xhttpSettings?.path || stream?.wsSettings?.path,
         flow: vnext.users?.[0]?.flow || undefined,
@@ -86,31 +100,28 @@ function parseXrayJsonConfig(json: XrayJsonConfig): ServerConfig | null {
       };
     }
 
-    const vnext = proxyOutbound.settings.vnext[0];
-    const stream = proxyOutbound.streamSettings;
-    const country = detectCountry(name);
+    // servers-based protocols (trojan, shadowsocks)
+    const server = proxyOutbound.settings?.servers?.[0];
+    if (server) {
+      return {
+        id: crypto.randomUUID(),
+        name,
+        protocol: protocol === 'shadowsocks' ? 'shadowsocks' : 'trojan',
+        address: server.address || '',
+        port: server.port || 443,
+        password: server.password,
+        encryption: server.method,
+        transport: stream?.network || 'tcp',
+        security: stream?.security || 'none',
+        sni: stream?.realitySettings?.serverName || stream?.tlsSettings?.serverName,
+        country: country?.name,
+        countryCode: country?.code,
+        rawLink: JSON.stringify(json),
+        rawConfig: json,
+      };
+    }
 
-    return {
-      id: crypto.randomUUID(),
-      name,
-      protocol: 'vless',
-      address: vnext.address || '',
-      port: vnext.port || 443,
-      uuid: vnext.users?.[0]?.id,
-      transport: stream?.network || 'tcp',
-      security: stream?.security || 'none',
-      fingerprint: stream?.realitySettings?.fingerprint,
-      publicKey: stream?.realitySettings?.publicKey,
-      sni: stream?.realitySettings?.serverName,
-      shortId: stream?.realitySettings?.shortId,
-      path: stream?.xhttpSettings?.path || stream?.wsSettings?.path,
-      flow: vnext.users?.[0]?.flow || undefined,
-      encryption: vnext.users?.[0]?.encryption || 'none',
-      country: country?.name,
-      countryCode: country?.code,
-      rawLink: JSON.stringify(json),
-      rawConfig: json,
-    };
+    return null;
   } catch {
     return null;
   }
