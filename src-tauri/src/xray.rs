@@ -197,8 +197,8 @@ pub fn stop_xray() -> Result<(), String> {
         let _ = std::process::Command::new("pkill").args(["-f", "xray"]).output();
     }
     
-    // Brief pause to let ports release
-    std::thread::sleep(std::time::Duration::from_millis(300));
+    // Brief pause to let ports release (kept short — caller retries if needed)
+    std::thread::sleep(std::time::Duration::from_millis(100));
     Ok(())
 }
 

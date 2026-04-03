@@ -1474,7 +1474,7 @@ async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
         let state = CONNECTION_STATE.lock().unwrap_or_else(|p| p.into_inner());
         *state
     };
-    
+
     if !is_connected {
         return ConnectResult {
             success: true,
@@ -1482,47 +1482,57 @@ async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
         };
     }
 
-    // Stop all engines — always clean up everything to prevent orphaned processes
-    let prev_engine = {
-        let engine = ACTIVE_ENGINE.lock().unwrap_or_else(|p| p.into_inner());
-        engine.clone()
-    };
-    
-    // Always stop in-process libsingbox (safe even if not running)
-    let _ = singbox::stop_singbox();
-    
-    // Always stop xray (safe if not running)
-    let _ = xray::stop_xray();
-    
-    // Only kill external sing-box.exe and wait if TUN was active
-    let had_tun = matches!(
-        prev_engine.as_deref(),
-        Some("singbox-tun") | Some("singbox+app-proxy") | Some("xray+tun") | Some("xray+app-proxy") | None
-    );
-    
-    if had_tun {
-        let _ = tun::stop_tun();
-        for _ in 0..8 {
-            if !tun::is_singbox_running() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(200));
+    // Update state IMMEDIATELY so UI responds right away
+    {
+        let mut state = CONNECTION_STATE.lock().unwrap_or_else(|p| p.into_inner());
+        *state = false;
+        let mut engine_lock = ACTIVE_ENGINE.lock().unwrap_or_else(|p| p.into_inner());
+        let prev = engine_lock.clone();
+        *engine_lock = None;
+        drop(engine_lock);
+        drop(state);
+        update_tray_disconnected(&app);
+
+        // Unset Windows system proxy first (instant, restores internet immediately)
+        let _ = sysproxy::unset_system_proxy();
+
+        // Stop engines based on what was running
+        let _ = singbox::stop_singbox();
+
+        let had_tun = matches!(
+            prev.as_deref(),
+            Some("singbox-tun") | Some("singbox+app-proxy") | Some("xray+tun") | Some("xray+app-proxy") | None
+        );
+        let had_xray = matches!(
+            prev.as_deref(),
+            Some("xray") | Some("xray+tun") | Some("xray+app-proxy") | None
+        );
+
+        if had_xray {
+            let _ = xray::stop_xray();
         }
-        if tun::is_singbox_running() {
-            eprintln!("[warn] sing-box.exe still alive after stop_tun, retrying...");
+
+        if had_tun {
             let _ = tun::stop_tun();
-            std::thread::sleep(std::time::Duration::from_millis(500));
+            // Quick check — don't block forever
+            for _ in 0..5 {
+                if !tun::is_singbox_running() { break; }
+                std::thread::sleep(std::time::Duration::from_millis(150));
+            }
+            // If still alive, fire-and-forget elevated kill (don't block on UAC)
+            if tun::is_singbox_running() {
+                eprintln!("[warn] sing-box.exe still alive, spawning elevated kill");
+                #[cfg(windows)]
+                {
+                    let mut cmd = std::process::Command::new("taskkill");
+                    cmd.args(&["/IM", "sing-box.exe", "/F", "/T"]);
+                    cmd.creation_flags(0x08000000);
+                    let _ = cmd.spawn(); // non-blocking spawn
+                }
+            }
         }
     }
-    
-    // Unset Windows system proxy
-    let _ = sysproxy::unset_system_proxy();
-    
-    let mut state = CONNECTION_STATE.lock().unwrap_or_else(|p| p.into_inner());
-    *state = false;
-    let mut engine = ACTIVE_ENGINE.lock().unwrap_or_else(|p| p.into_inner());
-    *engine = None;
-    update_tray_disconnected(&app);
+
     ConnectResult {
         success: true,
         message: "Disconnected".into(),
