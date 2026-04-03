@@ -280,12 +280,13 @@ pub fn stop_tun() -> Result<(), String> {
         if let Ok(output) = &regular {
             let stderr = String::from_utf8_lossy(&output.stderr);
             if stderr.contains("Access") || stderr.contains("Отказано") || stderr.contains("denied") {
+                // Regular taskkill failed (access denied) — try elevated kill
                 let kill_cmd = "taskkill /IM sing-box.exe /F /T";
                 let cmd_w: Vec<u16> = "cmd.exe\0".encode_utf16().collect();
                 let args = format!("/c {}\0", kill_cmd);
                 let args_w: Vec<u16> = args.encode_utf16().collect();
                 let verb: Vec<u16> = "runas\0".encode_utf16().collect();
-                
+
                 unsafe {
                     #[link(name = "shell32")]
                     extern "system" {
@@ -298,7 +299,7 @@ pub fn stop_tun() -> Result<(), String> {
                             nShowCmd: i32,
                         ) -> isize;
                     }
-                    
+
                     ShellExecuteW(
                         std::ptr::null_mut(),
                         verb.as_ptr(),
@@ -308,20 +309,17 @@ pub fn stop_tun() -> Result<(), String> {
                         0,
                     );
                 }
-                
-                // Wait for the process to actually terminate
-                for _ in 0..8 {
-                    if !is_singbox_running() {
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(250));
+
+                // Quick poll — don't block forever on elevated kill
+                for _ in 0..4 {
+                    if !is_singbox_running() { break; }
+                    std::thread::sleep(std::time::Duration::from_millis(150));
                 }
             } else {
-                for _ in 0..6 {
-                    if !is_singbox_running() {
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(250));
+                // taskkill succeeded or process not found — brief wait
+                for _ in 0..3 {
+                    if !is_singbox_running() { break; }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
                 }
             }
         }
