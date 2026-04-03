@@ -1130,10 +1130,10 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                 "type": "tun",
                 "tag": "tun-in",
                 "interface_name": "tun0",
-                "address": ["172.19.0.1/30"],
+                "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
                 "auto_route": true,
                 "strict_route": true,
-                "stack": "system",
+                "stack": "mixed",
                 "udp_timeout": "5m0s",
             }],
             "outbounds": [
@@ -1141,7 +1141,8 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                     "type": "socks",
                     "tag": "proxy",
                     "server": "127.0.0.1",
-                    "server_port": request.socks_port
+                    "server_port": request.socks_port,
+                    "udp_over_tcp": true
                 },
                 { "type": "direct", "tag": "direct" }
             ],
@@ -1156,7 +1157,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                 ]
             }
         });
-        
+
         match tun::start_tun_elevated(&tun_bridge) {
             Ok(_) => {
                 let mut state = CONNECTION_STATE.lock().unwrap_or_else(|p| p.into_inner());
@@ -1273,20 +1274,27 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                         "dns": {
                             "servers": [
                                 {
+                                    "tag": "dns-remote",
+                                    "type": "udp",
+                                    "server": "8.8.8.8",
+                                    "detour": "proxy"
+                                },
+                                {
                                     "tag": "dns-direct",
                                     "type": "udp",
-                                    "server": "8.8.8.8"
+                                    "server": "1.1.1.1"
                                 }
                             ],
+                            "final": "dns-remote",
                             "strategy": "prefer_ipv4"
                         },
                         "inbounds": [{
                             "type": "tun",
                             "tag": "tun-in",
-                            "address": ["172.19.0.1/30"],
+                            "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
                             "auto_route": true,
                             "strict_route": true,
-                            "stack": "system",
+                            "stack": "mixed",
                             "udp_timeout": "5m0s",
                         }],
                         "outbounds": [
@@ -1295,7 +1303,8 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                                 "type": "socks",
                                 "tag": "proxy",
                                 "server": "127.0.0.1",
-                                "server_port": request.socks_port
+                                "server_port": request.socks_port,
+                                "udp_over_tcp": true
                             },
                             { "type": "block", "tag": "block" }
                         ],
@@ -1426,20 +1435,27 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                         "dns": {
                             "servers": [
                                 {
+                                    "tag": "dns-remote",
+                                    "type": "udp",
+                                    "server": "8.8.8.8",
+                                    "detour": "proxy"
+                                },
+                                {
                                     "tag": "dns-direct",
                                     "type": "udp",
-                                    "server": "8.8.8.8"
+                                    "server": "1.1.1.1"
                                 }
                             ],
+                            "final": "dns-remote",
                             "strategy": "prefer_ipv4"
                         },
                         "inbounds": [{
                             "type": "tun",
                             "tag": "tun-in",
-                            "address": ["172.19.0.1/30"],
+                            "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
                             "auto_route": true,
                             "strict_route": true,
-                            "stack": "system",
+                            "stack": "mixed",
                             "udp_timeout": "5m0s",
                         }],
                         "outbounds": [
@@ -1448,7 +1464,8 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                                 "type": "socks",
                                 "tag": "proxy",
                                 "server": "127.0.0.1",
-                                "server_port": request.socks_port
+                                "server_port": request.socks_port,
+                                "udp_over_tcp": true
                             },
                             { "type": "block", "tag": "block" }
                         ],
