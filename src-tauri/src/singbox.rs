@@ -10,7 +10,7 @@ lazy_static! {
 }
 
 pub fn start_singbox(config_json: &Value) -> Result<(), String> {
-    let mut lib_guard = SINGBOX_LIB.lock().unwrap();
+    let mut lib_guard = SINGBOX_LIB.lock().unwrap_or_else(|p| p.into_inner());
     
     if lib_guard.is_none() {
         // Platform-specific library name
@@ -78,7 +78,7 @@ pub fn start_singbox(config_json: &Value) -> Result<(), String> {
 }
 
 pub fn stop_singbox() -> Result<(), String> {
-    let lib_guard = SINGBOX_LIB.lock().unwrap();
+    let lib_guard = SINGBOX_LIB.lock().unwrap_or_else(|p| p.into_inner());
     
     if let Some(lib) = lib_guard.as_ref() {
         unsafe {

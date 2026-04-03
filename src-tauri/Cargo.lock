@@ -4267,7 +4267,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-app"
-version = "3.1.8"
+version = "3.2.0"
 dependencies = [
  "ctrlc",
  "lazy_static",
@@ -4721,9 +4721,7 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
- "parking_lot",
  "pin-project-lite",
- "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",

@@ -18,6 +18,7 @@ import { fetchSubscription, refreshSubscription } from '../lib/subscription';
 import { formatPing, protocolLabel, pingServerSmart } from '../lib/utils';
 import type { ServerConfig } from '../stores/app-store';
 import { useTranslation } from '../locales';
+import ConfirmModal, { EMPTY_CONFIRM, type ConfirmModalState } from '../components/ConfirmModal';
 
 export default function Servers() {
   const {
@@ -42,12 +43,7 @@ export default function Servers() {
   const [refreshingSub, setRefreshingSub] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
 
-  const [confirmModal, setConfirmModal] = useState<{
-    show: boolean;
-    title: string;
-    message: string;
-    onConfirm: () => void;
-  }>({ show: false, title: '', message: '', onConfirm: () => {} });
+  const [confirmModal, setConfirmModal] = useState<ConfirmModalState>(EMPTY_CONFIRM);
 
   // Auto-ping all servers on mount (only those without a ping value)
   useEffect(() => {
@@ -391,31 +387,11 @@ export default function Servers() {
         </div>
       </div>
       
-      {/* ── CUSTOM CONFIRM MODAL ── */}
-      {confirmModal.show && (
-        <>
-          <div className="fixed inset-0 z-[60] bg-black/40 backdrop-blur-sm"
-            onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))} />
-          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[70] w-72 bg-white border-[3px] border-black rounded-2xl p-5 shadow-[6px_6px_0_#000] animate-slide-up flex flex-col gap-4">
-            <div>
-              <h3 className="text-xs font-black uppercase tracking-widest leading-tight">{confirmModal.title}</h3>
-              <p className="text-xs text-black/60 font-bold mt-2 leading-relaxed">{confirmModal.message}</p>
-            </div>
-            <div className="flex gap-2 mt-2">
-              <button 
-                onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
-                className="flex-1 py-2 bg-white text-black border-[2px] border-black rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer hover:bg-black/5 hover:-translate-y-0.5 active:translate-y-0 transition-all">
-                {t('cancel')}
-              </button>
-              <button 
-                onClick={confirmModal.onConfirm}
-                className="flex-1 py-2 bg-danger text-white border-[2px] border-black rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer shadow-[2px_2px_0_#000] hover:shadow-[3px_3px_0_#000] hover:-translate-y-0.5 active:translate-y-1 active:shadow-none transition-all">
-                OK
-              </button>
-            </div>
-          </div>
-        </>
-      )}
+      <ConfirmModal
+        {...confirmModal}
+        cancelLabel={t('cancel')}
+        onClose={() => setConfirmModal(prev => ({ ...prev, show: false }))}
+      />
     </div>
   );
 }

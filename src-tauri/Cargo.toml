@@ -1,6 +1,6 @@
 [package]
 name = "tauri-app"
-version = "3.2.0"
+version = "3.2.1"
 description = "DoodleRay VPN Client"
 authors = ["DoodleVPN"]
 edition = "2021"
@@ -28,13 +28,19 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 libloading = "0.8"
 lazy_static = "1.4"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "net"] }
 reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false }
 tauri-plugin-autostart = "2.5.1"
 tauri-plugin-updater = "2.10.0"
 tauri-plugin-process = "2.3.1"
 tauri-plugin-http = "2.5.7"
 ctrlc = "3"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
 
 # Windows-only dependencies
 [target.'cfg(windows)'.dependencies]

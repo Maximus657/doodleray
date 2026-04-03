@@ -1009,7 +1009,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
     // Stop previous engine — only call stop_tun() (which needs admin password on macOS)
     // when TUN was actually active
     let prev_engine = {
-        let engine = ACTIVE_ENGINE.lock().unwrap();
+        let engine = ACTIVE_ENGINE.lock().unwrap_or_else(|p| p.into_inner());
         engine.clone()
     };
     
@@ -1159,9 +1159,9 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
         
         match tun::start_tun_elevated(&tun_bridge) {
             Ok(_) => {
-                let mut state = CONNECTION_STATE.lock().unwrap();
+                let mut state = CONNECTION_STATE.lock().unwrap_or_else(|p| p.into_inner());
                 *state = true;
-                let mut engine = ACTIVE_ENGINE.lock().unwrap();
+                let mut engine = ACTIVE_ENGINE.lock().unwrap_or_else(|p| p.into_inner());
                 *engine = Some("xray+tun".into());
                 update_tray_connected(&app, &request.server_address);
                 ConnectResult {
@@ -1203,9 +1203,9 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
             Ok(_) => {
                 // DNS Leak Prevention: wait for core to be ready before setting proxy
                 wait_for_port_ready(request.socks_port);
-                let mut state = CONNECTION_STATE.lock().unwrap();
+                let mut state = CONNECTION_STATE.lock().unwrap_or_else(|p| p.into_inner());
                 *state = true;
-                let mut engine = ACTIVE_ENGINE.lock().unwrap();
+                let mut engine = ACTIVE_ENGINE.lock().unwrap_or_else(|p| p.into_inner());
                 *engine = Some("xray".into());
                 if let Err(e) = sysproxy::set_system_proxy(request.http_port) {
                     return ConnectResult { success: false, message: format!("xray started but failed to set system proxy: {}", e) };
@@ -1333,9 +1333,9 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
         
         match tun::start_tun_elevated(&config) {
             Ok(_) => {
-                let mut state = CONNECTION_STATE.lock().unwrap();
+                let mut state = CONNECTION_STATE.lock().unwrap_or_else(|p| p.into_inner());
                 *state = true;
-                let mut engine = ACTIVE_ENGINE.lock().unwrap();
+                let mut engine = ACTIVE_ENGINE.lock().unwrap_or_else(|p| p.into_inner());
                 *engine = Some("singbox-tun".into());
                 update_tray_connected(&app, &request.server_address);
                 ConnectResult {
@@ -1357,9 +1357,9 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
             Ok(_) => {
                 // DNS Leak Prevention: wait for core to be ready before setting proxy
                 wait_for_port_ready(request.socks_port);
-                let mut state = CONNECTION_STATE.lock().unwrap();
+                let mut state = CONNECTION_STATE.lock().unwrap_or_else(|p| p.into_inner());
                 *state = true;
-                let mut engine = ACTIVE_ENGINE.lock().unwrap();
+                let mut engine = ACTIVE_ENGINE.lock().unwrap_or_else(|p| p.into_inner());
                 *engine = Some("singbox".into());
                 if let Err(e) = sysproxy::set_system_proxy(request.http_port) {
                     return ConnectResult { success: false, message: format!("sing-box started but failed to set system proxy: {}", e) };
@@ -1485,7 +1485,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
 #[tauri::command]
 async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
     let is_connected = {
-        let state = CONNECTION_STATE.lock().unwrap();
+        let state = CONNECTION_STATE.lock().unwrap_or_else(|p| p.into_inner());
         *state
     };
     
@@ -1498,7 +1498,7 @@ async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
 
     // Stop all engines — always clean up everything to prevent orphaned processes
     let prev_engine = {
-        let engine = ACTIVE_ENGINE.lock().unwrap();
+        let engine = ACTIVE_ENGINE.lock().unwrap_or_else(|p| p.into_inner());
         engine.clone()
     };
     
@@ -1532,9 +1532,9 @@ async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
     // Unset Windows system proxy
     let _ = sysproxy::unset_system_proxy();
     
-    let mut state = CONNECTION_STATE.lock().unwrap();
+    let mut state = CONNECTION_STATE.lock().unwrap_or_else(|p| p.into_inner());
     *state = false;
-    let mut engine = ACTIVE_ENGINE.lock().unwrap();
+    let mut engine = ACTIVE_ENGINE.lock().unwrap_or_else(|p| p.into_inner());
     *engine = None;
     update_tray_disconnected(&app);
     ConnectResult {
@@ -1545,7 +1545,7 @@ async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
 
 #[tauri::command]
 fn vpn_status() -> bool {
-    let state = CONNECTION_STATE.lock().unwrap();
+    let state = CONNECTION_STATE.lock().unwrap_or_else(|p| p.into_inner());
     *state
 }
 
@@ -1774,7 +1774,7 @@ fn scan_installed_apps() -> Result<Vec<serde_json::Value>, String> {
 #[tauri::command]
 async fn get_proxy_logs() -> Vec<String> {
     let engine = {
-        let e = ACTIVE_ENGINE.lock().unwrap();
+        let e = ACTIVE_ENGINE.lock().unwrap_or_else(|p| p.into_inner());
         e.clone().unwrap_or_default()
     };
 
@@ -1806,7 +1806,7 @@ async fn get_proxy_logs() -> Vec<String> {
             };
 
             let mut new_lines = Vec::new();
-            let mut seen = SB_SEEN_CONNS.lock().unwrap();
+            let mut seen = SB_SEEN_CONNS.lock().unwrap_or_else(|p| p.into_inner());
             if seen.is_none() {
                 *seen = Some(HashSet::new());
             }
@@ -1857,16 +1857,16 @@ async fn get_proxy_logs() -> Vec<String> {
 
 /// Reset sing-box traffic counters (call on connect/disconnect)
 fn reset_sb_traffic() {
-    *SB_PREV_DOWN.lock().unwrap() = 0;
-    *SB_PREV_UP.lock().unwrap() = 0;
-    *SB_SEEN_CONNS.lock().unwrap() = None;
+    *SB_PREV_DOWN.lock().unwrap_or_else(|p| p.into_inner()) = 0;
+    *SB_PREV_UP.lock().unwrap_or_else(|p| p.into_inner()) = 0;
+    *SB_SEEN_CONNS.lock().unwrap_or_else(|p| p.into_inner()) = None;
 }
 
 /// Get real traffic stats — dispatches to xray or sing-box clash API based on active engine
 #[tauri::command]
 async fn get_traffic_stats() -> serde_json::Value {
     let is_connected = {
-        let state = CONNECTION_STATE.lock().unwrap();
+        let state = CONNECTION_STATE.lock().unwrap_or_else(|p| p.into_inner());
         *state
     };
     if !is_connected {
@@ -1874,7 +1874,7 @@ async fn get_traffic_stats() -> serde_json::Value {
     }
 
     let engine = {
-        let e = ACTIVE_ENGINE.lock().unwrap();
+        let e = ACTIVE_ENGINE.lock().unwrap_or_else(|p| p.into_inner());
         e.clone().unwrap_or_default()
     };
 
@@ -1895,13 +1895,13 @@ async fn get_traffic_stats() -> serde_json::Value {
                         
                         // Calculate delta from previous poll
                         let prev_down = {
-                            let mut p = SB_PREV_DOWN.lock().unwrap();
+                            let mut p = SB_PREV_DOWN.lock().unwrap_or_else(|p| p.into_inner());
                             let prev = *p;
                             *p = total_down;
                             prev
                         };
                         let prev_up = {
-                            let mut p = SB_PREV_UP.lock().unwrap();
+                            let mut p = SB_PREV_UP.lock().unwrap_or_else(|p| p.into_inner());
                             let prev = *p;
                             *p = total_up;
                             prev

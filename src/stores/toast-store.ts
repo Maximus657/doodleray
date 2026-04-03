@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { TIMING } from '../lib/constants';
 
 interface Toast {
   id: string;
@@ -19,7 +20,7 @@ export const useToastStore = create<ToastStore>((set) => ({
     set((s) => ({ toasts: [...s.toasts, { id, message, type }] }));
     setTimeout(() => {
       set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
-    }, 4000);
+    }, TIMING.TOAST_DURATION);
   },
   removeToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 }));

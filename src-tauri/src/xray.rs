@@ -39,9 +39,9 @@ pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
     let _ = stop_xray();
 
     {
-        let mut logs = XRAY_LOGS.lock().unwrap();
+        let mut logs = XRAY_LOGS.lock().unwrap_or_else(|p| p.into_inner());
         logs.clear();
-        let mut cursor = LOG_CURSOR.lock().unwrap();
+        let mut cursor = LOG_CURSOR.lock().unwrap_or_else(|p| p.into_inner());
         *cursor = 0;
     }
 
@@ -106,10 +106,9 @@ pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
                     || line.contains("REALITY: received real certificate") {
                     continue;
                 }
-                let mut logs = XRAY_LOGS.lock().unwrap();
+                let mut logs = XRAY_LOGS.lock().unwrap_or_else(|p| p.into_inner());
                 if logs.len() > 1000 {
                     logs.drain(0..500);
-                    // Adjust cursor so it doesn't point past the end
                     if let Ok(mut c) = LOG_CURSOR.lock() {
                         *c = c.saturating_sub(500).min(logs.len());
                     }
@@ -124,16 +123,16 @@ pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
         std::thread::spawn(move || {
             let reader = std::io::BufReader::new(stderr);
             for line in reader.lines().flatten() {
-                if line.contains("api -> api") || line.contains("api]") 
-                    || line.contains("172.19.0.2:53") 
-                    || line.contains("dokodemo") 
+                if line.contains("api -> api") || line.contains("api]")
+                    || line.contains("172.19.0.2:53")
+                    || line.contains("dokodemo")
                     || line.contains("The feature VLESS")
                     || line.contains("An established connection was aborted by the software")
                     || line.contains("app/observatory/burst")
                     || line.contains("REALITY: received real certificate") {
                     continue;
                 }
-                let mut logs = XRAY_LOGS.lock().unwrap();
+                let mut logs = XRAY_LOGS.lock().unwrap_or_else(|p| p.into_inner());
                 if logs.len() > 1000 {
                     logs.drain(0..500);
                     if let Ok(mut c) = LOG_CURSOR.lock() {
@@ -146,7 +145,7 @@ pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
     }
 
     {
-        let mut proc = XRAY_PROCESS.lock().unwrap();
+        let mut proc = XRAY_PROCESS.lock().unwrap_or_else(|p| p.into_inner());
         *proc = Some(child);
     }
 
@@ -154,11 +153,11 @@ pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
 
     // Check if the process crashed immediately (e.g. port bind error)
     {
-        let mut proc = XRAY_PROCESS.lock().unwrap();
+        let mut proc = XRAY_PROCESS.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(ref mut child) = *proc {
             if let Ok(Some(status)) = child.try_wait() {
                 // Process died early. Get the reason from logs.
-                let logs = XRAY_LOGS.lock().unwrap();
+                let logs = XRAY_LOGS.lock().unwrap_or_else(|p| p.into_inner());
                 let mut reason = format!("Process exited with status: {}", status);
                 
                 // Find the most relevant error line
@@ -178,7 +177,7 @@ pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
 }
 
 pub fn stop_xray() -> Result<(), String> {
-    let mut proc = XRAY_PROCESS.lock().unwrap();
+    let mut proc = XRAY_PROCESS.lock().unwrap_or_else(|p| p.into_inner());
     if let Some(ref mut child) = *proc {
         let _ = child.kill();
         let _ = child.wait();
@@ -204,8 +203,8 @@ pub fn stop_xray() -> Result<(), String> {
 }
 
 pub fn get_new_logs() -> Vec<String> {
-    let logs = XRAY_LOGS.lock().unwrap();
-    let mut cursor = LOG_CURSOR.lock().unwrap();
+    let logs = XRAY_LOGS.lock().unwrap_or_else(|p| p.into_inner());
+    let mut cursor = LOG_CURSOR.lock().unwrap_or_else(|p| p.into_inner());
     // Clamp cursor to valid range
     let start = (*cursor).min(logs.len());
     let new_lines: Vec<String> = logs[start..].to_vec();
