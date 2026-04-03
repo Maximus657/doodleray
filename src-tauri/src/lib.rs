@@ -1030,24 +1030,23 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
     );
     
     if needs_process_wait {
-        for _ in 0..10 {
-            if !tun::is_singbox_running() {
-                break;
+        // Wait in blocking thread to avoid freezing async runtime (UI stays responsive)
+        tokio::task::spawn_blocking(|| {
+            for _ in 0..10 {
+                if !tun::is_singbox_running() { break; }
+                std::thread::sleep(std::time::Duration::from_millis(150));
             }
-            std::thread::sleep(std::time::Duration::from_millis(200));
-        }
-        if tun::is_singbox_running() {
-            eprintln!("[warn] sing-box.exe still alive, retrying stop_tun...");
-            let _ = tun::stop_tun();
-            for _ in 0..4 {
-                if !tun::is_singbox_running() {
-                    break;
+            if tun::is_singbox_running() {
+                eprintln!("[warn] sing-box.exe still alive, retrying stop_tun...");
+                let _ = tun::stop_tun();
+                for _ in 0..4 {
+                    if !tun::is_singbox_running() { break; }
+                    std::thread::sleep(std::time::Duration::from_millis(200));
                 }
-                std::thread::sleep(std::time::Duration::from_millis(300));
             }
-        }
-        // Brief wait for port release after process death
-        std::thread::sleep(std::time::Duration::from_millis(200));
+            // Brief wait for port release after process death
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }).await.ok();
     }
     
     if use_xray && is_tun {
@@ -1065,15 +1064,15 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                 let _ = force_free_port(request.socks_port).await;
                 let _ = force_free_port(request.http_port).await;
                 let _ = force_free_port(10813).await;
-                std::thread::sleep(std::time::Duration::from_millis(1000));
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 start_result = xray::start_xray(&xray_config);
             }
         }
-        
+
         if let Err(e) = start_result {
             return ConnectResult { success: false, message: format!("Failed to start xray-core: {}", e) };
         }
-        
+
         // sing-box as TUN bridge → routes all traffic to xray's SOCKS5
         // sing-box v1.13+ config format
         let tun_bridge = serde_json::json!({
@@ -1164,15 +1163,15 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                 let _ = force_free_port(request.socks_port).await;
                 let _ = force_free_port(request.http_port).await;
                 let _ = force_free_port(10813).await;
-                std::thread::sleep(std::time::Duration::from_millis(1000));
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 start_result = xray::start_xray(&xray_config);
             }
         }
-        
+
         match start_result {
             Ok(_) => {
                 // DNS Leak Prevention: wait for core to be ready before setting proxy
-                wait_for_port_ready(request.socks_port);
+                { let p = request.socks_port; tokio::task::spawn_blocking(move || wait_for_port_ready(p)).await.ok(); }
                 let mut state = CONNECTION_STATE.lock().unwrap_or_else(|p| p.into_inner());
                 *state = true;
                 let mut engine = ACTIVE_ENGINE.lock().unwrap_or_else(|p| p.into_inner());
@@ -1334,7 +1333,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
         match singbox::start_singbox(&config) {
             Ok(_) => {
                 // DNS Leak Prevention: wait for core to be ready before setting proxy
-                wait_for_port_ready(request.socks_port);
+                { let p = request.socks_port; tokio::task::spawn_blocking(move || wait_for_port_ready(p)).await.ok(); }
                 let mut state = CONNECTION_STATE.lock().unwrap_or_else(|p| p.into_inner());
                 *state = true;
                 let mut engine = ACTIVE_ENGINE.lock().unwrap_or_else(|p| p.into_inner());
@@ -1483,30 +1482,31 @@ async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
     }
 
     // Update state IMMEDIATELY so UI responds right away
-    {
+    let prev = {
         let mut state = CONNECTION_STATE.lock().unwrap_or_else(|p| p.into_inner());
         *state = false;
         let mut engine_lock = ACTIVE_ENGINE.lock().unwrap_or_else(|p| p.into_inner());
         let prev = engine_lock.clone();
         *engine_lock = None;
-        drop(engine_lock);
-        drop(state);
-        update_tray_disconnected(&app);
+        prev
+    };
+    update_tray_disconnected(&app);
 
-        // Unset Windows system proxy first (instant, restores internet immediately)
-        let _ = sysproxy::unset_system_proxy();
+    // Unset Windows system proxy first (instant, restores internet immediately)
+    let _ = sysproxy::unset_system_proxy();
 
-        // Stop engines based on what was running
+    // Stop engines in background thread (UI already updated above)
+    let had_tun = matches!(
+        prev.as_deref(),
+        Some("singbox-tun") | Some("singbox+app-proxy") | Some("xray+tun") | Some("xray+app-proxy") | None
+    );
+    let had_xray = matches!(
+        prev.as_deref(),
+        Some("xray") | Some("xray+tun") | Some("xray+app-proxy") | None
+    );
+
+    tokio::task::spawn_blocking(move || {
         let _ = singbox::stop_singbox();
-
-        let had_tun = matches!(
-            prev.as_deref(),
-            Some("singbox-tun") | Some("singbox+app-proxy") | Some("xray+tun") | Some("xray+app-proxy") | None
-        );
-        let had_xray = matches!(
-            prev.as_deref(),
-            Some("xray") | Some("xray+tun") | Some("xray+app-proxy") | None
-        );
 
         if had_xray {
             let _ = xray::stop_xray();
@@ -1514,12 +1514,10 @@ async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
 
         if had_tun {
             let _ = tun::stop_tun();
-            // Quick check — don't block forever
             for _ in 0..5 {
                 if !tun::is_singbox_running() { break; }
                 std::thread::sleep(std::time::Duration::from_millis(150));
             }
-            // If still alive, fire-and-forget elevated kill (don't block on UAC)
             if tun::is_singbox_running() {
                 eprintln!("[warn] sing-box.exe still alive, spawning elevated kill");
                 #[cfg(windows)]
@@ -1527,11 +1525,11 @@ async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
                     let mut cmd = std::process::Command::new("taskkill");
                     cmd.args(&["/IM", "sing-box.exe", "/F", "/T"]);
                     cmd.creation_flags(0x08000000);
-                    let _ = cmd.spawn(); // non-blocking spawn
+                    let _ = cmd.spawn();
                 }
             }
         }
-    }
+    }).await.ok();
 
     ConnectResult {
         success: true,
@@ -1914,149 +1912,157 @@ async fn get_traffic_stats() -> serde_json::Value {
             serde_json::json!({ "download": 0, "upload": 0 })
         },
         _ => {
-            // xray-core stats API
-            let exe_dir = std::env::current_exe()
-                .unwrap_or_default()
-                .parent()
-                .unwrap_or(std::path::Path::new("."))
-                .to_path_buf();
-            #[cfg(windows)]
-            let xray_exe = exe_dir.join("xray-core").join("xray.exe");
-            #[cfg(not(windows))]
-            let xray_exe = exe_dir.join("xray-core").join("xray");
-            
-            if !xray_exe.exists() {
-                let logs = xray::get_recent_activity();
-                return serde_json::json!({ "download": logs.0, "upload": logs.1 });
-            }
+            // xray-core stats API — run in blocking thread to avoid freezing async runtime
+            let result = tokio::task::spawn_blocking(move || {
+                let exe_dir = std::env::current_exe()
+                    .unwrap_or_default()
+                    .parent()
+                    .unwrap_or(std::path::Path::new("."))
+                    .to_path_buf();
+                #[cfg(windows)]
+                let xray_exe = exe_dir.join("xray-core").join("xray.exe");
+                #[cfg(not(windows))]
+                let xray_exe = exe_dir.join("xray-core").join("xray");
 
-            let mut dl: i64 = 0;
-            let mut ul: i64 = 0;
-
-            let mut cmd = std::process::Command::new(&xray_exe);
-            cmd.args(&["api", "statsquery", "-s", "127.0.0.1:10813", "-reset"]);
-            #[cfg(windows)]
-            cmd.creation_flags(0x08000000);
-            if let Ok(output) = cmd.output() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
-                    if let Some(stats) = json.get("stat").and_then(|s| s.as_array()) {
-                        for stat in stats {
-                            let name = stat.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                            let value = stat.get("value")
-                                .and_then(|v| v.as_str().map(|s| s.parse::<i64>().unwrap_or(0))
-                                    .or_else(|| v.as_i64()))
-                                .unwrap_or(0);
-                            if name.contains("api") { continue; }
-                            if name.contains("downlink") {
-                                dl += value;
-                            } else if name.contains("uplink") {
-                                ul += value;
-                            }
-                        }
-                    }
+                if !xray_exe.exists() {
+                    let logs = xray::get_recent_activity();
+                    return serde_json::json!({ "download": logs.0, "upload": logs.1 });
                 }
-            }
 
-            if dl == 0 && ul == 0 {
-                let logs = xray::get_recent_activity();
-                dl = logs.0;
-                ul = logs.1;
-            }
+                let mut dl: i64 = 0;
+                let mut ul: i64 = 0;
 
-            serde_json::json!({ "download": dl, "upload": ul })
-        }
-    }
-}
-
-/// Check what process is using a given port
-#[tauri::command]
-async fn check_port(port: u16) -> serde_json::Value {
-    #[cfg(windows)]
-    {
-        let mut cmd = std::process::Command::new("netstat");
-        cmd.args(&["-ano"]);
-        cmd.creation_flags(0x08000000);
-        if let Ok(output) = cmd.output() {
-            let text = String::from_utf8_lossy(&output.stdout);
-            let port_str = format!(":{}", port);
-            for line in text.lines() {
-                if line.contains(&port_str) && line.contains("LISTENING") {
-                    if let Some(pid_str) = line.split_whitespace().last() {
-                        if let Ok(pid) = pid_str.parse::<u32>() {
-                            let mut proc_name = format!("PID {}", pid);
-                            let mut info_cmd = std::process::Command::new("tasklist");
-                            info_cmd.args(&["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/NH"]);
-                            info_cmd.creation_flags(0x08000000);
-                            if let Ok(info) = info_cmd.output() {
-                                let info_text = String::from_utf8_lossy(&info.stdout);
-                                if let Some(name) = info_text.split(',').next() {
-                                    proc_name = name.trim().trim_matches('"').to_string();
+                let mut cmd = std::process::Command::new(&xray_exe);
+                cmd.args(&["api", "statsquery", "-s", "127.0.0.1:10813", "-reset"]);
+                #[cfg(windows)]
+                cmd.creation_flags(0x08000000);
+                if let Ok(output) = cmd.output() {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
+                        if let Some(stats) = json.get("stat").and_then(|s| s.as_array()) {
+                            for stat in stats {
+                                let name = stat.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                                let value = stat.get("value")
+                                    .and_then(|v| v.as_str().map(|s| s.parse::<i64>().unwrap_or(0))
+                                        .or_else(|| v.as_i64()))
+                                    .unwrap_or(0);
+                                if name.contains("api") { continue; }
+                                if name.contains("downlink") {
+                                    dl += value;
+                                } else if name.contains("uplink") {
+                                    ul += value;
                                 }
                             }
-                            return serde_json::json!({
-                                "busy": true, "pid": pid, "process": proc_name,
-                                "message": format!("Port {} is used by {} (PID {})", port, proc_name, pid)
-                            });
                         }
                     }
                 }
-            }
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        if let Ok(output) = std::process::Command::new("lsof").args(&["-i", &format!(":{}", port), "-t"]).output() {
-            let text = String::from_utf8_lossy(&output.stdout);
-            if let Some(pid_str) = text.lines().next() {
-                if let Ok(pid) = pid_str.trim().parse::<u32>() {
-                    return serde_json::json!({ "busy": true, "pid": pid, "process": format!("PID {}", pid), "message": format!("Port {} is used by PID {}", port, pid) });
+
+                if dl == 0 && ul == 0 {
+                    let logs = xray::get_recent_activity();
+                    dl = logs.0;
+                    ul = logs.1;
                 }
-            }
+
+                serde_json::json!({ "download": dl, "upload": ul })
+            }).await.unwrap_or_else(|_| serde_json::json!({ "download": 0, "upload": 0 }));
+
+            result
         }
     }
-    serde_json::json!({ "busy": false, "message": format!("Port {} is free", port) })
 }
 
-/// Force kill process on a specific port
+/// Check what process is using a given port (runs in blocking thread)
 #[tauri::command]
-async fn force_free_port(port: u16) -> String {
-    #[cfg(windows)]
-    {
-        let mut cmd = std::process::Command::new("netstat");
-        cmd.args(&["-ano"]);
-        cmd.creation_flags(0x08000000);
-        if let Ok(output) = cmd.output() {
-            let text = String::from_utf8_lossy(&output.stdout);
-            let port_str = format!(":{}", port);
-            for line in text.lines() {
-                if line.contains(&port_str) && line.contains("LISTENING") {
-                    if let Some(pid_str) = line.split_whitespace().last() {
-                        if let Ok(pid) = pid_str.parse::<u32>() {
-                            let mut kill = std::process::Command::new("taskkill");
-                            kill.args(&["/PID", &pid.to_string(), "/F"]);
-                            kill.creation_flags(0x08000000);
-                            let _ = kill.output();
-                            return format!("Killed PID {} on port {}", pid, port);
+async fn check_port(port: u16) -> serde_json::Value {
+    tokio::task::spawn_blocking(move || {
+        #[cfg(windows)]
+        {
+            let mut cmd = std::process::Command::new("netstat");
+            cmd.args(&["-ano"]);
+            cmd.creation_flags(0x08000000);
+            if let Ok(output) = cmd.output() {
+                let text = String::from_utf8_lossy(&output.stdout);
+                let port_str = format!(":{}", port);
+                for line in text.lines() {
+                    if line.contains(&port_str) && line.contains("LISTENING") {
+                        if let Some(pid_str) = line.split_whitespace().last() {
+                            if let Ok(pid) = pid_str.parse::<u32>() {
+                                let mut proc_name = format!("PID {}", pid);
+                                let mut info_cmd = std::process::Command::new("tasklist");
+                                info_cmd.args(&["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/NH"]);
+                                info_cmd.creation_flags(0x08000000);
+                                if let Ok(info) = info_cmd.output() {
+                                    let info_text = String::from_utf8_lossy(&info.stdout);
+                                    if let Some(name) = info_text.split(',').next() {
+                                        proc_name = name.trim().trim_matches('"').to_string();
+                                    }
+                                }
+                                return serde_json::json!({
+                                    "busy": true, "pid": pid, "process": proc_name,
+                                    "message": format!("Port {} is used by {} (PID {})", port, proc_name, pid)
+                                });
+                            }
                         }
                     }
                 }
             }
         }
-    }
-    #[cfg(not(windows))]
-    {
-        if let Ok(output) = std::process::Command::new("lsof").args(&["-i", &format!(":{}", port), "-t"]).output() {
-            let text = String::from_utf8_lossy(&output.stdout);
-            if let Some(pid_str) = text.lines().next() {
-                if let Ok(pid) = pid_str.trim().parse::<u32>() {
-                    let _ = std::process::Command::new("kill").args(&["-9", &pid.to_string()]).output();
-                    return format!("Killed PID {} on port {}", pid, port);
+        #[cfg(not(windows))]
+        {
+            if let Ok(output) = std::process::Command::new("lsof").args(&["-i", &format!(":{}", port), "-t"]).output() {
+                let text = String::from_utf8_lossy(&output.stdout);
+                if let Some(pid_str) = text.lines().next() {
+                    if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                        return serde_json::json!({ "busy": true, "pid": pid, "process": format!("PID {}", pid), "message": format!("Port {} is used by PID {}", port, pid) });
+                    }
                 }
             }
         }
-    }
-    format!("Port {} is already free", port)
+        serde_json::json!({ "busy": false, "message": format!("Port {} is free", port) })
+    }).await.unwrap_or_else(|_| serde_json::json!({ "busy": false, "message": "check failed" }))
+}
+
+/// Force kill process on a specific port (runs in blocking thread)
+#[tauri::command]
+async fn force_free_port(port: u16) -> String {
+    tokio::task::spawn_blocking(move || {
+        #[cfg(windows)]
+        {
+            let mut cmd = std::process::Command::new("netstat");
+            cmd.args(&["-ano"]);
+            cmd.creation_flags(0x08000000);
+            if let Ok(output) = cmd.output() {
+                let text = String::from_utf8_lossy(&output.stdout);
+                let port_str = format!(":{}", port);
+                for line in text.lines() {
+                    if line.contains(&port_str) && line.contains("LISTENING") {
+                        if let Some(pid_str) = line.split_whitespace().last() {
+                            if let Ok(pid) = pid_str.parse::<u32>() {
+                                let mut kill = std::process::Command::new("taskkill");
+                                kill.args(&["/PID", &pid.to_string(), "/F"]);
+                                kill.creation_flags(0x08000000);
+                                let _ = kill.output();
+                                return format!("Killed PID {} on port {}", pid, port);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            if let Ok(output) = std::process::Command::new("lsof").args(&["-i", &format!(":{}", port), "-t"]).output() {
+                let text = String::from_utf8_lossy(&output.stdout);
+                if let Some(pid_str) = text.lines().next() {
+                    if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                        let _ = std::process::Command::new("kill").args(&["-9", &pid.to_string()]).output();
+                        return format!("Killed PID {} on port {}", pid, port);
+                    }
+                }
+            }
+        }
+        format!("Port {} is already free", port)
+    }).await.unwrap_or_else(|_| format!("Port {} free check failed", port))
 }
 
 /// Fully quit the application (disconnect VPN, unset proxy, exit)
