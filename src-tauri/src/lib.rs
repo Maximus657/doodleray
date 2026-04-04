@@ -1733,10 +1733,9 @@ fn scan_installed_apps() -> Result<Vec<serde_json::Value>, String> {
                                         for entry in entries.filter_map(|e| e.ok()) {
                                             let fname = entry.file_name().to_string_lossy().to_string();
                                             let lower = fname.to_lowercase();
-                                            if lower.ends_with(".exe") 
+                                            if lower.ends_with(".exe")
                                                && !lower.contains("unins") && !lower.contains("uninst")
-                                               && !lower.contains("crash") && !lower.contains("update")
-                                               && !lower.contains("helper") && !lower.contains("launcher") {
+                                               && !lower.contains("crash") && !lower.contains("update") {
                                                 exe_name = fname;
                                                 break; // take first non-helper exe
                                             }
@@ -1769,10 +1768,74 @@ fn scan_installed_apps() -> Result<Vec<serde_json::Value>, String> {
             }
         }
         
+        // Also scan %LOCALAPPDATA% for Electron/Squirrel apps (Claude, Discord, Slack, etc.)
+        if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+            let local_dir = std::path::Path::new(&local_app_data);
+            // Scan direct subdirectories (Squirrel installs: %LOCALAPPDATA%\claude\, Discord\, etc.)
+            // and %LOCALAPPDATA%\Programs\ subdirectories
+            let scan_dirs: Vec<std::path::PathBuf> = {
+                let mut dirs = Vec::new();
+                // Direct subdirs of LOCALAPPDATA (Squirrel-style)
+                if let Ok(entries) = std::fs::read_dir(&local_dir) {
+                    for entry in entries.filter_map(|e| e.ok()) {
+                        let p = entry.path();
+                        if p.is_dir() {
+                            dirs.push(p);
+                        }
+                    }
+                }
+                // Subdirs of LOCALAPPDATA\Programs (e.g. claude\)
+                let programs = local_dir.join("Programs");
+                if programs.is_dir() {
+                    if let Ok(entries) = std::fs::read_dir(&programs) {
+                        for entry in entries.filter_map(|e| e.ok()) {
+                            let p = entry.path();
+                            if p.is_dir() {
+                                dirs.push(p);
+                            }
+                        }
+                    }
+                }
+                dirs
+            };
+
+            for dir in scan_dirs {
+                if let Ok(entries) = std::fs::read_dir(&dir) {
+                    for entry in entries.filter_map(|e| e.ok()) {
+                        let fname = entry.file_name().to_string_lossy().to_string();
+                        let lower = fname.to_lowercase();
+                        if lower.ends_with(".exe")
+                            && !lower.contains("unins") && !lower.contains("uninst")
+                            && !lower.contains("update") && !lower.contains("crash")
+                        {
+                            // Derive display name from directory name
+                            let dir_name = dir.file_name()
+                                .map(|f| f.to_string_lossy().to_string())
+                                .unwrap_or_default();
+                            if dir_name.is_empty() || dir_name.to_lowercase() == "programs" { continue; }
+                            // Skip if we already have this app from registry
+                            let display = {
+                                let mut s = dir_name.clone();
+                                // Capitalize first letter
+                                if let Some(first) = s.get_mut(..1) {
+                                    first.make_ascii_uppercase();
+                                }
+                                s
+                            };
+                            if !apps.values().any(|v| v.to_lowercase() == lower) {
+                                apps.entry(display).or_insert(fname);
+                            }
+                            break; // one exe per directory
+                        }
+                    }
+                }
+            }
+        }
+
         let result: Vec<serde_json::Value> = apps.into_iter()
             .map(|(name, path)| serde_json::json!({ "name": name, "path": path }))
             .collect();
-        
+
         Ok(result)
     }
     #[cfg(not(windows))]

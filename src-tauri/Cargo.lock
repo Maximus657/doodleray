@@ -4267,7 +4267,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-app"
-version = "3.1.8"
+version = "3.5.1"
 dependencies = [
  "ctrlc",
  "lazy_static",
