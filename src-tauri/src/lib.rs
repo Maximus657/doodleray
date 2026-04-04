@@ -516,9 +516,12 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
                 "type": "tun",
                 "tag": "tun-in",
                 "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
+                "mtu": 1492,
                 "auto_route": true,
                 "strict_route": req.strict_route,
-                "stack": "mixed",
+                "stack": "system",
+                "sniff": true,
+                "sniff_override_destination": false
             }
         ])
     } else {
@@ -644,9 +647,12 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
                 "type": "tun",
                 "tag": "tun-in",
                 "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
+                "mtu": 1492,
                 "auto_route": true,
                 "strict_route": effective_strict_route,
-                "stack": "mixed",
+                "stack": "system",
+                "sniff": true,
+                "sniff_override_destination": false
             }
         ])
     } else {
@@ -1130,9 +1136,12 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                 "tag": "tun-in",
                 "interface_name": "tun0",
                 "address": ["172.19.0.1/30"],
+                "mtu": 1492,
                 "auto_route": true,
                 "strict_route": false,
-                "stack": "mixed",
+                "stack": "system",
+                "sniff": true,
+                "sniff_override_destination": false
             }],
             "outbounds": [
                 {
@@ -1278,9 +1287,12 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                             "type": "tun",
                             "tag": "tun-in",
                             "address": ["172.19.0.1/30"],
+                            "mtu": 1492,
                             "auto_route": true,
                             "strict_route": false,
-                            "stack": "mixed",
+                            "stack": "system",
+                            "sniff": true,
+                            "sniff_override_destination": false
                         }],
                         "outbounds": [
                             { "type": "direct", "tag": "direct" },
@@ -1438,9 +1450,12 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                             "type": "tun",
                             "tag": "tun-in",
                             "address": ["172.19.0.1/30"],
+                            "mtu": 1492,
                             "auto_route": true,
                             "strict_route": false,
-                            "stack": "mixed",
+                            "stack": "system",
+                            "sniff": true,
+                            "sniff_override_destination": false
                         }],
                         "outbounds": [
                             { "type": "direct", "tag": "direct" },
