@@ -1832,6 +1832,46 @@ fn scan_installed_apps() -> Result<Vec<serde_json::Value>, String> {
             }
         }
 
+        // Scan MSIX/AppX packages (Claude Desktop, etc.)
+        if let Ok(output) = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command",
+                "Get-AppxPackage | Where-Object { $_.IsFramework -eq $false -and $_.SignatureKind -ne 'System' } | ForEach-Object { $_.Name + '|' + $_.InstallLocation }"])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                let parts: Vec<&str> = line.splitn(2, '|').collect();
+                if parts.len() != 2 { continue; }
+                let pkg_name = parts[0].trim();
+                let install_loc = parts[1].trim();
+                if install_loc.is_empty() { continue; }
+                // Skip Microsoft system apps
+                if pkg_name.starts_with("Microsoft.") || pkg_name.starts_with("Windows.") { continue; }
+                // Look for .exe in the app directory
+                let dir = std::path::Path::new(install_loc);
+                // Check root and "app" subdirectory (Electron MSIX pattern)
+                let search_dirs = vec![dir.to_path_buf(), dir.join("app")];
+                for search_dir in search_dirs {
+                    if !search_dir.is_dir() { continue; }
+                    if let Ok(entries) = std::fs::read_dir(&search_dir) {
+                        for entry in entries.filter_map(|e| e.ok()) {
+                            let fname = entry.file_name().to_string_lossy().to_string();
+                            let lower = fname.to_lowercase();
+                            if lower.ends_with(".exe")
+                                && !lower.contains("unins") && !lower.contains("uninst")
+                                && !lower.contains("crash") && !lower.contains("update")
+                            {
+                                if !apps.values().any(|v| v.to_lowercase() == lower) {
+                                    apps.entry(pkg_name.to_string()).or_insert(fname);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let result: Vec<serde_json::Value> = apps.into_iter()
             .map(|(name, path)| serde_json::json!({ "name": name, "path": path }))
             .collect();

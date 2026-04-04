@@ -353,8 +353,8 @@ function MyRulesTab() {
               <div className="flex items-center gap-2 bg-white border-[3px] border-black shadow-inner rounded-xl px-3 py-2">
                 <Search className="w-4 h-4 stroke-[3px] text-black/40" />
                 <input type="text" value={appSearch} onChange={e => setAppSearch(e.target.value)}
-                  placeholder="Search apps..."
-                  className="flex-1 text-sm font-black text-black placeholder:text-black/40 focus:outline-none uppercase tracking-tight" />
+                  placeholder="Search apps..." autoFocus
+                  className="flex-1 text-sm font-black text-black bg-transparent placeholder:text-black/40 focus:outline-none uppercase tracking-tight" />
               </div>
             </div>
             <div className="flex-1 overflow-y-auto px-5 pb-5 space-y-1">
