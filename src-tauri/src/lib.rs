@@ -1117,18 +1117,12 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
             "dns": {
                 "servers": [
                     {
-                        "tag": "dns-remote",
-                        "type": "udp",
-                        "server": "8.8.8.8",
-                        "detour": "proxy"
-                    },
-                    {
                         "tag": "dns-direct",
                         "type": "udp",
                         "server": "1.1.1.1"
                     }
                 ],
-                "final": "dns-remote",
+                "final": "dns-direct",
                 "strategy": "prefer_ipv4"
             },
             "inbounds": [{
