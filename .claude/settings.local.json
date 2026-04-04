@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(npx tsc:*)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(mkdir -p xray-core)",
+      "Bash(touch xray-core/placeholder)",
+      "Read(//c/CODS/doodleray/src-tauri/xray-core/**)",
+      "Read(//c/CODS/doodleray/src-tauri/**)",
+      "Bash(curl -L \"https://github.com/XTLS/Xray-core/releases/download/v25.3.6/Xray-windows-64.zip\" -o /tmp/xray.zip)",
+      "Bash(unzip -o /tmp/xray.zip -d /tmp/xray-tmp)",
+      "Bash(cp /tmp/xray-tmp/xray.exe xray-core/)",
+      "Bash(cp /tmp/xray-tmp/geoip.dat xray-core/)",
+      "Bash(cp /tmp/xray-tmp/geosite.dat xray-core/)",
+      "Bash(curl -L \"https://www.wintun.net/builds/wintun-0.14.1.zip\" -o /tmp/wintun.zip)",
+      "Bash(unzip -o /tmp/wintun.zip -d /tmp/wintun-tmp)",
+      "Bash(cp /tmp/wintun-tmp/wintun/bin/amd64/wintun.dll xray-core/)",
+      "Bash(curl -L \"https://github.com/SagerNet/sing-box/releases/download/v1.13.2/sing-box-1.13.2-windows-amd64.zip\" -o /tmp/singbox.zip)",
+      "Bash(unzip -o /tmp/singbox.zip -d /tmp/singbox-tmp)",
+      "Bash(cp /tmp/singbox-tmp/sing-box-1.13.2-windows-amd64/sing-box.exe .)",
+      "Bash(go build:*)",
+      "Bash(ls -la \"C:\\\\CODS\\\\doodleray\\\\src-tauri\\\\libsingbox\"*)",
+      "Bash(ls -la \"C:\\\\CODS\\\\doodleray\\\\src-tauri\\\\target\\\\debug\\\\libsingbox\"*)",
+      "Bash(npx tauri:*)",
+      "Bash(gh run:*)"
+    ]
+  }
+}

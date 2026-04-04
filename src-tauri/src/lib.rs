@@ -262,6 +262,30 @@ async fn ping_server(address: String, port: u16, server_id: String) -> PingResul
     PingResult { server_id: sid, ping_ms: tcp_result }
 }
 
+/// Generate all case variants for exe names so sing-box process_name matches regardless of case.
+/// sing-box 1.13 process_name is case-sensitive, so we include common variants:
+/// original, lowercase, uppercase, Title Case
+fn exe_variants(names: &[String]) -> Vec<serde_json::Value> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for name in names {
+        for variant in &[name.clone(), name.to_lowercase(), name.to_uppercase(), capitalize(name)] {
+            if seen.insert(variant.clone()) {
+                out.push(serde_json::Value::String(variant.clone()));
+            }
+        }
+    }
+    out
+}
+
+fn capitalize(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_uppercase().to_string() + &chars.as_str().to_lowercase(),
+    }
+}
+
 /// Build the sing-box JSON config from the connect request
 fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
     let outbound = match req.protocol.as_str() {
@@ -586,15 +610,15 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
         let mut r = serde_json::json!({ "outbound": "proxy" });
         if !proxy_domains.is_empty() { r["domain"] = proxy_domains.clone().into(); }
         if !proxy_domain_suffixes.is_empty() { r["domain_suffix"] = proxy_domain_suffixes.clone().into(); }
-        if !proxy_processes.is_empty() { r["process_name"] = proxy_processes.clone().into(); }
+        if !proxy_processes.is_empty() { r["process_name"] = exe_variants(&proxy_processes).into(); }
         custom_rules.push(r);
     }
-    
+
     if !direct_domains.is_empty() || !direct_domain_suffixes.is_empty() || !direct_processes.is_empty() {
         let mut r = serde_json::json!({ "outbound": "direct" });
         if !direct_domains.is_empty() { r["domain"] = direct_domains.clone().into(); }
         if !direct_domain_suffixes.is_empty() { r["domain_suffix"] = direct_domain_suffixes.clone().into(); }
-        if !direct_processes.is_empty() { r["process_name"] = direct_processes.clone().into(); }
+        if !direct_processes.is_empty() { r["process_name"] = exe_variants(&direct_processes).into(); }
         custom_rules.push(r);
     }
 
@@ -602,7 +626,7 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
         let mut r = serde_json::json!({ "outbound": "block" });
         if !block_domains.is_empty() { r["domain"] = block_domains.clone().into(); }
         if !block_domain_suffixes.is_empty() { r["domain_suffix"] = block_domain_suffixes.clone().into(); }
-        if !block_processes.is_empty() { r["process_name"] = block_processes.clone().into(); }
+        if !block_processes.is_empty() { r["process_name"] = exe_variants(&block_processes).into(); }
         custom_rules.push(r);
     }
     
@@ -664,6 +688,7 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
         ],
         "route": {
             "auto_detect_interface": true,
+                "find_process": true,
             "default_domain_resolver": "dns-direct",
             "final": final_outbound,
             "rules": rules
@@ -1105,7 +1130,21 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
         }
         
         // sing-box as TUN bridge → routes all traffic to xray's SOCKS5
-        // sing-box v1.13+ config format
+        // Include user's exe routing rules from Workshop
+        // Write initial rule-set files for hot-reload
+        let temp_dir = std::env::temp_dir().join("DoodleRay");
+        let _ = std::fs::create_dir_all(&temp_dir);
+        // Write rule-set files via vpn_update_rules logic
+        let _ = vpn_update_rules(request.routing_rules.clone());
+
+        let rules_direct_path = temp_dir.join("rules_direct.json").to_string_lossy().replace("\\", "/");
+        let rules_block_path = temp_dir.join("rules_block.json").to_string_lossy().replace("\\", "/");
+        let rules_proxy_path = temp_dir.join("rules_proxy.json").to_string_lossy().replace("\\", "/");
+
+        let exclude = vec!["sing-box.exe", "xray.exe", "DoodleRay.exe", "node.exe", "adb.exe", "svchost.exe", "lsass.exe", "csrss.exe", "System"];
+        let exclude_strs: Vec<String> = exclude.iter().map(|s| s.to_string()).collect();
+
+        // sing-box v1.13+ config with local rule_set for hot-reload
         let tun_bridge = serde_json::json!({
             "log": { "level": "info" },
             "dns": {
@@ -1141,15 +1180,25 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                     "server": "127.0.0.1",
                     "server_port": request.socks_port
                 },
-                { "type": "direct", "tag": "direct" }
+                { "type": "direct", "tag": "direct" },
+                { "type": "block", "tag": "block" }
             ],
             "route": {
                 "auto_detect_interface": true,
+                "find_process": true,
                 "default_domain_resolver": "dns-direct",
+                "rule_set": [
+                    { "tag": "rs-direct", "type": "local", "format": "source", "path": rules_direct_path },
+                    { "tag": "rs-block", "type": "local", "format": "source", "path": rules_block_path },
+                    { "tag": "rs-proxy", "type": "local", "format": "source", "path": rules_proxy_path }
+                ],
                 "rules": [
                     { "action": "sniff" },
                     { "protocol": "dns", "action": "hijack-dns" },
-                    { "process_name": ["sing-box.exe", "xray.exe", "DoodleRay.exe", "node.exe", "adb.exe", "svchost.exe", "lsass.exe", "csrss.exe", "System"], "outbound": "direct" },
+                    { "process_name": exe_variants(&exclude_strs), "outbound": "direct" },
+                    { "rule_set": "rs-block", "outbound": "block" },
+                    { "rule_set": "rs-direct", "outbound": "direct" },
+                    { "rule_set": "rs-proxy", "outbound": "proxy" },
                     { "ip_is_private": true, "outbound": "direct" }
                 ]
             }
@@ -1228,40 +1277,22 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                 let has_exe_rules = !proxy_exes.is_empty() || !direct_exes.is_empty() || !block_exes.is_empty();
                 
                 if has_exe_rules {
-                    let exclude = vec!["sing-box.exe", "xray.exe", "DoodleRay.exe", "adb.exe", "svchost.exe", "lsass.exe", "csrss.exe", "System"];
-                    
-                    // Build routing rules for the TUN bridge
+                    let exclude: Vec<String> = vec!["sing-box.exe", "xray.exe", "DoodleRay.exe", "adb.exe", "svchost.exe", "lsass.exe", "csrss.exe", "System"]
+                        .iter().map(|s| s.to_string()).collect();
+
                     let mut tun_rules: Vec<serde_json::Value> = Vec::new();
-                    
-                    // 1. System processes always bypass TUN
-                    let exclude_val: Vec<serde_json::Value> = exclude.iter()
-                        .map(|s| serde_json::Value::String(s.to_string())).collect();
-                    tun_rules.push(serde_json::json!({ "process_name": exclude_val, "outbound": "direct" }));
-                    
-                    // 2. Blocked apps
+                    tun_rules.push(serde_json::json!({ "process_name": exe_variants(&exclude), "outbound": "direct" }));
                     if !block_exes.is_empty() {
-                        let block_val: Vec<serde_json::Value> = block_exes.iter()
-                            .map(|s| serde_json::Value::String(s.to_string())).collect();
-                        tun_rules.push(serde_json::json!({ "process_name": block_val, "outbound": "block" }));
+                        tun_rules.push(serde_json::json!({ "process_name": exe_variants(&block_exes), "outbound": "block" }));
                     }
-                    
-                    // 3. Direct apps — bypass VPN entirely (games, etc.)
                     if !direct_exes.is_empty() {
-                        let direct_val: Vec<serde_json::Value> = direct_exes.iter()
-                            .map(|s| serde_json::Value::String(s.to_string())).collect();
-                        tun_rules.push(serde_json::json!({ "process_name": direct_val, "outbound": "direct" }));
+                        tun_rules.push(serde_json::json!({ "process_name": exe_variants(&direct_exes), "outbound": "direct" }));
                     }
-                    
-                    // 4. Proxy apps — route through xray SOCKS5
                     if !proxy_exes.is_empty() {
-                        let proxy_val: Vec<serde_json::Value> = proxy_exes.iter()
-                            .map(|s| serde_json::Value::String(s.to_string())).collect();
-                        tun_rules.push(serde_json::json!({ "process_name": proxy_val, "outbound": "proxy" }));
+                        tun_rules.push(serde_json::json!({ "process_name": exe_variants(&proxy_exes), "outbound": "proxy" }));
                     }
-                    
-                    // 5. Private IPs always go direct
                     tun_rules.push(serde_json::json!({ "ip_is_private": true, "outbound": "direct" }));
-                    
+
                     let tun_bridge = serde_json::json!({
                         "log": { "level": "info" },
                         "dns": {
@@ -1294,6 +1325,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                         ],
                         "route": {
                             "auto_detect_interface": true,
+                "find_process": true,
                             "default_domain_resolver": "dns-direct",
                             "rules": tun_rules
                         }
@@ -1388,40 +1420,22 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                 let has_exe_rules = !proxy_exes.is_empty() || !direct_exes.is_empty() || !block_exes.is_empty();
                 
                 if has_exe_rules {
-                    let exclude = vec!["sing-box.exe", "DoodleRay.exe", "adb.exe", "svchost.exe", "lsass.exe", "csrss.exe", "System"];
-                    
-                    // Build routing rules for the TUN bridge
+                    let exclude: Vec<String> = vec!["sing-box.exe", "DoodleRay.exe", "adb.exe", "svchost.exe", "lsass.exe", "csrss.exe", "System"]
+                        .iter().map(|s| s.to_string()).collect();
+
                     let mut tun_rules: Vec<serde_json::Value> = Vec::new();
-                    
-                    // 1. System processes always bypass TUN
-                    let exclude_val: Vec<serde_json::Value> = exclude.iter()
-                        .map(|s| serde_json::Value::String(s.to_string())).collect();
-                    tun_rules.push(serde_json::json!({ "process_name": exclude_val, "outbound": "direct" }));
-                    
-                    // 2. Blocked apps
+                    tun_rules.push(serde_json::json!({ "process_name": exe_variants(&exclude), "outbound": "direct" }));
                     if !block_exes.is_empty() {
-                        let block_val: Vec<serde_json::Value> = block_exes.iter()
-                            .map(|s| serde_json::Value::String(s.to_string())).collect();
-                        tun_rules.push(serde_json::json!({ "process_name": block_val, "outbound": "block" }));
+                        tun_rules.push(serde_json::json!({ "process_name": exe_variants(&block_exes), "outbound": "block" }));
                     }
-                    
-                    // 3. Direct apps — bypass VPN entirely (games, etc.)
                     if !direct_exes.is_empty() {
-                        let direct_val: Vec<serde_json::Value> = direct_exes.iter()
-                            .map(|s| serde_json::Value::String(s.to_string())).collect();
-                        tun_rules.push(serde_json::json!({ "process_name": direct_val, "outbound": "direct" }));
+                        tun_rules.push(serde_json::json!({ "process_name": exe_variants(&direct_exes), "outbound": "direct" }));
                     }
-                    
-                    // 4. Proxy apps — route through SOCKS5
                     if !proxy_exes.is_empty() {
-                        let proxy_val: Vec<serde_json::Value> = proxy_exes.iter()
-                            .map(|s| serde_json::Value::String(s.to_string())).collect();
-                        tun_rules.push(serde_json::json!({ "process_name": proxy_val, "outbound": "proxy" }));
+                        tun_rules.push(serde_json::json!({ "process_name": exe_variants(&proxy_exes), "outbound": "proxy" }));
                     }
-                    
-                    // 5. Private IPs always go direct
                     tun_rules.push(serde_json::json!({ "ip_is_private": true, "outbound": "direct" }));
-                    
+
                     let tun_bridge = serde_json::json!({
                         "log": { "level": "info" },
                         "dns": {
@@ -1454,6 +1468,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                         ],
                         "route": {
                             "auto_detect_interface": true,
+                "find_process": true,
                             "default_domain_resolver": "dns-direct",
                             "rules": tun_rules
                         }
@@ -1551,6 +1566,56 @@ async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
     ConnectResult {
         success: true,
         message: "Disconnected".into(),
+    }
+}
+
+/// Hot-update routing rules by writing rule-set files to disk.
+/// sing-box watches these files via fsnotify and reloads automatically — no restart needed.
+#[tauri::command]
+fn vpn_update_rules(routing_rules: Vec<RoutingRuleRequest>) -> ConnectResult {
+    let temp_dir = std::env::temp_dir().join("DoodleRay");
+    let _ = std::fs::create_dir_all(&temp_dir);
+
+    // Separate exe rules by action
+    let direct_exes: Vec<String> = routing_rules.iter()
+        .filter(|r| r.rule_type == "exe" && r.action == "direct")
+        .map(|r| r.value.clone()).collect();
+    let block_exes: Vec<String> = routing_rules.iter()
+        .filter(|r| r.rule_type == "exe" && r.action == "block")
+        .map(|r| r.value.clone()).collect();
+    let proxy_exes: Vec<String> = routing_rules.iter()
+        .filter(|r| r.rule_type == "exe" && r.action == "proxy")
+        .map(|r| r.value.clone()).collect();
+
+    // Write each rule-set file — sing-box auto-reloads on file change
+    let write_ruleset = |path: &std::path::Path, exes: &[String]| -> Result<(), String> {
+        let process_names = exe_variants(exes);
+        let ruleset = if exes.is_empty() {
+            serde_json::json!({ "version": 3, "rules": [] })
+        } else {
+            serde_json::json!({
+                "version": 3,
+                "rules": [{ "process_name": process_names }]
+            })
+        };
+        std::fs::write(path, serde_json::to_string_pretty(&ruleset).unwrap_or_default())
+            .map_err(|e| format!("Failed to write rule-set: {}", e))
+    };
+
+    if let Err(e) = write_ruleset(&temp_dir.join("rules_direct.json"), &direct_exes) {
+        return ConnectResult { success: false, message: e };
+    }
+    if let Err(e) = write_ruleset(&temp_dir.join("rules_block.json"), &block_exes) {
+        return ConnectResult { success: false, message: e };
+    }
+    if let Err(e) = write_ruleset(&temp_dir.join("rules_proxy.json"), &proxy_exes) {
+        return ConnectResult { success: false, message: e };
+    }
+
+    let total = direct_exes.len() + block_exes.len() + proxy_exes.len();
+    ConnectResult {
+        success: true,
+        message: format!("Rules updated ({} direct, {} block, {} proxy)", direct_exes.len(), block_exes.len(), proxy_exes.len()),
     }
 }
 
@@ -2419,6 +2484,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             vpn_connect,
             vpn_disconnect,
+            vpn_update_rules,
             vpn_status,
             ping_server,
             fetch_url,

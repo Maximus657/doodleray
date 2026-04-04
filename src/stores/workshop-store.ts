@@ -85,8 +85,25 @@ interface WorkshopState {
   getAllActiveRules: () => RoutingRule[];
 }
 
+// Default game exclusions — games go direct (bypass VPN) to avoid latency
+const DEFAULT_GAME_RULES: RoutingRule[] = [
+  { id: 'default-cs2', type: 'exe', value: 'cs2.exe', action: 'direct', enabled: true, comment: 'Counter-Strike 2' },
+  { id: 'default-valorant', type: 'exe', value: 'VALORANT-Win64-Shipping.exe', action: 'direct', enabled: true, comment: 'Valorant' },
+  { id: 'default-dota2', type: 'exe', value: 'dota2.exe', action: 'direct', enabled: true, comment: 'Dota 2' },
+  { id: 'default-fortnite', type: 'exe', value: 'FortniteClient-Win64-Shipping.exe', action: 'direct', enabled: true, comment: 'Fortnite' },
+  { id: 'default-apex', type: 'exe', value: 'r5apex.exe', action: 'direct', enabled: true, comment: 'Apex Legends' },
+  { id: 'default-pubg', type: 'exe', value: 'TslGame.exe', action: 'direct', enabled: true, comment: 'PUBG' },
+  { id: 'default-gta5', type: 'exe', value: 'GTA5.exe', action: 'direct', enabled: true, comment: 'GTA V' },
+  { id: 'default-rocketleague', type: 'exe', value: 'RocketLeague.exe', action: 'direct', enabled: true, comment: 'Rocket League' },
+  { id: 'default-overwatch', type: 'exe', value: 'Overwatch.exe', action: 'direct', enabled: true, comment: 'Overwatch 2' },
+  { id: 'default-lol', type: 'exe', value: 'League of Legends.exe', action: 'direct', enabled: true, comment: 'League of Legends' },
+  { id: 'default-minecraft', type: 'exe', value: 'javaw.exe', action: 'direct', enabled: true, comment: 'Minecraft (Java)' },
+  { id: 'default-rust', type: 'exe', value: 'RustClient.exe', action: 'direct', enabled: true, comment: 'Rust' },
+  { id: 'default-deadlock', type: 'exe', value: 'project8.exe', action: 'direct', enabled: true, comment: 'Deadlock' },
+];
+
 export const useWorkshopStore = create<WorkshopState>()(persist((set, get) => ({
-  myRules: [],
+  myRules: DEFAULT_GAME_RULES,
   appliedPresets: [],
   presets: [],
   sortBy: 'popular',
@@ -259,9 +276,26 @@ export const useWorkshopStore = create<WorkshopState>()(persist((set, get) => ({
 }),
 {
   name: 'workshop-storage',
+  version: 1,
   partialize: (state) => ({
     myRules: state.myRules,
     appliedPresets: state.appliedPresets,
   }),
+  migrate: (persisted: any, version: number) => {
+    if (version === 0) {
+      // v0 → v1: inject default game exclusions for existing users
+      const existing = persisted as { myRules?: RoutingRule[]; appliedPresets?: any[] };
+      const existingIds = new Set((existing.myRules || []).map((r: RoutingRule) => r.id));
+      const existingExes = new Set((existing.myRules || []).map((r: RoutingRule) => r.value.toLowerCase()));
+      const newDefaults = DEFAULT_GAME_RULES.filter(
+        r => !existingIds.has(r.id) && !existingExes.has(r.value.toLowerCase())
+      );
+      return {
+        ...existing,
+        myRules: [...(existing.myRules || []), ...newDefaults],
+      };
+    }
+    return persisted;
+  },
 }
 ));

@@ -9,6 +9,7 @@ import Workshop from './pages/Workshop';
 import Settings from './pages/Settings';
 import { useAppStore } from './stores/app-store';
 import { useToastStore } from './stores/toast-store';
+import { useWorkshopStore } from './stores/workshop-store';
 import { buildConnectRequestFromState } from './lib/connect-helpers';
 import './index.css';
 
@@ -191,8 +192,42 @@ function App() {
       startHeartbeat();
     }).catch(() => { /* silent */ });
 
+    // Hot-update routing rules when changed while VPN is connected (no restart needed)
+    let rulesUpdateTimer: ReturnType<typeof setTimeout> | null = null;
+    let prevRulesKey = JSON.stringify({
+      r: useWorkshopStore.getState().myRules,
+      p: useWorkshopStore.getState().appliedPresets,
+    });
+    const unsubRules = useWorkshopStore.subscribe(() => {
+      const ws = useWorkshopStore.getState();
+      const key = JSON.stringify({ r: ws.myRules, p: ws.appliedPresets });
+      if (key === prevRulesKey) return;
+      prevRulesKey = key;
+      // Debounce 500ms
+      if (rulesUpdateTimer) clearTimeout(rulesUpdateTimer);
+      rulesUpdateTimer = setTimeout(async () => {
+        const appState = useAppStore.getState();
+        if (appState.status !== 'connected') return;
+        // Get active rules and hot-update rule-set files on disk
+        // sing-box watches these files and reloads automatically
+        const { getActiveRoutingRules } = await import('./lib/connect-helpers');
+        const rules = await getActiveRoutingRules();
+        try {
+          const result: any = await invoke('vpn_update_rules', { routingRules: rules });
+          if (result.success) {
+            appState.addLog('info', `Rules applied: ${result.message}`);
+          } else {
+            appState.addLog('error', result.message);
+          }
+        } catch (err: any) {
+          appState.addLog('error', `Failed to update rules: ${err.message || err}`);
+        }
+      }, 500);
+    });
+
     return () => {
       unsubscribe();
+      unsubRules();
       clearInterval(updateInterval);
     };
   }, []);

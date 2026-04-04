@@ -6,7 +6,7 @@ import {
   CartesianGrid,
   YAxis,
 } from 'recharts';
-import type { ProxyMode, SpeedPoint } from '../../stores/app-store';
+import type { SpeedPoint } from '../../stores/app-store';
 import { formatSpeed, formatDuration, formatBytes } from '../../lib/utils';
 
 interface Props {
@@ -15,12 +15,11 @@ interface Props {
   totalDown: number;
   totalUp: number;
   connectTime: number;
-  proxyMode: ProxyMode;
   speedHistory: SpeedPoint[];
   t: (key: any) => string;
 }
 
-export default function StatsPanel({ currentDownload, currentUpload, totalDown, totalUp, connectTime, proxyMode, speedHistory, t }: Props) {
+export default function StatsPanel({ currentDownload, currentUpload, totalDown, totalUp, connectTime, speedHistory, t }: Props) {
   const displayData = speedHistory.slice(-30);
 
   return (
@@ -44,7 +43,7 @@ export default function StatsPanel({ currentDownload, currentUpload, totalDown, 
           <p className="text-xl font-black text-black tabular-nums tracking-tighter">{formatDuration(connectTime)}</p>
           <p className="text-[10px] font-black text-black/60 uppercase tracking-widest mt-0.5">{t('time')}</p>
           <p className="text-[10px] font-black font-mono text-black/40 mt-1 flex items-center justify-center gap-1">
-            <Shield className="w-3 h-3" /> {proxyMode === 'tun' ? 'TUN' : 'PROXY'}
+            <Shield className="w-3 h-3" /> VPN
           </p>
         </div>
       </div>
