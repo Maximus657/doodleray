@@ -17,7 +17,7 @@ export function generateSingboxConfig(
   options: {
     socksPort: number;
     httpPort: number;
-    proxyMode: 'system-proxy' | 'tun' | 'vpn';
+    proxyMode: 'system-proxy' | 'tun';
     networkStack: 'mixed' | 'system' | 'gvisor';
     dnsMode: 'fakeip' | 'realip';
     strictRoute: boolean;
@@ -73,7 +73,7 @@ function generateInbounds(
   networkStack: string,
   strictRoute: boolean
 ): Record<string, unknown>[] {
-  if (mode === 'tun' || mode === 'vpn') {
+  if (mode === 'tun') {
     return [{
       type: 'tun',
       tag: 'tun-in',

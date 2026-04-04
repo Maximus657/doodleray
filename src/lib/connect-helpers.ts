@@ -33,7 +33,7 @@ export function buildConnectRequest(server: ServerConfig, opts: ConnectOpts) {
     public_key: server.publicKey || null,
     short_id: server.shortId || null,
     flow: server.flow || null,
-    proxy_mode: 'tun',
+    proxy_mode: opts.proxyMode,
     socks_port: opts.socksPort,
     http_port: opts.httpPort,
     network_stack: opts.networkStack,
@@ -75,12 +75,16 @@ export async function getActiveRoutingRules() {
 
 /**
  * Convenience: build the full connect request pulling current state from stores.
+ * Pass `proxyModeOverride` when switching modes mid-connection.
  */
-export async function buildConnectRequestFromState(server: ServerConfig) {
+export async function buildConnectRequestFromState(
+  server: ServerConfig,
+  proxyModeOverride?: ProxyMode
+) {
   const state = useAppStore.getState();
   const routingRules = await getActiveRoutingRules();
   return buildConnectRequest(server, {
-    proxyMode: 'vpn',
+    proxyMode: proxyModeOverride ?? state.proxyMode,
     socksPort: state.socksPort,
     httpPort: state.httpPort,
     networkStack: state.networkStack,

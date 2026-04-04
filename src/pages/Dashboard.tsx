@@ -19,7 +19,7 @@ import LogsStrip from '../components/dashboard/LogsStrip';
 export default function Dashboard() {
   const {
     status, setStatus, activeServer, servers, setActiveServer,
-    speedHistory, currentDownload, currentUpload,
+    proxyMode, setProxyMode, speedHistory, currentDownload, currentUpload,
     totalDown, totalUp, addTraffic, resetTraffic, addSpeedPoint, setCurrentSpeed,
     logs, addLog, clearLogs, socksPort, httpPort, subscriptions,
     updateSubscription, removeSubscription, autoSelectFastest,
@@ -172,6 +172,7 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, [status, addSpeedPoint, setCurrentSpeed, addTraffic]);
 
+  // Auto-detect clipboard links removed to prevent macOS permission spam
   // Subscription auto-update
   useEffect(() => {
     if (subAutoUpdateMinutes <= 0 || subscriptions.length === 0) return;
@@ -205,21 +206,23 @@ export default function Dashboard() {
       if (!srv) { addLog('error', 'No server selected. Please add a subscription or select a server.'); return; }
       setStatus('connecting');
 
-      // VPN requires admin (TUN under the hood)
-      try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        const admin: boolean = await invoke('is_admin');
-        if (!admin) {
-          addLog('warning', 'VPN requires administrator privileges. Restarting...');
-          try { await invoke('restart_as_admin'); return; }
-          catch {
-            addLog('error', 'Could not restart as admin');
-            const { useToastStore } = await import('../stores/toast-store');
-            useToastStore.getState().addToast('Admin required for VPN', 'warning');
-            setStatus('disconnected'); return;
+      // TUN mode admin check
+      if (proxyMode === 'tun') {
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          const admin: boolean = await invoke('is_admin');
+          if (!admin) {
+            addLog('warning', 'TUN mode requires administrator privileges. Restarting...');
+            try { await invoke('restart_as_admin'); return; }
+            catch {
+              addLog('error', 'Could not restart as admin — switching to System Proxy mode');
+              const { useToastStore } = await import('../stores/toast-store');
+              useToastStore.getState().addToast('Admin required for TUN mode — switched to System Proxy', 'warning');
+              setProxyMode('system-proxy'); setStatus('disconnected'); return;
+            }
           }
-        }
-      } catch { /* */ }
+        } catch { /* */ }
+      }
 
       setConnectedAt(null);
       addLog('info', `Starting connection to ${srv.name}...`);
@@ -265,8 +268,46 @@ export default function Dashboard() {
       } catch { addLog('info', '[SIM] Disconnected'); }
       setStatus('disconnected'); setCurrentSpeed(0, 0); resetTraffic();
     }
-  }, [status, setStatus, setCurrentSpeed, resetTraffic, activeServer, servers, setActiveServer, addLog, socksPort, httpPort, autoSelectFastest, setConnectedAt, t]);
+  }, [status, setStatus, setCurrentSpeed, resetTraffic, activeServer, servers, setActiveServer, addLog, proxyMode, socksPort, httpPort, autoSelectFastest, setConnectedAt, t, setProxyMode]);
 
+  const handleModeSwitch = useCallback(async (mode: 'system-proxy' | 'tun') => {
+    if (proxyMode === mode) return;
+    if (mode === 'tun') {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const admin: boolean = await invoke('is_admin');
+        if (!admin) {
+          addLog('warning', 'TUN mode requires admin. Disconnecting and restarting as admin...');
+          if (status === 'connected') await invoke('vpn_disconnect');
+          setProxyMode(mode);
+          try { await invoke('restart_as_admin'); return; }
+          catch { addLog('error', 'Could not restart as admin — staying on System Proxy');
+            const { useToastStore } = await import('../stores/toast-store');
+            useToastStore.getState().addToast('Admin required for TUN mode', 'warning');
+            setProxyMode('system-proxy'); return;
+          }
+        }
+      } catch { /* */ }
+    }
+    setProxyMode(mode);
+    addLog('info', `Switched routing mode to ${mode === 'tun' ? 'TUN' : 'System Proxy'}`);
+    if (status === 'connected') {
+      addLog('warning', 'Reconnecting to apply new routing mode...');
+      setStatus('connecting');
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('vpn_disconnect');
+        await new Promise(r => setTimeout(r, 2000));
+        const srv = activeServer;
+        if (srv) {
+          const request = await buildConnectRequestFromState(srv, mode);
+          const result: any = await invoke('vpn_connect', { request });
+          if (result.success) { addLog('success', result.message); setStatus('connected'); setConnectedAt(Date.now()); }
+          else { addLog('error', result.message); setStatus('disconnected'); }
+        } else { setStatus('disconnected'); }
+      } catch (err: any) { addLog('error', `Reconnect failed: ${err.message || err}`); setStatus('disconnected'); }
+    }
+  }, [proxyMode, setProxyMode, status, setStatus, addLog, activeServer, socksPort, httpPort, setConnectedAt]);
 
   const handleServerSelect = useCallback(async (server: typeof activeServer) => {
     if (!server) return;
@@ -285,7 +326,7 @@ export default function Dashboard() {
         else { addLog('error', result.message); setStatus('disconnected'); }
       } catch (err: any) { addLog('error', `Server switch failed: ${err.message || err}`); setStatus('disconnected'); }
     }
-  }, [status, setStatus, activeServer, setActiveServer, addLog, socksPort, httpPort, setConnectedAt]);
+  }, [status, setStatus, activeServer, setActiveServer, addLog, proxyMode, socksPort, httpPort, setConnectedAt]);
 
   const handleQuickAdd = useCallback(async () => {
     const trimmed = quickInput.trim();
@@ -455,16 +496,16 @@ export default function Dashboard() {
         ) : (
           <div className="contents">
             <ConnectionControls
-              status={status} canConnect={canConnect}
+              status={status} proxyMode={proxyMode} canConnect={canConnect}
               connectTime={connectTime} onConnect={handleConnect}
-              t={t}
+              onModeSwitch={handleModeSwitch} t={t}
             />
 
             {showStats && isConnected && (
               <StatsPanel
                 currentDownload={currentDownload} currentUpload={currentUpload}
                 totalDown={totalDown} totalUp={totalUp} connectTime={connectTime}
-                speedHistory={speedHistory} t={t}
+                proxyMode={proxyMode} speedHistory={speedHistory} t={t}
               />
             )}
 

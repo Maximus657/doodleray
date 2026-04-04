@@ -6,7 +6,7 @@ import { persist } from 'zustand/middleware';
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
 
-export type ProxyMode = 'system-proxy' | 'tun' | 'vpn';
+export type ProxyMode = 'system-proxy' | 'tun';
 
 export interface ServerConfig {
   id: string;
@@ -146,7 +146,7 @@ export const useAppStore = create<AppState>()(
     (set) => ({
       status: 'disconnected',
       activeServer: null,
-      proxyMode: 'vpn' as ProxyMode,
+      proxyMode: 'system-proxy',
 
       servers: [],
       subscriptions: [],

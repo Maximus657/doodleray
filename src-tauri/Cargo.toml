@@ -1,6 +1,6 @@
 [package]
 name = "tauri-app"
-version = "3.3.1"
+version = "3.5.0"
 description = "DoodleRay VPN Client"
 authors = ["DoodleVPN"]
 edition = "2021"
@@ -35,11 +35,6 @@ tauri-plugin-updater = "2.10.0"
 tauri-plugin-process = "2.3.1"
 tauri-plugin-http = "2.5.7"
 ctrlc = "3"
-
-[profile.release]
-opt-level = 3
-lto = true
-codegen-units = 1
 
 # Windows-only dependencies
 [target.'cfg(windows)'.dependencies]
