@@ -34,6 +34,21 @@ static SB_PREV_UP: Mutex<i64> = Mutex::new(0);
 use std::collections::HashSet;
 static SB_SEEN_CONNS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 
+// Connection debug log buffer — shown in UI via get_proxy_logs
+static CONNECT_LOG: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+fn vpn_log(msg: &str) {
+    let line = format!("[vpn] {}", msg);
+    eprintln!("{}", line);
+    if let Ok(mut logs) = CONNECT_LOG.lock() {
+        logs.push(line);
+        if logs.len() > 200 {
+            let drain = logs.len() - 200;
+            logs.drain(..drain);
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ConnectRequest {
     pub server_address: String,
@@ -996,10 +1011,28 @@ fn build_xray_config(req: &ConnectRequest) -> serde_json::Value {
 
 #[tauri::command]
 async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectResult {
+    // Clear previous connect logs
+    if let Ok(mut logs) = CONNECT_LOG.lock() { logs.clear(); }
+
     let has_raw_config = request.raw_xray_config.is_some();
     let use_xray = request.transport == "xhttp" || has_raw_config;
     let is_tun = request.proxy_mode == "tun";
-    
+
+    vpn_log(&format!("=== vpn_connect start === server={}:{} proto={} transport={} mode={} use_xray={}",
+        request.server_address, request.server_port, request.protocol, request.transport, request.proxy_mode, use_xray));
+
+    if is_tun {
+        vpn_log(&format!("TUN config: stack=system, mtu=1492, sniff=true, strict_route={}", request.strict_route));
+    }
+
+    let exe_rules: Vec<String> = request.routing_rules.iter()
+        .filter(|r| r.rule_type == "exe")
+        .map(|r| format!("{}:{}", r.value, r.action))
+        .collect();
+    if !exe_rules.is_empty() {
+        vpn_log(&format!("exe rules: {:?}", exe_rules));
+    }
+
     let debug_path = std::env::temp_dir()
         .join("DoodleRay")
         .join("doodleray_debug_config.json");
@@ -1021,8 +1054,9 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
     );
     
     // Always stop in-process libsingbox (safe, no admin needed)
+    vpn_log(&format!("stopping previous engine: {:?} (keep_bridge={})", prev_engine, keep_tun_bridge));
     let _ = singbox::stop_singbox();
-    
+
     match prev_engine.as_deref() {
         Some("xray") => {
             let _ = xray::stop_xray();
@@ -1032,26 +1066,21 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
             let _ = xray::stop_xray();
         }
         Some("xray+app-proxy") => {
-            // Keep TUN bridge alive — only restart xray proxy engine
             let _ = xray::stop_xray();
         }
         Some("singbox-tun") => {
             let _ = tun::stop_tun();
         }
-        Some("singbox+app-proxy") => {
-            // Keep TUN bridge alive — in-process singbox already stopped above
-        }
-        Some("singbox") => {
-            // already stopped above
-        }
+        Some("singbox+app-proxy") => {}
+        Some("singbox") => {}
         _ => {
             let _ = xray::stop_xray();
-            // Try to clean up orphaned sing-box processes (e.g. from previous app session)
             let _ = tun::stop_tun();
         }
     }
     let _ = sysproxy::unset_system_proxy();
     reset_sb_traffic();
+    vpn_log("previous engine stopped, ports freed");
     
     // Forcefully release local ports to prevent "Only one usage of each socket address is normally permitted"
     // caused by zombie processes (or double React Strict Mode invocations) locking the ports.
@@ -1088,13 +1117,18 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
     
     if use_xray && is_tun {
         // ═══ xray + TUN: xray-core (SOCKS5) + sing-box (TUN bridge) ═══
+        vpn_log("mode: xray + TUN bridge");
         let xray_config = if let Some(ref raw) = request.raw_xray_config {
+            vpn_log("using raw xray config (injecting inbounds)");
             inject_xray_inbounds(raw.clone(), &request)
         } else {
+            vpn_log("building xray config from request");
             build_xray_config(&request)
         };
         let _ = std::fs::write(&debug_path, serde_json::to_string_pretty(&xray_config).unwrap_or_default());
-        
+        vpn_log(&format!("debug config written to {:?}", debug_path));
+
+        vpn_log(&format!("starting xray-core (socks:{} http:{})", request.socks_port, request.http_port));
         let mut start_result = xray::start_xray(&xray_config);
         if let Err(e) = &start_result {
             if e.to_lowercase().contains("bind") || e.to_lowercase().contains("listen") || e.to_lowercase().contains("socket") {
@@ -1107,11 +1141,13 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
         }
         
         if let Err(e) = start_result {
+            vpn_log(&format!("FATAL: xray-core failed to start: {}", e));
             return ConnectResult { success: false, message: format!("Failed to start xray-core: {}", e) };
         }
-        
+        vpn_log("xray-core started OK");
+
         // sing-box as TUN bridge → routes all traffic to xray's SOCKS5
-        // sing-box v1.13+ config format
+        vpn_log("building TUN bridge config (sing-box -> xray SOCKS5)");
         let tun_bridge = serde_json::json!({
             "log": { "level": "info" },
             "dns": {
@@ -1158,8 +1194,15 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
             }
         });
         
+        vpn_log("starting TUN bridge (elevated sing-box)...");
+        // Write TUN bridge config to debug file
+        let tun_debug_path = std::env::temp_dir().join("DoodleRay").join("tun_bridge_config.json");
+        let _ = std::fs::write(&tun_debug_path, serde_json::to_string_pretty(&tun_bridge).unwrap_or_default());
+        vpn_log(&format!("TUN bridge config written to {:?}", tun_debug_path));
+
         match tun::start_tun_elevated(&tun_bridge) {
             Ok(_) => {
+                vpn_log("TUN bridge started OK — connection established");
                 let mut state = CONNECTION_STATE.lock().unwrap();
                 *state = true;
                 let mut engine = ACTIVE_ENGINE.lock().unwrap();
@@ -1171,6 +1214,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                 }
             }
             Err(e) => {
+                vpn_log(&format!("FATAL: TUN bridge failed: {}", e));
                 let _ = xray::stop_xray();
                 ConnectResult {
                     success: false,
@@ -1180,15 +1224,15 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
         }
     } else if use_xray {
         // ═══ xray + System Proxy ═══
-        // Sets Windows system proxy → browsers, Electron apps (Discord, Telegram Desktop) 
-        // will use it. UDP (Discord voice) won't go through proxy.
+        vpn_log("mode: xray + System Proxy");
         let xray_config = if let Some(ref raw) = request.raw_xray_config {
             inject_xray_inbounds(raw.clone(), &request)
         } else {
             build_xray_config(&request)
         };
         let _ = std::fs::write(&debug_path, serde_json::to_string_pretty(&xray_config).unwrap_or_default());
-        
+
+        vpn_log(&format!("starting xray-core (socks:{} http:{})", request.socks_port, request.http_port));
         let mut start_result = xray::start_xray(&xray_config);
         if let Err(e) = &start_result {
             if e.to_lowercase().contains("bind") || e.to_lowercase().contains("listen") || e.to_lowercase().contains("socket") {
@@ -1202,16 +1246,20 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
         
         match start_result {
             Ok(_) => {
-                // DNS Leak Prevention: wait for core to be ready before setting proxy
+                vpn_log("xray-core started OK, waiting for port ready...");
                 wait_for_port_ready(request.socks_port);
+                vpn_log("xray port ready");
                 let mut state = CONNECTION_STATE.lock().unwrap();
                 *state = true;
                 let mut engine = ACTIVE_ENGINE.lock().unwrap();
                 *engine = Some("xray".into());
+                vpn_log(&format!("setting system proxy to localhost:{}", request.http_port));
                 if let Err(e) = sysproxy::set_system_proxy(request.http_port) {
+                    vpn_log(&format!("FATAL: system proxy failed: {}", e));
                     return ConnectResult { success: false, message: format!("xray started but failed to set system proxy: {}", e) };
                 }
-                
+                vpn_log("system proxy set OK");
+
                 // Per-app TUN bridge: route specific apps via process_name matching
                 // Activated when user adds ANY exe rules in Workshop (proxy, direct, or block)
                 // sing-box TUN captures all traffic and routes by process name,
@@ -1231,12 +1279,11 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                 let has_exe_rules = !proxy_exes.is_empty() || !direct_exes.is_empty() || !block_exes.is_empty();
 
                 if has_exe_rules {
+                    vpn_log(&format!("per-app TUN bridge: proxy={:?} direct={:?} block={:?}", proxy_exes, direct_exes, block_exes));
                     let exclude = vec!["sing-box.exe", "xray.exe", "DoodleRay.exe", "adb.exe", "svchost.exe", "lsass.exe", "csrss.exe", "System"];
-                    
-                    // Build routing rules for the TUN bridge
+
                     let mut tun_rules: Vec<serde_json::Value> = Vec::new();
-                    
-                    // 1. System processes always bypass TUN
+
                     let exclude_val: Vec<serde_json::Value> = exclude.iter()
                         .map(|s| serde_json::Value::String(s.to_string())).collect();
                     tun_rules.push(serde_json::json!({ "process_name": exclude_val, "outbound": "direct" }));
@@ -1335,15 +1382,22 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                     message: format!("Connected via System Proxy. SOCKS5: 127.0.0.1:{}, HTTP: 127.0.0.1:{}", request.socks_port, request.http_port),
                 }
             }
-            Err(e) => ConnectResult { success: false, message: format!("Failed to start xray-core: {}", e) }
+            Err(e) => {
+                vpn_log(&format!("FATAL: xray-core failed: {}", e));
+                ConnectResult { success: false, message: format!("Failed to start xray-core: {}", e) }
+            }
         }
     } else if is_tun {
         // ═══ Non-xhttp + TUN ═══
+        vpn_log("mode: sing-box TUN (direct, no xray)");
         let config = build_singbox_config(&request);
         let _ = std::fs::write(&debug_path, serde_json::to_string_pretty(&config).unwrap_or_default());
-        
+        vpn_log(&format!("config written to {:?}", debug_path));
+
+        vpn_log("starting sing-box TUN (elevated)...");
         match tun::start_tun_elevated(&config) {
             Ok(_) => {
+                vpn_log("sing-box TUN started OK");
                 let mut state = CONNECTION_STATE.lock().unwrap();
                 *state = true;
                 let mut engine = ACTIVE_ENGINE.lock().unwrap();
@@ -1354,27 +1408,36 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                     message: "TUN connected via sing-box".into(),
                 }
             }
-            Err(e) => ConnectResult {
-                success: false,
-                message: format!("TUN failed: {}", e),
+            Err(e) => {
+                vpn_log(&format!("FATAL: sing-box TUN failed: {}", e));
+                ConnectResult {
+                    success: false,
+                    message: format!("TUN failed: {}", e),
+                }
             }
         }
     } else {
         // ═══ Non-xhttp + System Proxy ═══
+        vpn_log("mode: sing-box + System Proxy");
         let config = build_singbox_config(&request);
         let _ = std::fs::write(&debug_path, serde_json::to_string_pretty(&config).unwrap_or_default());
-        
+
+        vpn_log("starting sing-box in-process...");
         match singbox::start_singbox(&config) {
             Ok(_) => {
-                // DNS Leak Prevention: wait for core to be ready before setting proxy
+                vpn_log("sing-box started OK, waiting for port ready...");
                 wait_for_port_ready(request.socks_port);
+                vpn_log("port ready");
                 let mut state = CONNECTION_STATE.lock().unwrap();
                 *state = true;
                 let mut engine = ACTIVE_ENGINE.lock().unwrap();
                 *engine = Some("singbox".into());
+                vpn_log(&format!("setting system proxy to localhost:{}", request.http_port));
                 if let Err(e) = sysproxy::set_system_proxy(request.http_port) {
+                    vpn_log(&format!("FATAL: system proxy failed: {}", e));
                     return ConnectResult { success: false, message: format!("sing-box started but failed to set system proxy: {}", e) };
                 }
+                vpn_log("system proxy set OK");
                 
                 // Per-app TUN bridge: route specific apps via process_name matching
                 // Activated when user adds ANY exe rules in Workshop (proxy, direct, or block)
@@ -1901,7 +1964,7 @@ async fn get_proxy_logs() -> Vec<String> {
         e.clone().unwrap_or_default()
     };
 
-    match engine.as_str() {
+    let engine_logs = match engine.as_str() {
         "singbox" | "singbox-tun" => {
             // Query sing-box clash API /connections for new connections
             let client = reqwest::Client::builder()
@@ -1975,7 +2038,17 @@ async fn get_proxy_logs() -> Vec<String> {
             new_lines
         },
         _ => xray::get_new_logs(),
+    };
+
+    // Prepend any connect-phase logs
+    if let Ok(mut connect_logs) = CONNECT_LOG.lock() {
+        if !connect_logs.is_empty() {
+            let mut combined = connect_logs.drain(..).collect::<Vec<_>>();
+            combined.extend(engine_logs);
+            return combined;
+        }
     }
+    engine_logs
 }
 
 /// Reset sing-box traffic counters (call on connect/disconnect)
