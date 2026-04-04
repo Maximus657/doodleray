@@ -570,7 +570,7 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
                 }
             }
         } else if rule.rule_type == "exe" {
-            let val = rule.value.clone();
+            let val = rule.value.to_lowercase();
             match rule.action.as_str() {
                 "proxy" => proxy_processes.push(val),
                 "direct" => direct_processes.push(val),
@@ -1215,18 +1215,18 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                 // while xray handles the actual proxy connection via SOCKS5
                 let proxy_exes: Vec<String> = request.routing_rules.iter()
                     .filter(|r| r.rule_type == "exe" && r.action == "proxy")
-                    .map(|r| r.value.clone())
+                    .map(|r| r.value.to_lowercase())
                     .collect();
                 let direct_exes: Vec<String> = request.routing_rules.iter()
                     .filter(|r| r.rule_type == "exe" && r.action == "direct")
-                    .map(|r| r.value.clone())
+                    .map(|r| r.value.to_lowercase())
                     .collect();
                 let block_exes: Vec<String> = request.routing_rules.iter()
                     .filter(|r| r.rule_type == "exe" && r.action == "block")
-                    .map(|r| r.value.clone())
+                    .map(|r| r.value.to_lowercase())
                     .collect();
                 let has_exe_rules = !proxy_exes.is_empty() || !direct_exes.is_empty() || !block_exes.is_empty();
-                
+
                 if has_exe_rules {
                     let exclude = vec!["sing-box.exe", "xray.exe", "DoodleRay.exe", "adb.exe", "svchost.exe", "lsass.exe", "csrss.exe", "System"];
                     
@@ -1375,18 +1375,18 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                 // sing-box TUN captures all traffic and routes by process name
                 let proxy_exes: Vec<String> = request.routing_rules.iter()
                     .filter(|r| r.rule_type == "exe" && r.action == "proxy")
-                    .map(|r| r.value.clone())
+                    .map(|r| r.value.to_lowercase())
                     .collect();
                 let direct_exes: Vec<String> = request.routing_rules.iter()
                     .filter(|r| r.rule_type == "exe" && r.action == "direct")
-                    .map(|r| r.value.clone())
+                    .map(|r| r.value.to_lowercase())
                     .collect();
                 let block_exes: Vec<String> = request.routing_rules.iter()
                     .filter(|r| r.rule_type == "exe" && r.action == "block")
-                    .map(|r| r.value.clone())
+                    .map(|r| r.value.to_lowercase())
                     .collect();
                 let has_exe_rules = !proxy_exes.is_empty() || !direct_exes.is_empty() || !block_exes.is_empty();
-                
+
                 if has_exe_rules {
                     let exclude = vec!["sing-box.exe", "DoodleRay.exe", "adb.exe", "svchost.exe", "lsass.exe", "csrss.exe", "System"];
                     
