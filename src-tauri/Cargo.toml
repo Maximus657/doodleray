@@ -1,6 +1,6 @@
 [package]
 name = "tauri-app"
-version = "3.5.4"
+version = "3.5.5"
 description = "DoodleRay VPN Client"
 authors = ["DoodleVPN"]
 edition = "2021"

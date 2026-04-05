@@ -156,7 +156,9 @@ export async function fetchSubscription(
       // Not JSON — try Base64 then plain text
       let decoded: string;
       try {
-        decoded = atob(text.trim());
+        const binary = atob(text.trim());
+        const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+        decoded = new TextDecoder().decode(bytes);
       } catch {
         decoded = text;
       }
