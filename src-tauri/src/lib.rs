@@ -297,6 +297,11 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
                     "fingerprint": req.fingerprint.clone().unwrap_or("chrome".into())
                 }
             });
+            if let Some(ref alpn) = req.alpn {
+                if !alpn.is_empty() {
+                    tls_obj["alpn"] = serde_json::json!(alpn);
+                }
+            }
             if req.security == "reality" {
                 tls_obj["reality"] = serde_json::json!({
                     "enabled": true,
@@ -1318,7 +1323,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                             "servers": [
                                 {
                                     "tag": "dns-direct",
-                                    "type": "tcp",
+                                    "type": "udp",
                                     "server": "8.8.8.8"
                                 }
                             ],
@@ -1497,7 +1502,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                             "servers": [
                                 {
                                     "tag": "dns-direct",
-                                    "type": "tcp",
+                                    "type": "udp",
                                     "server": "8.8.8.8"
                                 }
                             ],

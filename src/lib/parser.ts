@@ -30,6 +30,7 @@ export function parseVlessLink(link: string): ServerConfig | null {
       shortId: params.get('sid') || undefined,
       flow: params.get('flow') || undefined,
       encryption: params.get('encryption') || 'none',
+      alpn: params.get('alpn') ? params.get('alpn')!.split(',') : undefined,
       rawLink: link,
     };
   } catch {
