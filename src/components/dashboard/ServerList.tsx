@@ -74,7 +74,7 @@ export default function ServerList({
               <Loader2 className={`w-4 h-4 animate-spin shrink-0 ${isActive ? 'text-white/80' : 'text-black/40'}`} />
             ) : (
               <span className={`text-[10px] whitespace-nowrap font-black uppercase tracking-widest ${isActive ? 'text-white/80' : pingColor}`}>
-                {server.ping === -1 ? t('errorLabel') : `${server.ping}ms`}
+                {server.ping === -1 ? t('errorLabel') : `tcp ${server.ping}ms`}
               </span>
             )
           )}
@@ -211,7 +211,7 @@ export default function ServerList({
                           </div>
                           {server.ping !== undefined && (
                             <span className={`text-[10px] whitespace-nowrap font-black uppercase tracking-widest pl-1 shrink-0 ${isActive ? 'text-white/80' : pingColor}`}>
-                              {server.ping === -1 ? t('errorLabel') : `${server.ping}ms`}
+                              {server.ping === -1 ? t('errorLabel') : `tcp ${server.ping}ms`}
                             </span>
                           )}
                         </div>

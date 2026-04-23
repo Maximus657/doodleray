@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { Download, Loader2 } from 'lucide-react';
 import { Sidebar } from './components/layout/Sidebar';
 import Dashboard from './pages/Dashboard';
+import Servers from './pages/Servers';
 import Workshop from './pages/Workshop';
 
 import Settings from './pages/Settings';
@@ -177,13 +178,21 @@ function App() {
       }
     );
 
+    let unsubscribeHydration: (() => void) | undefined;
+
     syncSilentAdmin();
     // Check for updates after a brief delay so UI loads first
     setTimeout(checkForUpdates, 3000);
     // Re-check for updates every 30 minutes
     const updateInterval = setInterval(checkForUpdates, 30 * 60 * 1000);
-    // Auto-connect if enabled
-    autoConnectIfEnabled();
+    // Auto-connect needs persisted servers/settings to be loaded first.
+    if (useAppStore.persist.hasHydrated()) {
+      autoConnectIfEnabled();
+    } else {
+      unsubscribeHydration = useAppStore.persist.onFinishHydration(() => {
+        autoConnectIfEnabled();
+      });
+    }
     
     // Analytics — report launch + start heartbeat
     import('./lib/workshop-api').then(({ reportLaunch, startHeartbeat }) => {
@@ -193,6 +202,7 @@ function App() {
 
     return () => {
       unsubscribe();
+      unsubscribeHydration?.();
       clearInterval(updateInterval);
     };
   }, []);
@@ -205,6 +215,7 @@ function App() {
           <UpdateBanner />
           <Routes>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/servers" element={<Servers />} />
             <Route path="/workshop" element={<Workshop />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>

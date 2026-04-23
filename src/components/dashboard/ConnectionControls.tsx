@@ -1,18 +1,30 @@
 import { Power, Globe, Network, CheckCircle2, Loader2 } from 'lucide-react';
-import type { ConnectionStatus, ProxyMode } from '../../stores/app-store';
+import type { ConnectionStatus, ProxyMode, SystemProxyMode } from '../../stores/app-store';
 import { formatDuration } from '../../lib/utils';
 
 interface Props {
   status: ConnectionStatus;
   proxyMode: ProxyMode;
+  systemProxyMode: SystemProxyMode;
   canConnect: boolean;
   connectTime: number;
   onConnect: () => void;
   onModeSwitch: (mode: ProxyMode) => void;
+  onSystemProxyModeChange: (mode: SystemProxyMode) => void;
   t: (key: any) => string;
 }
 
-export default function ConnectionControls({ status, proxyMode, canConnect, connectTime, onConnect, onModeSwitch, t }: Props) {
+export default function ConnectionControls({
+  status,
+  proxyMode,
+  systemProxyMode,
+  canConnect,
+  connectTime,
+  onConnect,
+  onModeSwitch,
+  onSystemProxyModeChange,
+  t
+}: Props) {
   const isConnected = status === 'connected';
   const isConnecting = status === 'connecting';
 
@@ -36,6 +48,37 @@ export default function ConnectionControls({ status, proxyMode, canConnect, conn
             <Network className={`w-4 h-4 transition-transform duration-300 ${proxyMode === 'tun' ? 'scale-110' : 'scale-100'}`} /> <span className="truncate">{t('tunMode')}</span>
         </button>
       </div>
+
+      {proxyMode === 'system-proxy' && (
+        <div className="relative z-10 -mt-1 flex w-full max-w-sm items-center gap-1.5 rounded-xl border-[3px] border-black bg-white p-1.5 shadow-[4px_4px_0_#000]">
+          {([
+            ['set', 'systemProxyShortSet'],
+            ['unchanged', 'systemProxyShortKeep'],
+            ['clear', 'systemProxyShortClear'],
+          ] as const).map(([mode, labelKey]) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => onSystemProxyModeChange(mode)}
+              disabled={isConnecting || isConnected}
+              title={
+                mode === 'set'
+                  ? t('systemProxySet')
+                  : mode === 'unchanged'
+                    ? t('systemProxyUnchanged')
+                    : t('systemProxyClear')
+              }
+              className={`flex-1 rounded-lg border-[2px] border-black px-2 py-1.5 text-[9px] font-black uppercase tracking-widest transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
+                systemProxyMode === mode
+                  ? 'bg-black text-white shadow-[2px_2px_0_rgba(0,0,0,0.3)]'
+                  : 'bg-bg-primary text-black hover:-translate-y-0.5 hover:shadow-[2px_2px_0_#000]'
+              }`}
+            >
+              {t(labelKey)}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* ── POWER BUTTON ── */}
       <div className="flex flex-col items-center mt-2 relative z-10 shrink-0">
@@ -66,7 +109,7 @@ export default function ConnectionControls({ status, proxyMode, canConnect, conn
         {isConnected ? (
           <div className="mt-4 px-6 py-3 bg-black rounded-2xl border-[3px] border-black shadow-[4px_4px_0_rgba(0,0,0,0.3)] hover:-translate-y-0.5 hover:shadow-[6px_6px_0_rgba(0,0,0,0.4)] transition-all">
             <p className="text-[13px] font-black tracking-widest uppercase text-emerald-400 text-center flex items-center justify-center gap-2">
-              {t('protectedWorking')} <CheckCircle2 className="w-5 h-5 inline stroke-[3px]" />
+              {t('connectionActive')} <CheckCircle2 className="w-5 h-5 inline stroke-[3px]" />
             </p>
             <p className="text-[10px] text-emerald-400/50 text-center mt-1 uppercase tracking-widest font-bold">
               {t('timeValid')}: {formatDuration(connectTime)}

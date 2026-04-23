@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware';
+import { invoke } from '@tauri-apps/api/core';
 // Trigger HMR
 
 // ========== Types ==========
@@ -7,6 +8,7 @@ import { persist } from 'zustand/middleware';
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
 
 export type ProxyMode = 'system-proxy' | 'tun';
+export type SystemProxyMode = 'set' | 'clear' | 'unchanged';
 
 export interface ServerConfig {
   id: string;
@@ -76,6 +78,7 @@ export interface AppState {
   status: ConnectionStatus;
   activeServer: ServerConfig | null;
   proxyMode: ProxyMode;
+  systemProxyMode: SystemProxyMode;
 
   servers: ServerConfig[];
   subscriptions: Subscription[];
@@ -106,6 +109,7 @@ export interface AppState {
   setStatus: (status: ConnectionStatus) => void;
   setActiveServer: (server: ServerConfig | null) => void;
   setProxyMode: (mode: ProxyMode) => void;
+  setSystemProxyMode: (mode: SystemProxyMode) => void;
 
   setNetworkStack: (stack: 'mixed' | 'system' | 'gvisor') => void;
   setDnsMode: (mode: 'fakeip' | 'realip') => void;
@@ -141,12 +145,55 @@ export interface AppState {
   resetTraffic: () => void;
 }
 
+const isTauriRuntime = () =>
+  typeof window !== 'undefined' &&
+  !!(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+
+const secureStorage: StateStorage<Promise<void> | void> = {
+  async getItem(name) {
+    if (!isTauriRuntime()) return localStorage.getItem(name);
+
+    const value = await invoke<string | null>('secure_store_get', { key: name });
+    if (value !== null) {
+      localStorage.removeItem(name);
+      return value;
+    }
+
+    // One-time migration from legacy plaintext localStorage into OS secure storage.
+    const legacyValue = localStorage.getItem(name);
+    if (legacyValue !== null) {
+      await invoke('secure_store_set', { key: name, value: legacyValue });
+      localStorage.removeItem(name);
+    }
+    return legacyValue;
+  },
+  async setItem(name, value) {
+    if (!isTauriRuntime()) {
+      localStorage.setItem(name, value);
+      return;
+    }
+
+    await invoke('secure_store_set', { key: name, value });
+    localStorage.removeItem(name);
+  },
+  async removeItem(name) {
+    if (!isTauriRuntime()) {
+      localStorage.removeItem(name);
+      return;
+    }
+
+    await invoke('secure_store_delete', { key: name });
+    localStorage.removeItem(name);
+  },
+};
+
 export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
       status: 'disconnected',
       activeServer: null,
       proxyMode: 'system-proxy',
+      systemProxyMode: 'set',
 
       servers: [],
       subscriptions: [],
@@ -177,6 +224,7 @@ export const useAppStore = create<AppState>()(
       setStatus: (status) => set({ status }),
       setActiveServer: (server) => set({ activeServer: server }),
       setProxyMode: (mode) => set({ proxyMode: mode }),
+      setSystemProxyMode: (mode) => set({ systemProxyMode: mode }),
 
       setNetworkStack: (stack) => set({ networkStack: stack }),
       setDnsMode: (mode) => set({ dnsMode: mode }),
@@ -276,6 +324,7 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'doodleray-storage',
+      storage: createJSONStorage(() => secureStorage),
       partialize: (state) => Object.fromEntries(
         Object.entries(state as any).filter(([key]) => !['status', 'speedHistory', 'currentDownload', 'currentUpload', 'totalDown', 'totalUp', 'logs', 'availableUpdate'].includes(key))
       ) as Partial<AppState>,

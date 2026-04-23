@@ -1,8 +1,8 @@
 #[cfg(windows)]
-#[cfg(windows)]
-use tokio::net::windows::named_pipe::{ServerOptions, NamedPipeServer};
-#[cfg(windows)]
 use std::io::Error as IoError;
+#[cfg(windows)]
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 
 #[cfg(windows)]
 const PIPE_NAME: &str = r"\\.\pipe\DoodleRayServicePipe";
@@ -11,7 +11,7 @@ const PIPE_NAME: &str = r"\\.\pipe\DoodleRayServicePipe";
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("DoodleRay Service Starting...");
-    
+
     // Create the named pipe server
     let mut server = ServerOptions::new()
         .first_pipe_instance(true)
@@ -26,7 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Process the connection in a separate task or just handle it sequentially for simplicity
         let mut connected_client = server;
-        
+
         // Setup the next server instance to accept the next connection
         server = ServerOptions::new().create(PIPE_NAME)?;
 
@@ -48,7 +48,7 @@ async fn handle_client(client: &mut NamedPipeServer) -> Result<(), IoError> {
         Ok(n) => {
             let command_str = String::from_utf8_lossy(&buffer[..n]);
             println!("Received command: {}", command_str);
-            
+
             let response = process_command(&command_str).await;
             client.write_all(response.as_bytes()).await?;
         }

@@ -1,7 +1,10 @@
-use std::process::Command;
-use std::path::PathBuf;
+use std::io::Write;
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
+use std::path::PathBuf;
+use std::process::Command;
 
 /// Check if the current process is running with elevated (admin) privileges
 #[cfg(windows)]
@@ -51,7 +54,9 @@ pub fn is_elevated() -> bool {
 #[cfg(not(windows))]
 pub fn is_elevated() -> bool {
     unsafe {
-        extern "C" { fn getuid() -> u32; }
+        extern "C" {
+            fn getuid() -> u32;
+        }
         getuid() == 0
     }
 }
@@ -65,19 +70,52 @@ fn get_resource_dir() -> PathBuf {
         .parent()
         .unwrap()
         .to_path_buf();
-    
+
     #[cfg(target_os = "macos")]
     {
         // In a .app bundle: Contents/MacOS/DoodleRay → Contents/Resources/
-        let resources_dir = exe_dir.parent()
+        let resources_dir = exe_dir
+            .parent()
             .map(|p| p.join("Resources"))
             .unwrap_or(exe_dir.clone());
         if resources_dir.exists() {
             return resources_dir;
         }
     }
-    
+
     exe_dir
+}
+
+fn create_private_dir(path: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(path).map_err(|e| format!("Failed to create temp dir: {}", e))?;
+    #[cfg(unix)]
+    {
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700));
+    }
+    Ok(())
+}
+
+fn write_private_file(
+    path: &std::path::Path,
+    content: &str,
+    executable: bool,
+) -> Result<(), String> {
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).write(true).truncate(true);
+    #[cfg(unix)]
+    options.mode(if executable { 0o700 } else { 0o600 });
+
+    let mut file = options
+        .open(path)
+        .map_err(|e| format!("Failed to write private file {:?}: {}", path, e))?;
+    file.write_all(content.as_bytes())
+        .map_err(|e| format!("Failed to write private file {:?}: {}", path, e))?;
+    #[cfg(unix)]
+    {
+        let mode = if executable { 0o700 } else { 0o600 };
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
+    }
+    Ok(())
 }
 
 /// Start sing-box TUN as an elevated (admin/root) subprocess
@@ -89,7 +127,7 @@ pub fn start_tun_elevated(config_json: &serde_json::Value) -> Result<(), String>
         .parent()
         .unwrap()
         .to_path_buf();
-    
+
     let resource_dir = get_resource_dir();
 
     #[cfg(windows)]
@@ -104,22 +142,26 @@ pub fn start_tun_elevated(config_json: &serde_json::Value) -> Result<(), String>
         exe_dir.join(singbox_name)
     };
     if !singbox_exe.exists() {
-        return Err(format!("{} not found at {:?} or {:?}", singbox_name, resource_dir.join(singbox_name), exe_dir.join(singbox_name)));
+        return Err(format!(
+            "{} not found at {:?} or {:?}",
+            singbox_name,
+            resource_dir.join(singbox_name),
+            exe_dir.join(singbox_name)
+        ));
     }
 
     // Write config/log/launcher to temp dir (exe_dir may be in Program Files = read-only)
     let temp_dir = std::env::temp_dir().join("DoodleRay");
-    let _ = std::fs::create_dir_all(&temp_dir);
+    create_private_dir(&temp_dir)?;
 
     let config_path = temp_dir.join("tun_config.json");
     let config_str = serde_json::to_string_pretty(config_json)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
-    std::fs::write(&config_path, &config_str)
-        .map_err(|e| format!("Failed to write config: {}", e))?;
+    write_private_file(&config_path, &config_str, false)?;
 
     // Write a launcher script that captures sing-box output to a log
     let log_path = temp_dir.join("singbox_tun.log");
-    let _ = std::fs::write(&log_path, "");
+    let _ = write_private_file(&log_path, "", false);
 
     #[cfg(windows)]
     {
@@ -130,8 +172,7 @@ pub fn start_tun_elevated(config_json: &serde_json::Value) -> Result<(), String>
             config_path.to_string_lossy(),
             log_path.to_string_lossy(),
         );
-        std::fs::write(&bat_path, &bat_content)
-            .map_err(|e| format!("Failed to write launcher bat: {}", e))?;
+        write_private_file(&bat_path, &bat_content, false)?;
 
         if is_elevated() {
             // Already running as admin — launch sing-box directly, no UAC prompt
@@ -143,7 +184,8 @@ pub fn start_tun_elevated(config_json: &serde_json::Value) -> Result<(), String>
                 .map_err(|e| format!("Failed to launch sing-box: {}", e))?;
         } else {
             // Not elevated — need UAC prompt via ShellExecuteW "runas"
-            let bat_str: Vec<u16> = bat_path.to_string_lossy()
+            let bat_str: Vec<u16> = bat_path
+                .to_string_lossy()
                 .encode_utf16()
                 .chain(std::iter::once(0))
                 .collect();
@@ -172,7 +214,10 @@ pub fn start_tun_elevated(config_json: &serde_json::Value) -> Result<(), String>
                 );
 
                 if result as usize <= 32 {
-                    return Err("UAC was declined or ShellExecute failed. TUN requires admin privileges.".into());
+                    return Err(
+                        "UAC was declined or ShellExecute failed. TUN requires admin privileges."
+                            .into(),
+                    );
                 }
             }
         }
@@ -187,9 +232,8 @@ pub fn start_tun_elevated(config_json: &serde_json::Value) -> Result<(), String>
             config_path.to_string_lossy(),
             log_path.to_string_lossy(),
         );
-        std::fs::write(&sh_path, &sh_content)
-            .map_err(|e| format!("Failed to write launcher script: {}", e))?;
-        
+        write_private_file(&sh_path, &sh_content, true)?;
+
         // Make it executable
         Command::new("chmod")
             .args(["+x", &sh_path.to_string_lossy()])
@@ -201,7 +245,7 @@ pub fn start_tun_elevated(config_json: &serde_json::Value) -> Result<(), String>
             "do shell script \"bash '{}'\" with administrator privileges",
             sh_path.to_string_lossy()
         );
-        
+
         Command::new("osascript")
             .args(["-e", &script])
             .spawn()
@@ -225,7 +269,11 @@ pub fn start_tun_elevated(config_json: &serde_json::Value) -> Result<(), String>
         if attempt >= 2 {
             if let Ok(log_content) = std::fs::read_to_string(&log_path) {
                 let trimmed = log_content.trim();
-                if !trimmed.is_empty() && (trimmed.contains("FATAL") || trimmed.contains("ERROR") || trimmed.contains("panic")) {
+                if !trimmed.is_empty()
+                    && (trimmed.contains("FATAL")
+                        || trimmed.contains("ERROR")
+                        || trimmed.contains("panic"))
+                {
                     return Err(format!("sing-box crashed: {}", trimmed));
                 }
             }
@@ -236,7 +284,7 @@ pub fn start_tun_elevated(config_json: &serde_json::Value) -> Result<(), String>
     // Read log for final error message
     let log_msg = std::fs::read_to_string(&log_path).unwrap_or_default();
     let log_trimmed = log_msg.trim();
-    
+
     if !log_trimmed.is_empty() {
         Err(format!("sing-box failed to start: {}", log_trimmed))
     } else {
@@ -259,10 +307,7 @@ pub fn is_singbox_running() -> bool {
     }
     #[cfg(not(windows))]
     {
-        if let Ok(output) = Command::new("pgrep")
-            .args(["-f", "sing-box"])
-            .output()
-        {
+        if let Ok(output) = Command::new("pgrep").args(["-f", "sing-box"]).output() {
             return output.status.success();
         }
         false
@@ -276,16 +321,17 @@ pub fn stop_tun() -> Result<(), String> {
             .args(&["/IM", "sing-box.exe", "/F", "/T"])
             .creation_flags(0x08000000)
             .output();
-        
+
         if let Ok(output) = &regular {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            if stderr.contains("Access") || stderr.contains("Отказано") || stderr.contains("denied") {
+            if stderr.contains("Access") || stderr.contains("Отказано") || stderr.contains("denied")
+            {
                 let kill_cmd = "taskkill /IM sing-box.exe /F /T";
                 let cmd_w: Vec<u16> = "cmd.exe\0".encode_utf16().collect();
                 let args = format!("/c {}\0", kill_cmd);
                 let args_w: Vec<u16> = args.encode_utf16().collect();
                 let verb: Vec<u16> = "runas\0".encode_utf16().collect();
-                
+
                 unsafe {
                     #[link(name = "shell32")]
                     extern "system" {
@@ -298,7 +344,7 @@ pub fn stop_tun() -> Result<(), String> {
                             nShowCmd: i32,
                         ) -> isize;
                     }
-                    
+
                     ShellExecuteW(
                         std::ptr::null_mut(),
                         verb.as_ptr(),
@@ -308,7 +354,7 @@ pub fn stop_tun() -> Result<(), String> {
                         0,
                     );
                 }
-                
+
                 // Wait for the process to actually terminate
                 for _ in 0..8 {
                     if !is_singbox_running() {
@@ -330,18 +376,19 @@ pub fn stop_tun() -> Result<(), String> {
     #[cfg(not(windows))]
     {
         // Kill via sudo (may prompt for password)
-        let _ = Command::new("pkill")
-            .args(["-f", "sing-box"])
-            .output();
-        
+        let _ = Command::new("pkill").args(["-f", "sing-box"]).output();
+
         // If regular kill fails, try with sudo
         if is_singbox_running() {
             let _ = Command::new("osascript")
-                .args(["-e", "do shell script \"pkill -f sing-box\" with administrator privileges"])
+                .args([
+                    "-e",
+                    "do shell script \"pkill -f sing-box\" with administrator privileges",
+                ])
                 .output();
             std::thread::sleep(std::time::Duration::from_millis(500));
         }
     }
-    
+
     Ok(())
 }

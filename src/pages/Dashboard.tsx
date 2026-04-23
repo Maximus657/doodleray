@@ -19,7 +19,7 @@ import LogsStrip from '../components/dashboard/LogsStrip';
 export default function Dashboard() {
   const {
     status, setStatus, activeServer, servers, setActiveServer,
-    proxyMode, setProxyMode, speedHistory, currentDownload, currentUpload,
+    proxyMode, setProxyMode, systemProxyMode, setSystemProxyMode, speedHistory, currentDownload, currentUpload,
     totalDown, totalUp, addTraffic, resetTraffic, addSpeedPoint, setCurrentSpeed,
     logs, addLog, clearLogs, socksPort, httpPort, subscriptions,
     updateSubscription, removeSubscription, autoSelectFastest,
@@ -39,6 +39,7 @@ export default function Dashboard() {
   const [testingSubId, setTestingSubId] = useState<string | null>(null);
   const [refreshingSubId, setRefreshingSubId] = useState<string | null>(null);
   const [pingingServerId, setPingingServerId] = useState<string | null>(null);
+  const autoPingStartedRef = useRef<Set<string>>(new Set());
 
   const [confirmModal, setConfirmModal] = useState<{
     show: boolean;
@@ -51,9 +52,11 @@ export default function Dashboard() {
   //  Effects
   // ═══════════════════════════════════════════════════
 
-  // Auto-ping unpinged servers on mount
+  // Auto-ping unpinged servers after persisted state/subscriptions are loaded.
   useEffect(() => {
-    const unpinged = servers.filter(s => s.ping === undefined);
+    const unpinged = servers.filter(
+      s => (s.ping === undefined || (s.ping > 0 && s.ping <= 5)) && !autoPingStartedRef.current.has(s.id)
+    );
     if (unpinged.length === 0) return;
     let cancelled = false;
     (async () => {
@@ -61,6 +64,7 @@ export default function Dashboard() {
         const { invoke } = await import('@tauri-apps/api/core');
         for (const server of unpinged) {
           if (cancelled) break;
+          autoPingStartedRef.current.add(server.id);
           try {
             const ping = await pingServerSmart(server, invoke);
             updateServerPing(server.id, ping);
@@ -70,7 +74,7 @@ export default function Dashboard() {
       } catch { /* not in tauri env */ }
     })();
     return () => { cancelled = true; };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [servers, updateServerPing]);
 
   // Connection time counter
   const [connectTime, setConnectTime] = useState(0);
@@ -234,7 +238,7 @@ export default function Dashboard() {
 
         if (result.success) {
           addLog('success', result.message);
-          addLog('success', `${t('protectedWorking')} ✅`);
+          addLog('success', t('connectionActive'));
           setStatus('connected'); setConnectedAt(Date.now());
         } else {
           // Port-busy retry
@@ -496,9 +500,9 @@ export default function Dashboard() {
         ) : (
           <div className="contents">
             <ConnectionControls
-              status={status} proxyMode={proxyMode} canConnect={canConnect}
+              status={status} proxyMode={proxyMode} systemProxyMode={systemProxyMode} canConnect={canConnect}
               connectTime={connectTime} onConnect={handleConnect}
-              onModeSwitch={handleModeSwitch} t={t}
+              onModeSwitch={handleModeSwitch} onSystemProxyModeChange={setSystemProxyMode} t={t}
             />
 
             {showStats && isConnected && (

@@ -34,6 +34,7 @@ export function buildConnectRequest(server: ServerConfig, opts: ConnectOpts) {
     short_id: server.shortId || null,
     flow: server.flow || null,
     proxy_mode: opts.proxyMode,
+    system_proxy_mode: useAppStore.getState().systemProxyMode,
     socks_port: opts.socksPort,
     http_port: opts.httpPort,
     network_stack: opts.networkStack,

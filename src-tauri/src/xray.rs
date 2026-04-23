@@ -1,15 +1,45 @@
-use std::io::BufRead;
-use std::process::{Child, Command};
-use std::sync::Mutex;
-use std::path::PathBuf;
 use lazy_static::lazy_static;
+use std::io::BufRead;
+use std::io::Write;
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
+use std::path::PathBuf;
+use std::process::{Child, Command};
+use std::sync::Mutex;
 
 lazy_static! {
     static ref XRAY_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
     static ref XRAY_LOGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
     static ref LOG_CURSOR: Mutex<usize> = Mutex::new(0);
+}
+
+fn create_private_dir(path: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(path).map_err(|e| format!("Failed to create temp dir: {}", e))?;
+    #[cfg(unix)]
+    {
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700));
+    }
+    Ok(())
+}
+
+fn write_private_file(path: &std::path::Path, content: &str) -> Result<(), String> {
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).write(true).truncate(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+
+    let mut file = options
+        .open(path)
+        .map_err(|e| format!("Failed to write private file {:?}: {}", path, e))?;
+    file.write_all(content.as_bytes())
+        .map_err(|e| format!("Failed to write private file {:?}: {}", path, e))?;
+    #[cfg(unix)]
+    {
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
 }
 
 /// Get the directory where xray-core resources are located.
@@ -19,11 +49,12 @@ fn get_xray_resource_dir() -> PathBuf {
         .parent()
         .unwrap()
         .to_path_buf();
-    
+
     #[cfg(target_os = "macos")]
     {
         // In a .app bundle: Contents/MacOS/ → Contents/Resources/
-        let resources_dir = exe_dir.parent()
+        let resources_dir = exe_dir
+            .parent()
             .map(|p| p.join("Resources"))
             .unwrap_or(exe_dir.clone());
         let xray_in_resources = resources_dir.join("xray-core");
@@ -31,7 +62,7 @@ fn get_xray_resource_dir() -> PathBuf {
             return resources_dir;
         }
     }
-    
+
     exe_dir
 }
 
@@ -50,7 +81,7 @@ pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
         .parent()
         .unwrap()
         .to_path_buf();
-    
+
     let resource_dir = get_xray_resource_dir();
 
     #[cfg(windows)]
@@ -69,12 +100,11 @@ pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
     }
 
     let temp_dir = std::env::temp_dir().join("DoodleRay");
-    let _ = std::fs::create_dir_all(&temp_dir);
+    create_private_dir(&temp_dir)?;
     let config_path = temp_dir.join("xray_config.json");
     let config_str = serde_json::to_string_pretty(config_json)
         .map_err(|e| format!("Failed to serialize xray config: {}", e))?;
-    std::fs::write(&config_path, &config_str)
-        .map_err(|e| format!("Failed to write xray config: {}", e))?;
+    write_private_file(&config_path, &config_str)?;
 
     let mut cmd = Command::new(&xray_exe);
     cmd.arg("run")
@@ -82,11 +112,12 @@ pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
         .arg(&config_path)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    
+
     #[cfg(windows)]
     cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    
-    let mut child = cmd.spawn()
+
+    let mut child = cmd
+        .spawn()
         .map_err(|e| format!("Failed to start xray: {}", e))?;
 
     // Capture stdout (xray writes access logs here)
@@ -94,16 +125,18 @@ pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
         std::thread::spawn(move || {
             let reader = std::io::BufReader::new(stdout);
             for line in reader.lines().flatten() {
-                if line.contains("api -> api") || line.contains("api]") 
-                    || line.contains("172.19.0.2:53") 
+                if line.contains("api -> api")
+                    || line.contains("api]")
+                    || line.contains("172.19.0.2:53")
                     || line.contains("fdfe:dcba")
-                    || line.contains("dokodemo") 
-                    || line.contains("The feature VLESS") 
+                    || line.contains("dokodemo")
+                    || line.contains("The feature VLESS")
                     || line.contains("An established connection was aborted by the software")
                     || line.contains("dns-out")
                     || line.contains("cannot find the pending request")
                     || line.contains("app/observatory/burst")
-                    || line.contains("REALITY: received real certificate") {
+                    || line.contains("REALITY: received real certificate")
+                {
                     continue;
                 }
                 let mut logs = XRAY_LOGS.lock().unwrap();
@@ -124,13 +157,15 @@ pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
         std::thread::spawn(move || {
             let reader = std::io::BufReader::new(stderr);
             for line in reader.lines().flatten() {
-                if line.contains("api -> api") || line.contains("api]") 
-                    || line.contains("172.19.0.2:53") 
-                    || line.contains("dokodemo") 
+                if line.contains("api -> api")
+                    || line.contains("api]")
+                    || line.contains("172.19.0.2:53")
+                    || line.contains("dokodemo")
                     || line.contains("The feature VLESS")
                     || line.contains("An established connection was aborted by the software")
                     || line.contains("app/observatory/burst")
-                    || line.contains("REALITY: received real certificate") {
+                    || line.contains("REALITY: received real certificate")
+                {
                     continue;
                 }
                 let mut logs = XRAY_LOGS.lock().unwrap();
@@ -160,10 +195,13 @@ pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
                 // Process died early. Get the reason from logs.
                 let logs = XRAY_LOGS.lock().unwrap();
                 let mut reason = format!("Process exited with status: {}", status);
-                
+
                 // Find the most relevant error line
                 for line in logs.iter().rev() {
-                    if line.contains("Failed to start") || line.contains("bind") || line.contains("error") {
+                    if line.contains("Failed to start")
+                        || line.contains("bind")
+                        || line.contains("error")
+                    {
                         reason = line.clone();
                         break;
                     }
@@ -184,7 +222,7 @@ pub fn stop_xray() -> Result<(), String> {
         let _ = child.wait();
     }
     *proc = None;
-    
+
     // Also force-kill any orphaned xray process (e.g. after crash)
     #[cfg(windows)]
     {
@@ -195,9 +233,11 @@ pub fn stop_xray() -> Result<(), String> {
     }
     #[cfg(not(windows))]
     {
-        let _ = std::process::Command::new("pkill").args(["-f", "xray"]).output();
+        let _ = std::process::Command::new("pkill")
+            .args(["-f", "xray"])
+            .output();
     }
-    
+
     // Brief pause to let ports release
     std::thread::sleep(std::time::Duration::from_millis(300));
     Ok(())

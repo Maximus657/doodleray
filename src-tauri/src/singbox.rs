@@ -1,9 +1,9 @@
+use lazy_static::lazy_static;
 use libloading::{Library, Symbol};
+use serde_json::Value;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int};
 use std::sync::Mutex;
-use lazy_static::lazy_static;
-use serde_json::Value;
 
 lazy_static! {
     static ref SINGBOX_LIB: Mutex<Option<Library>> = Mutex::new(None);
@@ -11,7 +11,7 @@ lazy_static! {
 
 pub fn start_singbox(config_json: &Value) -> Result<(), String> {
     let mut lib_guard = SINGBOX_LIB.lock().unwrap();
-    
+
     if lib_guard.is_none() {
         // Platform-specific library name
         #[cfg(windows)]
@@ -26,17 +26,18 @@ pub fn start_singbox(config_json: &Value) -> Result<(), String> {
             .parent()
             .unwrap()
             .to_path_buf();
-        
+
         let lib_path = exe_dir.join(lib_name);
-        
+
         // macOS .app bundle: Contents/Resources/
         #[cfg(target_os = "macos")]
-        let macos_resource_path = exe_dir.parent()
+        let macos_resource_path = exe_dir
+            .parent()
             .map(|p| p.join("Resources").join(lib_name))
             .unwrap_or(lib_path.clone());
         #[cfg(not(target_os = "macos"))]
         let macos_resource_path = lib_path.clone();
-            
+
         // Fallback for development (running via tauri dev)
         let fallback_path = std::env::current_dir()
             .unwrap()
@@ -79,7 +80,7 @@ pub fn start_singbox(config_json: &Value) -> Result<(), String> {
 
 pub fn stop_singbox() -> Result<(), String> {
     let lib_guard = SINGBOX_LIB.lock().unwrap();
-    
+
     if let Some(lib) = lib_guard.as_ref() {
         unsafe {
             let stop_func: Symbol<unsafe extern "C" fn() -> c_int> = lib
@@ -92,6 +93,6 @@ pub fn stop_singbox() -> Result<(), String> {
             }
         }
     }
-    
+
     Ok(())
 }

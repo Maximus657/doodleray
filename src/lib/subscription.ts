@@ -165,6 +165,10 @@ export async function fetchSubscription(
       servers = parseMultipleLinks(decoded).map((s) => ({ ...s, subscriptionId: id }));
     }
 
+    if (servers.length === 0) {
+      throw new Error('No supported servers found in subscription');
+    }
+
     return {
       id,
       name: name || new URL(url).hostname,
@@ -173,8 +177,14 @@ export async function fetchSubscription(
       updatedAt: new Date().toISOString(),
     };
   } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : typeof error === 'string'
+          ? error
+          : JSON.stringify(error);
     throw new Error(
-      `Failed to fetch subscription: ${error instanceof Error ? error.message : 'Unknown error'}`
+      `Failed to fetch subscription: ${message || 'Unknown error'}`
     );
   }
 }

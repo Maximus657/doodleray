@@ -28,7 +28,7 @@ export function pingColor(ping: number | undefined): string {
 export function formatPing(ping: number | undefined): string {
   if (ping === undefined) return '— ms';
   if (ping < 0) return 'timeout';
-  return `${ping} ms`;
+  return `tcp ${ping} ms`;
 }
 
 // Short protocol label

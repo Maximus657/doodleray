@@ -1,6 +1,6 @@
+use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::os::windows::fs::OpenOptionsExt;
-use std::fs::OpenOptions;
 
 const PIPE_NAME: &str = r"\\.\pipe\DoodleRayServicePipe";
 
@@ -10,9 +10,15 @@ pub fn send_command_to_service(command: &str) -> Result<String, String> {
         .write(true)
         .custom_flags(0)
         .open(PIPE_NAME)
-        .map_err(|e| format!("Failed to connect to service pipe (is the service running?): {}", e))?;
+        .map_err(|e| {
+            format!(
+                "Failed to connect to service pipe (is the service running?): {}",
+                e
+            )
+        })?;
 
-    client.write_all(command.as_bytes())
+    client
+        .write_all(command.as_bytes())
         .map_err(|e| format!("Failed to write to pipe: {}", e))?;
 
     let mut buffer = [0; 1024];

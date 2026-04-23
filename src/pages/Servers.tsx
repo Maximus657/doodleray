@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   Plus,
   Trash2,
@@ -41,6 +41,7 @@ export default function Servers() {
   const [testingGroup, setTestingGroup] = useState<string | null>(null);
   const [refreshingSub, setRefreshingSub] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  const autoPingStartedRef = useRef<Set<string>>(new Set());
 
   const [confirmModal, setConfirmModal] = useState<{
     show: boolean;
@@ -49,9 +50,11 @@ export default function Servers() {
     onConfirm: () => void;
   }>({ show: false, title: '', message: '', onConfirm: () => {} });
 
-  // Auto-ping all servers on mount (only those without a ping value)
+  // Auto-ping servers after persisted state/subscriptions are loaded.
   useEffect(() => {
-    const unpinged = servers.filter(s => s.ping === undefined);
+    const unpinged = servers.filter(
+      s => (s.ping === undefined || (s.ping > 0 && s.ping <= 5)) && !autoPingStartedRef.current.has(s.id)
+    );
     if (unpinged.length === 0) return;
     
     let cancelled = false;
@@ -60,6 +63,7 @@ export default function Servers() {
         const { invoke } = await import('@tauri-apps/api/core');
         for (const server of unpinged) {
           if (cancelled) break;
+          autoPingStartedRef.current.add(server.id);
           try {
             const ping = await pingServerSmart(server, invoke);
             updateServerPing(server.id, ping);
@@ -71,7 +75,7 @@ export default function Servers() {
       } catch { /* not in tauri env */ }
     })();
     return () => { cancelled = true; };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [servers, updateServerPing]);
 
   // Auto-detect input type
   const detectType = (input: string): 'sub' | 'link' | 'unknown' => {
