@@ -415,10 +415,55 @@ fn delete_secure_store_chunks(key: &str, manifest: &str) {
     }
 }
 
-#[tauri::command]
-fn secure_store_get(key: String) -> Result<Option<String>, String> {
-    validate_secure_store_key(&key)?;
-    let entry = secure_store_entry(&key)?;
+fn secure_store_fallback_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Secure storage fallback path unavailable: {}", e))?
+        .join("secure-storage");
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("Secure storage fallback init failed: {}", e))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    }
+    Ok(dir)
+}
+
+fn secure_store_fallback_path(
+    app: &tauri::AppHandle,
+    key: &str,
+) -> Result<std::path::PathBuf, String> {
+    Ok(secure_store_fallback_dir(app)?.join(format!("{}.store", key)))
+}
+
+fn secure_store_fallback_get(app: &tauri::AppHandle, key: &str) -> Result<Option<String>, String> {
+    let path = secure_store_fallback_path(app, key)?;
+    match std::fs::read_to_string(&path) {
+        Ok(value) => Ok(Some(value)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("Secure storage fallback read failed: {}", e)),
+    }
+}
+
+fn secure_store_fallback_set(app: &tauri::AppHandle, key: &str, value: &str) -> Result<(), String> {
+    let path = secure_store_fallback_path(app, key)?;
+    write_private_file(&path, value.as_bytes())
+        .map_err(|e| format!("Secure storage fallback write failed: {}", e))
+}
+
+fn secure_store_fallback_delete(app: &tauri::AppHandle, key: &str) -> Result<(), String> {
+    let path = secure_store_fallback_path(app, key)?;
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("Secure storage fallback delete failed: {}", e)),
+    }
+}
+
+fn secure_store_keyring_get(key: &str) -> Result<Option<String>, String> {
+    let entry = secure_store_entry(key)?;
     match entry.get_password() {
         Ok(value) => {
             let Some(count) = secure_store_chunk_count(&value) else {
@@ -427,7 +472,7 @@ fn secure_store_get(key: String) -> Result<Option<String>, String> {
 
             let mut restored = String::new();
             for index in 0..count {
-                let chunk_entry = secure_store_entry(&secure_store_chunk_key(&key, index))?;
+                let chunk_entry = secure_store_entry(&secure_store_chunk_key(key, index))?;
                 let chunk = chunk_entry
                     .get_password()
                     .map_err(|e| format!("Secure storage chunk read failed: {}", e))?;
@@ -440,18 +485,16 @@ fn secure_store_get(key: String) -> Result<Option<String>, String> {
     }
 }
 
-#[tauri::command]
-fn secure_store_set(key: String, value: String) -> Result<(), String> {
-    validate_secure_store_key(&key)?;
-    let entry = secure_store_entry(&key)?;
+fn secure_store_keyring_set(key: &str, value: &str) -> Result<(), String> {
+    let entry = secure_store_entry(key)?;
     if let Ok(old_value) = entry.get_password() {
-        delete_secure_store_chunks(&key, &old_value);
+        delete_secure_store_chunks(key, &old_value);
     }
 
     if value.len() > SECURE_STORE_CHUNK_BYTES {
-        let chunks = secure_store_chunks(&value);
+        let chunks = secure_store_chunks(value);
         for (index, chunk) in chunks.iter().enumerate() {
-            let chunk_entry = secure_store_entry(&secure_store_chunk_key(&key, index))?;
+            let chunk_entry = secure_store_entry(&secure_store_chunk_key(key, index))?;
             chunk_entry
                 .set_password(chunk)
                 .map_err(|e| format!("Secure storage chunk write failed: {}", e))?;
@@ -463,17 +506,75 @@ fn secure_store_set(key: String, value: String) -> Result<(), String> {
     }
 
     entry
-        .set_password(&value)
+        .set_password(value)
         .map_err(|e| format!("Secure storage write failed: {}", e))
 }
 
-#[tauri::command]
-fn secure_store_delete(key: String) -> Result<(), String> {
-    validate_secure_store_key(&key)?;
-    if let Ok(value) = secure_store_entry(&key)?.get_password() {
-        delete_secure_store_chunks(&key, &value);
+fn secure_store_keyring_delete(key: &str) -> Result<(), String> {
+    if let Ok(value) = secure_store_entry(key)?.get_password() {
+        delete_secure_store_chunks(key, &value);
     }
-    delete_secure_store_entry(&key)
+    delete_secure_store_entry(key)
+}
+
+#[tauri::command]
+fn secure_store_get(app: tauri::AppHandle, key: String) -> Result<Option<String>, String> {
+    validate_secure_store_key(&key)?;
+    match secure_store_fallback_get(&app, &key) {
+        Ok(Some(value)) => return Ok(Some(value)),
+        Ok(None) => {}
+        Err(fallback_error) => {
+            eprintln!(
+                "[warn] secure storage fallback read failed: {}",
+                fallback_error
+            );
+        }
+    }
+
+    match secure_store_keyring_get(&key) {
+        Ok(Some(value)) => Ok(Some(value)),
+        Ok(None) => Ok(None),
+        Err(keyring_error) => {
+            eprintln!(
+                "[warn] secure storage keyring read failed: {}",
+                keyring_error
+            );
+            Err(keyring_error)
+        }
+    }
+}
+
+#[tauri::command]
+fn secure_store_set(app: tauri::AppHandle, key: String, value: String) -> Result<(), String> {
+    validate_secure_store_key(&key)?;
+    match secure_store_keyring_set(&key, &value) {
+        Ok(()) => {
+            let _ = secure_store_fallback_delete(&app, &key);
+            Ok(())
+        }
+        Err(keyring_error) => {
+            eprintln!(
+                "[warn] secure storage keyring write failed: {}",
+                keyring_error
+            );
+            secure_store_fallback_set(&app, &key, &value)
+                .map_err(|fallback_error| format!("{}; {}", keyring_error, fallback_error))
+        }
+    }
+}
+
+#[tauri::command]
+fn secure_store_delete(app: tauri::AppHandle, key: String) -> Result<(), String> {
+    validate_secure_store_key(&key)?;
+    let keyring_result = secure_store_keyring_delete(&key);
+    let fallback_result = secure_store_fallback_delete(&app, &key);
+
+    match (keyring_result, fallback_result) {
+        (Ok(()), _) | (_, Ok(())) => Ok(()),
+        (Err(keyring_error), Err(fallback_error)) => {
+            Err(format!("{}; {}", keyring_error, fallback_error))
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -149,41 +149,80 @@ const isTauriRuntime = () =>
   typeof window !== 'undefined' &&
   !!(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
 
+const safeLocalGet = (name: string) => {
+  try {
+    return localStorage.getItem(name);
+  } catch {
+    return null;
+  }
+};
+
+const safeLocalSet = (name: string, value: string) => {
+  try {
+    localStorage.setItem(name, value);
+  } catch (err) {
+    console.warn('[storage] localStorage write failed', err);
+  }
+};
+
+const safeLocalRemove = (name: string) => {
+  try {
+    localStorage.removeItem(name);
+  } catch {
+    // Ignore cleanup failures; secure storage/fallback remains canonical.
+  }
+};
+
 const secureStorage: StateStorage<Promise<void> | void> = {
   async getItem(name) {
-    if (!isTauriRuntime()) return localStorage.getItem(name);
+    if (!isTauriRuntime()) return safeLocalGet(name);
 
-    const value = await invoke<string | null>('secure_store_get', { key: name });
-    if (value !== null) {
-      localStorage.removeItem(name);
-      return value;
-    }
-
-    // One-time migration from legacy plaintext localStorage into OS secure storage.
-    const legacyValue = localStorage.getItem(name);
+    const legacyValue = safeLocalGet(name);
     if (legacyValue !== null) {
-      await invoke('secure_store_set', { key: name, value: legacyValue });
-      localStorage.removeItem(name);
+      try {
+        await invoke('secure_store_set', { key: name, value: legacyValue });
+        safeLocalRemove(name);
+      } catch (err) {
+        console.warn('[storage] secure migration failed, keeping local fallback', err);
+      }
+      return legacyValue;
     }
-    return legacyValue;
+
+    try {
+      const value = await invoke<string | null>('secure_store_get', { key: name });
+      return value;
+    } catch (err) {
+      console.warn('[storage] secure read failed, using local fallback', err);
+      return null;
+    }
   },
   async setItem(name, value) {
     if (!isTauriRuntime()) {
-      localStorage.setItem(name, value);
+      safeLocalSet(name, value);
       return;
     }
 
-    await invoke('secure_store_set', { key: name, value });
-    localStorage.removeItem(name);
+    // Write local first so a Keychain/IPC failure never loses newly added servers.
+    safeLocalSet(name, value);
+    try {
+      await invoke('secure_store_set', { key: name, value });
+      safeLocalRemove(name);
+    } catch (err) {
+      console.warn('[storage] secure write failed, keeping local fallback', err);
+    }
   },
   async removeItem(name) {
     if (!isTauriRuntime()) {
-      localStorage.removeItem(name);
+      safeLocalRemove(name);
       return;
     }
 
-    await invoke('secure_store_delete', { key: name });
-    localStorage.removeItem(name);
+    safeLocalRemove(name);
+    try {
+      await invoke('secure_store_delete', { key: name });
+    } catch (err) {
+      console.warn('[storage] secure delete failed', err);
+    }
   },
 };
 
