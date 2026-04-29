@@ -532,7 +532,17 @@ fn secure_store_get(app: tauri::AppHandle, key: String) -> Result<Option<String>
     }
 
     match secure_store_keyring_get(&key) {
-        Ok(Some(value)) => Ok(Some(value)),
+        Ok(Some(value)) => {
+            // Keep the app-data fallback warm for later boots where the OS
+            // credential store is temporarily unavailable.
+            if let Err(fallback_error) = secure_store_fallback_set(&app, &key, &value) {
+                eprintln!(
+                    "[warn] secure storage fallback backfill failed: {}",
+                    fallback_error
+                );
+            }
+            Ok(Some(value))
+        }
         Ok(None) => Ok(None),
         Err(keyring_error) => {
             eprintln!(
@@ -547,17 +557,23 @@ fn secure_store_get(app: tauri::AppHandle, key: String) -> Result<Option<String>
 #[tauri::command]
 fn secure_store_set(app: tauri::AppHandle, key: String, value: String) -> Result<(), String> {
     validate_secure_store_key(&key)?;
+
+    let fallback_result = secure_store_fallback_set(&app, &key, &value);
+    if let Err(fallback_error) = &fallback_result {
+        eprintln!(
+            "[warn] secure storage fallback mirror write failed: {}",
+            fallback_error
+        );
+    }
+
     match secure_store_keyring_set(&key, &value) {
-        Ok(()) => {
-            let _ = secure_store_fallback_delete(&app, &key);
-            Ok(())
-        }
+        Ok(()) => fallback_result,
         Err(keyring_error) => {
             eprintln!(
                 "[warn] secure storage keyring write failed: {}",
                 keyring_error
             );
-            secure_store_fallback_set(&app, &key, &value)
+            fallback_result
                 .map_err(|fallback_error| format!("{}; {}", keyring_error, fallback_error))
         }
     }
