@@ -1370,6 +1370,8 @@ fn inject_xray_inbounds(mut config: serde_json::Value, req: &ConnectRequest) -> 
         });
     }
 
+    sanitize_xray_routing_rules(&mut config);
+
     // Make sure routing rules include the API rule
     if let Some(routing) = config.get_mut("routing") {
         if let Some(rules) = routing.get_mut("rules") {
@@ -1395,6 +1397,44 @@ fn inject_xray_inbounds(mut config: serde_json::Value, req: &ConnectRequest) -> 
     }
 
     config
+}
+
+fn sanitize_xray_routing_rules(config: &mut serde_json::Value) {
+    let Some(rules) = config
+        .get_mut("routing")
+        .and_then(|routing| routing.get_mut("rules"))
+        .and_then(|rules| rules.as_array_mut())
+    else {
+        return;
+    };
+
+    for rule in rules {
+        remove_unsupported_xray_rule_values(
+            rule.get_mut("domain"),
+            &[
+                "geosite:torrent",
+                "geosite:twitch-ads",
+                "geosite:whitelist",
+                "geosite:faceit",
+            ],
+        );
+        remove_unsupported_xray_rule_values(rule.get_mut("ip"), &["geoip:direct"]);
+    }
+}
+
+fn remove_unsupported_xray_rule_values(
+    value: Option<&mut serde_json::Value>,
+    unsupported: &[&str],
+) {
+    let Some(values) = value.and_then(|v| v.as_array_mut()) else {
+        return;
+    };
+
+    values.retain(|item| {
+        item.as_str()
+            .map(|s| !unsupported.iter().any(|bad| s.eq_ignore_ascii_case(bad)))
+            .unwrap_or(true)
+    });
 }
 
 /// Build the xray-core JSON config (for xhttp transport)
