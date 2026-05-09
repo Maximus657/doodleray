@@ -45,9 +45,21 @@ function serverProtocolLabel(server: ServerConfig) {
   return server.rawConfig ? `${server.protocol.toUpperCase()} | JSON` : protocolLabel(server.protocol, server.transport);
 }
 
-function formatTrafficBytes(bytes: number): string {
+function formatTrafficQuotaBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
-  return formatBytes(bytes);
+  if (bytes < 1024 * 1024 * 1024) return formatBytes(bytes);
+
+  const gb = bytes / (1024 * 1024 * 1024);
+  const isWholeGb = Math.abs(gb - Math.round(gb)) < 0.001;
+  return `${isWholeGb ? Math.round(gb).toString() : gb.toFixed(2)} GB`;
+}
+
+function groupPingColor(ping: number | undefined): string {
+  if (ping === undefined) return 'text-black/35';
+  if (ping < 0) return 'text-red-600';
+  if (ping < 100) return 'text-emerald-600';
+  if (ping < 300) return 'text-amber-600';
+  return 'text-red-600';
 }
 
 export default function ServerList({
@@ -74,7 +86,7 @@ export default function ServerList({
         </div>
         <div className="mt-1 flex items-center justify-between gap-2 text-[9px] font-black uppercase tracking-widest text-black/55">
           <span className="truncate">
-            {total ? `${formatTrafficBytes(used)} / ${formatTrafficBytes(total)}` : formatTrafficBytes(used)}
+            {total ? `${formatTrafficQuotaBytes(used)} / ${formatTrafficQuotaBytes(total)}` : formatTrafficQuotaBytes(used)}
           </span>
           {expire && <span className="shrink-0">до {expire}</span>}
         </div>
@@ -87,6 +99,11 @@ export default function ServerList({
     const selectedServer = activeGroupServer || group.selectedServer;
     const isActive = !!activeGroupServer;
     const isPinging = group.servers.some((server) => pingingServerId === server.id);
+    const pingText = group.ping === undefined
+      ? null
+      : group.ping < 0
+        ? t('errorLabel')
+        : `tcp ${group.ping}ms`;
 
     return (
       <button key={group.id} onClick={() => onServerSelect(selectedServer)}
@@ -107,7 +124,14 @@ export default function ServerList({
           {isPinging ? (
             <Loader2 className={`w-4 h-4 animate-spin shrink-0 ${isActive ? 'text-white/80' : 'text-black/40'}`} />
           ) : (
-            <ChevronRight className={`w-5 h-5 shrink-0 stroke-[3px] ${isActive ? 'text-white/70' : 'text-black/35'}`} />
+            <div className="flex items-center gap-1.5 shrink-0">
+              {pingText && (
+                <span className={`text-[10px] whitespace-nowrap font-black uppercase tracking-widest ${isActive ? 'text-white/80' : groupPingColor(group.ping)}`}>
+                  {pingText}
+                </span>
+              )}
+              <ChevronRight className={`w-5 h-5 shrink-0 stroke-[3px] ${isActive ? 'text-white/70' : 'text-black/35'}`} />
+            </div>
           )}
         </div>
         {isActive && <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 ml-1 stroke-[3px]" />}

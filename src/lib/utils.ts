@@ -77,6 +77,29 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
+const isTauriRuntime = () =>
+  typeof window !== 'undefined' &&
+  typeof (window as unknown as {
+    __TAURI_INTERNALS__?: { invoke?: unknown };
+  }).__TAURI_INTERNALS__?.invoke === 'function';
+
+async function pingAddress(
+  address: string,
+  port: number,
+  serverId: string,
+  invoke: (cmd: string, args: any) => Promise<any>
+): Promise<number> {
+  if (isTauriRuntime()) {
+    const result: any = await invoke('ping_server', { address, port, serverId });
+    return result.ping_ms;
+  }
+
+  const response = await fetch(`/api/ping?address=${encodeURIComponent(address)}&port=${encodeURIComponent(String(port))}`);
+  if (!response.ok) return -1;
+  const result = await response.json();
+  return Number.isFinite(result.ping_ms) ? result.ping_ms : -1;
+}
+
 // Used to ping multiple backends for multi-outbound configs (DoodleVPN)
 export function getRawConfigAddresses(rawConfig: any): { address: string; port: number }[] {
   if (!rawConfig?.outbounds) return [];
@@ -134,11 +157,9 @@ export async function pingServerSmart(
   let bestPing = -1;
   for (const addr of addresses) {
     try {
-      const result: any = await invoke('ping_server', {
-        address: addr.address, port: addr.port, serverId: server.id,
-      });
-      if (result.ping_ms > 0 && (bestPing < 0 || result.ping_ms < bestPing)) {
-        bestPing = result.ping_ms;
+      const pingMs = await pingAddress(addr.address, addr.port, server.id, invoke);
+      if (pingMs > 0 && (bestPing < 0 || pingMs < bestPing)) {
+        bestPing = pingMs;
         break; // Got a good ping, no need to try more
       }
     } catch {

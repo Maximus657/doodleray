@@ -40,6 +40,7 @@ export default function Dashboard() {
   const [refreshingSubId, setRefreshingSubId] = useState<string | null>(null);
   const [pingingServerId, setPingingServerId] = useState<string | null>(null);
   const autoPingStartedRef = useRef<Set<string>>(new Set());
+  const autoSubRefreshStartedRef = useRef(false);
 
   const [confirmModal, setConfirmModal] = useState<{
     show: boolean;
@@ -180,14 +181,26 @@ export default function Dashboard() {
   // Subscription auto-update
   useEffect(() => {
     if (subAutoUpdateMinutes <= 0 || subscriptions.length === 0) return;
-    const interval = setInterval(async () => {
+
+    const refreshAllSubscriptions = async (logSuccess: boolean) => {
       for (const sub of subscriptions) {
         try {
           const updated = await refreshSubscription(sub);
           updateSubscription(sub.id, updated);
-          addLog('info', `Auto-updated subscription: ${sub.name} (${updated.servers.length} servers)`);
+          if (logSuccess) {
+            addLog('info', `Auto-updated subscription: ${sub.name} (${updated.servers.length} servers)`);
+          }
         } catch { /* silently skip */ }
       }
+    };
+
+    if (!autoSubRefreshStartedRef.current) {
+      autoSubRefreshStartedRef.current = true;
+      refreshAllSubscriptions(false);
+    }
+
+    const interval = setInterval(async () => {
+      refreshAllSubscriptions(true);
     }, subAutoUpdateMinutes * 60 * 1000);
     return () => clearInterval(interval);
   }, [subAutoUpdateMinutes, subscriptions, updateSubscription, addLog]);

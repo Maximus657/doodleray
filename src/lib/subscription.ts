@@ -323,7 +323,33 @@ async function fetchSubscriptionText(url: string): Promise<FetchedSubscriptionPa
     }
   }
 
-  const response = await fetch(url);
+  const browserFetch = async (targetUrl: string) => {
+    const response = await fetch(targetUrl);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    return {
+      text: await response.text(),
+      userInfo:
+        response.headers.get('subscription-userinfo') ||
+        response.headers.get('x-subscription-userinfo') ||
+        undefined,
+    };
+  };
+
+  const isLocalDev =
+    typeof window !== 'undefined' &&
+    ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+
+  try {
+    const result = await browserFetch(url);
+    if (result.userInfo || !isLocalDev) return result;
+  } catch {
+    if (!isLocalDev) throw new Error('Failed to fetch subscription');
+  }
+
+  const response = await fetch(`/api/proxy?url=${encodeURIComponent(url)}`);
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
   }
