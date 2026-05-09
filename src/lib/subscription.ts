@@ -105,6 +105,18 @@ function getBalancerOutbounds(json: XrayJsonConfig, balancer: XrayBalancer): Xra
   return selected.length > 0 ? selected : supported;
 }
 
+function isAggregateAutoBalancer(balancer: XrayBalancer, balancerCount: number): boolean {
+  const tag = balancer.tag?.toLowerCase() || '';
+  if (/entry-pool|urltest|leastping/.test(tag)) return true;
+  return balancerCount === 1 && /auto|fast|самый/.test(tag);
+}
+
+function getAutoBalancerName(balancer: XrayBalancer): string {
+  const tag = balancer.tag || '';
+  if (/entry-pool/i.test(tag)) return '⚡ Самый быстрый auto';
+  return tag || '⚡ Самый быстрый auto';
+}
+
 function cloneConfigForOutbound(json: XrayJsonConfig, outboundTag?: string): XrayJsonConfig {
   const cloned = JSON.parse(JSON.stringify(json)) as XrayJsonConfig;
   if (!outboundTag) return cloned;
@@ -217,6 +229,26 @@ function parseXrayJsonConfig(json: XrayJsonConfig): ServerConfig | null {
 
 function parseXrayJsonSubscription(json: XrayJsonConfig, subscriptionName: string): ServerConfig[] {
   const balancers = getXrayBalancers(json);
+  const autoBalancer = balancers.find((balancer) => isAggregateAutoBalancer(balancer, balancers.length));
+  if (autoBalancer) {
+    const autoOutbound = getBalancerOutbounds(json, autoBalancer)[0];
+    const autoServer = autoOutbound
+      ? parseXrayOutbound(json, autoOutbound, {
+        name: getAutoBalancerName(autoBalancer),
+        rawConfig: cloneConfigForBalancer(json, autoBalancer.tag),
+      })
+      : null;
+
+    const outboundServers = getSupportedXrayOutbounds(json)
+      .map((outbound, index) => parseXrayOutbound(json, outbound, {
+        name: outbound.tag || json.remarks || json.remark || `${subscriptionName} ${index + 1}`,
+        rawConfig: cloneConfigForOutbound(json, outbound.tag),
+      }))
+      .filter((server): server is ServerConfig => server !== null);
+
+    return [autoServer, ...outboundServers].filter((server): server is ServerConfig => server !== null);
+  }
+
   if (balancers.length > 0) {
     const servers = balancers
       .map((balancer, index) => {

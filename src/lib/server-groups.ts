@@ -54,6 +54,17 @@ function getBestGroupPing(servers: ServerConfig[]): number | undefined {
   return undefined;
 }
 
+function getDisplayRank(label: string): number {
+  const normalized = label.toLowerCase();
+  if (/самый быстрый|auto|entry-pool|fastest/.test(normalized)) return 0;
+  if (/обход|блокиров|white|whitelist|bypass/.test(normalized)) return 1;
+  if (/нидерланд|netherlands/.test(normalized)) return 2;
+  if (/герман|germany/.test(normalized)) return 3;
+  if (/польш|poland/.test(normalized)) return 4;
+  if (/росси|russia/.test(normalized)) return 5;
+  return 50;
+}
+
 export function buildServerDisplayGroups(servers: ServerConfig[]): ServerDisplayGroup[] {
   const groups = new Map<string, ServerDisplayGroup>();
 
@@ -77,9 +88,14 @@ export function buildServerDisplayGroups(servers: ServerConfig[]): ServerDisplay
     });
   }
 
-  return Array.from(groups.values()).map((group) => ({
-    ...group,
-    selectedServer: selectBestServer(group.servers),
-    ping: getBestGroupPing(group.servers),
-  }));
+  return Array.from(groups.values())
+    .map((group, index) => ({
+      ...group,
+      selectedServer: selectBestServer(group.servers),
+      ping: getBestGroupPing(group.servers),
+      displayRank: getDisplayRank(group.label),
+      originalIndex: index,
+    }))
+    .sort((a, b) => a.displayRank - b.displayRank || a.originalIndex - b.originalIndex)
+    .map(({ displayRank: _displayRank, originalIndex: _originalIndex, ...group }) => group);
 }
