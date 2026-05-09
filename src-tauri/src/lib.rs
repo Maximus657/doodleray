@@ -1408,10 +1408,11 @@ fn sanitize_xray_routing_rules(config: &mut serde_json::Value) {
         return;
     };
 
-    for rule in rules {
+    for rule in rules.iter_mut() {
         remove_unsupported_xray_rule_values(
             rule.get_mut("domain"),
             &[
+                "geosite:category-bittorrent",
                 "geosite:torrent",
                 "geosite:twitch-ads",
                 "geosite:whitelist",
@@ -1419,7 +1420,11 @@ fn sanitize_xray_routing_rules(config: &mut serde_json::Value) {
             ],
         );
         remove_unsupported_xray_rule_values(rule.get_mut("ip"), &["geoip:direct"]);
+        remove_empty_xray_rule_array(rule, "domain");
+        remove_empty_xray_rule_array(rule, "ip");
     }
+
+    rules.retain(has_effective_xray_rule_fields);
 }
 
 fn remove_unsupported_xray_rule_values(
@@ -1435,6 +1440,89 @@ fn remove_unsupported_xray_rule_values(
             .map(|s| !unsupported.iter().any(|bad| s.eq_ignore_ascii_case(bad)))
             .unwrap_or(true)
     });
+}
+
+fn remove_empty_xray_rule_array(rule: &mut serde_json::Value, key: &str) {
+    let should_remove = rule
+        .get(key)
+        .and_then(|value| value.as_array())
+        .map(|values| values.is_empty())
+        .unwrap_or(false);
+
+    if should_remove {
+        if let Some(rule_object) = rule.as_object_mut() {
+            rule_object.remove(key);
+        }
+    }
+}
+
+fn has_effective_xray_rule_fields(rule: &serde_json::Value) -> bool {
+    [
+        "domain",
+        "ip",
+        "port",
+        "sourcePort",
+        "network",
+        "source",
+        "user",
+        "inboundTag",
+        "protocol",
+        "attrs",
+    ]
+    .iter()
+    .any(|key| has_effective_xray_rule_field(rule.get(*key)))
+}
+
+fn has_effective_xray_rule_field(value: Option<&serde_json::Value>) -> bool {
+    match value {
+        Some(serde_json::Value::Array(values)) => !values.is_empty(),
+        Some(serde_json::Value::String(value)) => !value.is_empty(),
+        Some(serde_json::Value::Null) | None => false,
+        Some(_) => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn sanitize_xray_routing_rules_removes_unsupported_geo_rules() {
+        let mut config = json!({
+            "routing": {
+                "rules": [
+                    {
+                        "type": "field",
+                        "domain": ["geosite:CATEGORY-BITTORRENT"],
+                        "outboundTag": "direct"
+                    },
+                    {
+                        "type": "field",
+                        "domain": ["geosite:category-bittorrent", "domain:example.com"],
+                        "outboundTag": "proxy"
+                    },
+                    {
+                        "type": "field",
+                        "ip": ["geoip:direct"],
+                        "outboundTag": "direct"
+                    },
+                    {
+                        "type": "field",
+                        "inboundTag": ["api"],
+                        "outboundTag": "api"
+                    }
+                ]
+            }
+        });
+
+        sanitize_xray_routing_rules(&mut config);
+
+        let rules = config["routing"]["rules"].as_array().unwrap();
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0]["domain"], json!(["domain:example.com"]));
+        assert_eq!(rules[1]["inboundTag"], json!(["api"]));
+    }
 }
 
 /// Build the xray-core JSON config (for xhttp transport)
