@@ -16,6 +16,7 @@ import { useAppStore } from '../stores/app-store';
 import { parseProxyLink } from '../lib/parser';
 import { fetchSubscription, refreshSubscription } from '../lib/subscription';
 import { formatPing, protocolLabel, pingServerSmart } from '../lib/utils';
+import { buildServerDisplayGroups, type ServerDisplayGroup } from '../lib/server-groups';
 import type { ServerConfig } from '../stores/app-store';
 import { useTranslation } from '../locales';
 
@@ -176,9 +177,11 @@ export default function Servers() {
 
   // Group servers
   const manualServers = servers.filter((s) => !s.subscriptionId);
+  const manualServerGroups = buildServerDisplayGroups(manualServers);
   const subGroups = subscriptions.map((sub) => ({
     sub,
     servers: servers.filter((s) => s.subscriptionId === sub.id),
+    serverGroups: buildServerDisplayGroups(servers.filter((s) => s.subscriptionId === sub.id)),
   }));
 
   const renderFlag = (code?: string) => {
@@ -186,50 +189,64 @@ export default function Servers() {
     return <img src={`https://flagcdn.com/w40/${code.toLowerCase()}.png`} alt={code} className="w-6 h-4 object-cover rounded-[2px] shadow-sm border-[1px] border-black/20" />;
   };
 
-  // Render a single server item
-  const renderServer = (server: ServerConfig) => (
+  const serverProtocolLabel = (server: ServerConfig) =>
+    server.rawConfig ? `${server.protocol.toUpperCase()} | JSON` : protocolLabel(server.protocol, server.transport);
+
+  const removeServerGroup = (group: ServerDisplayGroup) => {
+    group.servers.forEach((server) => removeServer(server.id));
+  };
+
+  // Render a normalized server group item
+  const renderServerGroup = (group: ServerDisplayGroup) => {
+    const activeGroupServer = group.servers.find((server) => activeServer?.id === server.id);
+    const selectedServer = activeGroupServer || group.selectedServer;
+    const isActive = !!activeGroupServer;
+
+    return (
     <div
-      key={server.id}
-      onClick={() => setActiveServer(server)}
+      key={group.id}
+      onClick={() => setActiveServer(selectedServer)}
       className={`group relative overflow-hidden rounded-2xl px-5 py-4 flex items-center gap-4 cursor-pointer transition-all duration-150 border-[3px] border-black shadow-[4px_4px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-[2px_2px_0_#000]
-        ${activeServer?.id === server.id 
+        ${isActive
           ? 'bg-black text-white' 
           : 'bg-white text-black'
         }
       `}
     >
-      <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm shrink-0 border-[3px] ${activeServer?.id === server.id ? 'bg-white border-white' : 'bg-black border-black text-white'}`}>
-        {renderFlag(server.countryCode)}
+      <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm shrink-0 border-[3px] ${isActive ? 'bg-white border-white' : 'bg-black border-black text-white'}`}>
+        {renderFlag(group.countryCode)}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
-          <span className="text-sm font-black truncate uppercase tracking-tight">{server.name}</span>
-          {activeServer?.id === server.id && <CheckCircle2 className="w-4 h-4 text-white shrink-0 stroke-[3px]" />}
+          <span className="text-sm font-black truncate uppercase tracking-tight">{group.label}</span>
+          {isActive && <CheckCircle2 className="w-4 h-4 text-white shrink-0 stroke-[3px]" />}
         </div>
-        <span className={`text-[10px] px-1.5 py-0.5 rounded font-black mt-1 inline-block uppercase tracking-widest border-[2px] ${activeServer?.id === server.id ? 'bg-white/20 border-transparent text-white/80' : 'bg-black/10 border-black/20 text-black/70'}`}>
-          {protocolLabel(server.protocol, server.transport)}
+        <span className={`text-[10px] px-1.5 py-0.5 rounded font-black mt-1 inline-block uppercase tracking-widest border-[2px] ${isActive ? 'bg-white/20 border-transparent text-white/80' : 'bg-black/10 border-black/20 text-black/70'}`}>
+          {serverProtocolLabel(selectedServer)}
         </span>
       </div>
       <span className={`text-sm font-black shrink-0 tracking-widest uppercase
-        ${server.ping && server.ping < 100 ? 'text-emerald-600' : 
-          server.ping && server.ping < 300 ? 'text-amber-600' : 
+        ${group.ping && group.ping < 100 ? 'text-emerald-600' :
+          group.ping && group.ping < 300 ? 'text-amber-600' :
+          group.ping === -1 ? 'text-danger' :
           'text-current'}`}>
-        {formatPing(server.ping)}
+        {formatPing(group.ping)}
       </span>
       
       {/* Action Buttons Container */}
       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all duration-200 translate-x-4 group-hover:translate-x-0">
         <button
-          onClick={(e) => { e.stopPropagation(); removeServer(server.id); }}
+          onClick={(e) => { e.stopPropagation(); removeServerGroup(group); }}
           className={`group p-2 rounded-xl transition-all cursor-pointer border-[3px] shadow-[2px_2px_0_#000] active:translate-x-1 active:translate-y-1 active:shadow-none
-            ${activeServer?.id === server.id ? 'bg-white text-danger border-white hover:bg-danger hover:text-white hover:border-black' : 'bg-black text-white border-black hover:bg-danger hover:border-black'}`}
+            ${isActive ? 'bg-white text-danger border-white hover:bg-danger hover:text-white hover:border-black' : 'bg-black text-white border-black hover:bg-danger hover:border-black'}`}
           title="Delete server"
         >
           <Trash2 className="w-5 h-5 stroke-[3px] transition-transform duration-300 group-hover:scale-110 group-hover:rotate-12" />
         </button>
       </div>
     </div>
-  );
+    );
+  };
 
   return (
     <div className="flex-1 p-5 overflow-y-auto animate-fade-in">
@@ -310,7 +327,7 @@ export default function Servers() {
                   <Rss className="w-6 h-6 text-black stroke-[3px]" />
                   <h3 className="text-lg font-black text-black uppercase tracking-tight">{group.sub.name}</h3>
                   <span className="text-[10px] text-white font-black uppercase tracking-widest bg-black px-2 py-1 rounded-lg border-[2px] border-black">
-                    {group.servers.length} servers
+                    {group.serverGroups.length} servers
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
@@ -341,10 +358,10 @@ export default function Servers() {
 
               {/* Server List */}
               <div className="bg-white/40 border-[4px] border-black rounded-3xl overflow-hidden p-2 space-y-2 shadow-[6px_6px_0_#000]">
-                {group.servers.length === 0 ? (
+                {group.serverGroups.length === 0 ? (
                   <p className="text-sm font-black text-center text-black/40 uppercase tracking-widest py-8 px-4">No servers</p>
                 ) : (
-                  group.servers.map(renderServer)
+                  group.serverGroups.map(renderServerGroup)
                 )}
               </div>
             </div>
@@ -388,7 +405,7 @@ export default function Servers() {
                 </div>
               </div>
               <div className="bg-white/40 border-[4px] border-black rounded-3xl overflow-hidden p-2 space-y-2 shadow-[6px_6px_0_#000]">
-                {manualServers.map(renderServer)}
+                {manualServerGroups.map(renderServerGroup)}
               </div>
             </div>
           )}

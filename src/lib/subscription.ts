@@ -1,6 +1,11 @@
 import type { Subscription, ServerConfig } from '../stores/app-store';
 import { parseMultipleLinks, detectCountry } from './parser';
 
+interface FetchedSubscriptionPayload {
+  text: string;
+  userInfo?: string;
+}
+
 // ========== Xray JSON Config Parser ==========
 
 interface XrayJsonConfig {
@@ -8,8 +13,15 @@ interface XrayJsonConfig {
   remarks?: string;
   outbounds?: XrayOutbound[];
   routing?: {
+    balancers?: XrayBalancer[];
     rules?: XrayRoutingRule[];
   };
+}
+
+interface XrayBalancer {
+  tag?: string;
+  selector?: string[];
+  [key: string]: unknown;
 }
 
 interface XrayRoutingRule {
@@ -70,6 +82,29 @@ function getSupportedXrayOutbounds(json: XrayJsonConfig): XrayOutbound[] {
   return json.outbounds?.filter(isSupportedXrayOutbound) || [];
 }
 
+function getXrayBalancers(json: XrayJsonConfig): XrayBalancer[] {
+  return json.routing?.balancers?.filter((balancer) => !!balancer.tag) || [];
+}
+
+function outboundMatchesBalancer(outbound: XrayOutbound, balancer: XrayBalancer): boolean {
+  const tag = outbound.tag;
+  if (!tag) return false;
+  const selectors = balancer.selector || [];
+  if (selectors.length === 0) return true;
+
+  return selectors.some((selector) =>
+    tag === selector ||
+    tag.startsWith(selector) ||
+    tag.toLowerCase().includes(selector.toLowerCase())
+  );
+}
+
+function getBalancerOutbounds(json: XrayJsonConfig, balancer: XrayBalancer): XrayOutbound[] {
+  const supported = getSupportedXrayOutbounds(json);
+  const selected = supported.filter((outbound) => outboundMatchesBalancer(outbound, balancer));
+  return selected.length > 0 ? selected : supported;
+}
+
 function cloneConfigForOutbound(json: XrayJsonConfig, outboundTag?: string): XrayJsonConfig {
   const cloned = JSON.parse(JSON.stringify(json)) as XrayJsonConfig;
   if (!outboundTag) return cloned;
@@ -89,6 +124,29 @@ function cloneConfigForOutbound(json: XrayJsonConfig, outboundTag?: string): Xra
 
   if (!routedByBalancer) {
     rules.push({ type: 'field', outboundTag });
+  }
+
+  return cloned;
+}
+
+function cloneConfigForBalancer(json: XrayJsonConfig, balancerTag?: string): XrayJsonConfig {
+  const cloned = JSON.parse(JSON.stringify(json)) as XrayJsonConfig;
+  if (!balancerTag) return cloned;
+
+  cloned.routing ||= {};
+  cloned.routing.rules ||= [];
+  const rules = cloned.routing.rules;
+
+  let routedByBalancer = false;
+  for (const rule of rules) {
+    if (rule.balancerTag) {
+      rule.balancerTag = balancerTag;
+      routedByBalancer = true;
+    }
+  }
+
+  if (!routedByBalancer) {
+    rules.push({ type: 'field', balancerTag });
   }
 
   return cloned;
@@ -158,6 +216,23 @@ function parseXrayJsonConfig(json: XrayJsonConfig): ServerConfig | null {
 }
 
 function parseXrayJsonSubscription(json: XrayJsonConfig, subscriptionName: string): ServerConfig[] {
+  const balancers = getXrayBalancers(json);
+  if (balancers.length > 0) {
+    const servers = balancers
+      .map((balancer, index) => {
+        const outbound = getBalancerOutbounds(json, balancer)[0];
+        if (!outbound) return null;
+
+        return parseXrayOutbound(json, outbound, {
+          name: balancer.tag || `${subscriptionName} ${index + 1}`,
+          rawConfig: cloneConfigForBalancer(json, balancer.tag),
+        });
+      })
+      .filter((server): server is ServerConfig => server !== null);
+
+    if (servers.length > 0) return servers;
+  }
+
   const outbounds = getSupportedXrayOutbounds(json);
   if (outbounds.length === 0) return [];
 
@@ -167,6 +242,67 @@ function parseXrayJsonSubscription(json: XrayJsonConfig, subscriptionName: strin
       rawConfig: cloneConfigForOutbound(json, outbound.tag),
     }))
     .filter((server): server is ServerConfig => server !== null);
+}
+
+function parseSubscriptionUserInfo(value?: string | null): Subscription['traffic'] | undefined {
+  if (!value) return undefined;
+
+  const parts = value.split(';').map((part) => part.trim()).filter(Boolean);
+  const info: Record<string, number> = {};
+
+  for (const part of parts) {
+    const [key, rawValue] = part.split('=').map((item) => item.trim());
+    if (!key || !rawValue) continue;
+
+    const parsed = Number(rawValue);
+    if (Number.isFinite(parsed)) info[key.toLowerCase()] = parsed;
+  }
+
+  if (info.upload === undefined && info.download === undefined && info.total === undefined && info.expire === undefined) {
+    return undefined;
+  }
+
+  return {
+    upload: info.upload || 0,
+    download: info.download || 0,
+    total: info.total,
+    expire: info.expire,
+  };
+}
+
+async function fetchSubscriptionText(url: string): Promise<FetchedSubscriptionPayload> {
+  const isTauri =
+    typeof window !== 'undefined' &&
+    typeof (window as unknown as {
+      __TAURI_INTERNALS__?: { invoke?: unknown };
+    }).__TAURI_INTERNALS__?.invoke === 'function';
+
+  if (isTauri) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    try {
+      const result = await invoke<{ body: string; subscription_userinfo?: string | null }>('fetch_subscription_url', { url });
+      return {
+        text: result.body,
+        userInfo: result.subscription_userinfo || undefined,
+      };
+    } catch {
+      const text = await invoke<string>('fetch_url', { url });
+      return { text };
+    }
+  }
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+  }
+
+  return {
+    text: await response.text(),
+    userInfo:
+      response.headers.get('subscription-userinfo') ||
+      response.headers.get('x-subscription-userinfo') ||
+      undefined,
+  };
 }
 
 // ========== Fetch Subscription ==========
@@ -180,23 +316,7 @@ export async function fetchSubscription(
   const subscriptionName = name || new URL(url).hostname;
 
   try {
-    let text: string;
-
-    // Use Rust-side fetch to bypass CORS in Tauri WebView
-    const isTauri =
-      typeof window !== 'undefined' &&
-      !!(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
-    if (isTauri) {
-      const { invoke } = await import('@tauri-apps/api/core');
-      text = await invoke('fetch_url', { url });
-    } else {
-      // Dev mode fallback — browser fetch
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      text = await response.text();
-    }
+    const { text, userInfo } = await fetchSubscriptionText(url);
     let servers: ServerConfig[] = [];
 
     // Try JSON array first (DoodleVPN-style full configs)
@@ -234,6 +354,7 @@ export async function fetchSubscription(
       url,
       servers,
       updatedAt: new Date().toISOString(),
+      traffic: parseSubscriptionUserInfo(userInfo),
     };
   } catch (error) {
     const message =

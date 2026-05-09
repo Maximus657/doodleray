@@ -15,8 +15,15 @@ export default function LogsStrip({ logs, showLogs, onToggleLogs, onClearLogs, l
   return (
     <div className={`bg-white border-t-[4px] border-black overflow-hidden flex flex-col transition-all duration-300 shrink-0
       ${showLogs ? 'h-40' : 'h-10'}`}>
-      <button onClick={onToggleLogs}
-        className="flex items-center justify-between px-4 py-2 shrink-0 cursor-pointer hover:bg-black/5 transition-all">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onToggleLogs}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') onToggleLogs();
+        }}
+        className="flex items-center justify-between px-4 py-2 shrink-0 cursor-pointer hover:bg-black/5 transition-all"
+      >
         <div className="flex items-center gap-2 text-black font-black uppercase tracking-widest text-[11px]">
           <ScrollText className="w-4 h-4" />
           <span>{t('terminal')}</span>
@@ -28,7 +35,7 @@ export default function LogsStrip({ logs, showLogs, onToggleLogs, onClearLogs, l
           )}
           {showLogs ? <ChevronDown className="w-5 h-5 text-black stroke-[3px]" /> : <ChevronUp className="w-5 h-5 text-black stroke-[3px]" />}
         </div>
-      </button>
+      </div>
       <div className="flex-1 overflow-y-auto px-4 pb-2 font-mono text-[11px] font-black uppercase space-y-1">
         {logs.length === 0 ? (
           <p className="text-black/40 py-2 text-center text-[10px]">{t('noLogsYet')}</p>

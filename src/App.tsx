@@ -95,7 +95,17 @@ function UpdateBanner() {
 
 function App() {
   useEffect(() => {
+    const isTauriRuntime = () => {
+      if (typeof window === 'undefined') return false;
+      const tauriInternals = (window as unknown as {
+        __TAURI_INTERNALS__?: { invoke?: unknown };
+      }).__TAURI_INTERNALS__;
+      return typeof tauriInternals?.invoke === 'function';
+    };
+
     async function syncSilentAdmin() {
+      if (!isTauriRuntime()) return;
+
       try {
         const silentEnabled: boolean = await invoke('check_silent_autostart');
         useAppStore.setState({ silentAdminAutostart: silentEnabled });

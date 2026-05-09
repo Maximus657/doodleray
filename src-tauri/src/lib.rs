@@ -680,6 +680,12 @@ pub struct PingResult {
     pub ping_ms: i32, // -1 = failed/timeout
 }
 
+#[derive(Debug, Serialize)]
+pub struct SubscriptionFetchResult {
+    pub body: String,
+    pub subscription_userinfo: Option<String>,
+}
+
 /// Fetch a URL from Rust side — bypasses CORS restrictions in WebView
 #[tauri::command]
 async fn fetch_url(url: String) -> Result<String, String> {
@@ -717,6 +723,57 @@ async fn fetch_url(url: String) -> Result<String, String> {
         .text()
         .await
         .map_err(|e| format!("Failed to read body: {}", e))
+}
+
+/// Fetch a subscription and return its quota metadata headers together with body.
+#[tauri::command]
+async fn fetch_subscription_url(url: String) -> Result<SubscriptionFetchResult, String> {
+    let parsed_url = validate_http_url(&url)?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
+    let response = client
+        .get(parsed_url)
+        .header("User-Agent", "DoodleRay/2.0")
+        .send()
+        .await
+        .map_err(|e| {
+            if e.is_timeout() {
+                "Fetch failed: request timed out".to_string()
+            } else if e.is_connect() {
+                format!("Fetch failed: connection error ({})", e)
+            } else {
+                format!("Fetch failed: {}", e)
+            }
+        })?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "HTTP {}: {}",
+            response.status().as_u16(),
+            response.status().as_str()
+        ));
+    }
+
+    let subscription_userinfo = response
+        .headers()
+        .get("subscription-userinfo")
+        .or_else(|| response.headers().get("x-subscription-userinfo"))
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_string());
+
+    let body = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read body: {}", e))?;
+
+    Ok(SubscriptionFetchResult {
+        body,
+        subscription_userinfo,
+    })
 }
 
 /// Workshop API proxy — supports GET/POST for the pinned production API.
@@ -3601,6 +3658,7 @@ pub fn run() {
             vpn_status,
             ping_server,
             fetch_url,
+            fetch_subscription_url,
             get_proxy_logs,
             get_traffic_stats,
             check_port,

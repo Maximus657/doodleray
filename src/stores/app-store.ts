@@ -66,6 +66,12 @@ export interface Subscription {
   url: string;
   servers: ServerConfig[];
   updatedAt: string;
+  traffic?: {
+    upload: number;
+    download: number;
+    total?: number;
+    expire?: number;
+  };
 }
 
 export interface SpeedPoint {
@@ -147,7 +153,9 @@ export interface AppState {
 
 const isTauriRuntime = () =>
   typeof window !== 'undefined' &&
-  !!(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+  typeof (window as unknown as {
+    __TAURI_INTERNALS__?: { invoke?: unknown };
+  }).__TAURI_INTERNALS__?.invoke === 'function';
 
 const safeLocalGet = (name: string) => {
   try {
