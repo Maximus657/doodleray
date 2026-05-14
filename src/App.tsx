@@ -11,13 +11,8 @@ import Settings from './pages/Settings';
 import { useAppStore } from './stores/app-store';
 import { useToastStore } from './stores/toast-store';
 import { buildConnectRequestFromState } from './lib/connect-helpers';
+import { checkForAppUpdate, installAppUpdate } from './lib/app-updater';
 import './index.css';
-
-// Cache the Update object so we don't call check() again when user clicks install.
-// On macOS, calling check() multiple times can produce stale/duplicate objects.
-let _cachedUpdate: any = null;
-export function getCachedUpdate() { return _cachedUpdate; }
-export function setCachedUpdate(u: any) { _cachedUpdate = u; }
 
 function ToastContainer() {
   const toasts = useToastStore(s => s.toasts);
@@ -51,18 +46,7 @@ function UpdateBanner() {
   const handleInstall = async () => {
     setInstalling(true);
     try {
-      // Reuse the cached Update object; only call check() if cache is empty
-      let update = _cachedUpdate;
-      if (!update) {
-        const { check } = await import('@tauri-apps/plugin-updater');
-        update = await check();
-      }
-      if (update) {
-        await update.downloadAndInstall();
-        _cachedUpdate = null;
-        const { relaunch } = await import('@tauri-apps/plugin-process');
-        await relaunch();
-      }
+      await installAppUpdate();
     } catch (e) {
       console.error('Update failed:', e);
       useToastStore.getState().addToast('Update failed — try again later', 'error');
@@ -116,11 +100,8 @@ function App() {
 
     async function checkForUpdates() {
       try {
-        const { check } = await import('@tauri-apps/plugin-updater');
-        const update = await check();
+        const update = await checkForAppUpdate();
         if (update) {
-          // Cache the Update object for one-click install later
-          _cachedUpdate = update;
           const prev = useAppStore.getState().availableUpdate;
           useAppStore.getState().setAvailableUpdate(update.version);
           // Only show toast on fresh discovery (not repeated checks)

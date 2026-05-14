@@ -251,7 +251,17 @@ export default function ServerList({
                       ? server.ping < 100 ? 'text-emerald-600' : server.ping < 300 ? 'text-amber-600' : 'text-red-600'
                       : server.ping === -1 ? 'text-red-600' : 'text-black/40';
                     return (
-                      <button key={server.id} onClick={() => onServerSelect(server)}
+                      <div
+                        key={server.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => onServerSelect(server)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            onServerSelect(server);
+                          }
+                        }}
                         className={`w-full p-2.5 rounded-2xl flex items-center gap-3 transition-all duration-150 overflow-hidden relative cursor-pointer
                           ${isActive
                             ? 'bg-black text-white border-[3px] border-black shadow-[4px_4px_0_rgba(0,0,0,0.4)] translate-x-[-1px] translate-y-[-1px]'
@@ -280,7 +290,7 @@ export default function ServerList({
                           </button>
                           {isActive && <CheckCircle2 className="w-5 h-5 text-emerald-400 stroke-[3px]" />}
                         </div>
-                      </button>
+                      </div>
                     );
                   })}
                 </div>

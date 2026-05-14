@@ -69,8 +69,7 @@ export function buildConnectRequest(server: ServerConfig, opts: ConnectOpts) {
 /** Get active routing rules from WorkshopStore (async to avoid circular deps). */
 export async function getActiveRoutingRules() {
   const { useWorkshopStore } = await import('../stores/workshop-store');
-  return useWorkshopStore.getState().myRules
-    .filter(r => r.enabled)
+  return useWorkshopStore.getState().getAllActiveRules()
     .map(r => ({ rule_type: r.type, value: r.value, action: r.action }));
 }
 
@@ -83,9 +82,10 @@ export async function buildConnectRequestFromState(
   proxyModeOverride?: ProxyMode
 ) {
   const state = useAppStore.getState();
-  const routingRules = await getActiveRoutingRules();
+  const proxyMode = proxyModeOverride ?? state.proxyMode;
+  const routingRules = proxyMode === 'tun' ? await getActiveRoutingRules() : [];
   return buildConnectRequest(server, {
-    proxyMode: proxyModeOverride ?? state.proxyMode,
+    proxyMode,
     socksPort: state.socksPort,
     httpPort: state.httpPort,
     networkStack: state.networkStack,

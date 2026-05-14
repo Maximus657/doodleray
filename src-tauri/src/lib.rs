@@ -39,7 +39,10 @@ static SB_SEEN_CONNS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 // Connection debug log buffer — shown in UI via get_proxy_logs
 static CONNECT_LOG: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-const WORKSHOP_API_HOST: &str = "doodleraydb-doodleray-ic3y6k-c7350f-94-241-172-101.traefik.me";
+const WORKSHOP_API_HOSTS: &[&str] = &[
+    "doodleraydb-doodleray-ic3y6k-c7350f-94-241-172-101.traefik.me",
+    "94-241-172-101.sslip.io",
+];
 const APP_MANAGED_PORTS: &[u16] = &[10808, 10809, 10813];
 const SECURE_STORE_SERVICE: &str = "DoodleRay";
 const SECURE_STORE_CHUNK_BYTES: usize = 1800;
@@ -120,10 +123,16 @@ fn validate_workshop_api_url(raw_url: &str) -> Result<Url, String> {
     if parsed.scheme() != "https" {
         return Err("Workshop API must use HTTPS".into());
     }
-    if parsed.host_str() != Some(WORKSHOP_API_HOST) {
+    let host = parsed.host_str().ok_or("Workshop API host is missing")?;
+    if !WORKSHOP_API_HOSTS.contains(&host) {
         return Err("Workshop API host is not allowed".into());
     }
-    if !parsed.path().starts_with("/api/") && parsed.path() != "/api" {
+    let path = parsed.path();
+    let is_allowed_path = path.starts_with("/api/")
+        || path == "/api"
+        || path.starts_with("/doodleray-api/api/")
+        || path == "/doodleray-api/api";
+    if !is_allowed_path {
         return Err("Workshop API path is not allowed".into());
     }
     Ok(parsed)
@@ -313,6 +322,90 @@ fn xray_dns_servers(mode: &str) -> serde_json::Value {
         _ => serde_json::json!({
             "servers": ["1.1.1.1", "9.9.9.9"]
         }),
+    }
+}
+
+const SYSTEM_BYPASS_PROCESS_NAMES: &[&str] = &[
+    "sing-box",
+    "sing-box.exe",
+    "xray",
+    "xray.exe",
+    "DoodleRay",
+    "DoodleRay.exe",
+    "tauri-app",
+    "tauri-app.exe",
+    "node",
+    "node.exe",
+    "adb",
+    "adb.exe",
+    "svchost.exe",
+    "lsass.exe",
+    "csrss.exe",
+    "System",
+    "system",
+];
+
+fn effective_tun_strict_route(req: &ConnectRequest) -> bool {
+    req.kill_switch || req.strict_route
+}
+
+fn normalize_process_name(value: &str) -> Option<String> {
+    let trimmed = value.trim().trim_matches('"').trim_matches('\'');
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let file_name = trimmed
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|name| !name.is_empty())
+        .unwrap_or(trimmed);
+    let lower = file_name.to_lowercase();
+    let process_name = lower.strip_suffix(".app").unwrap_or(&lower);
+
+    if process_name.is_empty() {
+        None
+    } else {
+        Some(process_name.to_string())
+    }
+}
+
+fn process_rule_names(req: &ConnectRequest, action: &str) -> Vec<String> {
+    let mut names: Vec<String> = req
+        .routing_rules
+        .iter()
+        .filter(|r| r.rule_type == "exe" && r.action == action)
+        .filter_map(|r| normalize_process_name(&r.value))
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn string_values(values: &[String]) -> Vec<serde_json::Value> {
+    values
+        .iter()
+        .map(|value| serde_json::Value::String(value.clone()))
+        .collect()
+}
+
+fn system_bypass_process_values() -> Vec<serde_json::Value> {
+    SYSTEM_BYPASS_PROCESS_NAMES
+        .iter()
+        .map(|name| serde_json::Value::String((*name).to_string()))
+        .collect()
+}
+
+fn push_process_route(
+    rules: &mut Vec<serde_json::Value>,
+    process_names: &[String],
+    outbound: &str,
+) {
+    if !process_names.is_empty() {
+        rules.push(serde_json::json!({
+            "process_name": string_values(process_names),
+            "outbound": outbound
+        }));
     }
 }
 
@@ -1240,7 +1333,9 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
                 }
             }
         } else if rule.rule_type == "exe" {
-            let val = rule.value.to_lowercase();
+            let Some(val) = normalize_process_name(&rule.value) else {
+                continue;
+            };
             match rule.action.as_str() {
                 "proxy" => proxy_processes.push(val),
                 "direct" => direct_processes.push(val),
@@ -1316,19 +1411,12 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
 
     rules.extend(custom_rules);
 
-    // Kill Switch: if enabled + TUN mode, block all traffic that doesn't match proxy/direct rules
-    let final_outbound = if req.kill_switch && req.proxy_mode == "tun" {
-        "block"
-    } else {
-        "proxy"
-    };
+    // Default route remains the VPN outbound. Kill Switch hardens TUN routing with strict_route;
+    // setting final=block here would block normal VPN traffic that has no custom rule.
+    let final_outbound = "proxy";
 
-    // Kill Switch in TUN mode: force strict_route regardless of user setting
-    let effective_strict_route = if req.kill_switch && req.proxy_mode == "tun" {
-        true
-    } else {
-        req.strict_route
-    };
+    // Kill Switch in TUN mode: force strict_route regardless of user setting.
+    let effective_strict_route = effective_tun_strict_route(req);
 
     // Update inbounds strict_route if TUN mode
     let effective_inbounds = if req.proxy_mode == "tun" {
@@ -1544,6 +1632,50 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn sample_request(proxy_mode: &str) -> ConnectRequest {
+        ConnectRequest {
+            server_address: "example.com".into(),
+            server_port: 443,
+            protocol: "vless".into(),
+            uuid: Some("00000000-0000-0000-0000-000000000000".into()),
+            password: None,
+            transport: "tcp".into(),
+            security: "tls".into(),
+            sni: Some("example.com".into()),
+            host: None,
+            path: None,
+            fingerprint: Some("chrome".into()),
+            public_key: None,
+            short_id: None,
+            flow: None,
+            proxy_mode: proxy_mode.into(),
+            system_proxy_mode: "set".into(),
+            socks_port: 10808,
+            http_port: 10809,
+            network_stack: "system".into(),
+            dns_mode: "fakeip".into(),
+            strict_route: false,
+            kill_switch: false,
+            routing_rules: Vec::new(),
+            obfs_type: None,
+            obfs_password: None,
+            up_mbps: None,
+            down_mbps: None,
+            congestion_control: None,
+            udp_relay_mode: None,
+            alpn: None,
+            private_key: None,
+            peer_public_key: None,
+            pre_shared_key: None,
+            local_address: None,
+            reserved: None,
+            mtu: None,
+            workers: None,
+            encryption: None,
+            raw_xray_config: None,
+        }
+    }
+
     #[test]
     fn sanitize_xray_routing_rules_removes_unsupported_geo_rules() {
         let mut config = json!({
@@ -1579,6 +1711,54 @@ mod tests {
         assert_eq!(rules.len(), 2);
         assert_eq!(rules[0]["domain"], json!(["domain:example.com"]));
         assert_eq!(rules[1]["inboundTag"], json!(["api"]));
+    }
+
+    #[test]
+    fn singbox_tun_kill_switch_keeps_vpn_final_and_enables_strict_route() {
+        let mut req = sample_request("tun");
+        req.kill_switch = true;
+        req.strict_route = false;
+
+        let config = build_singbox_config(&req);
+
+        assert_eq!(config["route"]["final"], json!("proxy"));
+        assert_eq!(config["inbounds"][0]["strict_route"], json!(true));
+    }
+
+    #[test]
+    fn process_rules_are_normalized_to_process_names() {
+        let mut req = sample_request("tun");
+        req.routing_rules = vec![
+            RoutingRuleRequest {
+                rule_type: "exe".into(),
+                value: r"C:\Program Files\Discord\Discord.exe".into(),
+                action: "direct".into(),
+            },
+            RoutingRuleRequest {
+                rule_type: "exe".into(),
+                value: "/Applications/Steam.app".into(),
+                action: "block".into(),
+            },
+        ];
+
+        let direct_names = process_rule_names(&req, "direct");
+        let block_names = process_rule_names(&req, "block");
+
+        assert_eq!(direct_names, vec!["discord.exe".to_string()]);
+        assert_eq!(block_names, vec!["steam".to_string()]);
+    }
+
+    #[test]
+    fn tun_bridge_bypass_processes_cover_macos_and_windows_engines() {
+        let names: Vec<String> = system_bypass_process_values()
+            .into_iter()
+            .filter_map(|value| value.as_str().map(ToOwned::to_owned))
+            .collect();
+
+        assert!(names.contains(&"xray".to_string()));
+        assert!(names.contains(&"xray.exe".to_string()));
+        assert!(names.contains(&"sing-box".to_string()));
+        assert!(names.contains(&"sing-box.exe".to_string()));
     }
 }
 
@@ -1982,6 +2162,20 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
 
         // sing-box as TUN bridge → routes all traffic to xray's SOCKS5
         vpn_log("building TUN bridge config (sing-box -> xray SOCKS5)");
+        let proxy_exes = process_rule_names(&request, "proxy");
+        let direct_exes = process_rule_names(&request, "direct");
+        let block_exes = process_rule_names(&request, "block");
+
+        let mut tun_bridge_rules = vec![
+            serde_json::json!({ "action": "sniff" }),
+            serde_json::json!({ "protocol": "dns", "action": "hijack-dns" }),
+            serde_json::json!({ "process_name": system_bypass_process_values(), "outbound": "direct" }),
+        ];
+        push_process_route(&mut tun_bridge_rules, &block_exes, "block");
+        push_process_route(&mut tun_bridge_rules, &direct_exes, "direct");
+        push_process_route(&mut tun_bridge_rules, &proxy_exes, "proxy");
+        tun_bridge_rules.push(serde_json::json!({ "ip_is_private": true, "outbound": "direct" }));
+
         let tun_bridge = serde_json::json!({
             "log": { "level": "info" },
             "dns": singbox_dns_config(&request.dns_mode),
@@ -1992,7 +2186,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                 "address": ["172.19.0.1/30"],
                 "mtu": 1492,
                 "auto_route": true,
-                "strict_route": false,
+                "strict_route": effective_tun_strict_route(&request),
                 "stack": safe_network_stack(&request.network_stack),
                 "sniff": true,
                 "sniff_override_destination": false
@@ -2004,17 +2198,14 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                     "server": "127.0.0.1",
                     "server_port": request.socks_port
                 },
-                { "type": "direct", "tag": "direct" }
+                { "type": "direct", "tag": "direct" },
+                { "type": "block", "tag": "block" }
             ],
             "route": {
                 "auto_detect_interface": true,
                 "default_domain_resolver": "dns-direct",
-                "rules": [
-                    { "action": "sniff" },
-                    { "protocol": "dns", "action": "hijack-dns" },
-                    { "process_name": ["sing-box.exe", "xray.exe", "DoodleRay.exe", "node.exe", "adb.exe", "svchost.exe", "lsass.exe", "csrss.exe", "System"], "outbound": "direct" },
-                    { "ip_is_private": true, "outbound": "direct" }
-                ]
+                "final": "proxy",
+                "rules": tun_bridge_rules
             }
         });
 
@@ -2103,24 +2294,9 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                 // Activated when user adds ANY exe rules in Workshop (proxy, direct, or block)
                 // sing-box TUN captures all traffic and routes by process name,
                 // while xray handles the actual proxy connection via SOCKS5
-                let proxy_exes: Vec<String> = request
-                    .routing_rules
-                    .iter()
-                    .filter(|r| r.rule_type == "exe" && r.action == "proxy")
-                    .map(|r| r.value.to_lowercase())
-                    .collect();
-                let direct_exes: Vec<String> = request
-                    .routing_rules
-                    .iter()
-                    .filter(|r| r.rule_type == "exe" && r.action == "direct")
-                    .map(|r| r.value.to_lowercase())
-                    .collect();
-                let block_exes: Vec<String> = request
-                    .routing_rules
-                    .iter()
-                    .filter(|r| r.rule_type == "exe" && r.action == "block")
-                    .map(|r| r.value.to_lowercase())
-                    .collect();
+                let proxy_exes = process_rule_names(&request, "proxy");
+                let direct_exes = process_rule_names(&request, "direct");
+                let block_exes = process_rule_names(&request, "block");
                 let has_exe_rules =
                     !proxy_exes.is_empty() || !direct_exes.is_empty() || !block_exes.is_empty();
 
@@ -2129,59 +2305,20 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                         "per-app TUN bridge: proxy={:?} direct={:?} block={:?}",
                         proxy_exes, direct_exes, block_exes
                     ));
-                    let exclude = vec![
-                        "sing-box.exe",
-                        "xray.exe",
-                        "DoodleRay.exe",
-                        "adb.exe",
-                        "svchost.exe",
-                        "lsass.exe",
-                        "csrss.exe",
-                        "System",
-                    ];
-
                     let mut tun_rules: Vec<serde_json::Value> = Vec::new();
 
-                    let exclude_val: Vec<serde_json::Value> = exclude
-                        .iter()
-                        .map(|s| serde_json::Value::String(s.to_string()))
-                        .collect();
                     tun_rules.push(
-                        serde_json::json!({ "process_name": exclude_val, "outbound": "direct" }),
+                        serde_json::json!({ "process_name": system_bypass_process_values(), "outbound": "direct" }),
                     );
 
                     // 2. Blocked apps
-                    if !block_exes.is_empty() {
-                        let block_val: Vec<serde_json::Value> = block_exes
-                            .iter()
-                            .map(|s| serde_json::Value::String(s.to_string()))
-                            .collect();
-                        tun_rules.push(
-                            serde_json::json!({ "process_name": block_val, "outbound": "block" }),
-                        );
-                    }
+                    push_process_route(&mut tun_rules, &block_exes, "block");
 
                     // 3. Direct apps — bypass VPN entirely (games, etc.)
-                    if !direct_exes.is_empty() {
-                        let direct_val: Vec<serde_json::Value> = direct_exes
-                            .iter()
-                            .map(|s| serde_json::Value::String(s.to_string()))
-                            .collect();
-                        tun_rules.push(
-                            serde_json::json!({ "process_name": direct_val, "outbound": "direct" }),
-                        );
-                    }
+                    push_process_route(&mut tun_rules, &direct_exes, "direct");
 
                     // 4. Proxy apps — route through xray SOCKS5
-                    if !proxy_exes.is_empty() {
-                        let proxy_val: Vec<serde_json::Value> = proxy_exes
-                            .iter()
-                            .map(|s| serde_json::Value::String(s.to_string()))
-                            .collect();
-                        tun_rules.push(
-                            serde_json::json!({ "process_name": proxy_val, "outbound": "proxy" }),
-                        );
-                    }
+                    push_process_route(&mut tun_rules, &proxy_exes, "proxy");
 
                     // 5. Private IPs always go direct
                     tun_rules
@@ -2214,6 +2351,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                         "route": {
                             "auto_detect_interface": true,
                             "default_domain_resolver": "dns-direct",
+                            "final": "direct",
                             "rules": tun_rules
                         }
                     });
@@ -2233,7 +2371,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                         };
                     }
 
-                    if let Ok(_) = tun::start_tun_elevated(&tun_bridge) {
+                    if tun::start_tun_elevated(&tun_bridge).is_ok() {
                         *engine = Some("xray+app-proxy".into());
                         update_tray_connected(&app, &request.server_address);
                         let total = proxy_exes.len() + direct_exes.len() + block_exes.len();
@@ -2326,82 +2464,29 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                 // Per-app TUN bridge: route specific apps via process_name matching
                 // Activated when user adds ANY exe rules in Workshop (proxy, direct, or block)
                 // sing-box TUN captures all traffic and routes by process name
-                let proxy_exes: Vec<String> = request
-                    .routing_rules
-                    .iter()
-                    .filter(|r| r.rule_type == "exe" && r.action == "proxy")
-                    .map(|r| r.value.to_lowercase())
-                    .collect();
-                let direct_exes: Vec<String> = request
-                    .routing_rules
-                    .iter()
-                    .filter(|r| r.rule_type == "exe" && r.action == "direct")
-                    .map(|r| r.value.to_lowercase())
-                    .collect();
-                let block_exes: Vec<String> = request
-                    .routing_rules
-                    .iter()
-                    .filter(|r| r.rule_type == "exe" && r.action == "block")
-                    .map(|r| r.value.to_lowercase())
-                    .collect();
+                let proxy_exes = process_rule_names(&request, "proxy");
+                let direct_exes = process_rule_names(&request, "direct");
+                let block_exes = process_rule_names(&request, "block");
                 let has_exe_rules =
                     !proxy_exes.is_empty() || !direct_exes.is_empty() || !block_exes.is_empty();
 
                 if has_exe_rules {
-                    let exclude = vec![
-                        "sing-box.exe",
-                        "DoodleRay.exe",
-                        "adb.exe",
-                        "svchost.exe",
-                        "lsass.exe",
-                        "csrss.exe",
-                        "System",
-                    ];
-
                     // Build routing rules for the TUN bridge
                     let mut tun_rules: Vec<serde_json::Value> = Vec::new();
 
                     // 1. System processes always bypass TUN
-                    let exclude_val: Vec<serde_json::Value> = exclude
-                        .iter()
-                        .map(|s| serde_json::Value::String(s.to_string()))
-                        .collect();
                     tun_rules.push(
-                        serde_json::json!({ "process_name": exclude_val, "outbound": "direct" }),
+                        serde_json::json!({ "process_name": system_bypass_process_values(), "outbound": "direct" }),
                     );
 
                     // 2. Blocked apps
-                    if !block_exes.is_empty() {
-                        let block_val: Vec<serde_json::Value> = block_exes
-                            .iter()
-                            .map(|s| serde_json::Value::String(s.to_string()))
-                            .collect();
-                        tun_rules.push(
-                            serde_json::json!({ "process_name": block_val, "outbound": "block" }),
-                        );
-                    }
+                    push_process_route(&mut tun_rules, &block_exes, "block");
 
                     // 3. Direct apps — bypass VPN entirely (games, etc.)
-                    if !direct_exes.is_empty() {
-                        let direct_val: Vec<serde_json::Value> = direct_exes
-                            .iter()
-                            .map(|s| serde_json::Value::String(s.to_string()))
-                            .collect();
-                        tun_rules.push(
-                            serde_json::json!({ "process_name": direct_val, "outbound": "direct" }),
-                        );
-                    }
+                    push_process_route(&mut tun_rules, &direct_exes, "direct");
 
                     // 4. Proxy apps — route through SOCKS5
-                    if !proxy_exes.is_empty() {
-                        let proxy_val: Vec<serde_json::Value> = proxy_exes
-                            .iter()
-                            .map(|s| serde_json::Value::String(s.to_string()))
-                            .collect();
-                        tun_rules.push(
-                            serde_json::json!({ "process_name": proxy_val, "outbound": "proxy" }),
-                        );
-                    }
+                    push_process_route(&mut tun_rules, &proxy_exes, "proxy");
 
                     // 5. Private IPs always go direct
                     tun_rules
@@ -2434,6 +2519,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                         "route": {
                             "auto_detect_interface": true,
                             "default_domain_resolver": "dns-direct",
+                            "final": "direct",
                             "rules": tun_rules
                         }
                     });
@@ -2452,7 +2538,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                         };
                     }
 
-                    if let Ok(_) = tun::start_tun_elevated(&tun_bridge) {
+                    if tun::start_tun_elevated(&tun_bridge).is_ok() {
                         *engine = Some("singbox+app-proxy".into());
                         update_tray_connected(&app, &request.server_address);
                         let total = proxy_exes.len() + direct_exes.len() + block_exes.len();
@@ -3128,7 +3214,7 @@ async fn get_traffic_stats() -> serde_json::Value {
             let mut ul: i64 = 0;
 
             let mut cmd = std::process::Command::new(&xray_exe);
-            cmd.args(&["api", "statsquery", "-s", "127.0.0.1:10813", "-reset"]);
+            cmd.args(["api", "statsquery", "-s", "127.0.0.1:10813", "-reset"]);
             #[cfg(windows)]
             cmd.creation_flags(0x08000000);
             if let Ok(output) = cmd.output() {
@@ -3213,7 +3299,7 @@ async fn check_port(port: u16) -> serde_json::Value {
     #[cfg(not(windows))]
     {
         if let Ok(output) = std::process::Command::new("lsof")
-            .args(&["-i", &format!(":{}", port), "-t"])
+            .args(["-i", &format!(":{}", port), "-t"])
             .output()
         {
             let text = String::from_utf8_lossy(&output.stdout);
@@ -3263,14 +3349,14 @@ async fn force_free_managed_port(port: u16) -> String {
     #[cfg(not(windows))]
     {
         if let Ok(output) = std::process::Command::new("lsof")
-            .args(&["-i", &format!(":{}", port), "-t"])
+            .args(["-i", &format!(":{}", port), "-t"])
             .output()
         {
             let text = String::from_utf8_lossy(&output.stdout);
             if let Some(pid_str) = text.lines().next() {
                 if let Ok(pid) = pid_str.trim().parse::<u32>() {
                     let _ = std::process::Command::new("kill")
-                        .args(&["-9", &pid.to_string()])
+                        .args(["-9", &pid.to_string()])
                         .output();
                     return format!("Killed PID {} on port {}", pid, port);
                 }

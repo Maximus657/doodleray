@@ -1,4 +1,5 @@
-import { Power, Globe, Network, CheckCircle2, Loader2 } from 'lucide-react';
+import { useState } from 'react';
+import { Power, Globe, Network, CheckCircle2, Loader2, CircleHelp } from 'lucide-react';
 import type { ConnectionStatus, ProxyMode, SystemProxyMode } from '../../stores/app-store';
 import { formatDuration } from '../../lib/utils';
 
@@ -27,6 +28,16 @@ export default function ConnectionControls({
 }: Props) {
   const isConnected = status === 'connected';
   const isConnecting = status === 'connecting';
+  const [modeHelp, setModeHelp] = useState<ProxyMode | null>(null);
+
+  const switchMode = (mode: ProxyMode) => {
+    setModeHelp(null);
+    onModeSwitch(mode);
+  };
+
+  const toggleModeHelp = (mode: ProxyMode) => {
+    setModeHelp((current) => current === mode ? null : mode);
+  };
 
   return (
     <>
@@ -37,17 +48,60 @@ export default function ConnectionControls({
             proxyMode === 'tun' ? 'left-1/2' : 'left-1.5'
           }`}
         />
-        <button onClick={() => onModeSwitch('system-proxy')}
-          className={`relative z-10 flex flex-1 items-center justify-center gap-2 py-2 text-[11px] font-black uppercase tracking-widest cursor-pointer transition-colors duration-300 select-none
-            ${proxyMode === 'system-proxy' ? 'text-black' : 'text-white/40 hover:text-white/80'}`}>
-          <Globe className={`w-4 h-4 transition-transform duration-300 ${proxyMode === 'system-proxy' ? 'scale-110' : 'scale-100'}`} /> <span className="truncate">{t('systemProxy')}</span>
-        </button>
-        <button onClick={() => onModeSwitch('tun')}
-          className={`relative z-10 flex flex-1 items-center justify-center gap-2 py-2 text-[11px] font-black uppercase tracking-widest cursor-pointer transition-colors duration-300 select-none
-            ${proxyMode === 'tun' ? 'text-black' : 'text-white/40 hover:text-white/80'}`}>
-            <Network className={`w-4 h-4 transition-transform duration-300 ${proxyMode === 'tun' ? 'scale-110' : 'scale-100'}`} /> <span className="truncate">{t('tunMode')}</span>
-        </button>
+        <div className="relative z-10 flex flex-1 items-center justify-center min-w-0">
+          <button onClick={() => switchMode('system-proxy')}
+            className={`flex min-w-0 flex-1 items-center justify-center gap-1.5 py-2 pl-2 text-[11px] font-black uppercase tracking-widest cursor-pointer transition-colors duration-300 select-none
+              ${proxyMode === 'system-proxy' ? 'text-black' : 'text-white/40 hover:text-white/80'}`}>
+            <Globe className={`w-4 h-4 shrink-0 transition-transform duration-300 ${proxyMode === 'system-proxy' ? 'scale-110' : 'scale-100'}`} />
+            <span className="truncate">{t('systemProxy')}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => toggleModeHelp('system-proxy')}
+            aria-label={t('modeHelpProxyTitle')}
+            aria-expanded={modeHelp === 'system-proxy'}
+            className={`mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-[2px] transition-all ${
+              proxyMode === 'system-proxy'
+                ? 'border-black bg-white text-black hover:bg-black hover:text-white'
+                : 'border-white/25 bg-white/10 text-white/70 hover:border-white hover:text-white'
+            }`}
+          >
+            <CircleHelp className="w-3 h-3 stroke-[3px]" />
+          </button>
+        </div>
+        <div className="relative z-10 flex flex-1 items-center justify-center min-w-0">
+          <button onClick={() => switchMode('tun')}
+            className={`flex min-w-0 flex-1 items-center justify-center gap-1.5 py-2 pl-2 text-[11px] font-black uppercase tracking-widest cursor-pointer transition-colors duration-300 select-none
+              ${proxyMode === 'tun' ? 'text-black' : 'text-white/40 hover:text-white/80'}`}>
+            <Network className={`w-4 h-4 shrink-0 transition-transform duration-300 ${proxyMode === 'tun' ? 'scale-110' : 'scale-100'}`} />
+            <span className="truncate">{t('tunMode')}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => toggleModeHelp('tun')}
+            aria-label={t('modeHelpTunTitle')}
+            aria-expanded={modeHelp === 'tun'}
+            className={`mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-[2px] transition-all ${
+              proxyMode === 'tun'
+                ? 'border-black bg-white text-black hover:bg-black hover:text-white'
+                : 'border-white/25 bg-white/10 text-white/70 hover:border-white hover:text-white'
+            }`}
+          >
+            <CircleHelp className="w-3 h-3 stroke-[3px]" />
+          </button>
+        </div>
       </div>
+
+      {modeHelp && (
+        <div className="relative z-30 -mt-1 w-full max-w-sm rounded-xl border-[3px] border-black bg-white p-3 text-left shadow-[4px_4px_0_#000] animate-slide-up">
+          <p className="text-[11px] font-black uppercase tracking-widest text-black">
+            {modeHelp === 'tun' ? t('modeHelpTunTitle') : t('modeHelpProxyTitle')}
+          </p>
+          <p className="mt-1 text-[10px] font-bold leading-relaxed text-black/65">
+            {modeHelp === 'tun' ? t('modeHelpTunBody') : t('modeHelpProxyBody')}
+          </p>
+        </div>
+      )}
 
       {proxyMode === 'system-proxy' && (
         <div className="relative z-10 -mt-1 flex w-full max-w-sm items-center gap-1.5 rounded-xl border-[3px] border-black bg-white p-1.5 shadow-[4px_4px_0_#000]">

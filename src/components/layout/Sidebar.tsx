@@ -11,7 +11,7 @@ import {
   HelpCircle,
 } from 'lucide-react';
 import { useAppStore } from '../../stores/app-store';
-import { getCachedUpdate, setCachedUpdate } from '../../App';
+import { installAppUpdate } from '../../lib/app-updater';
 
 import { useTranslation } from '../../locales';
 
@@ -39,17 +39,7 @@ export function Sidebar() {
   const handleInstallUpdate = async () => {
     setInstalling(true);
     try {
-      let update = getCachedUpdate();
-      if (!update) {
-        const { check } = await import('@tauri-apps/plugin-updater');
-        update = await check();
-      }
-      if (update) {
-        await update.downloadAndInstall();
-        setCachedUpdate(null);
-        const { relaunch } = await import('@tauri-apps/plugin-process');
-        await relaunch();
-      }
+      await installAppUpdate();
     } catch (e) {
       console.error('Update failed:', e);
       setInstalling(false);

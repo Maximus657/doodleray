@@ -3,7 +3,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 
-const API_BASE = 'https://doodleraydb-doodleray-ic3y6k-c7350f-94-241-172-101.traefik.me/api';
+const API_BASE = 'https://94-241-172-101.sslip.io/doodleray-api/api';
 
 // We need to access app state for heartbeat VPN status
 // Lazy import to avoid circular dependencies
@@ -26,8 +26,30 @@ function getFingerprint(): string {
   return fp;
 }
 
-// Helper: call API through Tauri Rust backend (bypasses SSL issues)
+function isTauriRuntime(): boolean {
+  const tauriInternals = (window as unknown as {
+    __TAURI_INTERNALS__?: { invoke?: unknown };
+  }).__TAURI_INTERNALS__;
+  return typeof tauriInternals?.invoke === 'function';
+}
+
+async function browserApiRequest(path: string, method: 'GET' | 'POST', data?: any): Promise<any> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method,
+    headers: method === 'POST' ? { 'Content-Type': 'application/json' } : undefined,
+    body: method === 'POST' ? JSON.stringify(data) : undefined,
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+// Helper: call API through Tauri Rust backend in the desktop app; use fetch in web dev.
 async function apiGet(path: string): Promise<any> {
+  if (!isTauriRuntime()) {
+    return browserApiRequest(path, 'GET');
+  }
   const text = await invoke<string>('workshop_api', {
     url: `${API_BASE}${path}`,
     method: 'GET',
@@ -37,6 +59,9 @@ async function apiGet(path: string): Promise<any> {
 }
 
 async function apiPost(path: string, data: any): Promise<any> {
+  if (!isTauriRuntime()) {
+    return browserApiRequest(path, 'POST', data);
+  }
   const text = await invoke<string>('workshop_api', {
     url: `${API_BASE}${path}`,
     method: 'POST',

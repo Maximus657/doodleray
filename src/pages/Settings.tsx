@@ -3,7 +3,7 @@ import { Settings as SettingsIcon, Trash2, RotateCcw, Database, Zap, Monitor, Do
 import { disable } from '@tauri-apps/plugin-autostart';
 import { useTranslation } from '../locales';
 import { useAppStore } from '../stores/app-store';
-import { getCachedUpdate, setCachedUpdate } from '../App';
+import { checkForAppUpdate, getCachedUpdate, installAppUpdate } from '../lib/app-updater';
 
 function Toggle({ checked, onChange, label, description, warning }: { checked: boolean; onChange: (v: boolean) => void; label: string; description?: string; warning?: string }) {
   return (
@@ -167,47 +167,10 @@ export default function Settings() {
     try {
       let update = getCachedUpdate();
       if (!update) {
-        const { check } = await import('@tauri-apps/plugin-updater');
-        update = await check();
+        update = await checkForAppUpdate();
       }
       if (update) {
-        setUpdateStatus(`v${update.version} available! Downloading...`);
-        let downloaded = 0;
-        let contentLength = 0;
-        await update.download((event: any) => {
-          switch (event.event) {
-            case 'Started':
-              contentLength = event.data.contentLength || 0;
-              break;
-            case 'Progress':
-              downloaded += event.data.chunkLength;
-              if (contentLength > 0) {
-                const percent = Math.round((downloaded / contentLength) * 100);
-                setUpdateStatus(`Downloading... ${percent}%`);
-              }
-              break;
-            case 'Finished':
-              setUpdateStatus('Closing background processes...');
-              break;
-          }
-        });
-        
-        try {
-          // Preemptively release file locks (important for Windows NSIS overwriting xray.exe)
-          const { invoke } = await import('@tauri-apps/api/core');
-          await invoke('vpn_disconnect');
-          // Wait briefly to ensure files are fully released by the OS
-          await new Promise(r => setTimeout(r, 1000));
-        } catch (e) {
-          console.warn("Could not disconnect VPN before update:", e);
-        }
-
-        setUpdateStatus('Installing...');
-        await update.install();
-        setCachedUpdate(null);
-        setUpdateStatus('Update installed! Restarting...');
-        const { relaunch } = await import('@tauri-apps/plugin-process');
-        await relaunch();
+        await installAppUpdate({ update, onStatus: setUpdateStatus });
       } else {
         setUpdateStatus('You are on the latest version ✓');
         setTimeout(() => setUpdateStatus(''), 3000);

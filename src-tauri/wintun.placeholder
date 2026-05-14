@@ -1,0 +1,2 @@
+Placeholder so Tauri resource glob `wintun*` is valid on non-Windows builds.
+Windows release CI copies the real `wintun.dll` into this directory before bundling.

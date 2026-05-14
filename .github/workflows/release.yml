@@ -47,6 +47,7 @@ jobs:
           Invoke-WebRequest -Uri $wintunUrl -OutFile wintun.zip
           Expand-Archive -Path wintun.zip -DestinationPath wintun-tmp
           Copy-Item "wintun-tmp/wintun/bin/amd64/wintun.dll" "src-tauri/xray-core/"
+          Copy-Item "wintun-tmp/wintun/bin/amd64/wintun.dll" "src-tauri/"
         shell: pwsh
 
       # Download sing-box for Windows
@@ -84,6 +85,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path "$targetDir/xray-core"
           Copy-Item "src-tauri/xray-core/*" "$targetDir/xray-core/" -Recurse
           Copy-Item "src-tauri/sing-box.exe" "$targetDir/" -ErrorAction SilentlyContinue
+          Copy-Item "src-tauri/wintun.dll" "$targetDir/" -ErrorAction SilentlyContinue
         shell: pwsh
 
       # Strip trailing whitespace/newlines from signing key

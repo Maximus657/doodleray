@@ -124,7 +124,7 @@ pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
     if let Some(stdout) = child.stdout.take() {
         std::thread::spawn(move || {
             let reader = std::io::BufReader::new(stdout);
-            for line in reader.lines().flatten() {
+            for line in reader.lines().map_while(Result::ok) {
                 if line.contains("api -> api")
                     || line.contains("api]")
                     || line.contains("172.19.0.2:53")
@@ -156,7 +156,7 @@ pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
     if let Some(stderr) = child.stderr.take() {
         std::thread::spawn(move || {
             let reader = std::io::BufReader::new(stderr);
-            for line in reader.lines().flatten() {
+            for line in reader.lines().map_while(Result::ok) {
                 if line.contains("api -> api")
                     || line.contains("api]")
                     || line.contains("172.19.0.2:53")
