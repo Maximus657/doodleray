@@ -2221,7 +2221,6 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
             "inbounds": [{
                 "type": "tun",
                 "tag": "tun-in",
-                "interface_name": "tun0",
                 "address": ["172.19.0.1/30"],
                 "mtu": 1492,
                 "auto_route": true,
