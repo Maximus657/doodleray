@@ -409,6 +409,10 @@ fn push_process_route(
     }
 }
 
+fn tun_address_values() -> serde_json::Value {
+    serde_json::json!(["172.19.0.1/30", "fdfe:dcba:9876::1/126"])
+}
+
 fn write_debug_config(path: &std::path::Path, config: &serde_json::Value) {
     if std::env::var("DOODLERAY_DEBUG_CONFIG").ok().as_deref() != Some("1") {
         return;
@@ -1275,7 +1279,7 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
             {
                 "type": "tun",
                 "tag": "tun-in",
-                "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
+                "address": tun_address_values(),
                 "mtu": 1492,
                 "auto_route": true,
                 "strict_route": req.strict_route,
@@ -1424,7 +1428,7 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
             {
                 "type": "tun",
                 "tag": "tun-in",
-                "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
+                "address": tun_address_values(),
                 "mtu": 1492,
                 "auto_route": true,
                 "strict_route": effective_strict_route,
@@ -1762,6 +1766,14 @@ mod tests {
         assert!(names.contains(&"xray.exe".to_string()));
         assert!(names.contains(&"sing-box".to_string()));
         assert!(names.contains(&"sing-box.exe".to_string()));
+    }
+
+    #[test]
+    fn tun_addresses_include_ipv4_and_ipv6() {
+        assert_eq!(
+            tun_address_values(),
+            json!(["172.19.0.1/30", "fdfe:dcba:9876::1/126"])
+        );
     }
 
     #[test]
@@ -2221,7 +2233,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
             "inbounds": [{
                 "type": "tun",
                 "tag": "tun-in",
-                "address": ["172.19.0.1/30"],
+                "address": tun_address_values(),
                 "mtu": 1492,
                 "auto_route": true,
                 "strict_route": effective_tun_strict_route(&request),
@@ -2375,7 +2387,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                         "inbounds": [{
                             "type": "tun",
                             "tag": "tun-in",
-                            "address": ["172.19.0.1/30"],
+                            "address": tun_address_values(),
                             "mtu": 1492,
                             "auto_route": true,
                             "strict_route": false,
@@ -2550,7 +2562,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
                         "inbounds": [{
                             "type": "tun",
                             "tag": "tun-in",
-                            "address": ["172.19.0.1/30"],
+                            "address": tun_address_values(),
                             "mtu": 1492,
                             "auto_route": true,
                             "strict_route": false,
