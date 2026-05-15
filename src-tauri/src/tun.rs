@@ -243,7 +243,7 @@ pub fn start_tun_elevated(config_json: &serde_json::Value) -> Result<(), String>
     {
         let sh_path = temp_dir.join("launch_singbox.sh");
         let sh_content = format!(
-            "#!/bin/bash\nset -e\nnohup {} run -c {} > {} 2>&1 &\n",
+            "#!/bin/bash\nset -e\n{} run -c {} > {} 2>&1 < /dev/null &\n",
             shell_quote(&singbox_exe.to_string_lossy()),
             shell_quote(&config_path.to_string_lossy()),
             shell_quote(&log_path.to_string_lossy()),

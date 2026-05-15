@@ -317,10 +317,10 @@ fn singbox_dns_config(mode: &str) -> serde_json::Value {
 fn xray_dns_servers(mode: &str) -> serde_json::Value {
     match mode {
         "fakeip" => serde_json::json!({
-            "servers": ["1.1.1.1", "9.9.9.9"]
+            "servers": ["localhost", "1.1.1.1", "9.9.9.9"]
         }),
         _ => serde_json::json!({
-            "servers": ["1.1.1.1", "9.9.9.9"]
+            "servers": ["localhost", "1.1.1.1", "9.9.9.9"]
         }),
     }
 }
@@ -1493,6 +1493,9 @@ fn inject_xray_inbounds(mut config: serde_json::Value, req: &ConnectRequest) -> 
         }
     ]);
     config["inbounds"] = inbounds;
+    // Subscription JSON can contain DoH servers that are blocked or unreachable on some
+    // networks. Prefer the local resolver first so proxy mode does not get stuck on DNS.
+    config["dns"] = xray_dns_servers(&req.dns_mode);
 
     // Ensure stats/api/policy exist for traffic monitoring
     if config.get("stats").is_none() {
@@ -1759,6 +1762,31 @@ mod tests {
         assert!(names.contains(&"xray.exe".to_string()));
         assert!(names.contains(&"sing-box".to_string()));
         assert!(names.contains(&"sing-box.exe".to_string()));
+    }
+
+    #[test]
+    fn raw_xray_config_uses_safe_dns_after_injection() {
+        let req = sample_request("system-proxy");
+        let raw = json!({
+            "dns": {
+                "servers": [
+                    "https://1.1.1.1/dns-query",
+                    "https://8.8.8.8/dns-query"
+                ]
+            },
+            "inbounds": [],
+            "outbounds": [
+                { "tag": "proxy", "protocol": "freedom" }
+            ],
+            "routing": { "rules": [] }
+        });
+
+        let config = inject_xray_inbounds(raw, &req);
+
+        assert_eq!(
+            config["dns"],
+            json!({ "servers": ["localhost", "1.1.1.1", "9.9.9.9"] })
+        );
     }
 }
 
