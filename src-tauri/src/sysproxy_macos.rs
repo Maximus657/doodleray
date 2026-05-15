@@ -1,5 +1,17 @@
 /// macOS system proxy helper — sets/unsets the HTTP proxy via networksetup
+use std::io::Write;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::process::Command;
+
+fn shell_quote(value: &str) -> String {
+    let escaped = value.replace('\'', "'\\''");
+    format!("'{}'", escaped)
+}
+
+fn applescript_quote(value: &str) -> String {
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{}\"", escaped)
+}
 
 /// Get the active network service name (e.g., "Wi-Fi" or "Ethernet")
 fn get_active_service() -> Result<String, String> {
@@ -41,79 +53,157 @@ fn get_active_service() -> Result<String, String> {
     Ok("Wi-Fi".to_string())
 }
 
+fn command_error(action: &str, output: std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stderr.is_empty() {
+        format!("{}: {}", action, stderr)
+    } else if !stdout.is_empty() {
+        format!("{}: {}", action, stdout)
+    } else {
+        format!("{} failed with status {}", action, output.status)
+    }
+}
+
+fn run_networksetup(action: &str, args: &[String]) -> Result<(), String> {
+    let output = Command::new("networksetup")
+        .args(args)
+        .output()
+        .map_err(|e| format!("{}: failed to run networksetup: {}", action, e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(command_error(action, output))
+    }
+}
+
+fn write_admin_script(script: &str) -> Result<std::path::PathBuf, String> {
+    let temp_dir = std::env::temp_dir().join("DoodleRay");
+    std::fs::create_dir_all(&temp_dir)
+        .map_err(|e| format!("Failed to create temp dir for proxy helper: {}", e))?;
+    let path = temp_dir.join("macos_proxy_admin.sh");
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .mode(0o700)
+        .open(&path)
+        .map_err(|e| format!("Failed to write proxy helper: {}", e))?;
+    file.write_all(script.as_bytes())
+        .map_err(|e| format!("Failed to write proxy helper: {}", e))?;
+    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700));
+    Ok(path)
+}
+
+fn run_admin_script(action: &str, script: &str) -> Result<(), String> {
+    let script_path = write_admin_script(script)?;
+    let shell_command = format!("bash {}", shell_quote(&script_path.to_string_lossy()));
+    let applescript = format!(
+        "do shell script {} with administrator privileges",
+        applescript_quote(&shell_command)
+    );
+
+    let output = Command::new("osascript")
+        .args(["-e", &applescript])
+        .output()
+        .map_err(|e| {
+            format!(
+                "{}: failed to request administrator permission: {}",
+                action, e
+            )
+        })?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(command_error(action, output))
+    }
+}
+
+fn networksetup_script(commands: &[Vec<String>]) -> String {
+    let mut script = String::from("#!/bin/bash\nset -e\n");
+    for args in commands {
+        script.push_str("/usr/sbin/networksetup");
+        for arg in args {
+            script.push(' ');
+            script.push_str(&shell_quote(arg));
+        }
+        script.push('\n');
+    }
+    script
+}
+
+fn run_networksetup_batch(action: &str, commands: Vec<Vec<String>>) -> Result<(), String> {
+    let mut first_error: Option<String> = None;
+    for args in &commands {
+        if let Err(e) = run_networksetup(action, args) {
+            first_error = Some(e);
+            break;
+        }
+    }
+
+    if first_error.is_none() {
+        return Ok(());
+    }
+
+    let script = networksetup_script(&commands);
+    run_admin_script(action, &script).map_err(|admin_err| {
+        let first = first_error.unwrap_or_else(|| "networksetup failed".to_string());
+        format!("{}; admin retry failed: {}", first, admin_err)
+    })
+}
+
 pub fn set_system_proxy(http_port: u16) -> Result<(), String> {
     let socks_port = http_port - 1;
     let service = get_active_service()?;
+    let http_port = http_port.to_string();
+    let socks_port = socks_port.to_string();
 
-    // Set HTTP proxy
-    Command::new("networksetup")
-        .args([
-            "-setwebproxy",
-            &service,
-            "127.0.0.1",
-            &http_port.to_string(),
-        ])
-        .output()
-        .map_err(|e| format!("Failed to set HTTP proxy: {}", e))?;
-
-    // Set HTTPS proxy
-    Command::new("networksetup")
-        .args([
-            "-setsecurewebproxy",
-            &service,
-            "127.0.0.1",
-            &http_port.to_string(),
-        ])
-        .output()
-        .map_err(|e| format!("Failed to set HTTPS proxy: {}", e))?;
-
-    // Set SOCKS proxy
-    Command::new("networksetup")
-        .args([
-            "-setsocksfirewallproxy",
-            &service,
-            "127.0.0.1",
-            &socks_port.to_string(),
-        ])
-        .output()
-        .map_err(|e| format!("Failed to set SOCKS proxy: {}", e))?;
-
-    // Enable all proxies
-    Command::new("networksetup")
-        .args(["-setwebproxystate", &service, "on"])
-        .output()
-        .map_err(|_| "Failed to enable HTTP proxy".to_string())?;
-
-    Command::new("networksetup")
-        .args(["-setsecurewebproxystate", &service, "on"])
-        .output()
-        .map_err(|_| "Failed to enable HTTPS proxy".to_string())?;
-
-    Command::new("networksetup")
-        .args(["-setsocksfirewallproxystate", &service, "on"])
-        .output()
-        .map_err(|_| "Failed to enable SOCKS proxy".to_string())?;
-
-    Ok(())
+    run_networksetup_batch(
+        "set macOS system proxy",
+        vec![
+            vec![
+                "-setwebproxy".into(),
+                service.clone(),
+                "127.0.0.1".into(),
+                http_port.clone(),
+            ],
+            vec![
+                "-setsecurewebproxy".into(),
+                service.clone(),
+                "127.0.0.1".into(),
+                http_port,
+            ],
+            vec![
+                "-setsocksfirewallproxy".into(),
+                service.clone(),
+                "127.0.0.1".into(),
+                socks_port,
+            ],
+            vec!["-setwebproxystate".into(), service.clone(), "on".into()],
+            vec![
+                "-setsecurewebproxystate".into(),
+                service.clone(),
+                "on".into(),
+            ],
+            vec!["-setsocksfirewallproxystate".into(), service, "on".into()],
+        ],
+    )
 }
 
 pub fn unset_system_proxy() -> Result<(), String> {
     let service = get_active_service()?;
-
-    Command::new("networksetup")
-        .args(["-setwebproxystate", &service, "off"])
-        .output()
-        .map_err(|_| "Failed to disable HTTP proxy".to_string())?;
-
-    Command::new("networksetup")
-        .args(["-setsecurewebproxystate", &service, "off"])
-        .output()
-        .map_err(|_| "Failed to disable HTTPS proxy".to_string())?;
-
-    Command::new("networksetup")
-        .args(["-setsocksfirewallproxystate", &service, "off"])
-        .output()
-        .map_err(|_| "Failed to disable SOCKS proxy".to_string())?;
-
-    Ok(())
+    run_networksetup_batch(
+        "unset macOS system proxy",
+        vec![
+            vec!["-setwebproxystate".into(), service.clone(), "off".into()],
+            vec![
+                "-setsecurewebproxystate".into(),
+                service.clone(),
+                "off".into(),
+            ],
+            vec!["-setsocksfirewallproxystate".into(), service, "off".into()],
+        ],
+    )
 }

@@ -2159,6 +2159,17 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
             };
         }
         vpn_log("xray-core started OK");
+        if let Err(e) = wait_for_port_ready(request.socks_port) {
+            vpn_log(&format!(
+                "FATAL: xray port not ready before TUN bridge: {}",
+                e
+            ));
+            let _ = xray::stop_xray();
+            return ConnectResult {
+                success: false,
+                message: format!("xray started but local proxy is not ready: {}", e),
+            };
+        }
 
         // sing-box as TUN bridge → routes all traffic to xray's SOCKS5
         vpn_log("building TUN bridge config (sing-box -> xray SOCKS5)");
@@ -2268,7 +2279,14 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
         match start_result {
             Ok(_) => {
                 vpn_log("xray-core started OK, waiting for port ready...");
-                wait_for_port_ready(request.socks_port);
+                if let Err(e) = wait_for_port_ready(request.socks_port) {
+                    vpn_log(&format!("FATAL: xray port not ready: {}", e));
+                    let _ = xray::stop_xray();
+                    return ConnectResult {
+                        success: false,
+                        message: format!("xray started but local proxy is not ready: {}", e),
+                    };
+                }
                 vpn_log("xray port ready");
                 let mut state = CONNECTION_STATE.lock().unwrap();
                 *state = true;
@@ -2439,7 +2457,14 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
         match singbox::start_singbox(&config) {
             Ok(_) => {
                 vpn_log("sing-box started OK, waiting for port ready...");
-                wait_for_port_ready(request.socks_port);
+                if let Err(e) = wait_for_port_ready(request.socks_port) {
+                    vpn_log(&format!("FATAL: sing-box port not ready: {}", e));
+                    let _ = singbox::stop_singbox();
+                    return ConnectResult {
+                        success: false,
+                        message: format!("sing-box started but local proxy is not ready: {}", e),
+                    };
+                }
                 vpn_log("port ready");
                 let mut state = CONNECTION_STATE.lock().unwrap();
                 *state = true;
@@ -3395,16 +3420,16 @@ fn update_tray_disconnected(app: &tauri::AppHandle) {
 
 /// Wait for the SOCKS port to become ready (max 2s)
 /// Prevents DNS leaks by ensuring the core is actually listening before we set system proxy
-fn wait_for_port_ready(port: u16) {
+fn wait_for_port_ready(port: u16) -> Result<(), String> {
     use std::net::SocketAddr;
     let addr: SocketAddr = format!("127.0.0.1:{}", port).parse().unwrap();
     for _ in 0..20 {
         if TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok() {
-            return;
+            return Ok(());
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    eprintln!("[warn] Port {} did not become ready in 2s", port);
+    Err(format!("127.0.0.1:{} did not open in time", port))
 }
 
 /// Check connection health by testing if SOCKS port is alive

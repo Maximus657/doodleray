@@ -223,22 +223,10 @@ export default function Dashboard() {
       if (!srv) { addLog('error', 'No server selected. Please add a subscription or select a server.'); return; }
       setStatus('connecting');
 
-      // TUN mode admin check
+      // TUN mode elevates only the network engine when needed.
+      // macOS prompts for the password through osascript; Windows uses UAC for sing-box.
       if (proxyMode === 'tun') {
-        try {
-          const { invoke } = await import('@tauri-apps/api/core');
-          const admin: boolean = await invoke('is_admin');
-          if (!admin) {
-            addLog('warning', 'TUN mode requires administrator privileges. Restarting...');
-            try { await invoke('restart_as_admin'); return; }
-            catch {
-              addLog('error', 'Could not restart as admin — switching to System Proxy mode');
-              const { useToastStore } = await import('../stores/toast-store');
-              useToastStore.getState().addToast('Admin required for TUN mode — switched to System Proxy', 'warning');
-              setProxyMode('system-proxy'); setStatus('disconnected'); return;
-            }
-          }
-        } catch { /* */ }
+        addLog('info', 'TUN mode may ask for administrator permission to create the network adapter.');
       }
 
       setConnectedAt(null);
@@ -290,21 +278,7 @@ export default function Dashboard() {
   const handleModeSwitch = useCallback(async (mode: 'system-proxy' | 'tun') => {
     if (proxyMode === mode) return;
     if (mode === 'tun') {
-      try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        const admin: boolean = await invoke('is_admin');
-        if (!admin) {
-          addLog('warning', 'TUN mode requires admin. Disconnecting and restarting as admin...');
-          if (status === 'connected') await invoke('vpn_disconnect');
-          setProxyMode(mode);
-          try { await invoke('restart_as_admin'); return; }
-          catch { addLog('error', 'Could not restart as admin — staying on System Proxy');
-            const { useToastStore } = await import('../stores/toast-store');
-            useToastStore.getState().addToast('Admin required for TUN mode', 'warning');
-            setProxyMode('system-proxy'); return;
-          }
-        }
-      } catch { /* */ }
+      addLog('info', 'TUN mode will request administrator permission when the connection starts.');
     }
     setProxyMode(mode);
     addLog('info', `Switched routing mode to ${mode === 'tun' ? 'TUN' : 'System Proxy'}`);

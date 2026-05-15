@@ -118,6 +118,22 @@ fn write_private_file(
     Ok(())
 }
 
+#[cfg(unix)]
+fn shell_quote(value: &str) -> String {
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('$', "\\$")
+        .replace('`', "\\`");
+    format!("\"{}\"", escaped)
+}
+
+#[cfg(target_os = "macos")]
+fn applescript_quote(value: &str) -> String {
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{}\"", escaped)
+}
+
 /// Start sing-box TUN as an elevated (admin/root) subprocess
 pub fn start_tun_elevated(config_json: &serde_json::Value) -> Result<(), String> {
     let _ = stop_tun();
@@ -227,10 +243,10 @@ pub fn start_tun_elevated(config_json: &serde_json::Value) -> Result<(), String>
     {
         let sh_path = temp_dir.join("launch_singbox.sh");
         let sh_content = format!(
-            "#!/bin/bash\n\"{}\" run -c \"{}\" > \"{}\" 2>&1\n",
-            singbox_exe.to_string_lossy(),
-            config_path.to_string_lossy(),
-            log_path.to_string_lossy(),
+            "#!/bin/bash\nset -e\nnohup {} run -c {} > {} 2>&1 &\n",
+            shell_quote(&singbox_exe.to_string_lossy()),
+            shell_quote(&config_path.to_string_lossy()),
+            shell_quote(&log_path.to_string_lossy()),
         );
         write_private_file(&sh_path, &sh_content, true)?;
 
@@ -240,16 +256,32 @@ pub fn start_tun_elevated(config_json: &serde_json::Value) -> Result<(), String>
             .output()
             .map_err(|e| format!("Failed to chmod: {}", e))?;
 
-        // Launch with sudo via osascript (shows macOS password prompt)
+        // Launch with macOS authorization prompt and wait for the user decision.
+        // The launcher backgrounds sing-box, so osascript exits after auth instead of
+        // staying attached to the long-running VPN process.
+        let shell_command = format!("bash {}", shell_quote(&sh_path.to_string_lossy()));
         let script = format!(
-            "do shell script \"bash '{}'\" with administrator privileges",
-            sh_path.to_string_lossy()
+            "do shell script {} with administrator privileges",
+            applescript_quote(&shell_command)
         );
 
-        Command::new("osascript")
+        let output = Command::new("osascript")
             .args(["-e", &script])
-            .spawn()
+            .output()
             .map_err(|e| format!("Failed to launch with admin: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let message = if !stderr.is_empty() {
+                stderr
+            } else if !stdout.is_empty() {
+                stdout
+            } else {
+                "administrator permission was cancelled or denied".into()
+            };
+            return Err(format!("TUN permission failed: {}", message));
+        }
     }
 
     // Wait for sing-box to actually start (poll instead of hardcoded sleep)
