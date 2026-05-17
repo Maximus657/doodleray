@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Trash2, RotateCcw, Database, Zap, Monitor, Download, ShieldCheck } from 'lucide-react';
+import { Settings as SettingsIcon, Trash2, RotateCcw, Database, Zap, Monitor, Download, ShieldCheck, ChevronDown } from 'lucide-react';
 import { disable } from '@tauri-apps/plugin-autostart';
 import { useTranslation } from '../locales';
 import { useAppStore } from '../stores/app-store';
@@ -157,6 +157,7 @@ export default function Settings() {
 
   const [updateStatus, setUpdateStatus] = useState<string>('');
   const [appVersion, setAppVersion] = useState<string>('...');
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
     import('@tauri-apps/api/app').then(({ getVersion }) => getVersion()).then(setAppVersion).catch(() => {});
@@ -191,10 +192,10 @@ export default function Settings() {
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           
-          {/* Section 1: System */}
-          <div className="bg-bg-primary border-[4px] border-black rounded-2xl p-6 shadow-[6px_6px_0_#000]">
+          {/* Section 1: Basic */}
+          <div className="bg-bg-primary border-[4px] border-black rounded-2xl p-6 shadow-[6px_6px_0_#000] lg:col-span-2">
             <h2 className="text-xl font-black text-black mb-5 flex items-center gap-2 uppercase tracking-tight bg-white px-3 py-1 w-max rounded-lg border-[3px] border-black shadow-[2px_2px_0_#000]">
-              <Monitor className="w-5 h-5 text-black stroke-[3px]" /> {t('system')}
+              <Monitor className="w-5 h-5 text-black stroke-[3px]" /> {t('basicSettings')}
             </h2>
             <div className="space-y-2">
               <Toggle
@@ -224,6 +225,22 @@ export default function Settings() {
                   <option value="zh">中文</option>
                 </select>
               </div>
+              <button
+                type="button"
+                onClick={() => setShowAdvanced((open) => !open)}
+                className="flex w-full items-center justify-between gap-3 rounded-xl border-[3px] border-black bg-black px-4 py-3 text-left text-white shadow-[2px_2px_0_rgba(0,0,0,0.35)] transition-all hover:-translate-y-0.5 hover:shadow-[4px_4px_0_rgba(0,0,0,0.35)] active:translate-y-0 active:shadow-none"
+              >
+                <span className="min-w-0">
+                  <span className="block text-sm font-black uppercase tracking-tight">{t('advancedSettings')}</span>
+                  <span className="mt-0.5 block text-[9px] font-black uppercase tracking-widest text-white/55">{t('advancedSettingsDesc')}</span>
+                </span>
+                <span className="flex shrink-0 items-center gap-1.5 text-[9px] font-black uppercase tracking-widest text-bg-primary">
+                  {showAdvanced ? t('hideAdvanced') : t('showAdvanced')}
+                  <ChevronDown className={`h-4 w-4 stroke-[3px] transition-transform ${showAdvanced ? 'rotate-180' : ''}`} />
+                </span>
+              </button>
+              {showAdvanced && (
+                <>
               <div className="flex items-center justify-between py-3 px-4 bg-white border-[3px] border-black shadow-[2px_2px_0_#000] rounded-xl">
                 <span className="text-sm font-black text-black uppercase tracking-tight">{t('socksPort')}</span>
                 <input type="number" value={socksPort} onChange={(e) => setSocksPort(parseInt(e.target.value) || 10808)}
@@ -251,11 +268,14 @@ export default function Settings() {
               <p className="text-[10px] font-black text-text-on-orange-secondary/70 px-2 uppercase tracking-widest mt-1">
                 {t('portChangeHint')}
               </p>
+                </>
+              )}
             </div>
           </div>
 
           {/* Section 2: Core Engine */}
-          <div className="bg-bg-primary border-[4px] border-black rounded-2xl p-6 shadow-[6px_6px_0_#000]">
+          {showAdvanced && (
+          <div className="bg-bg-primary border-[4px] border-black rounded-2xl p-6 shadow-[6px_6px_0_#000] lg:col-span-2">
             <h2 className="text-xl font-black text-black mb-5 flex items-center gap-2 uppercase tracking-tight bg-white px-3 py-1 w-max rounded-lg border-[3px] border-black shadow-[2px_2px_0_#000]">
               <Zap className="w-5 h-5 text-black stroke-[3px]" /> {t('coreEngine')}
             </h2>
@@ -291,11 +311,12 @@ export default function Settings() {
               />
             </div>
           </div>
+          )}
 
-          {/* Section 3: Data */}
+          {/* Section 3: Maintenance */}
           <div className="bg-bg-primary border-[4px] border-black rounded-2xl p-6 shadow-[6px_6px_0_#000] lg:col-span-2">
             <h2 className="text-xl font-black text-black mb-5 flex items-center gap-2 uppercase tracking-tight bg-white px-3 py-1 w-max rounded-lg border-[3px] border-black shadow-[2px_2px_0_#000]">
-              <Database className="w-5 h-5 text-black stroke-[3px]" /> {t('data')}
+              <Database className="w-5 h-5 text-black stroke-[3px]" /> {t('maintenance')}
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <button onClick={handleClearLogs} className="group flex items-center gap-4 bg-white border-[3px] border-black shadow-[4px_4px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none p-5 rounded-2xl transition-all cursor-pointer text-left">

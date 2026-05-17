@@ -12,7 +12,7 @@ import { buildConnectRequestFromState } from '../lib/connect-helpers';
 import RetroBackground from '../components/dashboard/RetroBackground';
 import OnboardingCard from '../components/dashboard/OnboardingCard';
 import ConnectionControls from '../components/dashboard/ConnectionControls';
-import StatsPanel from '../components/dashboard/StatsPanel';
+import DashboardControlsDrawer from '../components/dashboard/DashboardControlsDrawer';
 import ServerList from '../components/dashboard/ServerList';
 import LogsStrip from '../components/dashboard/LogsStrip';
 
@@ -36,6 +36,7 @@ export default function Dashboard() {
   const [quickInput, setQuickInput] = useState('');
   const [quickImporting, setQuickImporting] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [connectionStep, setConnectionStep] = useState<string | null>(null);
   const [testingSubId, setTestingSubId] = useState<string | null>(null);
   const [refreshingSubId, setRefreshingSubId] = useState<string | null>(null);
   const [pingingServerId, setPingingServerId] = useState<string | null>(null);
@@ -222,6 +223,7 @@ export default function Dashboard() {
       }
       if (!srv) { addLog('error', 'No server selected. Please add a subscription or select a server.'); return; }
       setStatus('connecting');
+      setConnectionStep(t('connectionStarting'));
 
       // TUN mode elevates only the network engine when needed.
       // macOS prompts for the password through osascript; Windows uses UAC for sing-box.
@@ -234,12 +236,15 @@ export default function Dashboard() {
 
       try {
         const { invoke } = await import('@tauri-apps/api/core');
+        setConnectionStep(t('connectionCheckingServer'));
         const request = await buildConnectRequestFromState(srv);
+        setConnectionStep(t('connectionSecuringTraffic'));
         const result: any = await invoke('vpn_connect', { request });
 
         if (result.success) {
           addLog('success', result.message);
           addLog('success', t('connectionActive'));
+          setConnectionStep(t('connectionReady'));
           setStatus('connected'); setConnectedAt(Date.now());
         } else {
           // Port-busy retry
@@ -252,17 +257,19 @@ export default function Dashboard() {
                 await new Promise(r => setTimeout(r, 1000));
                 const retryReq = await buildConnectRequestFromState(srv!);
                 const retry: any = await invoke('vpn_connect', { request: retryReq });
-                if (retry.success) { addLog('success', retry.message); setStatus('connected'); setConnectedAt(Date.now()); return; }
+                if (retry.success) { addLog('success', retry.message); setConnectionStep(t('connectionReady')); setStatus('connected'); setConnectedAt(Date.now()); return; }
               }
             } catch {}
           }
           addLog('error', result.message);
           reportConnectionError({ eventType: 'connect_fail', serverName: srv!.name, serverAddress: srv!.address, serverPort: srv!.port, protocol: srv!.protocol, errorMessage: result.message });
           setStatus('disconnected');
+          setConnectionStep(null);
         }
       } catch (err: any) {
         addLog('warning', `Dev mode — simulating connection: ${err.message || err}`);
-        setTimeout(() => { addLog('success', `[SIM] Connected via ${srv!.protocol.toUpperCase()}+${srv!.transport}`); setStatus('connected'); setConnectedAt(Date.now()); }, 1500);
+        setConnectionStep(t('connectionSecuringTraffic'));
+        setTimeout(() => { addLog('success', `[SIM] Connected via ${srv!.protocol.toUpperCase()}+${srv!.transport}`); setConnectionStep(t('connectionReady')); setStatus('connected'); setConnectedAt(Date.now()); }, 1500);
       }
     } else if (status === 'connected') {
       addLog('warning', 'Disconnecting...');
@@ -271,7 +278,7 @@ export default function Dashboard() {
         const result: any = await invoke('vpn_disconnect');
         addLog(result.success ? 'info' : 'error', result.message);
       } catch { addLog('info', '[SIM] Disconnected'); }
-      setStatus('disconnected'); setCurrentSpeed(0, 0); resetTraffic();
+      setStatus('disconnected'); setConnectionStep(null); setCurrentSpeed(0, 0); resetTraffic();
     }
   }, [status, setStatus, setCurrentSpeed, resetTraffic, activeServer, servers, setActiveServer, addLog, proxyMode, socksPort, httpPort, autoSelectFastest, setConnectedAt, t, setProxyMode]);
 
@@ -285,6 +292,7 @@ export default function Dashboard() {
     if (status === 'connected') {
       addLog('warning', 'Reconnecting to apply new routing mode...');
       setStatus('connecting');
+      setConnectionStep(t('connectionSecuringTraffic'));
       try {
         const { invoke } = await import('@tauri-apps/api/core');
         await invoke('vpn_disconnect');
@@ -293,12 +301,12 @@ export default function Dashboard() {
         if (srv) {
           const request = await buildConnectRequestFromState(srv, mode);
           const result: any = await invoke('vpn_connect', { request });
-          if (result.success) { addLog('success', result.message); setStatus('connected'); setConnectedAt(Date.now()); }
-          else { addLog('error', result.message); setStatus('disconnected'); }
-        } else { setStatus('disconnected'); }
-      } catch (err: any) { addLog('error', `Reconnect failed: ${err.message || err}`); setStatus('disconnected'); }
+          if (result.success) { addLog('success', result.message); setConnectionStep(t('connectionReady')); setStatus('connected'); setConnectedAt(Date.now()); }
+          else { addLog('error', result.message); setStatus('disconnected'); setConnectionStep(null); }
+        } else { setStatus('disconnected'); setConnectionStep(null); }
+      } catch (err: any) { addLog('error', `Reconnect failed: ${err.message || err}`); setStatus('disconnected'); setConnectionStep(null); }
     }
-  }, [proxyMode, setProxyMode, status, setStatus, addLog, activeServer, socksPort, httpPort, setConnectedAt]);
+  }, [proxyMode, setProxyMode, status, setStatus, addLog, activeServer, socksPort, httpPort, setConnectedAt, t]);
 
   const handleServerSelect = useCallback(async (server: typeof activeServer) => {
     if (!server) return;
@@ -307,17 +315,18 @@ export default function Dashboard() {
     if (status === 'connected' && !isSameServer) {
       addLog('warning', `Switching to ${server.name}...`);
       setStatus('connecting');
+      setConnectionStep(t('connectionCheckingServer'));
       try {
         const { invoke } = await import('@tauri-apps/api/core');
         // Don't call vpn_disconnect — vpn_connect handles cleanup internally
         // and preserves the TUN bridge to avoid game disconnections
         const request = await buildConnectRequestFromState(server);
         const result: any = await invoke('vpn_connect', { request });
-        if (result.success) { addLog('success', result.message); setStatus('connected'); setConnectedAt(Date.now()); }
-        else { addLog('error', result.message); setStatus('disconnected'); }
-      } catch (err: any) { addLog('error', `Server switch failed: ${err.message || err}`); setStatus('disconnected'); }
+        if (result.success) { addLog('success', result.message); setConnectionStep(t('connectionReady')); setStatus('connected'); setConnectedAt(Date.now()); }
+        else { addLog('error', result.message); setStatus('disconnected'); setConnectionStep(null); }
+      } catch (err: any) { addLog('error', `Server switch failed: ${err.message || err}`); setStatus('disconnected'); setConnectionStep(null); }
     }
-  }, [status, setStatus, activeServer, setActiveServer, addLog, proxyMode, socksPort, httpPort, setConnectedAt]);
+  }, [status, setStatus, activeServer, setActiveServer, addLog, proxyMode, socksPort, httpPort, setConnectedAt, t]);
 
   const handleQuickAdd = useCallback(async () => {
     const trimmed = quickInput.trim();
@@ -429,16 +438,40 @@ export default function Dashboard() {
   }, [subscriptions, removeSubscription, t]);
 
   const canConnect = !!activeServer || servers.length > 0;
-  const isConnected = status === 'connected';
+  const activeSubscription = activeServer
+    ? activeServer.subscriptionId
+      ? subscriptions.find((sub) => sub.id === activeServer.subscriptionId) || null
+      : null
+    : subscriptions.length === 1
+      ? subscriptions[0]
+      : null;
+  const activeSubscriptionServerCount = activeSubscription
+    ? servers.filter((server) => server.subscriptionId === activeSubscription.id).length
+    : 0;
+  const hasDashboardContent = servers.length > 0 || status !== 'disconnected';
+  const trimmedQuickInput = quickInput.trim();
+  const quickInputKind = trimmedQuickInput.startsWith('http://') || trimmedQuickInput.startsWith('https://')
+    ? 'subscription'
+    : /^(vless|vmess|trojan|ss|hy2|tuic|wg):\/\//.test(trimmedQuickInput)
+      ? 'link'
+      : 'unknown';
+  const quickInputHint = !trimmedQuickInput
+    ? t('detectedUnknown')
+    : quickInputKind === 'subscription'
+      ? t('detectedSubscription')
+      : quickInputKind === 'link'
+        ? t('detectedProxyLink')
+        : t('detectedUnknown');
+  const connectionStepLabel = status === 'connecting' ? connectionStep : null;
 
   // ═══════════════════════════════════════════════════
   //  Render
   // ═══════════════════════════════════════════════════
   return (
-    <div className="flex-1 flex flex-col overflow-hidden animate-fade-in">
-      <div className="flex-1 flex flex-col items-center gap-3 px-4 relative overflow-y-auto py-4">
-        <RetroBackground />
+    <div className="relative flex-1 flex flex-col overflow-hidden animate-fade-in">
+      <RetroBackground />
 
+      <div className="relative z-10 flex-1 flex flex-col items-center gap-3 px-4 overflow-y-auto py-4">
         {/* + Add button */}
         <button
           onClick={() => setShowAddModal(!showAddModal)}
@@ -451,25 +484,38 @@ export default function Dashboard() {
 
         {showAddModal && (
           <>
-            {/* Invisible overlay to close modal when clicking outside */}
-            <div 
-              className="fixed inset-0 z-30" 
+            <div
+              className="fixed inset-0 z-30 bg-black/20 backdrop-blur-[1px]"
               onClick={() => setShowAddModal(false)}
             />
-            <div className="absolute top-16 right-4 z-40 w-72 bg-white border-[3px] border-black rounded-2xl p-4 shadow-[6px_6px_0_#000] animate-slide-up space-y-3">
-              <p className="text-[10px] font-black text-black uppercase tracking-widest">{t('addSubOrServer')}</p>
-              <div className="flex gap-2">
-                <input type="text" value={quickInput} onChange={(e) => setQuickInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') { handleQuickAdd(); setShowAddModal(false); } }}
-                  autoFocus placeholder={t('pasteHint')}
-                  className="flex-1 min-w-0 bg-gray-50 border-[2px] border-black rounded-lg px-3 py-2 text-xs text-black placeholder:text-black/30 focus:outline-none font-bold tracking-tight" />
-                <button onClick={handleQuickPaste}
-                  className="w-9 h-9 flex items-center justify-center bg-white border-[2px] border-black rounded-lg cursor-pointer hover:bg-black hover:text-white transition-colors shrink-0">
-                  <ClipboardPaste className="w-4 h-4 stroke-[2.5px]" />
-                </button>
+            <div className="fixed left-1/2 top-16 z-40 w-[min(360px,calc(100vw-32px))] -translate-x-1/2 bg-white border-[3px] border-black rounded-2xl p-4 shadow-[6px_6px_0_#000] animate-slide-up space-y-3">
+              <div>
+                <p className="text-[11px] font-black text-black uppercase tracking-widest">{t('pasteToAddTitle')}</p>
+                <p className="mt-1 text-[10px] font-bold leading-relaxed text-black/55 uppercase tracking-widest">{t('pasteToAddDesc')}</p>
+              </div>
+              <div className="rounded-xl border-[3px] border-black bg-bg-primary p-2 shadow-inner">
+                <div className="flex gap-2">
+                  <input type="text" value={quickInput} onChange={(e) => setQuickInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && quickInputKind !== 'unknown') { handleQuickAdd(); setShowAddModal(false); } }}
+                    autoFocus placeholder={t('pasteHint')}
+                    className="flex-1 min-w-0 bg-white border-[2px] border-black rounded-lg px-3 py-2.5 text-xs text-black placeholder:text-black/30 focus:outline-none font-bold tracking-tight" />
+                  <button onClick={handleQuickPaste}
+                    className="w-10 h-10 flex items-center justify-center bg-white border-[2px] border-black rounded-lg cursor-pointer hover:bg-black hover:text-white transition-colors shrink-0">
+                    <ClipboardPaste className="w-4 h-4 stroke-[2.5px]" />
+                  </button>
+                </div>
+                <p className={`mt-2 inline-flex rounded-lg border-[2px] border-black px-2 py-1 text-[9px] font-black uppercase tracking-widest ${
+                  quickInputKind === 'subscription'
+                    ? 'bg-emerald-300 text-black'
+                    : quickInputKind === 'link'
+                      ? 'bg-amber-300 text-black'
+                      : 'bg-white/70 text-black/45'
+                }`}>
+                  {quickInputHint}
+                </p>
               </div>
               <button onClick={() => { handleQuickAdd(); setShowAddModal(false); }}
-                disabled={quickImporting || !quickInput.trim()}
+                disabled={quickImporting || !trimmedQuickInput || quickInputKind === 'unknown'}
                 className="w-full py-2.5 bg-black text-white border-[2px] border-black rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer shadow-[3px_3px_0_#000] hover:-translate-y-0.5 hover:shadow-[4px_4px_0_#000] active:translate-y-1 active:shadow-none transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                 {quickImporting ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> {t('adding')}</> : <><Plus className="w-3.5 h-3.5 stroke-[3px]" /> {t('add')}</>}
               </button>
@@ -478,7 +524,7 @@ export default function Dashboard() {
         )}
 
         {/* ═══ MAIN CONTENT ═══ */}
-        {servers.length === 0 && status === 'disconnected' ? (
+        {!hasDashboardContent ? (
           <OnboardingCard
             quickInput={quickInput} setQuickInput={setQuickInput}
             onQuickAdd={handleQuickAdd} onQuickPaste={handleQuickPaste}
@@ -487,18 +533,11 @@ export default function Dashboard() {
         ) : (
           <div className="contents">
             <ConnectionControls
-              status={status} proxyMode={proxyMode} systemProxyMode={systemProxyMode} canConnect={canConnect}
-              connectTime={connectTime} onConnect={handleConnect}
-              onModeSwitch={handleModeSwitch} onSystemProxyModeChange={setSystemProxyMode} t={t}
+              status={status} canConnect={canConnect}
+              connectionStepLabel={connectionStepLabel}
+              onConnect={handleConnect}
+              t={t}
             />
-
-            {showStats && isConnected && (
-              <StatsPanel
-                currentDownload={currentDownload} currentUpload={currentUpload}
-                totalDown={totalDown} totalUp={totalUp} connectTime={connectTime}
-                proxyMode={proxyMode} speedHistory={speedHistory} t={t}
-              />
-            )}
 
             <ServerList
               servers={servers} subscriptions={subscriptions} activeServer={activeServer}
@@ -518,6 +557,23 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      {hasDashboardContent && (
+        <div className="relative z-20 flex shrink-0 justify-center px-4 pb-2 pt-2">
+          <DashboardControlsDrawer
+            status={status} proxyMode={proxyMode} systemProxyMode={systemProxyMode}
+            connectTime={connectTime}
+            currentDownload={currentDownload} currentUpload={currentUpload}
+            totalDown={totalDown} totalUp={totalUp}
+            speedHistory={speedHistory} showStats={showStats}
+            activeSubscription={activeSubscription}
+            activeSubscriptionServerCount={activeSubscriptionServerCount}
+            onModeSwitch={handleModeSwitch}
+            onSystemProxyModeChange={setSystemProxyMode}
+            t={t}
+          />
+        </div>
+      )}
 
       <LogsStrip
         logs={logs} showLogs={showLogs}

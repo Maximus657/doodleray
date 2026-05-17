@@ -11,8 +11,9 @@ import {
   Settings as SettingsIcon,
   Trash2,
 } from 'lucide-react';
+import type { ReactNode } from 'react';
 import type { ServerConfig, Subscription } from '../../stores/app-store';
-import { formatBytes, protocolLabel } from '../../lib/utils';
+import { protocolLabel } from '../../lib/utils';
 import { buildServerDisplayGroups, serverMatchesGroupQuery, type ServerDisplayGroup } from '../../lib/server-groups';
 
 interface Props {
@@ -45,21 +46,35 @@ function serverProtocolLabel(server: ServerConfig) {
   return server.rawConfig ? `${server.protocol.toUpperCase()} | JSON` : protocolLabel(server.protocol, server.transport);
 }
 
-function formatTrafficQuotaBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024 * 1024) return formatBytes(bytes);
-
-  const gb = bytes / (1024 * 1024 * 1024);
-  const isWholeGb = Math.abs(gb - Math.round(gb)) < 0.001;
-  return `${isWholeGb ? Math.round(gb).toString() : gb.toFixed(2)} GB`;
-}
-
 function groupPingColor(ping: number | undefined): string {
   if (ping === undefined) return 'text-black/35';
   if (ping < 0) return 'text-red-600';
   if (ping < 100) return 'text-emerald-600';
   if (ping < 300) return 'text-amber-600';
   return 'text-red-600';
+}
+
+function CollapsibleSection({
+  open,
+  children,
+  className = '',
+}: {
+  open: boolean;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      data-open={open ? 'true' : 'false'}
+      aria-hidden={!open}
+      inert={!open ? true : undefined}
+      className={`smooth-collapse ${className}`}
+    >
+      <div className="smooth-collapse-inner">
+        {children}
+      </div>
+    </div>
+  );
 }
 
 export default function ServerList({
@@ -69,31 +84,6 @@ export default function ServerList({
   onTestCustomServers, onRemoveAllCustomServers, onRemoveServer,
   testingSubId, refreshingSubId, pingingServerId, t,
 }: Props) {
-  const renderTrafficInfo = (sub: Subscription) => {
-    if (!sub.traffic) return null;
-
-    const used = sub.traffic.upload + sub.traffic.download;
-    const total = sub.traffic.total;
-    const percent = total && total > 0 ? Math.min(100, (used / total) * 100) : 0;
-    const expire = sub.traffic.expire
-      ? new Date(sub.traffic.expire * 1000).toLocaleDateString('ru-RU')
-      : null;
-
-    return (
-      <div className="mt-2 w-full">
-        <div className="h-2.5 rounded-full bg-black/10 border-[2px] border-black overflow-hidden">
-          <div className="h-full bg-emerald-400" style={{ width: `${percent}%` }} />
-        </div>
-        <div className="mt-1 flex items-center justify-between gap-2 text-[9px] font-black uppercase tracking-widest text-black/55">
-          <span className="truncate">
-            {total ? `${formatTrafficQuotaBytes(used)} / ${formatTrafficQuotaBytes(total)}` : formatTrafficQuotaBytes(used)}
-          </span>
-          {expire && <span className="shrink-0">до {expire}</span>}
-        </div>
-      </div>
-    );
-  };
-
   const renderServerGroup = (group: ServerDisplayGroup) => {
     const activeGroupServer = group.servers.find((server) => activeServer?.id === server.id);
     const selectedServer = activeGroupServer || group.selectedServer;
@@ -107,10 +97,10 @@ export default function ServerList({
 
     return (
       <button key={group.id} onClick={() => onServerSelect(selectedServer)}
-        className={`w-full p-2.5 rounded-2xl flex items-center gap-3 transition-all duration-150 overflow-hidden relative cursor-pointer
+        className={`w-full p-2.5 rounded-2xl flex items-center gap-3 transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] overflow-hidden relative cursor-pointer
           ${isActive
-            ? 'bg-black text-white border-[3px] border-black shadow-[4px_4px_0_rgba(0,0,0,0.4)] translate-x-[-1px] translate-y-[-1px]'
-            : 'bg-white text-black border-[3px] border-black shadow-[2px_2px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[4px_4px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none'}`}>
+            ? 'bg-black text-white border-[3px] border-emerald-400 shadow-[0_0_0_3px_rgba(52,211,153,0.18),4px_4px_0_rgba(0,0,0,0.4)] translate-x-[-1px] translate-y-[-1px]'
+            : 'bg-white/92 text-black border-[2px] border-black shadow-[1px_1px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[4px_4px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none'}`}>
         <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border-[2px] ${isActive ? 'bg-white border-white' : 'bg-black border-black'}`}>
           {renderFlag(group.countryCode)}
         </div>
@@ -169,7 +159,7 @@ export default function ServerList({
           return (
             <div key={sub.id} className="w-full">
               {/* Subscription Header */}
-              <div className="w-full bg-white border-[3px] border-black rounded-xl p-2.5 mb-2 shadow-[2px_2px_0_#000]">
+              <div className="w-full bg-white/90 border-[2px] border-black/70 rounded-xl p-2.5 mb-2 shadow-[1px_1px_0_rgba(0,0,0,0.35)] backdrop-blur transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]">
                 <div className="w-full flex items-center justify-between">
                   <div className="flex items-center gap-2 min-w-0 pr-2 cursor-pointer select-none" onClick={() => onToggleGroup(sub.id)}>
                     <ChevronDown className={`w-4 h-4 text-black shrink-0 stroke-[3px] transition-transform duration-300 ${collapsedGroups[sub.id] ? '-rotate-90' : 'rotate-0'}`} />
@@ -192,20 +182,19 @@ export default function ServerList({
                       <span className="text-[10px] font-black tracking-widest uppercase">{testingSubId === sub.id ? t('testing') : t('test')}</span>
                     </button>
                     <button onClick={() => onRemoveSubscription(sub.id)}
-                      className="w-7 h-7 flex items-center justify-center bg-red-400 border-[2px] border-black rounded-lg text-white cursor-pointer transition-all shadow-[2px_2px_0_#000] hover:-translate-y-[1px] hover:-translate-x-[1px] hover:shadow-[3px_3px_0_#000] active:translate-y-[1px] active:translate-x-[1px] active:shadow-none" title={t('deleteSub')}>
+                      className="w-7 h-7 flex items-center justify-center bg-white border-[2px] border-black rounded-lg text-danger cursor-pointer transition-all shadow-[1px_1px_0_#000] hover:bg-danger hover:text-white hover:-translate-y-[1px] hover:-translate-x-[1px] hover:shadow-[2px_2px_0_#000] active:translate-y-[1px] active:translate-x-[1px] active:shadow-none" title={t('deleteSub')}>
                       <Trash2 className="w-3.5 h-3.5 stroke-[3px]" />
                     </button>
                   </div>
                 </div>
-                {renderTrafficInfo(sub)}
               </div>
 
               {/* Servers */}
-              {!collapsedGroups[sub.id] && (
-                <div className="flex flex-col gap-2 pl-2 border-l-[3px] border-black/10 ml-2 animate-slide-up">
+              <CollapsibleSection open={!collapsedGroups[sub.id]}>
+                <div className="flex flex-col gap-2 pl-2 border-l-[3px] border-black/10 ml-2">
                   {subServerGroups.map(renderServerGroup)}
                 </div>
-              )}
+              </CollapsibleSection>
             </div>
           );
         })}
@@ -220,7 +209,7 @@ export default function ServerList({
 
           return (
             <div className="w-full mt-2">
-              <div className="w-full flex items-center justify-between bg-white border-[3px] border-black rounded-xl p-2.5 mb-2 shadow-[2px_2px_0_#000]">
+              <div className="w-full flex items-center justify-between bg-white/90 border-[2px] border-black/70 rounded-xl p-2.5 mb-2 shadow-[1px_1px_0_rgba(0,0,0,0.35)] backdrop-blur transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]">
                 <div className="flex items-center gap-2 min-w-0 pr-2 cursor-pointer select-none" onClick={() => onToggleGroup('__custom__')}>
                   <ChevronDown className={`w-4 h-4 text-black shrink-0 stroke-[3px] transition-transform duration-300 ${collapsedGroups['__custom__'] ? '-rotate-90' : 'rotate-0'}`} />
                   <SettingsIcon className="w-3.5 h-3.5 text-black shrink-0 stroke-[3px]" />
@@ -238,12 +227,12 @@ export default function ServerList({
                     <span className="text-[10px] font-black tracking-widest uppercase">{testingSubId === '__custom__' ? t('testing') : t('test')}</span>
                   </button>
                   <button onClick={onRemoveAllCustomServers}
-                    className="w-7 h-7 flex items-center justify-center bg-red-400 border-[2px] border-black rounded-lg text-white cursor-pointer transition-all shadow-[2px_2px_0_#000] hover:-translate-y-[1px] hover:-translate-x-[1px] hover:shadow-[3px_3px_0_#000] active:translate-y-[1px] active:translate-x-[1px] active:shadow-none">
+                    className="w-7 h-7 flex items-center justify-center bg-white border-[2px] border-black rounded-lg text-danger cursor-pointer transition-all shadow-[1px_1px_0_#000] hover:bg-danger hover:text-white hover:-translate-y-[1px] hover:-translate-x-[1px] hover:shadow-[2px_2px_0_#000] active:translate-y-[1px] active:translate-x-[1px] active:shadow-none">
                     <Trash2 className="w-3.5 h-3.5 stroke-[3px]" />
                   </button>
                 </div>
               </div>
-              {!collapsedGroups['__custom__'] && (
+              <CollapsibleSection open={!collapsedGroups['__custom__']}>
                 <div className="flex flex-col gap-2 pl-2 border-l-[3px] border-black/10 ml-2">
                   {standalone.map((server) => {
                     const isActive = activeServer?.id === server.id;
@@ -262,10 +251,10 @@ export default function ServerList({
                             onServerSelect(server);
                           }
                         }}
-                        className={`w-full p-2.5 rounded-2xl flex items-center gap-3 transition-all duration-150 overflow-hidden relative cursor-pointer
+                        className={`w-full p-2.5 rounded-2xl flex items-center gap-3 transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] overflow-hidden relative cursor-pointer
                           ${isActive
-                            ? 'bg-black text-white border-[3px] border-black shadow-[4px_4px_0_rgba(0,0,0,0.4)] translate-x-[-1px] translate-y-[-1px]'
-                            : 'bg-white text-black border-[3px] border-black shadow-[2px_2px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[4px_4px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none'}`}>
+                            ? 'bg-black text-white border-[3px] border-emerald-400 shadow-[0_0_0_3px_rgba(52,211,153,0.18),4px_4px_0_rgba(0,0,0,0.4)] translate-x-[-1px] translate-y-[-1px]'
+                            : 'bg-white/92 text-black border-[2px] border-black shadow-[1px_1px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[4px_4px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none'}`}>
                         <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border-[2px] ${isActive ? 'bg-white border-white' : 'bg-black border-black'}`}>
                           {renderFlag(server.countryCode)}
                         </div>
@@ -284,7 +273,11 @@ export default function ServerList({
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
                           <button onClick={(e) => { e.stopPropagation(); onRemoveServer(server.id, server.name); }}
-                            className="w-8 h-8 flex items-center justify-center bg-danger/10 hover:bg-danger text-danger hover:text-white rounded-xl transition-colors cursor-pointer"
+                            className={`w-8 h-8 flex items-center justify-center rounded-xl transition-colors cursor-pointer ${
+                              isActive
+                                ? 'bg-white/10 text-white/35 hover:bg-danger hover:text-white'
+                                : 'bg-danger/10 text-danger hover:bg-danger hover:text-white'
+                            }`}
                             title={t('deleteServer')}>
                             <Trash2 className="w-4 h-4 stroke-[3px]" />
                           </button>
@@ -294,7 +287,7 @@ export default function ServerList({
                     );
                   })}
                 </div>
-              )}
+              </CollapsibleSection>
             </div>
           );
         })()}

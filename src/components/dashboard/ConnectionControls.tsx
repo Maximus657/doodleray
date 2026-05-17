@@ -1,183 +1,80 @@
-import { useState } from 'react';
-import { Power, Globe, Network, CheckCircle2, Loader2, CircleHelp } from 'lucide-react';
-import type { ConnectionStatus, ProxyMode, SystemProxyMode } from '../../stores/app-store';
-import { formatDuration } from '../../lib/utils';
+import { CheckCircle2, Loader2, Power } from 'lucide-react';
+import type { ConnectionStatus } from '../../stores/app-store';
 
 interface Props {
   status: ConnectionStatus;
-  proxyMode: ProxyMode;
-  systemProxyMode: SystemProxyMode;
   canConnect: boolean;
-  connectTime: number;
+  connectionStepLabel?: string | null;
   onConnect: () => void;
-  onModeSwitch: (mode: ProxyMode) => void;
-  onSystemProxyModeChange: (mode: SystemProxyMode) => void;
   t: (key: any) => string;
 }
 
 export default function ConnectionControls({
   status,
-  proxyMode,
-  systemProxyMode,
   canConnect,
-  connectTime,
+  connectionStepLabel,
   onConnect,
-  onModeSwitch,
-  onSystemProxyModeChange,
-  t
+  t,
 }: Props) {
   const isConnected = status === 'connected';
   const isConnecting = status === 'connecting';
-  const [modeHelp, setModeHelp] = useState<ProxyMode | null>(null);
-
-  const switchMode = (mode: ProxyMode) => {
-    setModeHelp(null);
-    onModeSwitch(mode);
-  };
-
-  const toggleModeHelp = (mode: ProxyMode) => {
-    setModeHelp((current) => current === mode ? null : mode);
-  };
+  const connectionLabel = isConnected
+    ? t('disconnect')
+    : isConnecting
+      ? t('connecting')
+      : t('connect');
 
   return (
-    <>
-      {/* ── PROXY MODE TOGGLE ── */}
-      <div className="relative flex bg-black rounded-2xl p-1.5 shadow-inner w-full max-w-sm border-[3px] border-black shrink-0 mt-2 z-10">
-        <div
-          className={`absolute top-1.5 bottom-1.5 w-[calc(50%-6px)] bg-bg-primary rounded-xl transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] shadow-[2px_2px_0_rgba(0,0,0,0.4)] border-[2px] border-black ${
-            proxyMode === 'tun' ? 'left-1/2' : 'left-1.5'
-          }`}
-        />
-        <div className="relative z-10 flex flex-1 items-center justify-center min-w-0">
-          <button onClick={() => switchMode('system-proxy')}
-            className={`flex min-w-0 flex-1 items-center justify-center gap-1.5 py-2 pl-2 text-[11px] font-black uppercase tracking-widest cursor-pointer transition-colors duration-300 select-none
-              ${proxyMode === 'system-proxy' ? 'text-black' : 'text-white/40 hover:text-white/80'}`}>
-            <Globe className={`w-4 h-4 shrink-0 transition-transform duration-300 ${proxyMode === 'system-proxy' ? 'scale-110' : 'scale-100'}`} />
-            <span className="truncate">{t('systemProxy')}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => toggleModeHelp('system-proxy')}
-            aria-label={t('modeHelpProxyTitle')}
-            aria-expanded={modeHelp === 'system-proxy'}
-            className={`mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-[2px] transition-all ${
-              proxyMode === 'system-proxy'
-                ? 'border-black bg-white text-black hover:bg-black hover:text-white'
-                : 'border-white/25 bg-white/10 text-white/70 hover:border-white hover:text-white'
-            }`}
-          >
-            <CircleHelp className="w-3 h-3 stroke-[3px]" />
-          </button>
-        </div>
-        <div className="relative z-10 flex flex-1 items-center justify-center min-w-0">
-          <button onClick={() => switchMode('tun')}
-            className={`flex min-w-0 flex-1 items-center justify-center gap-1.5 py-2 pl-2 text-[11px] font-black uppercase tracking-widest cursor-pointer transition-colors duration-300 select-none
-              ${proxyMode === 'tun' ? 'text-black' : 'text-white/40 hover:text-white/80'}`}>
-            <Network className={`w-4 h-4 shrink-0 transition-transform duration-300 ${proxyMode === 'tun' ? 'scale-110' : 'scale-100'}`} />
-            <span className="truncate">{t('tunMode')}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => toggleModeHelp('tun')}
-            aria-label={t('modeHelpTunTitle')}
-            aria-expanded={modeHelp === 'tun'}
-            className={`mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-[2px] transition-all ${
-              proxyMode === 'tun'
-                ? 'border-black bg-white text-black hover:bg-black hover:text-white'
-                : 'border-white/25 bg-white/10 text-white/70 hover:border-white hover:text-white'
-            }`}
-          >
-            <CircleHelp className="w-3 h-3 stroke-[3px]" />
-          </button>
-        </div>
-      </div>
-
-      {modeHelp && (
-        <div className="relative z-30 -mt-1 w-full max-w-sm rounded-xl border-[3px] border-black bg-white p-3 text-left shadow-[4px_4px_0_#000] animate-slide-up">
-          <p className="text-[11px] font-black uppercase tracking-widest text-black">
-            {modeHelp === 'tun' ? t('modeHelpTunTitle') : t('modeHelpProxyTitle')}
-          </p>
-          <p className="mt-1 text-[10px] font-bold leading-relaxed text-black/65">
-            {modeHelp === 'tun' ? t('modeHelpTunBody') : t('modeHelpProxyBody')}
-          </p>
-        </div>
-      )}
-
-      {proxyMode === 'system-proxy' && (
-        <div className="relative z-10 -mt-1 flex w-full max-w-sm items-center gap-1.5 rounded-xl border-[3px] border-black bg-white p-1.5 shadow-[4px_4px_0_#000]">
-          {([
-            ['set', 'systemProxyShortSet'],
-            ['unchanged', 'systemProxyShortKeep'],
-            ['clear', 'systemProxyShortClear'],
-          ] as const).map(([mode, labelKey]) => (
-            <button
-              key={mode}
-              type="button"
-              onClick={() => onSystemProxyModeChange(mode)}
-              disabled={isConnecting || isConnected}
-              title={
-                mode === 'set'
-                  ? t('systemProxySet')
-                  : mode === 'unchanged'
-                    ? t('systemProxyUnchanged')
-                    : t('systemProxyClear')
-              }
-              className={`flex-1 rounded-lg border-[2px] border-black px-2 py-1.5 text-[9px] font-black uppercase tracking-widest transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
-                systemProxyMode === mode
-                  ? 'bg-black text-white shadow-[2px_2px_0_rgba(0,0,0,0.3)]'
-                  : 'bg-bg-primary text-black hover:-translate-y-0.5 hover:shadow-[2px_2px_0_#000]'
-              }`}
-            >
-              {t(labelKey)}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* ── POWER BUTTON ── */}
-      <div className="flex flex-col items-center mt-2 relative z-10 shrink-0">
-        <button id="connect-button" onClick={onConnect}
-          disabled={isConnecting || !canConnect}
-          className="group relative w-40 h-40 flex items-center justify-center transition-all duration-150 cursor-pointer border-0 bg-transparent disabled:cursor-not-allowed">
-          
-          {isConnecting && (
-            <svg className="absolute inset-[-12px] w-[calc(100%+24px)] h-[calc(100%+24px)] animate-spin-slow" viewBox="0 0 100 100">
-              <circle cx="50" cy="50" r="46" fill="none" stroke="#000" strokeWidth="4" strokeDasharray="40 240" strokeLinecap="round" />
-            </svg>
-          )}
-
-          <div className={`relative w-40 h-40 rounded-full flex items-center justify-center transition-all duration-150 border-[5px] border-black
-            ${isConnected
-              ? 'bg-black text-white shadow-[0_0_0_#000] scale-95'
-              : isConnecting
-                ? 'bg-white text-black shadow-[4px_4px_0_#000]'
-                : canConnect
-                  ? 'bg-white text-black shadow-[8px_8px_0_#000] hover:shadow-[10px_10px_0_#000] hover:-translate-y-1 hover:-translate-x-1 active:shadow-[2px_2px_0_#000] active:translate-y-[6px] active:translate-x-[6px]'
-                  : 'bg-white/50 text-black/30 shadow-[4px_4px_0_rgba(0,0,0,0.3)]'
-            }`}>
-            <Power className={`w-16 h-16 transition-all duration-300 stroke-[3px] ${isConnecting ? 'animate-pulse' : ''}`} />
-          </div>
-        </button>
-        
-        {/* Status Label */}
-        {isConnected ? (
-          <div className="mt-4 px-6 py-3 bg-black rounded-2xl border-[3px] border-black shadow-[4px_4px_0_rgba(0,0,0,0.3)] hover:-translate-y-0.5 hover:shadow-[6px_6px_0_rgba(0,0,0,0.4)] transition-all">
-            <p className="text-[13px] font-black tracking-widest uppercase text-emerald-400 text-center flex items-center justify-center gap-2">
-              {t('connectionActive')} <CheckCircle2 className="w-5 h-5 inline stroke-[3px]" />
-            </p>
-            <p className="text-[10px] text-emerald-400/50 text-center mt-1 uppercase tracking-widest font-bold">
-              {t('timeValid')}: {formatDuration(connectTime)}
-            </p>
-          </div>
-        ) : (
-          <div className={`mt-4 px-6 py-3 rounded-2xl border-[3px] border-transparent transition-all duration-300 ${isConnecting ? 'bg-amber-100/50 border-amber-400/30' : ''}`}>
-            <p className={`text-[13px] font-black tracking-widest uppercase flex items-center justify-center gap-2
-              ${isConnecting ? 'text-amber-600 animate-pulse' : 'text-black/40'}`}>
-              {isConnecting ? <><Loader2 className="w-4 h-4 inline animate-spin stroke-[3px]" /> {t('connecting')}</> : `${t('notConnected')} ❌`}
-            </p>
-          </div>
+    <div className="relative z-10 mt-5 mb-1 flex w-full max-w-sm shrink-0 flex-col items-center">
+      <button
+        id="connect-button"
+        onClick={onConnect}
+        disabled={isConnecting || !canConnect}
+        className={`group relative flex h-44 w-44 flex-col items-center justify-center gap-2 rounded-full border-[5px] text-center transition-all duration-200 disabled:cursor-not-allowed ${
+          isConnected
+            ? 'animate-vpn-connected border-black bg-black text-white shadow-[0_0_0_6px_rgba(16,185,129,0.18),6px_6px_0_rgba(0,0,0,0.35)]'
+            : isConnecting
+              ? 'border-black bg-white text-black shadow-[0_0_0_6px_rgba(251,191,36,0.24),6px_6px_0_#000]'
+              : canConnect
+                ? 'border-black bg-white text-black shadow-[8px_8px_0_#000] hover:-translate-x-1 hover:-translate-y-1 hover:shadow-[10px_10px_0_#000] active:translate-x-[5px] active:translate-y-[5px] active:shadow-[3px_3px_0_#000]'
+                : 'border-black/35 bg-white/60 text-black/35 shadow-[4px_4px_0_rgba(0,0,0,0.25)]'
+        }`}
+      >
+        {isConnecting && (
+          <svg className="pointer-events-none absolute inset-[-13px] h-[calc(100%+26px)] w-[calc(100%+26px)] animate-spin-slow" viewBox="0 0 100 100">
+            <circle cx="50" cy="50" r="46" fill="none" stroke="#000" strokeWidth="4" strokeDasharray="42 245" strokeLinecap="round" />
+          </svg>
         )}
-      </div>
-    </>
+        {isConnected && (
+          <span className="pointer-events-none absolute inset-[-8px] rounded-full border-[4px] border-emerald-400/35" />
+        )}
+        <span className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-full border-[3px] transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+          isConnected
+            ? 'animate-vpn-pop border-emerald-300 bg-emerald-400 text-black shadow-[0_0_0_5px_rgba(52,211,153,0.22)]'
+            : canConnect
+              ? 'border-black bg-black text-white shadow-[0_0_0_5px_rgba(0,0,0,0.08)] group-hover:scale-105'
+              : 'border-black/30 bg-black/15 text-black/35'
+        }`}>
+          {isConnecting ? (
+            <Loader2 className="h-9 w-9 animate-spin stroke-[3px]" />
+          ) : isConnected ? (
+            <CheckCircle2 className="h-10 w-10 stroke-[3px]" />
+          ) : (
+            <Power className="h-9 w-9 stroke-[3px]" />
+          )}
+        </span>
+
+        <span className="flex w-full min-w-0 flex-col items-center justify-center px-4">
+          <span className="max-w-full truncate text-[19px] font-black uppercase leading-none tracking-tight">
+            {connectionLabel}
+          </span>
+          {isConnecting && connectionStepLabel && (
+            <span className="mt-1 max-w-full truncate rounded-full bg-amber-300 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-black">
+              {connectionStepLabel}
+            </span>
+          )}
+        </span>
+      </button>
+    </div>
   );
 }

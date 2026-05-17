@@ -4,6 +4,8 @@ import { parseMultipleLinks, detectCountry } from './parser';
 interface FetchedSubscriptionPayload {
   text: string;
   userInfo?: string;
+  profileTitle?: string;
+  contentDisposition?: string;
 }
 
 // ========== Xray JSON Config Parser ==========
@@ -302,6 +304,53 @@ function parseSubscriptionUserInfo(value?: string | null): Subscription['traffic
   };
 }
 
+function decodeUtf8Base64(value: string): string | undefined {
+  try {
+    const binary = atob(value);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    return new TextDecoder().decode(bytes).trim();
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeSubscriptionTitle(value?: string | null): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+
+  const base64Match = trimmed.match(/^base64:(.+)$/i);
+  if (base64Match) return decodeUtf8Base64(base64Match[1]);
+
+  try {
+    const decoded = decodeURIComponent(trimmed);
+    return decoded.trim() || undefined;
+  } catch {
+    return trimmed;
+  }
+}
+
+function parseContentDispositionName(value?: string | null): string | undefined {
+  if (!value) return undefined;
+
+  const filenameStar = value.match(/filename\*=UTF-8''([^;]+)/i);
+  if (filenameStar) return normalizeSubscriptionTitle(filenameStar[1]);
+
+  const filename = value.match(/filename="?([^";]+)"?/i);
+  if (!filename) return undefined;
+
+  const cleanName = filename[1].replace(/\.(?:txt|json|yaml|yml|conf)$/i, '');
+  return normalizeSubscriptionTitle(cleanName);
+}
+
+function getFallbackSubscriptionName(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
+}
+
 async function fetchSubscriptionText(url: string): Promise<FetchedSubscriptionPayload> {
   const isTauri =
     typeof window !== 'undefined' &&
@@ -312,10 +361,17 @@ async function fetchSubscriptionText(url: string): Promise<FetchedSubscriptionPa
   if (isTauri) {
     const { invoke } = await import('@tauri-apps/api/core');
     try {
-      const result = await invoke<{ body: string; subscription_userinfo?: string | null }>('fetch_subscription_url', { url });
+      const result = await invoke<{
+        body: string;
+        subscription_userinfo?: string | null;
+        profile_title?: string | null;
+        content_disposition?: string | null;
+      }>('fetch_subscription_url', { url });
       return {
         text: result.body,
         userInfo: result.subscription_userinfo || undefined,
+        profileTitle: result.profile_title || undefined,
+        contentDisposition: result.content_disposition || undefined,
       };
     } catch {
       const text = await invoke<string>('fetch_url', { url });
@@ -335,6 +391,11 @@ async function fetchSubscriptionText(url: string): Promise<FetchedSubscriptionPa
         response.headers.get('subscription-userinfo') ||
         response.headers.get('x-subscription-userinfo') ||
         undefined,
+      profileTitle:
+        response.headers.get('profile-title') ||
+        response.headers.get('x-profile-title') ||
+        undefined,
+      contentDisposition: response.headers.get('content-disposition') || undefined,
     };
   };
 
@@ -360,6 +421,11 @@ async function fetchSubscriptionText(url: string): Promise<FetchedSubscriptionPa
       response.headers.get('subscription-userinfo') ||
       response.headers.get('x-subscription-userinfo') ||
       undefined,
+    profileTitle:
+      response.headers.get('profile-title') ||
+      response.headers.get('x-profile-title') ||
+      undefined,
+    contentDisposition: response.headers.get('content-disposition') || undefined,
   };
 }
 
@@ -371,10 +437,14 @@ export async function fetchSubscription(
   existingId?: string
 ): Promise<Subscription> {
   const id = existingId || crypto.randomUUID();
-  const subscriptionName = name || new URL(url).hostname;
+  const fallbackName = name || getFallbackSubscriptionName(url);
 
   try {
-    const { text, userInfo } = await fetchSubscriptionText(url);
+    const { text, userInfo, profileTitle, contentDisposition } = await fetchSubscriptionText(url);
+    const remoteName =
+      normalizeSubscriptionTitle(profileTitle) ||
+      parseContentDispositionName(contentDisposition);
+    const subscriptionName = remoteName || fallbackName;
     let servers: ServerConfig[] = [];
 
     // Try JSON array first (DoodleVPN-style full configs)

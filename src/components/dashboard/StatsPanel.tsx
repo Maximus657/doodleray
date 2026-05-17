@@ -17,31 +17,41 @@ interface Props {
   connectTime: number;
   proxyMode: ProxyMode;
   speedHistory: SpeedPoint[];
+  compact?: boolean;
   t: (key: any) => string;
 }
 
-export default function StatsPanel({ currentDownload, currentUpload, totalDown, totalUp, connectTime, proxyMode, speedHistory, t }: Props) {
+export default function StatsPanel({ currentDownload, currentUpload, totalDown, totalUp, connectTime, proxyMode, speedHistory, compact = false, t }: Props) {
   const displayData = speedHistory.slice(-30);
+  const statCardClass = compact
+    ? 'bg-white rounded-xl p-2 text-center border-[3px] border-black shadow-[2px_2px_0_#000]'
+    : 'bg-white rounded-2xl p-3 text-center border-[3px] border-black shadow-[4px_4px_0_#000]';
+  const statValueClass = compact
+    ? 'text-base font-black text-black tabular-nums tracking-tighter'
+    : 'text-xl font-black text-black tabular-nums tracking-tighter';
+  const chartClass = compact
+    ? 'w-full card rounded-xl p-3 shrink-0 animate-slide-up relative z-10 pointer-events-none'
+    : 'w-full max-w-md card rounded-2xl p-3 shrink-0 animate-slide-up relative z-10 pointer-events-none';
 
   return (
     <>
       {/* ── STATS CARDS ── */}
-      <div className="grid grid-cols-3 gap-4 w-full max-w-md mt-4 shrink-0 animate-slide-up relative z-10">
-        <div className="bg-white rounded-2xl p-3 text-center border-[3px] border-black shadow-[4px_4px_0_#000]">
+      <div className={`grid grid-cols-3 ${compact ? 'gap-2 w-full' : 'gap-4 w-full max-w-md mt-4'} shrink-0 animate-slide-up relative z-10`}>
+        <div className={statCardClass}>
           <ArrowDown className="w-5 h-5 mx-auto text-black mb-1 stroke-[3px]" />
-          <p className="text-xl font-black text-black tabular-nums tracking-tighter">{formatSpeed(currentDownload)}</p>
+          <p className={statValueClass}>{formatSpeed(currentDownload)}</p>
           <p className="text-[10px] font-black text-black/60 uppercase tracking-widest mt-0.5">{t('download')}</p>
           <p className="text-[10px] font-black font-mono text-black/40 mt-1">{formatBytes(totalDown)}</p>
         </div>
-        <div className="bg-white rounded-2xl p-3 text-center border-[3px] border-black shadow-[4px_4px_0_#000]">
+        <div className={statCardClass}>
           <ArrowUp className="w-5 h-5 mx-auto text-black mb-1 stroke-[3px]" />
-          <p className="text-xl font-black text-black tabular-nums tracking-tighter">{formatSpeed(currentUpload)}</p>
+          <p className={statValueClass}>{formatSpeed(currentUpload)}</p>
           <p className="text-[10px] font-black text-black/60 uppercase tracking-widest mt-0.5">{t('upload')}</p>
           <p className="text-[10px] font-black font-mono text-black/40 mt-1">{formatBytes(totalUp)}</p>
         </div>
-        <div className="bg-white rounded-2xl p-3 text-center border-[3px] border-black shadow-[4px_4px_0_#000]">
+        <div className={statCardClass}>
           <Timer className="w-5 h-5 mx-auto text-black mb-1 stroke-[3px]" />
-          <p className="text-xl font-black text-black tabular-nums tracking-tighter">{formatDuration(connectTime)}</p>
+          <p className={statValueClass}>{formatDuration(connectTime)}</p>
           <p className="text-[10px] font-black text-black/60 uppercase tracking-widest mt-0.5">{t('time')}</p>
           <p className="text-[10px] font-black font-mono text-black/40 mt-1 flex items-center justify-center gap-1">
             <Shield className="w-3 h-3" /> {proxyMode === 'tun' ? 'TUN' : 'PROXY'}
@@ -51,7 +61,7 @@ export default function StatsPanel({ currentDownload, currentUpload, totalDown, 
 
       {/* ── SPEED GRAPH ── */}
       {displayData.length > 2 && (
-        <div className="w-full max-w-md card rounded-2xl p-3 shrink-0 animate-slide-up relative z-10 pointer-events-none">
+        <div className={chartClass}>
           <div className="flex items-center justify-between mb-2 px-1">
             <span className="text-[10px] font-bold text-text-on-dark-muted uppercase tracking-widest flex items-center gap-1">
               <Wifi className="w-3 h-3" /> {t('liveThroughput')}

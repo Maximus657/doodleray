@@ -781,6 +781,8 @@ pub struct PingResult {
 pub struct SubscriptionFetchResult {
     pub body: String,
     pub subscription_userinfo: Option<String>,
+    pub profile_title: Option<String>,
+    pub content_disposition: Option<String>,
 }
 
 /// Fetch a URL from Rust side — bypasses CORS restrictions in WebView
@@ -862,6 +864,19 @@ async fn fetch_subscription_url(url: String) -> Result<SubscriptionFetchResult, 
         .and_then(|value| value.to_str().ok())
         .map(|value| value.to_string());
 
+    let profile_title = response
+        .headers()
+        .get("profile-title")
+        .or_else(|| response.headers().get("x-profile-title"))
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_string());
+
+    let content_disposition = response
+        .headers()
+        .get("content-disposition")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_string());
+
     let body = response
         .text()
         .await
@@ -870,6 +885,8 @@ async fn fetch_subscription_url(url: String) -> Result<SubscriptionFetchResult, 
     Ok(SubscriptionFetchResult {
         body,
         subscription_userinfo,
+        profile_title,
+        content_disposition,
     })
 }
 

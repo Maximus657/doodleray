@@ -126,7 +126,7 @@ jobs:
             ---
             > **Tip:** If you're not sure which file to pick — on **Windows** grab the `.exe`, on **Mac** grab the `.dmg` matching your chip (Apple Silicon = `aarch64`, Intel = `x64`).
           releaseDraft: false
-          prerelease: false
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'BETA') }}
 
   build-macos:
     needs: build-windows
@@ -274,5 +274,5 @@ jobs:
             ---
             > **Tip:** If you're not sure which file to pick — on **Windows** grab the `.exe`, on **Mac** grab the `.dmg` matching your chip (Apple Silicon = `aarch64`, Intel = `x64`).
           releaseDraft: false
-          prerelease: false
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'BETA') }}
           args: --target ${{ matrix.target }}

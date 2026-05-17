@@ -12,9 +12,13 @@ interface Props {
 }
 
 export default function LogsStrip({ logs, showLogs, onToggleLogs, onClearLogs, logsEndRef, t }: Props) {
+  const issueCount = logs.filter((log) => log.level === 'error' || log.level === 'warning').length;
+  const hasIssues = issueCount > 0;
+
   return (
-    <div className={`bg-white border-t-[4px] border-black overflow-hidden flex flex-col transition-all duration-300 shrink-0
-      ${showLogs ? 'h-40' : 'h-10'}`}>
+    <div className={`relative z-30 overflow-hidden flex flex-col transition-all duration-300 shrink-0 border-t-[3px] border-black
+      ${hasIssues ? 'bg-red-50' : 'bg-white'}
+      ${showLogs ? 'h-40' : 'h-8'}`}>
       <div
         role="button"
         tabIndex={0}
@@ -22,18 +26,22 @@ export default function LogsStrip({ logs, showLogs, onToggleLogs, onClearLogs, l
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') onToggleLogs();
         }}
-        className="flex items-center justify-between px-4 py-2 shrink-0 cursor-pointer hover:bg-black/5 transition-all"
+        className="flex h-8 items-center justify-between px-4 shrink-0 cursor-pointer hover:bg-black/5 transition-all"
       >
-        <div className="flex items-center gap-2 text-black font-black uppercase tracking-widest text-[11px]">
-          <ScrollText className="w-4 h-4" />
-          <span>{t('terminal')}</span>
-          {logs.length > 0 && <span className="text-black/50">({logs.length})</span>}
+        <div className="flex items-center gap-2 text-black font-black uppercase tracking-widest text-[10px]">
+          <ScrollText className={`w-3.5 h-3.5 ${hasIssues ? 'text-red-600' : ''}`} />
+          <span>{hasIssues ? t('issues') : t('events')}</span>
+          {logs.length > 0 && (
+            <span className={`${hasIssues ? 'text-red-600' : 'text-black/45'}`}>
+              ({hasIssues ? issueCount : logs.length})
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-3">
-          {logs.length > 0 && (
+          {showLogs && logs.length > 0 && (
             <button onClick={(e) => { e.stopPropagation(); onClearLogs(); }} className="text-[10px] uppercase font-black text-black/50 hover:text-black cursor-pointer">{t('clear')}</button>
           )}
-          {showLogs ? <ChevronDown className="w-5 h-5 text-black stroke-[3px]" /> : <ChevronUp className="w-5 h-5 text-black stroke-[3px]" />}
+          {showLogs ? <ChevronDown className="w-4 h-4 text-black stroke-[3px]" /> : <ChevronUp className="w-4 h-4 text-black stroke-[3px]" />}
         </div>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-2 font-mono text-[11px] font-black uppercase space-y-1">

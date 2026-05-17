@@ -36,13 +36,20 @@ export default defineConfig(async () => ({
               response.headers.get('subscription-userinfo') ||
               response.headers.get('x-subscription-userinfo') ||
               '';
+            const profileTitle =
+              response.headers.get('profile-title') ||
+              response.headers.get('x-profile-title') ||
+              '';
+            const contentDisposition = response.headers.get('content-disposition') || '';
             const text = await response.text();
             res.writeHead(response.status, {
               'Content-Type': response.headers.get('content-type') || 'text/plain',
               'Access-Control-Allow-Origin': '*',
-              'Access-Control-Expose-Headers': 'subscription-userinfo,x-subscription-userinfo',
+              'Access-Control-Expose-Headers': 'subscription-userinfo,x-subscription-userinfo,profile-title,x-profile-title,content-disposition',
               'Cache-Control': 'no-store',
               ...(subscriptionUserinfo ? { 'subscription-userinfo': subscriptionUserinfo } : {}),
+              ...(profileTitle ? { 'profile-title': profileTitle } : {}),
+              ...(contentDisposition ? { 'content-disposition': contentDisposition } : {}),
             });
             res.end(text);
           } catch (err) {
