@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/core';
+import { findMatchingServer } from '../lib/server-selection';
 // Trigger HMR
 
 // ========== Types ==========
@@ -296,7 +297,10 @@ export const useAppStore = create<AppState>()(
         servers: s.servers.filter((srv) => srv.subscriptionId !== undefined),
         activeServer: (!s.activeServer?.subscriptionId) ? null : s.activeServer
       })),
-      setServers: (servers) => set({ servers }),
+      setServers: (servers) => set((s) => ({
+        servers,
+        activeServer: findMatchingServer(s.activeServer, servers),
+      })),
 
       addSubscription: (sub) => set((s) => {
         // If subscription with same URL already exists, replace it
@@ -315,7 +319,11 @@ export const useAppStore = create<AppState>()(
           seen.add(key);
           return true;
         });
-        return { subscriptions: newSubscriptions, servers: deduped };
+        return {
+          subscriptions: newSubscriptions,
+          servers: deduped,
+          activeServer: findMatchingServer(s.activeServer, deduped),
+        };
       }),
       removeSubscription: (id) => set((s) => ({
         subscriptions: s.subscriptions.filter((sub) => sub.id !== id),
@@ -338,6 +346,7 @@ export const useAppStore = create<AppState>()(
         return {
           subscriptions: s.subscriptions.map((sub) => sub.id === id ? newSub : sub),
           servers: deduped,
+          activeServer: findMatchingServer(s.activeServer, deduped),
         };
       }),
 

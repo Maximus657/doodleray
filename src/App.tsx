@@ -11,6 +11,7 @@ import Settings from './pages/Settings';
 import { useAppStore } from './stores/app-store';
 import { useToastStore } from './stores/toast-store';
 import { buildConnectRequestFromState } from './lib/connect-helpers';
+import { resolveConnectServer } from './lib/server-selection';
 import { checkForAppUpdate, installAppUpdate } from './lib/app-updater';
 import './index.css';
 
@@ -119,17 +120,7 @@ function App() {
       if (!state.autoConnectOnStartup) return;
       if (state.status === 'connected' || state.status === 'connecting') return;
       
-      let srv = state.activeServer;
-      if (!srv && state.servers.length > 0) {
-        if (state.autoSelectFastest) {
-          const withPing = state.servers.filter(s => s.ping !== undefined && s.ping > 0);
-          srv = withPing.length > 0
-            ? withPing.reduce((best, s) => (s.ping! < best.ping! ? s : best))
-            : state.servers[0];
-        } else {
-          srv = state.servers[0];
-        }
-      }
+      const srv = resolveConnectServer(state.activeServer, state.servers, state.autoSelectFastest);
       if (!srv) return;
 
       // Prevent concurrent executions by setting status immediately before the sleep delay

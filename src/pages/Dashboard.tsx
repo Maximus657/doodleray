@@ -7,6 +7,7 @@ import { parseProxyLink } from '../lib/parser';
 import { useTranslation } from '../locales';
 import { reportConnectionError } from '../lib/workshop-api';
 import { buildConnectRequestFromState } from '../lib/connect-helpers';
+import { findMatchingServer, resolveConnectServer } from '../lib/server-selection';
 
 // Sub-components
 import RetroBackground from '../components/dashboard/RetroBackground';
@@ -88,6 +89,15 @@ export default function Dashboard() {
     }, 1000);
     return () => clearInterval(interval);
   }, [status, connectedAt]);
+
+  // Keep persisted selections aligned with refreshed subscription server ids.
+  useEffect(() => {
+    if (!activeServer) return;
+    const matchedServer = findMatchingServer(activeServer, servers);
+    if (matchedServer && matchedServer.id !== activeServer.id) {
+      setActiveServer(matchedServer);
+    }
+  }, [activeServer, servers, setActiveServer]);
 
   // Sync connection state from backend on mount
   useEffect(() => {
@@ -212,14 +222,12 @@ export default function Dashboard() {
 
   const handleConnect = useCallback(async () => {
     if (status === 'disconnected') {
-      let srv = activeServer;
-      if (!srv && servers.length > 0) {
-        if (autoSelectFastest) {
-          const withPing = servers.filter(s => s.ping !== undefined && s.ping > 0);
-          srv = withPing.length > 0 ? withPing.reduce((best, s) => (s.ping! < best.ping! ? s : best)) : servers[0];
-          addLog('info', `Auto-selected fastest: ${srv.name} (${srv.ping}ms)`);
-        } else { srv = servers[0]; }
+      const srv = resolveConnectServer(activeServer, servers, autoSelectFastest);
+      if (srv && activeServer?.id !== srv.id) {
         setActiveServer(srv);
+        if (!activeServer && autoSelectFastest && srv.ping !== undefined && srv.ping > 0) {
+          addLog('info', `Auto-selected fastest: ${srv.name} (${srv.ping}ms)`);
+        }
       }
       if (!srv) { addLog('error', 'No server selected. Please add a subscription or select a server.'); return; }
       setStatus('connecting');
@@ -438,16 +446,6 @@ export default function Dashboard() {
   }, [subscriptions, removeSubscription, t]);
 
   const canConnect = !!activeServer || servers.length > 0;
-  const activeSubscription = activeServer
-    ? activeServer.subscriptionId
-      ? subscriptions.find((sub) => sub.id === activeServer.subscriptionId) || null
-      : null
-    : subscriptions.length === 1
-      ? subscriptions[0]
-      : null;
-  const activeSubscriptionServerCount = activeSubscription
-    ? servers.filter((server) => server.subscriptionId === activeSubscription.id).length
-    : 0;
   const hasDashboardContent = servers.length > 0 || status !== 'disconnected';
   const trimmedQuickInput = quickInput.trim();
   const quickInputKind = trimmedQuickInput.startsWith('http://') || trimmedQuickInput.startsWith('https://')
@@ -540,6 +538,7 @@ export default function Dashboard() {
             />
 
             <ServerList
+              status={status}
               servers={servers} subscriptions={subscriptions} activeServer={activeServer}
               searchQuery={searchQuery} onSearchChange={setSearchQuery}
               collapsedGroups={collapsedGroups}
@@ -566,8 +565,6 @@ export default function Dashboard() {
             currentDownload={currentDownload} currentUpload={currentUpload}
             totalDown={totalDown} totalUp={totalUp}
             speedHistory={speedHistory} showStats={showStats}
-            activeSubscription={activeSubscription}
-            activeSubscriptionServerCount={activeSubscriptionServerCount}
             onModeSwitch={handleModeSwitch}
             onSystemProxyModeChange={setSystemProxyMode}
             t={t}

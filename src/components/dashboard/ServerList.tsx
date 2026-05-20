@@ -12,11 +12,13 @@ import {
   Trash2,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
-import type { ServerConfig, Subscription } from '../../stores/app-store';
-import { protocolLabel } from '../../lib/utils';
+import type { ConnectionStatus, ServerConfig, Subscription } from '../../stores/app-store';
+import { formatBytes, protocolLabel } from '../../lib/utils';
 import { buildServerDisplayGroups, serverMatchesGroupQuery, type ServerDisplayGroup } from '../../lib/server-groups';
+import { findMatchingServer } from '../../lib/server-selection';
 
 interface Props {
+  status: ConnectionStatus;
   servers: ServerConfig[];
   subscriptions: Subscription[];
   activeServer: ServerConfig | null;
@@ -54,6 +56,15 @@ function groupPingColor(ping: number | undefined): string {
   return 'text-red-600';
 }
 
+function formatTrafficQuotaBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024 * 1024) return formatBytes(bytes);
+
+  const gb = bytes / (1024 * 1024 * 1024);
+  const isWholeGb = Math.abs(gb - Math.round(gb)) < 0.001;
+  return `${isWholeGb ? Math.round(gb).toString() : gb.toFixed(2)} GB`;
+}
+
 function CollapsibleSection({
   open,
   children,
@@ -68,6 +79,7 @@ function CollapsibleSection({
       data-open={open ? 'true' : 'false'}
       aria-hidden={!open}
       inert={!open ? true : undefined}
+      style={!open ? { height: 0, maxHeight: 0, opacity: 0, overflow: 'hidden' } : undefined}
       className={`smooth-collapse ${className}`}
     >
       <div className="smooth-collapse-inner">
@@ -78,14 +90,22 @@ function CollapsibleSection({
 }
 
 export default function ServerList({
-  servers, subscriptions, activeServer, searchQuery, onSearchChange,
+  status, servers, subscriptions, activeServer, searchQuery, onSearchChange,
   collapsedGroups, onToggleGroup, onServerSelect,
   onTestSubscription, onUpdateSubscription, onRemoveSubscription,
   onTestCustomServers, onRemoveAllCustomServers, onRemoveServer,
   testingSubId, refreshingSubId, pingingServerId, t,
 }: Props) {
+  const visibleActiveServer = findMatchingServer(activeServer, servers) || activeServer;
+  const showCurrentServer = status !== 'disconnected' && !!visibleActiveServer;
+  const activeServerPingText = visibleActiveServer?.ping === undefined
+    ? null
+    : visibleActiveServer.ping < 0
+      ? t('errorLabel')
+      : `tcp ${visibleActiveServer.ping}ms`;
+
   const renderServerGroup = (group: ServerDisplayGroup) => {
-    const activeGroupServer = group.servers.find((server) => activeServer?.id === server.id);
+    const activeGroupServer = findMatchingServer(activeServer, group.servers);
     const selectedServer = activeGroupServer || group.selectedServer;
     const isActive = !!activeGroupServer;
     const isPinging = group.servers.some((server) => pingingServerId === server.id);
@@ -129,8 +149,77 @@ export default function ServerList({
     );
   };
 
+  const renderSubscriptionUsage = (sub: Subscription) => {
+    const traffic = sub.traffic;
+    const used = traffic ? traffic.upload + traffic.download : 0;
+    const total = traffic?.total;
+    const hasReliableTraffic = !!traffic && !!total && total > 0;
+    const percent = hasReliableTraffic ? Math.min(100, (used / total) * 100) : 0;
+    const expire = traffic?.expire
+      ? new Date(traffic.expire * 1000).toLocaleDateString('ru-RU')
+      : null;
+    const updated = sub.updatedAt
+      ? new Date(sub.updatedAt).toLocaleDateString('ru-RU')
+      : null;
+
+    return (
+      <div className="mt-2 border-t-[2px] border-black/10 pt-2">
+        {hasReliableTraffic ? (
+          <>
+            <div className="h-2 overflow-hidden rounded-full border-[2px] border-black bg-black/10">
+              <div className="h-full bg-emerald-400" style={{ width: `${percent}%` }} />
+            </div>
+            <div className="mt-1.5 flex items-center justify-between gap-2 text-[8px] font-black uppercase tracking-widest text-black/55">
+              <span className="truncate">
+                {`${formatTrafficQuotaBytes(used)} / ${formatTrafficQuotaBytes(total)}`}
+              </span>
+              {expire && <span className="shrink-0">{t('validUntil')} {expire}</span>}
+            </div>
+          </>
+        ) : (
+          <p className="text-[8px] font-black uppercase tracking-widest text-black/40">
+            {t('trafficUnavailable')}
+          </p>
+        )}
+        {updated && (
+          <p className="mt-1 text-[8px] font-black uppercase tracking-widest text-black/35">
+            {t('lastUpdated')} {updated}
+          </p>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="w-full max-w-sm mt-4 relative z-10 pb-4">
+      {showCurrentServer && visibleActiveServer && (
+        <div className="mb-3 w-full rounded-2xl border-[3px] border-black bg-black p-3 text-white shadow-[5px_5px_0_rgba(0,0,0,0.35)]">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <span className="text-[10px] font-black uppercase tracking-widest text-white/55">
+              {t('activeServer')}
+            </span>
+            <span className={`rounded-lg border-[2px] border-emerald-400 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest ${
+              status === 'connected' ? 'bg-emerald-400 text-black' : 'bg-amber-300 text-black'
+            }`}>
+              {status === 'connected' ? t('connected') : t('connecting')}
+            </span>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border-[2px] border-white bg-white">
+              {renderFlag(visibleActiveServer.countryCode)}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-black uppercase leading-tight tracking-tight">
+                {visibleActiveServer.name}
+              </p>
+              <div className="mt-1 flex min-w-0 items-center gap-2 text-[9px] font-black uppercase tracking-widest text-white/55">
+                <span className="truncate">{serverProtocolLabel(visibleActiveServer)}</span>
+                {activeServerPingText && <span className="shrink-0 text-emerald-300">{activeServerPingText}</span>}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="mb-2 px-1 flex items-center justify-between">
         <span className="text-[11px] font-black text-black/50 uppercase tracking-widest pl-1">{t('servers')}</span>
@@ -161,12 +250,16 @@ export default function ServerList({
               {/* Subscription Header */}
               <div className="w-full bg-white/90 border-[2px] border-black/70 rounded-xl p-2.5 mb-2 shadow-[1px_1px_0_rgba(0,0,0,0.35)] backdrop-blur transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]">
                 <div className="w-full flex items-center justify-between">
-                  <div className="flex items-center gap-2 min-w-0 pr-2 cursor-pointer select-none" onClick={() => onToggleGroup(sub.id)}>
+                  <button
+                    type="button"
+                    className="flex min-w-0 cursor-pointer appearance-none items-center gap-2 bg-transparent pr-2 text-left select-none"
+                    onClick={() => onToggleGroup(sub.id)}
+                  >
                     <ChevronDown className={`w-4 h-4 text-black shrink-0 stroke-[3px] transition-transform duration-300 ${collapsedGroups[sub.id] ? '-rotate-90' : 'rotate-0'}`} />
                     <Rss className="w-3.5 h-3.5 text-black shrink-0 stroke-[3px]" />
                     <span className="text-[10px] font-black text-black uppercase tracking-widest truncate">{sub.name}</span>
                     <span className="text-[9px] font-black bg-black text-white px-1.5 py-0.5 rounded-md uppercase tracking-widest shrink-0">{subGroupCount}</span>
-                  </div>
+                  </button>
                   <div className="flex items-center gap-1.5 shrink-0 px-1">
                     <button onClick={() => onUpdateSubscription(sub)} disabled={refreshingSubId === sub.id}
                       className={`w-7 h-7 flex items-center justify-center bg-white border-[2px] border-black rounded-lg cursor-pointer text-black transition-all shadow-[2px_2px_0_#000] hover:-translate-y-[1px] hover:-translate-x-[1px] hover:shadow-[3px_3px_0_#000] active:translate-y-[1px] active:translate-x-[1px] active:shadow-none ${refreshingSubId === sub.id ? 'opacity-70 cursor-wait' : ''}`} title={t('refreshSub')}>
@@ -187,6 +280,9 @@ export default function ServerList({
                     </button>
                   </div>
                 </div>
+                <CollapsibleSection open={!collapsedGroups[sub.id]}>
+                  {renderSubscriptionUsage(sub)}
+                </CollapsibleSection>
               </div>
 
               {/* Servers */}
@@ -235,7 +331,7 @@ export default function ServerList({
               <CollapsibleSection open={!collapsedGroups['__custom__']}>
                 <div className="flex flex-col gap-2 pl-2 border-l-[3px] border-black/10 ml-2">
                   {standalone.map((server) => {
-                    const isActive = activeServer?.id === server.id;
+                    const isActive = findMatchingServer(activeServer, [server]) !== null;
                     const pingColor = server.ping && server.ping > 0
                       ? server.ping < 100 ? 'text-emerald-600' : server.ping < 300 ? 'text-amber-600' : 'text-red-600'
                       : server.ping === -1 ? 'text-red-600' : 'text-black/40';

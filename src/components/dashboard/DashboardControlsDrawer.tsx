@@ -6,11 +6,9 @@ import {
   CircleHelp,
   Globe,
   Network,
-  Rss,
   SlidersHorizontal,
 } from 'lucide-react';
-import type { ConnectionStatus, ProxyMode, SpeedPoint, Subscription, SystemProxyMode } from '../../stores/app-store';
-import { formatBytes } from '../../lib/utils';
+import type { ConnectionStatus, ProxyMode, SpeedPoint, SystemProxyMode } from '../../stores/app-store';
 import StatsPanel from './StatsPanel';
 
 interface Props {
@@ -24,20 +22,9 @@ interface Props {
   totalUp: number;
   speedHistory: SpeedPoint[];
   showStats: boolean;
-  activeSubscription: Subscription | null;
-  activeSubscriptionServerCount: number;
   onModeSwitch: (mode: ProxyMode) => void;
   onSystemProxyModeChange: (mode: SystemProxyMode) => void;
   t: (key: any) => string;
-}
-
-function formatTrafficQuotaBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024 * 1024) return formatBytes(bytes);
-
-  const gb = bytes / (1024 * 1024 * 1024);
-  const isWholeGb = Math.abs(gb - Math.round(gb)) < 0.001;
-  return `${isWholeGb ? Math.round(gb).toString() : gb.toFixed(2)} GB`;
 }
 
 export default function DashboardControlsDrawer({
@@ -51,8 +38,6 @@ export default function DashboardControlsDrawer({
   totalUp,
   speedHistory,
   showStats,
-  activeSubscription,
-  activeSubscriptionServerCount,
   onModeSwitch,
   onSystemProxyModeChange,
   t,
@@ -63,21 +48,6 @@ export default function DashboardControlsDrawer({
   const [detailsOpen, setDetailsOpen] = useState(false);
 
   const activeModeLabel = proxyMode === 'tun' ? t('fullDeviceMode') : t('systemProxy');
-  const subscriptionTraffic = activeSubscription?.traffic;
-  const subscriptionUsed = subscriptionTraffic
-    ? subscriptionTraffic.upload + subscriptionTraffic.download
-    : 0;
-  const subscriptionTotal = subscriptionTraffic?.total;
-  const hasReliableTraffic = !!subscriptionTraffic && !!subscriptionTotal && subscriptionTotal > 0;
-  const subscriptionPercent = hasReliableTraffic
-    ? Math.min(100, (subscriptionUsed / subscriptionTotal) * 100)
-    : 0;
-  const subscriptionExpire = subscriptionTraffic?.expire
-    ? new Date(subscriptionTraffic.expire * 1000).toLocaleDateString('ru-RU')
-    : null;
-  const subscriptionUpdated = activeSubscription?.updatedAt
-    ? new Date(activeSubscription.updatedAt).toLocaleDateString('ru-RU')
-    : null;
 
   const switchMode = (mode: ProxyMode) => {
     setModeHelp(null);
@@ -210,44 +180,6 @@ export default function DashboardControlsDrawer({
                   {t(labelKey)}
                 </button>
               ))}
-            </div>
-          )}
-
-          {activeSubscription && (
-            <div className="w-full rounded-xl border-[3px] border-black bg-white p-3 shadow-[4px_4px_0_#000]">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-2">
-                  <Rss className="h-4 w-4 shrink-0 stroke-[3px]" />
-                  <span className="truncate text-[11px] font-black uppercase tracking-widest text-black">
-                    {activeSubscription.name}
-                  </span>
-                </div>
-                <span className="shrink-0 rounded-lg bg-black px-2 py-1 text-[9px] font-black uppercase tracking-widest text-white">
-                  {activeSubscriptionServerCount}
-                </span>
-              </div>
-              {hasReliableTraffic ? (
-                <div className="mt-3">
-                  <div className="h-2.5 overflow-hidden rounded-full border-[2px] border-black bg-black/10">
-                    <div className="h-full bg-emerald-400" style={{ width: `${subscriptionPercent}%` }} />
-                  </div>
-                  <div className="mt-1.5 flex items-center justify-between gap-2 text-[9px] font-black uppercase tracking-widest text-black/55">
-                    <span className="truncate">
-                      {`${formatTrafficQuotaBytes(subscriptionUsed)} / ${formatTrafficQuotaBytes(subscriptionTotal!)}`}
-                    </span>
-                    {subscriptionExpire && <span className="shrink-0">{t('validUntil')} {subscriptionExpire}</span>}
-                  </div>
-                  {subscriptionUpdated && (
-                    <p className="mt-1 text-[8px] font-black uppercase tracking-widest text-black/35">
-                      {t('lastUpdated')} {subscriptionUpdated}
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <p className="mt-2 text-[10px] font-black uppercase tracking-widest text-black/40">
-                  {t('trafficUnavailable')}
-                </p>
-              )}
             </div>
           )}
 
