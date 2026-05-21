@@ -186,11 +186,11 @@ export default function ServerList({
         {trafficStatus.hasQuota ? (
           <>
             <div className="h-2 overflow-hidden rounded-full border-[2px] border-black bg-black/10">
-              <div className={`h-full ${quotaFillClass}`} style={{ width: `${trafficStatus.remainingPercent}%` }} />
+              <div className={`h-full ${quotaFillClass}`} style={{ width: `${trafficStatus.usedPercent}%` }} />
             </div>
             <div className="mt-1.5 flex items-center justify-between gap-2 text-[8px] font-black uppercase tracking-widest text-black/55">
               <span className="truncate">
-                {`${formatTrafficQuotaBytes(trafficStatus.remaining)} / ${formatTrafficQuotaBytes(trafficStatus.total)}`}
+                {`${formatTrafficQuotaBytes(trafficStatus.used)} / ${formatTrafficQuotaBytes(trafficStatus.total)}`}
               </span>
               {expire && <span className="shrink-0">{t('validUntil')} {expire}</span>}
             </div>
