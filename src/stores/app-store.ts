@@ -262,7 +262,7 @@ export const useAppStore = create<AppState>()(
       strictRoute: true,
       killSwitch: false,
       autoSelectFastest: true,
-      subAutoUpdateMinutes: 60,
+      subAutoUpdateMinutes: 180,
       connectedAt: null,
       alwaysRunAdmin: false,
       autoConnectOnStartup: false,

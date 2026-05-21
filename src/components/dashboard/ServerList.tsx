@@ -7,6 +7,7 @@ import {
   Rss,
   RefreshCw,
   Activity,
+  AlertTriangle,
   Loader2,
   Settings as SettingsIcon,
   Trash2,
@@ -16,6 +17,7 @@ import type { ConnectionStatus, ServerConfig, Subscription } from '../../stores/
 import { formatBytes, protocolLabel } from '../../lib/utils';
 import { buildServerDisplayGroups, serverMatchesGroupQuery, type ServerDisplayGroup } from '../../lib/server-groups';
 import { findMatchingServer } from '../../lib/server-selection';
+import { getSubscriptionTrafficStatus } from '../../lib/subscription-status';
 
 interface Props {
   status: ConnectionStatus;
@@ -36,6 +38,7 @@ interface Props {
   testingSubId: string | null;
   refreshingSubId: string | null;
   pingingServerId: string | null;
+  subAutoUpdateMinutes: number;
   t: (key: any) => string;
 }
 
@@ -63,6 +66,12 @@ function formatTrafficQuotaBytes(bytes: number): string {
   const gb = bytes / (1024 * 1024 * 1024);
   const isWholeGb = Math.abs(gb - Math.round(gb)) < 0.001;
   return `${isWholeGb ? Math.round(gb).toString() : gb.toFixed(2)} GB`;
+}
+
+function formatAutoUpdateInterval(minutes: number, t: (key: any) => string): string | null {
+  if (minutes <= 0) return null;
+  if (minutes % 60 === 0) return `${minutes / 60} ${t('hoursShort')}`;
+  return `${minutes} ${t('minutesShort')}`;
 }
 
 function CollapsibleSection({
@@ -94,7 +103,7 @@ export default function ServerList({
   collapsedGroups, onToggleGroup, onServerSelect,
   onTestSubscription, onUpdateSubscription, onRemoveSubscription,
   onTestCustomServers, onRemoveAllCustomServers, onRemoveServer,
-  testingSubId, refreshingSubId, pingingServerId, t,
+  testingSubId, refreshingSubId, pingingServerId, subAutoUpdateMinutes, t,
 }: Props) {
   const visibleActiveServer = findMatchingServer(activeServer, servers) || activeServer;
   const showCurrentServer = status !== 'disconnected' && !!visibleActiveServer;
@@ -150,28 +159,38 @@ export default function ServerList({
   };
 
   const renderSubscriptionUsage = (sub: Subscription) => {
-    const traffic = sub.traffic;
-    const used = traffic ? traffic.upload + traffic.download : 0;
-    const total = traffic?.total;
-    const hasReliableTraffic = !!traffic && !!total && total > 0;
-    const percent = hasReliableTraffic ? Math.min(100, (used / total) * 100) : 0;
-    const expire = traffic?.expire
-      ? new Date(traffic.expire * 1000).toLocaleDateString('ru-RU')
+    const trafficStatus = getSubscriptionTrafficStatus(sub);
+    const expire = sub.traffic?.expire
+      ? new Date(sub.traffic.expire * 1000).toLocaleDateString('ru-RU')
       : null;
     const updated = sub.updatedAt
       ? new Date(sub.updatedAt).toLocaleDateString('ru-RU')
       : null;
+    const autoUpdateInterval = formatAutoUpdateInterval(subAutoUpdateMinutes, t);
+    const quotaFillClass = trafficStatus.isLimited
+      ? 'bg-red-500'
+      : trafficStatus.remainingPercent <= 15
+        ? 'bg-amber-400'
+        : 'bg-emerald-400';
 
     return (
       <div className="mt-2 border-t-[2px] border-black/10 pt-2">
-        {hasReliableTraffic ? (
+        {trafficStatus.isLimited && (
+          <div className="mb-2 flex items-center gap-1.5 rounded-lg border-[2px] border-black bg-amber-300 px-2 py-1 text-[8px] font-black uppercase tracking-widest text-black">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 stroke-[3px]" />
+            <span className="truncate">
+              {trafficStatus.reason === 'expired' ? t('subscriptionExpired') : t('subscriptionLimited')}
+            </span>
+          </div>
+        )}
+        {trafficStatus.hasQuota ? (
           <>
             <div className="h-2 overflow-hidden rounded-full border-[2px] border-black bg-black/10">
-              <div className="h-full bg-emerald-400" style={{ width: `${percent}%` }} />
+              <div className={`h-full ${quotaFillClass}`} style={{ width: `${trafficStatus.remainingPercent}%` }} />
             </div>
             <div className="mt-1.5 flex items-center justify-between gap-2 text-[8px] font-black uppercase tracking-widest text-black/55">
               <span className="truncate">
-                {`${formatTrafficQuotaBytes(used)} / ${formatTrafficQuotaBytes(total)}`}
+                {`${formatTrafficQuotaBytes(trafficStatus.remaining)} / ${formatTrafficQuotaBytes(trafficStatus.total)}`}
               </span>
               {expire && <span className="shrink-0">{t('validUntil')} {expire}</span>}
             </div>
@@ -184,6 +203,7 @@ export default function ServerList({
         {updated && (
           <p className="mt-1 text-[8px] font-black uppercase tracking-widest text-black/35">
             {t('lastUpdated')} {updated}
+            {autoUpdateInterval && <> | {t('autoUpdateLabel')} {autoUpdateInterval}</>}
           </p>
         )}
       </div>
@@ -243,6 +263,7 @@ export default function ServerList({
           );
           const subServerGroups = buildServerDisplayGroups(subServers);
           const subGroupCount = buildServerDisplayGroups(servers.filter((s) => s.subscriptionId === sub.id)).length;
+          const trafficStatus = getSubscriptionTrafficStatus(sub);
           if (subServerGroups.length === 0 && searchQuery) return null;
 
           return (
@@ -259,6 +280,11 @@ export default function ServerList({
                     <Rss className="w-3.5 h-3.5 text-black shrink-0 stroke-[3px]" />
                     <span className="text-[10px] font-black text-black uppercase tracking-widest truncate">{sub.name}</span>
                     <span className="text-[9px] font-black bg-black text-white px-1.5 py-0.5 rounded-md uppercase tracking-widest shrink-0">{subGroupCount}</span>
+                    {trafficStatus.isLimited && (
+                      <span className="hidden sm:inline-flex rounded-md border-[2px] border-black bg-amber-300 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-widest text-black shrink-0">
+                        {t('subscriptionLimitedShort')}
+                      </span>
+                    )}
                   </button>
                   <div className="flex items-center gap-1.5 shrink-0 px-1">
                     <button onClick={() => onUpdateSubscription(sub)} disabled={refreshingSubId === sub.id}

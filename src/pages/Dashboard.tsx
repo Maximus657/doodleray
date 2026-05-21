@@ -8,6 +8,7 @@ import { useTranslation } from '../locales';
 import { reportConnectionError } from '../lib/workshop-api';
 import { buildConnectRequestFromState } from '../lib/connect-helpers';
 import { findMatchingServer, resolveConnectServer } from '../lib/server-selection';
+import { getSubscriptionById, getSubscriptionTrafficStatus } from '../lib/subscription-status';
 
 // Sub-components
 import RetroBackground from '../components/dashboard/RetroBackground';
@@ -16,6 +17,26 @@ import ConnectionControls from '../components/dashboard/ConnectionControls';
 import DashboardControlsDrawer from '../components/dashboard/DashboardControlsDrawer';
 import ServerList from '../components/dashboard/ServerList';
 import LogsStrip from '../components/dashboard/LogsStrip';
+
+const TRAFFIC_LIMIT_EOF_WINDOW_MS = 12_000;
+const TRAFFIC_LIMIT_EOF_THRESHOLD = 4;
+const TRAFFIC_LIMIT_NOTICE_COOLDOWN_MS = 60_000;
+
+function isProxyResponseEofLine(line: string): boolean {
+  const lower = line.toLowerCase();
+  return (
+    lower.includes('proxy/http') &&
+    lower.includes('failed to read response') &&
+    (lower.includes('unexpected eof') || lower.includes('eof'))
+  );
+}
+
+function getProxyLogLevel(line: string): 'error' | 'warning' | null {
+  const lower = line.toLowerCase();
+  if (lower.includes('[error]') || lower.includes('failed')) return 'error';
+  if (lower.includes('[warning]') || lower.includes('warning')) return 'warning';
+  return null;
+}
 
 export default function Dashboard() {
   const {
@@ -43,6 +64,13 @@ export default function Dashboard() {
   const [pingingServerId, setPingingServerId] = useState<string | null>(null);
   const autoPingStartedRef = useRef<Set<string>>(new Set());
   const autoSubRefreshStartedRef = useRef(false);
+  const trafficLimitNoticeKeyRef = useRef<string | null>(null);
+  const eofBurstRef = useRef({ count: 0, windowStartedAt: 0, lastNoticeAt: 0 });
+  const tRef = useRef(t);
+
+  useEffect(() => {
+    tRef.current = t;
+  }, [t]);
 
   const [confirmModal, setConfirmModal] = useState<{
     show: boolean;
@@ -162,14 +190,70 @@ export default function Dashboard() {
         const lines: string[] = await invoke('get_proxy_logs');
         for (const line of lines) {
           if (!line.trim() || line.match(/tunneling request to tcp|accepted (?:tcp|udp)/)) continue;
-          if (line.includes('[Warning]') || line.includes('[Error]') || line.includes('Failed')) {
-            addLog(line.includes('[Error]') || line.includes('Failed') ? 'error' : 'warning', line);
+          if (isProxyResponseEofLine(line)) {
+            const state = useAppStore.getState();
+            const activeSub = getSubscriptionById(state.subscriptions, state.activeServer?.subscriptionId);
+            const trafficStatus = activeSub ? getSubscriptionTrafficStatus(activeSub) : null;
+            const now = Date.now();
+            const burst = eofBurstRef.current;
+
+            if (now - burst.windowStartedAt > TRAFFIC_LIMIT_EOF_WINDOW_MS) {
+              burst.windowStartedAt = now;
+              burst.count = 1;
+            } else {
+              burst.count += 1;
+            }
+
+            const shouldShowNotice = !!trafficStatus?.isLimited || burst.count >= TRAFFIC_LIMIT_EOF_THRESHOLD;
+            if (shouldShowNotice && now - burst.lastNoticeAt > TRAFFIC_LIMIT_NOTICE_COOLDOWN_MS) {
+              const message = trafficStatus?.isLimited
+                ? `${trafficStatus.reason === 'expired' ? tRef.current('subscriptionExpiredLog') : tRef.current('subscriptionTrafficLimitedLog')}${activeSub ? `: ${activeSub.name}` : ''}`
+                : tRef.current('subscriptionMaybeLimitedLog');
+              burst.lastNoticeAt = now;
+              addLog('warning', message);
+              const { useToastStore } = await import('../stores/toast-store');
+              useToastStore.getState().addToast(message, 'warning');
+            }
+            continue;
+          }
+
+          const level = getProxyLogLevel(line);
+          if (level) {
+            addLog(level, line);
           }
         }
       } catch { /* */ }
     }, 1000);
     return () => clearInterval(poll);
   }, [status, addLog]);
+
+  // Show a clear status as soon as the active subscription reports no remaining traffic.
+  useEffect(() => {
+    if (status !== 'connected') {
+      trafficLimitNoticeKeyRef.current = null;
+      return;
+    }
+
+    const activeSub = getSubscriptionById(subscriptions, activeServer?.subscriptionId);
+    if (!activeSub) return;
+
+    const trafficStatus = getSubscriptionTrafficStatus(activeSub);
+    if (!trafficStatus.isLimited) {
+      trafficLimitNoticeKeyRef.current = null;
+      return;
+    }
+
+    const key = `${activeSub.id}:${activeSub.updatedAt}:${trafficStatus.reason}`;
+    if (trafficLimitNoticeKeyRef.current === key) return;
+    trafficLimitNoticeKeyRef.current = key;
+
+    const message = `${trafficStatus.reason === 'expired' ? t('subscriptionExpiredLog') : t('subscriptionTrafficLimitedLog')}: ${activeSub.name}`;
+    eofBurstRef.current.lastNoticeAt = Date.now();
+    addLog('warning', message);
+    import('../stores/toast-store').then(({ useToastStore }) => {
+      useToastStore.getState().addToast(message, 'warning');
+    }).catch(() => {});
+  }, [status, activeServer?.subscriptionId, subscriptions, addLog, t]);
 
   // Poll traffic stats
   useEffect(() => {
@@ -551,7 +635,9 @@ export default function Dashboard() {
               onRemoveAllCustomServers={handleRemoveAllCustom}
               onRemoveServer={handleRemoveServer}
               testingSubId={testingSubId} refreshingSubId={refreshingSubId}
-              pingingServerId={pingingServerId} t={t}
+              pingingServerId={pingingServerId}
+              subAutoUpdateMinutes={subAutoUpdateMinutes}
+              t={t}
             />
           </div>
         )}

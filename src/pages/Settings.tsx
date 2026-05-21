@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Trash2, RotateCcw, Database, Zap, Monitor, Download, ShieldCheck, ChevronDown } from 'lucide-react';
+import { Settings as SettingsIcon, Trash2, RotateCcw, Database, Zap, Monitor, Download, ShieldCheck, ChevronDown, RefreshCw } from 'lucide-react';
 import { disable } from '@tauri-apps/plugin-autostart';
 import { useTranslation } from '../locales';
 import { useAppStore } from '../stores/app-store';
@@ -32,6 +32,7 @@ export default function Settings() {
     killSwitch, setKillSwitch,
     silentAdminAutostart, setSilentAdminAutostart,
     autoConnectOnStartup, setAutoConnectOnStartup,
+    subAutoUpdateMinutes, setSubAutoUpdateMinutes,
     showStats, setShowStats,
     language, setLanguage,
     addLog,
@@ -216,6 +217,23 @@ export default function Settings() {
                 label={t('showLiveStats')}
                 description={t('showLiveStatsDesc')}
               />
+              <div className="flex items-center justify-between gap-3 py-3 px-4 bg-white border-[3px] border-black shadow-[2px_2px_0_#000] rounded-xl">
+                <div className="flex min-w-0 items-start gap-3">
+                  <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 text-black stroke-[3px]" />
+                  <div className="min-w-0">
+                    <span className="text-sm font-black text-black block uppercase tracking-tight">{t('subAutoUpdate')}</span>
+                    <span className="text-[10px] font-black text-black/60 block mt-0.5 tracking-widest uppercase">{t('subAutoUpdateDesc')}</span>
+                  </div>
+                </div>
+                <select value={subAutoUpdateMinutes} onChange={(e) => setSubAutoUpdateMinutes(parseInt(e.target.value, 10))}
+                  className="shrink-0 bg-white border-[3px] border-black shadow-[2px_2px_0_#000] rounded-lg px-3 py-1.5 text-xs text-black font-black uppercase tracking-widest focus:outline-none cursor-pointer">
+                  <option value={0}>{t('disabled')}</option>
+                  <option value={60}>{t('everyHour')}</option>
+                  <option value={180}>{t('every3Hours')}</option>
+                  <option value={360}>{t('every6Hours')}</option>
+                  <option value={720}>{t('every12Hours')}</option>
+                </select>
+              </div>
               <div className="flex items-center justify-between py-3 px-4 bg-white border-[3px] border-black shadow-[2px_2px_0_#000] rounded-xl">
                 <span className="text-sm font-black text-black uppercase tracking-tight">{t('language')}</span>
                 <select value={language} onChange={(e) => setLanguage(e.target.value as any)}

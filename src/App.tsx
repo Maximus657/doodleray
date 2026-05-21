@@ -99,19 +99,38 @@ function App() {
       }
     }
 
-    async function checkForUpdates() {
+    async function checkForUpdates(options: { autoInstall?: boolean } = {}) {
       try {
         const update = await checkForAppUpdate();
         if (update) {
           const prev = useAppStore.getState().availableUpdate;
           useAppStore.getState().setAvailableUpdate(update.version);
+
+          if (options.autoInstall) {
+            useToastStore.getState().addToast(`Installing update v${update.version}...`, 'info');
+            useAppStore.getState().addLog('info', `Auto-update found v${update.version}. Installing...`);
+            await installAppUpdate({
+              update,
+              onStatus: (status) => useAppStore.getState().addLog('info', `Auto-update: ${status}`),
+            });
+            return true;
+          }
+
           // Only show toast on fresh discovery (not repeated checks)
           if (!prev || prev !== update.version) {
             useToastStore.getState().addToast(`🚀 Update v${update.version} available!`, 'info');
           }
+          return false;
         }
+
+        useAppStore.getState().setAvailableUpdate(null);
+        return false;
       } catch (e) {
         console.log('Update check skipped:', e);
+        if (options.autoInstall) {
+          useAppStore.getState().addLog('warning', `Auto-update check failed: ${e instanceof Error ? e.message : e}`);
+        }
+        return false;
       }
     }
 
@@ -161,18 +180,37 @@ function App() {
     );
 
     let unsubscribeHydration: (() => void) | undefined;
+    let startupFlowTimer: ReturnType<typeof setTimeout> | undefined;
+    let updateInProgress = false;
 
     syncSilentAdmin();
-    // Check for updates after a brief delay so UI loads first
-    setTimeout(checkForUpdates, 3000);
-    // Re-check for updates every 30 minutes
-    const updateInterval = setInterval(checkForUpdates, 30 * 60 * 1000);
+
+    const runStartupFlow = () => {
+      startupFlowTimer = setTimeout(async () => {
+        updateInProgress = true;
+        const installingUpdate = await checkForUpdates({ autoInstall: true });
+        updateInProgress = false;
+        if (installingUpdate) return;
+        autoConnectIfEnabled();
+      }, 3000);
+    };
+
+    // Re-check for updates every 30 minutes. Install automatically only when idle.
+    const updateInterval = setInterval(async () => {
+      if (updateInProgress) return;
+      const state = useAppStore.getState();
+      const canInstallWithoutInterrupting = state.status === 'disconnected';
+      updateInProgress = canInstallWithoutInterrupting;
+      await checkForUpdates({ autoInstall: canInstallWithoutInterrupting });
+      updateInProgress = false;
+    }, 30 * 60 * 1000);
+
     // Auto-connect needs persisted servers/settings to be loaded first.
     if (useAppStore.persist.hasHydrated()) {
-      autoConnectIfEnabled();
+      runStartupFlow();
     } else {
       unsubscribeHydration = useAppStore.persist.onFinishHydration(() => {
-        autoConnectIfEnabled();
+        runStartupFlow();
       });
     }
     
@@ -185,6 +223,7 @@ function App() {
     return () => {
       unsubscribe();
       unsubscribeHydration?.();
+      if (startupFlowTimer) clearTimeout(startupFlowTimer);
       clearInterval(updateInterval);
     };
   }, []);
