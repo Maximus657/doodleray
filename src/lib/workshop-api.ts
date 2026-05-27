@@ -191,6 +191,46 @@ function getOS(): string {
   return 'unknown';
 }
 
+function sanitizeText(value?: string | null): string | null {
+  if (!value) return null;
+  return value
+    .replace(/\b(vless|vmess|trojan|ss|hy2|tuic|wg):\/\/[^\s]+/gi, '$1://[redacted]')
+    .replace(/https?:\/\/[^\s"'<>]+/gi, (match) => {
+      try {
+        const url = new URL(match);
+        return `${url.protocol}//${url.host}${url.pathname ? '/...' : ''}`;
+      } catch {
+        return 'https://[redacted]';
+      }
+    })
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi, '[uuid]')
+    .replace(/("?(?:password|uuid|id|private_key|publicKey|shortId|token|key)"?\s*[:=]\s*)["']?[^"',\s}]+/gi, '$1[redacted]')
+    .slice(0, 4000);
+}
+
+function sanitizeLogLines(lines: Array<{ level?: string; message?: string }>): string[] {
+  return lines
+    .slice(-20)
+    .map((line) => {
+      const level = line.level ? `${line.level}: ` : '';
+      return sanitizeText(`${level}${line.message || ''}`) || '';
+    })
+    .filter(Boolean);
+}
+
+export type UserIssueEventType =
+  | 'connect_fail'
+  | 'health_drop'
+  | 'subscription_fetch_fail'
+  | 'tun_start_fail'
+  | 'split_rule_ignored'
+  | 'dns_private_ip'
+  | 'core_crash'
+  | 'cache_too_large'
+  | 'app_error'
+  | 'app_updated'
+  | 'error';
+
 // Report app launch (called once on startup)
 export async function reportLaunch(): Promise<void> {
   try {
@@ -248,24 +288,49 @@ export function startHeartbeat(): void {
 
 // Report a connection error to the server (triggers TG notification)
 export async function reportConnectionError(opts: {
-  eventType: 'connect_fail' | 'health_drop' | 'error';
+  eventType: UserIssueEventType;
   serverName?: string;
   serverAddress?: string;
   serverPort?: number;
   protocol?: string;
   errorMessage?: string;
+  details?: Record<string, unknown>;
 }): Promise<void> {
   try {
+    const version = await getAppVersion();
+    let state: any = null;
+    try {
+      state = await ensureAppState();
+    } catch { /* ignore */ }
+
     await apiPost('/analytics/connection-error', {
       device_id: getFingerprint(),
       event_type: opts.eventType,
-      server_name: opts.serverName || null,
-      server_address: opts.serverAddress || null,
+      app_version: version,
+      os: getOS(),
+      proxy_mode: state?.proxyMode || null,
+      dns_mode: state?.dnsMode || null,
+      network_stack: state?.networkStack || null,
+      server_name: sanitizeText(opts.serverName) || null,
+      server_address: sanitizeText(opts.serverAddress) || null,
       server_port: opts.serverPort || null,
       protocol: opts.protocol || null,
-      error_message: opts.errorMessage || null,
+      error_message: sanitizeText(opts.errorMessage) || null,
+      recent_logs: sanitizeLogLines(state?.logs || []),
+      details: opts.details || null,
     });
   } catch {
     // silent — error reporting should never break the app
   }
+}
+
+export async function reportAppUpdated(fromVersion: string | null, toVersion: string): Promise<void> {
+  await reportConnectionError({
+    eventType: 'app_updated',
+    errorMessage: `App updated${fromVersion ? ` from ${fromVersion}` : ''} to ${toVersion}`,
+    details: {
+      from_version: fromVersion,
+      to_version: toVersion,
+    },
+  });
 }

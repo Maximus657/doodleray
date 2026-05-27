@@ -19,6 +19,7 @@ import { formatPing, protocolLabel, pingServerSmart } from '../lib/utils';
 import { buildServerDisplayGroups, type ServerDisplayGroup } from '../lib/server-groups';
 import type { ServerConfig } from '../stores/app-store';
 import { useTranslation } from '../locales';
+import { reportConnectionError } from '../lib/workshop-api';
 
 export default function Servers() {
   const {
@@ -104,7 +105,15 @@ export default function Servers() {
         setShowAdd(false);
         addLog('success', `Loaded ${sub.servers.length} servers from ${sub.name}`);
       } catch (err) {
-        addLog('error', `Subscription error: ${err instanceof Error ? err.message : 'Unknown'}`);
+        const message = err instanceof Error ? err.message : 'Unknown';
+        addLog('error', `Subscription error: ${message}`);
+        reportConnectionError({
+          eventType: message.toLowerCase().includes('private, loopback, or link-local')
+            ? 'dns_private_ip'
+            : 'subscription_fetch_fail',
+          errorMessage: message,
+          details: { action: 'add_subscription' },
+        });
       } finally {
         setImporting(false);
       }
@@ -156,7 +165,15 @@ export default function Servers() {
       updateSubscription(subId, updated);
       addLog('success', `Refreshed ${updated.servers.length} servers from ${updated.name}`);
     } catch (err) {
-      addLog('error', `Refresh failed: ${err instanceof Error ? err.message : 'Unknown'}`);
+      const message = err instanceof Error ? err.message : 'Unknown';
+      addLog('error', `Refresh failed: ${message}`);
+      reportConnectionError({
+        eventType: message.toLowerCase().includes('private, loopback, or link-local')
+          ? 'dns_private_ip'
+          : 'subscription_fetch_fail',
+        errorMessage: message,
+        details: { action: 'refresh_subscription', subscription: sub.name },
+      });
     } finally {
       setRefreshingSub(null);
     }

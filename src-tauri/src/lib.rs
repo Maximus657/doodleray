@@ -13,9 +13,11 @@ pub mod sysproxy;
 
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
+use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, ToSocketAddrs};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{
@@ -47,6 +49,8 @@ const APP_MANAGED_PORTS: &[u16] = &[10808, 10809, 10813];
 const SECURE_STORE_SERVICE: &str = "DoodleRay";
 const SECURE_STORE_CHUNK_BYTES: usize = 1800;
 const SECURE_STORE_CHUNK_PREFIX: &str = "chunked:v1:";
+const APP_IDENTIFIER: &str = "com.doodlevpn.doodleray";
+const APP_PRODUCT_NAME: &str = "DoodleRay";
 
 fn vpn_log(msg: &str) {
     let line = format!("[vpn] {}", msg);
@@ -115,6 +119,1090 @@ fn is_public_ip(ip: std::net::IpAddr) -> bool {
                 || ip.is_unique_local()
                 || ip.is_unicast_link_local())
         }
+    }
+}
+
+fn diagnostic_item(
+    severity: &str,
+    code: &str,
+    title: &str,
+    detail: impl Into<String>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "severity": severity,
+        "code": code,
+        "title": title,
+        "detail": detail.into(),
+    })
+}
+
+fn host_from_optional_url(raw_url: Option<&str>) -> Option<String> {
+    let raw = raw_url?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    Url::parse(raw)
+        .ok()
+        .and_then(|url| url.host_str().map(|host| host.to_string()))
+}
+
+fn hosts_file_path() -> &'static str {
+    #[cfg(windows)]
+    {
+        r"C:\Windows\System32\drivers\etc\hosts"
+    }
+    #[cfg(not(windows))]
+    {
+        "/etc/hosts"
+    }
+}
+
+fn hosts_file_mentions(host: &str) -> bool {
+    let Ok(text) = std::fs::read_to_string(hosts_file_path()) else {
+        return false;
+    };
+    let host_lower = host.to_lowercase();
+    text.lines().any(|line| {
+        let trimmed = line.trim();
+        !trimmed.starts_with('#') && trimmed.to_lowercase().contains(&host_lower)
+    })
+}
+
+fn command_stdout(program: &str, args: &[&str]) -> String {
+    let mut cmd = std::process::Command::new(program);
+    cmd.args(args);
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000);
+    match cmd.output() {
+        Ok(output) => {
+            let mut text = String::new();
+            text.push_str(&String::from_utf8_lossy(&output.stdout));
+            text.push_str(&String::from_utf8_lossy(&output.stderr));
+            text
+        }
+        Err(_) => String::new(),
+    }
+}
+
+fn process_snapshot() -> String {
+    #[cfg(windows)]
+    {
+        command_stdout("tasklist", &["/FO", "CSV", "/NH"])
+    }
+    #[cfg(not(windows))]
+    {
+        command_stdout("ps", &["-axo", "comm,args"])
+    }
+}
+
+fn network_interface_snapshot() -> String {
+    #[cfg(windows)]
+    {
+        command_stdout("ipconfig", &["/all"])
+    }
+    #[cfg(not(windows))]
+    {
+        command_stdout("ifconfig", &[])
+    }
+}
+
+fn known_conflict_patterns() -> &'static [(&'static str, &'static str, &'static str)] {
+    &[
+        (
+            "radmin",
+            "Radmin VPN",
+            "VPN service can change routes and virtual adapters.",
+        ),
+        (
+            "rvcontrolsvc",
+            "Radmin VPN Control Service",
+            "VPN service can change routes and virtual adapters.",
+        ),
+        (
+            "adguard",
+            "AdGuard",
+            "DNS/filtering layer can rewrite subscription DNS results.",
+        ),
+        (
+            "goodbyedpi",
+            "GoodbyeDPI",
+            "DPI bypass tool can conflict with VPN routing.",
+        ),
+        (
+            "zapret",
+            "zapret",
+            "DPI bypass tool can conflict with VPN routing.",
+        ),
+        (
+            "winws",
+            "zapret/winws",
+            "DPI bypass service can conflict with VPN routing.",
+        ),
+        (
+            "killer",
+            "Killer Network",
+            "Network optimizer can reprioritize or filter traffic.",
+        ),
+        (
+            "proxifier",
+            "Proxifier",
+            "Proxy manager can capture traffic before DoodleRay.",
+        ),
+        (
+            "clash",
+            "Clash",
+            "Another proxy client can compete for proxy/TUN routes.",
+        ),
+        (
+            "v2ray",
+            "v2ray",
+            "Another proxy core can compete for proxy/TUN routes.",
+        ),
+        (
+            "xray",
+            "xray",
+            "Another proxy core can compete for proxy/TUN routes.",
+        ),
+        (
+            "nekoray",
+            "NekoRay",
+            "Another proxy client can compete for proxy/TUN routes.",
+        ),
+        (
+            "nekobox",
+            "NekoBox",
+            "Another proxy client can compete for proxy/TUN routes.",
+        ),
+        (
+            "hiddify",
+            "Hiddify",
+            "Another VPN client can compete for proxy/TUN routes.",
+        ),
+        (
+            "happ",
+            "Happ",
+            "Another VPN client can compete for proxy/TUN routes.",
+        ),
+        (
+            "wireguard",
+            "WireGuard",
+            "VPN tunnel can change routes and DNS.",
+        ),
+        (
+            "openvpn",
+            "OpenVPN",
+            "VPN tunnel can change routes and DNS.",
+        ),
+        (
+            "tailscale",
+            "Tailscale",
+            "VPN/mesh tunnel can change routes and DNS.",
+        ),
+        (
+            "zerotier",
+            "ZeroTier",
+            "VPN/mesh tunnel can change routes and DNS.",
+        ),
+        (
+            "cloudflare warp",
+            "Cloudflare WARP",
+            "VPN/DNS layer can change routes and DNS.",
+        ),
+        (
+            "warp-svc",
+            "Cloudflare WARP",
+            "VPN/DNS layer can change routes and DNS.",
+        ),
+    ]
+}
+
+fn detect_conflicting_software() -> Vec<serde_json::Value> {
+    let snapshot = process_snapshot().to_lowercase();
+    let interfaces = network_interface_snapshot().to_lowercase();
+    let combined = format!("{}\n{}", snapshot, interfaces);
+    let mut seen = HashSet::new();
+    let mut found = Vec::new();
+
+    for (needle, name, reason) in known_conflict_patterns() {
+        if combined.contains(needle) && seen.insert(*name) {
+            found.push(serde_json::json!({
+                "name": name,
+                "reason": reason,
+            }));
+        }
+    }
+
+    found
+}
+
+fn port_busy_snapshot(port: u16) -> Option<String> {
+    #[cfg(windows)]
+    {
+        let text = command_stdout("netstat", &["-ano"]);
+        let port_str = format!(":{}", port);
+        for line in text.lines() {
+            if line.contains(&port_str) && line.contains("LISTENING") {
+                return Some(line.trim().to_string());
+            }
+        }
+        None
+    }
+    #[cfg(not(windows))]
+    {
+        let text = command_stdout("lsof", &["-nP", "-i", &format!(":{}", port)]);
+        text.lines()
+            .find(|line| line.contains("LISTEN"))
+            .map(|line| line.trim().to_string())
+    }
+}
+
+fn compact_command_output(output: String, max_chars: usize) -> String {
+    let collapsed = output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .take(18)
+        .collect::<Vec<_>>()
+        .join(" | ");
+    if collapsed.len() > max_chars {
+        let clipped = collapsed.chars().take(max_chars).collect::<String>();
+        format!("{}...", clipped)
+    } else {
+        collapsed
+    }
+}
+
+fn dns_snapshot() -> String {
+    #[cfg(windows)]
+    {
+        command_stdout(
+            "powershell",
+            &[
+                "-NoProfile",
+                "-Command",
+                "Get-DnsClientServerAddress -AddressFamily IPv4 | Select-Object -First 8 InterfaceAlias,ServerAddresses | Format-Table -HideTableHeaders",
+            ],
+        )
+    }
+    #[cfg(target_os = "macos")]
+    {
+        command_stdout("scutil", &["--dns"])
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let resolv = std::fs::read_to_string("/etc/resolv.conf").unwrap_or_default();
+        if resolv.trim().is_empty() {
+            command_stdout("resolvectl", &["dns"])
+        } else {
+            resolv
+        }
+    }
+}
+
+fn default_route_snapshot() -> String {
+    #[cfg(windows)]
+    {
+        command_stdout(
+            "powershell",
+            &[
+                "-NoProfile",
+                "-Command",
+                "Get-NetRoute -DestinationPrefix '0.0.0.0/0' | Sort-Object RouteMetric | Select-Object -First 5 InterfaceAlias,NextHop,RouteMetric | Format-Table -HideTableHeaders",
+            ],
+        )
+    }
+    #[cfg(target_os = "macos")]
+    {
+        command_stdout("route", &["-n", "get", "1.1.1.1"])
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        command_stdout("ip", &["route", "get", "1.1.1.1"])
+    }
+}
+
+fn service_snapshot() -> String {
+    #[cfg(windows)]
+    {
+        command_stdout("sc", &["query", "state=", "all"])
+    }
+    #[cfg(not(windows))]
+    {
+        String::new()
+    }
+}
+
+fn tcp_reachability_check(
+    code: &str,
+    title: &str,
+    host: &str,
+    port: u16,
+    required: bool,
+) -> serde_json::Value {
+    let target = format!("{}:{}", host, port);
+    let resolved = match target.to_socket_addrs() {
+        Ok(addrs) => addrs.collect::<Vec<_>>(),
+        Err(e) => {
+            return diagnostic_item(
+                if required { "error" } else { "warning" },
+                code,
+                title,
+                format!("DNS/resolve failed for {}: {}", target, e),
+            )
+        }
+    };
+
+    if resolved.is_empty() {
+        return diagnostic_item(
+            if required { "error" } else { "warning" },
+            code,
+            title,
+            format!("{} did not resolve to any socket address", target),
+        );
+    }
+
+    let started = Instant::now();
+    let mut last_error = String::new();
+    for addr in resolved.iter().take(6) {
+        match TcpStream::connect_timeout(addr, Duration::from_millis(2500)) {
+            Ok(_) => {
+                return diagnostic_item(
+                    "ok",
+                    code,
+                    title,
+                    format!(
+                        "{} reachable via {} in {} ms",
+                        target,
+                        addr,
+                        started.elapsed().as_millis()
+                    ),
+                )
+            }
+            Err(e) => {
+                last_error = format!("{}: {}", addr, e);
+            }
+        }
+    }
+
+    diagnostic_item(
+        if required { "error" } else { "warning" },
+        code,
+        title,
+        format!(
+            "{} is not reachable over TCP. Last error: {}",
+            target, last_error
+        ),
+    )
+}
+
+fn socks5_handshake_check(port: u16) -> serde_json::Value {
+    let addr: SocketAddr = format!("127.0.0.1:{}", port).parse().unwrap();
+    match TcpStream::connect_timeout(&addr, Duration::from_millis(1200)) {
+        Ok(mut stream) => {
+            let _ = stream.set_read_timeout(Some(Duration::from_millis(1200)));
+            let _ = stream.set_write_timeout(Some(Duration::from_millis(1200)));
+            if let Err(e) = stream.write_all(&[0x05, 0x01, 0x00]) {
+                return diagnostic_item(
+                    "error",
+                    "socks_handshake_failed",
+                    "Local SOCKS port is not responding correctly",
+                    format!("Write to 127.0.0.1:{} failed: {}", port, e),
+                );
+            }
+            let mut response = [0u8; 2];
+            match stream.read_exact(&mut response) {
+                Ok(()) if response[0] == 0x05 && response[1] != 0xff => diagnostic_item(
+                    "ok",
+                    "socks_handshake_ok",
+                    "Local SOCKS5 handshake passed",
+                    format!("127.0.0.1:{} accepted SOCKS5 no-auth method", port),
+                ),
+                Ok(()) => diagnostic_item(
+                    "error",
+                    "socks_handshake_rejected",
+                    "Local SOCKS5 handshake was rejected",
+                    format!("127.0.0.1:{} returned {:02x?}", port, response),
+                ),
+                Err(e) => diagnostic_item(
+                    "error",
+                    "socks_handshake_timeout",
+                    "Local SOCKS port accepted TCP but did not answer SOCKS5",
+                    format!("127.0.0.1:{} read failed: {}", port, e),
+                ),
+            }
+        }
+        Err(e) => diagnostic_item(
+            "error",
+            "socks_port_closed",
+            "Local SOCKS port is closed",
+            format!("127.0.0.1:{}: {}", port, e),
+        ),
+    }
+}
+
+async fn subscription_fetch_check(raw_url: &str) -> serde_json::Value {
+    let parsed = match validate_http_url(raw_url) {
+        Ok(url) => url,
+        Err(e) => {
+            return diagnostic_item(
+                "error",
+                "subscription_fetch_blocked",
+                "Subscription fetch blocked before HTTP request",
+                e,
+            )
+        }
+    };
+
+    let client = match reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(3))
+        .timeout(Duration::from_secs(8))
+        .user_agent("DoodleRay-Diagnostics/1.0")
+        .build()
+    {
+        Ok(client) => client,
+        Err(e) => {
+            return diagnostic_item(
+                "error",
+                "subscription_fetch_client_failed",
+                "Subscription HTTP client failed to initialize",
+                e.to_string(),
+            )
+        }
+    };
+
+    let started = Instant::now();
+    match client.get(parsed.clone()).send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            if !status.is_success() {
+                return diagnostic_item(
+                    "error",
+                    "subscription_http_status_bad",
+                    "Subscription HTTP request returned an error",
+                    format!(
+                        "{} returned HTTP {}",
+                        parsed.host_str().unwrap_or("subscription"),
+                        status
+                    ),
+                );
+            }
+            match resp.bytes().await {
+                Ok(bytes) if bytes.is_empty() => diagnostic_item(
+                    "warning",
+                    "subscription_body_empty",
+                    "Subscription HTTP request returned empty body",
+                    format!(
+                        "HTTP {} in {} ms, 0 bytes",
+                        status,
+                        started.elapsed().as_millis()
+                    ),
+                ),
+                Ok(bytes) => diagnostic_item(
+                    "ok",
+                    "subscription_fetch_ok",
+                    "Subscription HTTP fetch passed",
+                    format!(
+                        "HTTP {} in {} ms, {} bytes",
+                        status,
+                        started.elapsed().as_millis(),
+                        bytes.len()
+                    ),
+                ),
+                Err(e) => diagnostic_item(
+                    "error",
+                    "subscription_body_read_failed",
+                    "Subscription body read failed",
+                    e.to_string(),
+                ),
+            }
+        }
+        Err(e) => diagnostic_item(
+            "error",
+            "subscription_fetch_failed",
+            "Subscription HTTP request failed",
+            format!("{}: {}", parsed, e),
+        ),
+    }
+}
+
+fn diagnostics_summary(checks: &[serde_json::Value]) -> &'static str {
+    let severity_rank = |value: &serde_json::Value| match value
+        .get("severity")
+        .and_then(|severity| severity.as_str())
+        .unwrap_or("info")
+    {
+        "error" => 3,
+        "warning" => 2,
+        "ok" => 0,
+        _ => 1,
+    };
+    match checks.iter().map(severity_rank).max().unwrap_or(0) {
+        3 => "errors_found",
+        2 => "warnings_found",
+        _ => "ok",
+    }
+}
+
+#[tauri::command]
+async fn run_network_diagnostics(
+    subscription_url: Option<String>,
+    socks_port: u16,
+    http_port: u16,
+    active_server_address: Option<String>,
+    active_server_port: Option<u16>,
+    active_server_protocol: Option<String>,
+    proxy_mode: Option<String>,
+    app_status: Option<String>,
+    active_routing_rule_count: Option<usize>,
+    system_proxy_mode: Option<String>,
+    dns_mode: Option<String>,
+    network_stack: Option<String>,
+) -> serde_json::Value {
+    let started = Instant::now();
+    let mut checks = Vec::new();
+    let mut resolved_ips: Vec<String> = Vec::new();
+    let host = host_from_optional_url(subscription_url.as_deref());
+    let backend_connected = CONNECTION_STATE.lock().map(|state| *state).unwrap_or(false);
+    let frontend_connected = app_status.as_deref() == Some("connected");
+    let app_connected = backend_connected || frontend_connected;
+    let proxy_mode = proxy_mode.unwrap_or_else(|| "system-proxy".to_string());
+    let active_routing_rule_count = active_routing_rule_count.unwrap_or(0);
+
+    if let Some(host) = host.as_deref() {
+        if hosts_file_mentions(host) {
+            checks.push(diagnostic_item(
+                "warning",
+                "hosts_override",
+                "Subscription host appears in hosts file",
+                format!(
+                    "{} contains an entry for {}. This can force the subscription to a wrong IP.",
+                    hosts_file_path(),
+                    host
+                ),
+            ));
+        }
+
+        let port = subscription_url
+            .as_deref()
+            .and_then(|raw| Url::parse(raw).ok())
+            .and_then(|url| url.port_or_known_default())
+            .unwrap_or(443);
+
+        match (host, port).to_socket_addrs() {
+            Ok(addrs) => {
+                let mut private_hits = Vec::new();
+                for addr in addrs {
+                    let ip = addr.ip();
+                    let ip_text = ip.to_string();
+                    if !resolved_ips.contains(&ip_text) {
+                        resolved_ips.push(ip_text.clone());
+                    }
+                    if !is_public_ip(ip) {
+                        private_hits.push(ip_text);
+                    }
+                }
+
+                if private_hits.is_empty() {
+                    checks.push(diagnostic_item(
+                        "ok",
+                        "subscription_dns_public",
+                        "Subscription DNS resolves to public IPs",
+                        format!("{} -> {}", host, resolved_ips.join(", ")),
+                    ));
+                } else {
+                    checks.push(diagnostic_item(
+                        "error",
+                        "subscription_dns_private",
+                        "Subscription host resolves to private/local IP",
+                        format!(
+                            "{} -> {}. DNS filters, hosts file, local proxy, or another VPN may be rewriting this host.",
+                            host,
+                            private_hits.join(", ")
+                        ),
+                    ));
+                }
+            }
+            Err(e) => checks.push(diagnostic_item(
+                "error",
+                "subscription_dns_failed",
+                "Subscription DNS lookup failed",
+                format!("{}: {}", host, e),
+            )),
+        }
+
+        if let Some(url) = subscription_url
+            .as_deref()
+            .filter(|url| !url.trim().is_empty())
+        {
+            checks.push(subscription_fetch_check(url).await);
+        }
+    } else {
+        checks.push(diagnostic_item(
+            "info",
+            "subscription_not_checked",
+            "Subscription URL not provided",
+            "Paste a subscription URL before running diagnostics to check DNS resolution.",
+        ));
+    }
+
+    let conflicts = detect_conflicting_software();
+    if conflicts.is_empty() {
+        checks.push(diagnostic_item(
+            "ok",
+            "conflicts_none_detected",
+            "No known conflicting network tools detected",
+            "This is a heuristic check; hidden services or drivers may still exist.",
+        ));
+    } else {
+        let names = conflicts
+            .iter()
+            .filter_map(|item| item.get("name").and_then(|v| v.as_str()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        checks.push(diagnostic_item(
+            "warning",
+            "conflicts_detected",
+            "Potentially conflicting network tools detected",
+            format!(
+                "{}. Do not remove them automatically; ask the user to test with them disabled.",
+                names
+            ),
+        ));
+    }
+
+    let services = service_snapshot().to_lowercase();
+    if services.contains("windivert")
+        || services.contains("goodbyedpi")
+        || services.contains("zapret")
+        || services.contains("radmin")
+    {
+        checks.push(diagnostic_item(
+            "warning",
+            "network_services_detected",
+            "Potential network services detected",
+            "Windows service list contains WinDivert/GoodbyeDPI/zapret/Radmin markers. Disable them for a test instead of deleting automatically.",
+        ));
+    } else if cfg!(windows) {
+        checks.push(diagnostic_item(
+            "ok",
+            "network_services_clean",
+            "Known conflicting Windows services were not detected",
+            "Service scan did not find WinDivert/GoodbyeDPI/zapret/Radmin markers.",
+        ));
+    }
+
+    for (label, port) in [("SOCKS", socks_port), ("HTTP", http_port)] {
+        if let Some(line) = port_busy_snapshot(port) {
+            let severity = if app_connected { "ok" } else { "warning" };
+            let title = if app_connected {
+                format!("{} port is listening", label)
+            } else {
+                format!("{} port is already in use", label)
+            };
+            checks.push(diagnostic_item(
+                severity,
+                &format!("{}_port_busy", label.to_lowercase()),
+                &title,
+                line,
+            ));
+        } else {
+            let severity = if app_connected { "error" } else { "ok" };
+            let title = if app_connected {
+                format!("{} port is not listening while VPN is connected", label)
+            } else {
+                format!("{} port is free", label)
+            };
+            checks.push(diagnostic_item(
+                severity,
+                &format!("{}_port_free", label.to_lowercase()),
+                &title,
+                format!("Port {}", port),
+            ));
+        }
+    }
+
+    checks.push(tcp_reachability_check(
+        "public_tcp_443",
+        "Public TCP/443 connectivity",
+        "1.1.1.1",
+        443,
+        true,
+    ));
+
+    checks.push(tcp_reachability_check(
+        "system_dns_resolve",
+        "System DNS resolve check",
+        "cloudflare.com",
+        443,
+        true,
+    ));
+
+    if let (Some(address), Some(port)) = (active_server_address.as_deref(), active_server_port) {
+        let protocol = active_server_protocol
+            .as_deref()
+            .unwrap_or("unknown")
+            .to_lowercase();
+        if matches!(protocol.as_str(), "hysteria2" | "tuic" | "wireguard") {
+            checks.push(diagnostic_item(
+                "info",
+                "active_server_udp_protocol",
+                "Active server uses a UDP-based protocol",
+                format!(
+                    "{}:{} uses {}. TCP connect is not a valid reachability test for this protocol.",
+                    address, port, protocol
+                ),
+            ));
+            let target = format!("{}:{}", address, port);
+            match target.to_socket_addrs() {
+                Ok(addrs) => {
+                    let ips = addrs.map(|addr| addr.ip().to_string()).collect::<Vec<_>>();
+                    checks.push(diagnostic_item(
+                        "ok",
+                        "active_server_dns_ok",
+                        "Active server DNS resolved",
+                        format!("{} -> {}", address, ips.join(", ")),
+                    ));
+                }
+                Err(e) => checks.push(diagnostic_item(
+                    "error",
+                    "active_server_dns_failed",
+                    "Active server DNS failed",
+                    format!("{}: {}", address, e),
+                )),
+            }
+        } else {
+            checks.push(tcp_reachability_check(
+                "active_server_tcp",
+                "Active server TCP reachability",
+                address,
+                port,
+                true,
+            ));
+        }
+    } else {
+        checks.push(diagnostic_item(
+            "info",
+            "active_server_not_selected",
+            "Active server was not selected",
+            "Select a server before running diagnostics to test server reachability.",
+        ));
+    }
+
+    if app_connected {
+        checks.push(socks5_handshake_check(socks_port));
+    }
+
+    if active_routing_rule_count > 0 && proxy_mode != "tun" {
+        checks.push(diagnostic_item(
+            "warning",
+            "split_rules_proxy_mode",
+            "Workshop split tunneling rules are enabled but Proxy Mode is active",
+            format!(
+                "{} active rule(s). They are kept enabled, but only TUN mode can apply process/domain routing rules.",
+                active_routing_rule_count
+            ),
+        ));
+    } else if active_routing_rule_count > 0 {
+        checks.push(diagnostic_item(
+            "ok",
+            "split_rules_tun_mode",
+            "Workshop split tunneling can be applied",
+            format!(
+                "{} active rule(s), mode={}",
+                active_routing_rule_count, proxy_mode
+            ),
+        ));
+    }
+
+    let route = compact_command_output(default_route_snapshot(), 700);
+    if route.is_empty() {
+        checks.push(diagnostic_item(
+            "warning",
+            "default_route_unavailable",
+            "Default route snapshot unavailable",
+            "The diagnostic command did not return route information.",
+        ));
+    } else {
+        checks.push(diagnostic_item(
+            "info",
+            "default_route_snapshot",
+            "Default route snapshot",
+            route,
+        ));
+    }
+
+    let dns = compact_command_output(dns_snapshot(), 700);
+    if dns.is_empty() {
+        checks.push(diagnostic_item(
+            "warning",
+            "dns_snapshot_unavailable",
+            "DNS snapshot unavailable",
+            "The diagnostic command did not return DNS resolver information.",
+        ));
+    } else {
+        let lower = dns.to_lowercase();
+        let severity =
+            if lower.contains("127.0.0.1") || lower.contains("::1") || lower.contains("adguard") {
+                "warning"
+            } else {
+                "info"
+            };
+        checks.push(diagnostic_item(
+            severity,
+            "dns_snapshot",
+            "DNS resolver snapshot",
+            dns,
+        ));
+    }
+
+    checks.push(diagnostic_item(
+        "info",
+        "app_network_settings",
+        "DoodleRay network settings",
+        format!(
+            "status={}, backend_connected={}, mode={}, system_proxy={}, dns={}, stack={}, socks={}, http={}",
+            app_status.unwrap_or_else(|| "unknown".to_string()),
+            backend_connected,
+            proxy_mode,
+            system_proxy_mode.unwrap_or_else(|| "unknown".to_string()),
+            dns_mode.unwrap_or_else(|| "unknown".to_string()),
+            network_stack.unwrap_or_else(|| "unknown".to_string()),
+            socks_port,
+            http_port
+        ),
+    ));
+
+    let summary = diagnostics_summary(&checks);
+
+    serde_json::json!({
+        "summary": summary,
+        "subscriptionHost": host,
+        "resolvedIps": resolved_ips,
+        "conflicts": conflicts,
+        "checks": checks,
+        "durationMs": started.elapsed().as_millis() as u64,
+    })
+}
+
+fn human_bytes(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+    let value = bytes as f64;
+    if value >= GB {
+        format!("{:.2} GB", value / GB)
+    } else if value >= MB {
+        format!("{:.1} MB", value / MB)
+    } else if value >= KB {
+        format!("{:.1} KB", value / KB)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+fn dir_size_limited(path: &Path, max_entries: usize) -> (u64, bool) {
+    let mut total = 0u64;
+    let mut truncated = false;
+    let mut seen = 0usize;
+    let mut stack = vec![path.to_path_buf()];
+
+    while let Some(current) = stack.pop() {
+        if seen >= max_entries {
+            truncated = true;
+            break;
+        }
+        seen += 1;
+
+        let Ok(meta) = std::fs::symlink_metadata(&current) else {
+            continue;
+        };
+        if meta.file_type().is_symlink() {
+            continue;
+        }
+        if meta.is_file() {
+            total = total.saturating_add(meta.len());
+            continue;
+        }
+        if meta.is_dir() {
+            let Ok(entries) = std::fs::read_dir(&current) else {
+                continue;
+            };
+            for entry in entries.filter_map(|entry| entry.ok()) {
+                stack.push(entry.path());
+            }
+        }
+    }
+
+    (total, truncated)
+}
+
+fn push_storage_path(
+    paths: &mut Vec<(String, PathBuf, &'static str, bool)>,
+    label: impl Into<String>,
+    path: PathBuf,
+    kind: &'static str,
+    clearable: bool,
+) {
+    paths.push((label.into(), path, kind, clearable));
+}
+
+fn known_storage_paths(app: &tauri::AppHandle) -> Vec<(String, PathBuf, &'static str, bool)> {
+    let mut paths = Vec::new();
+    if let Ok(path) = app.path().app_data_dir() {
+        push_storage_path(&mut paths, "App data", path, "app_data", false);
+    }
+
+    push_storage_path(
+        &mut paths,
+        "Temp",
+        std::env::temp_dir().join(APP_PRODUCT_NAME),
+        "temp",
+        true,
+    );
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            let home = PathBuf::from(home);
+            push_storage_path(
+                &mut paths,
+                "Cache",
+                home.join("Library").join("Caches").join(APP_IDENTIFIER),
+                "cache",
+                true,
+            );
+            push_storage_path(
+                &mut paths,
+                "Legacy cache",
+                home.join("Library").join("Caches").join(APP_PRODUCT_NAME),
+                "cache",
+                true,
+            );
+            push_storage_path(
+                &mut paths,
+                "WebKit data",
+                home.join("Library").join("WebKit").join(APP_IDENTIFIER),
+                "webkit",
+                false,
+            );
+            push_storage_path(
+                &mut paths,
+                "Legacy WebKit data",
+                home.join("Library").join("WebKit").join(APP_PRODUCT_NAME),
+                "webkit",
+                false,
+            );
+            push_storage_path(
+                &mut paths,
+                "HTTP storage",
+                home.join("Library")
+                    .join("HTTPStorages")
+                    .join(APP_IDENTIFIER),
+                "cache",
+                true,
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            let local = PathBuf::from(local);
+            push_storage_path(
+                &mut paths,
+                "Local cache",
+                local.join(APP_IDENTIFIER),
+                "cache",
+                true,
+            );
+            push_storage_path(
+                &mut paths,
+                "Legacy local cache",
+                local.join(APP_PRODUCT_NAME),
+                "cache",
+                true,
+            );
+        }
+        if let Ok(roaming) = std::env::var("APPDATA") {
+            push_storage_path(
+                &mut paths,
+                "Roaming app data",
+                PathBuf::from(roaming).join(APP_IDENTIFIER),
+                "app_data",
+                false,
+            );
+        }
+    }
+
+    paths
+}
+
+#[tauri::command]
+fn get_storage_report(app: tauri::AppHandle) -> serde_json::Value {
+    let mut total = 0u64;
+    let paths = known_storage_paths(&app)
+        .into_iter()
+        .map(|(label, path, kind, clearable)| {
+            let exists = path.exists();
+            let (bytes, truncated) = if exists {
+                dir_size_limited(&path, 200_000)
+            } else {
+                (0, false)
+            };
+            total = total.saturating_add(bytes);
+            serde_json::json!({
+                "label": label,
+                "path": path.to_string_lossy(),
+                "kind": kind,
+                "exists": exists,
+                "clearable": clearable,
+                "bytes": bytes,
+                "size": human_bytes(bytes),
+                "truncated": truncated,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    serde_json::json!({
+        "totalBytes": total,
+        "totalSize": human_bytes(total),
+        "paths": paths,
+    })
+}
+
+#[tauri::command]
+fn clear_app_cache(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let mut removed = Vec::new();
+    let mut failed = Vec::new();
+
+    for (label, path, kind, clearable) in known_storage_paths(&app) {
+        if !clearable || !path.exists() {
+            continue;
+        }
+        let (bytes, _) = dir_size_limited(&path, 200_000);
+        match std::fs::remove_dir_all(&path) {
+            Ok(()) => removed.push(serde_json::json!({
+                "label": label,
+                "path": path.to_string_lossy(),
+                "kind": kind,
+                "bytes": bytes,
+                "size": human_bytes(bytes),
+            })),
+            Err(e) => failed.push(serde_json::json!({
+                "label": label,
+                "path": path.to_string_lossy(),
+                "error": e.to_string(),
+            })),
+        }
+    }
+
+    if failed.is_empty() {
+        Ok(serde_json::json!({ "removed": removed, "failed": failed }))
+    } else {
+        Err(format!(
+            "Some cache folders could not be removed: {}",
+            serde_json::Value::Array(failed).to_string()
+        ))
     }
 }
 
@@ -3840,6 +4928,9 @@ pub fn run() {
             check_connection_health,
             add_defender_exclusion,
             check_defender_exclusion,
+            run_network_diagnostics,
+            get_storage_report,
+            clear_app_cache,
             secure_store_get,
             secure_store_set,
             secure_store_delete,

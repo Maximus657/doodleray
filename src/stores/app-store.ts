@@ -235,6 +235,49 @@ const secureStorage: StateStorage<Promise<void> | void> = {
   },
 };
 
+function compactSubscriptionForStore(sub: Subscription): Subscription {
+  return {
+    ...sub,
+    servers: [],
+  };
+}
+
+function compactServerReference(server: ServerConfig | null): ServerConfig | null {
+  if (!server) return null;
+  return {
+    ...server,
+    rawLink: server.rawConfig ? '' : server.rawLink,
+    rawConfig: undefined,
+  };
+}
+
+function compactStateForPersist(state: AppState): Partial<AppState> {
+  const excluded = new Set([
+    'status',
+    'speedHistory',
+    'currentDownload',
+    'currentUpload',
+    'totalDown',
+    'totalUp',
+    'logs',
+    'availableUpdate',
+  ]);
+
+  return Object.fromEntries(
+    Object.entries(state as any)
+      .filter(([key]) => !excluded.has(key))
+      .map(([key, value]) => {
+        if (key === 'subscriptions' && Array.isArray(value)) {
+          return [key, value.map(compactSubscriptionForStore)];
+        }
+        if (key === 'activeServer') {
+          return [key, compactServerReference(value as ServerConfig | null)];
+        }
+        return [key, value];
+      })
+  ) as Partial<AppState>;
+}
+
 export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
@@ -305,9 +348,10 @@ export const useAppStore = create<AppState>()(
       addSubscription: (sub) => set((s) => {
         // If subscription with same URL already exists, replace it
         const existing = s.subscriptions.find((x) => x.url === sub.url);
+        const compactSub = compactSubscriptionForStore(sub);
         const newSubscriptions = existing
-          ? s.subscriptions.map((x) => x.url === sub.url ? sub : x)
-          : [...s.subscriptions, sub];
+          ? s.subscriptions.map((x) => x.url === sub.url ? compactSub : x)
+          : [...s.subscriptions, compactSub];
         const newServers = existing
           ? [...s.servers.filter((srv) => srv.subscriptionId !== existing.id), ...sub.servers]
           : [...s.servers, ...sub.servers];
@@ -344,7 +388,7 @@ export const useAppStore = create<AppState>()(
           return true;
         });
         return {
-          subscriptions: s.subscriptions.map((sub) => sub.id === id ? newSub : sub),
+          subscriptions: s.subscriptions.map((sub) => sub.id === id ? compactSubscriptionForStore(newSub) : sub),
           servers: deduped,
           activeServer: findMatchingServer(s.activeServer, deduped),
         };
@@ -381,9 +425,7 @@ export const useAppStore = create<AppState>()(
     {
       name: 'doodleray-storage',
       storage: createJSONStorage(() => secureStorage),
-      partialize: (state) => Object.fromEntries(
-        Object.entries(state as any).filter(([key]) => !['status', 'speedHistory', 'currentDownload', 'currentUpload', 'totalDown', 'totalUp', 'logs', 'availableUpdate'].includes(key))
-      ) as Partial<AppState>,
+      partialize: compactStateForPersist,
     }
   )
 );

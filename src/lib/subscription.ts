@@ -208,7 +208,7 @@ function parseXrayOutbound(
       alpn: tls?.alpn,
       country: country?.name,
       countryCode: country?.code,
-      rawLink: JSON.stringify(rawConfig),
+      rawLink: '',
       rawConfig,
     };
   } catch {

@@ -160,10 +160,31 @@ function App() {
         } else {
           useAppStore.setState({ status: 'disconnected' });
           state.addLog('error', `Auto-connect failed: ${result.message}`);
+          const { reportConnectionError } = await import('./lib/workshop-api');
+          reportConnectionError({
+            eventType: 'connect_fail',
+            serverName: srv.name,
+            serverAddress: srv.address,
+            serverPort: srv.port,
+            protocol: srv.protocol,
+            errorMessage: result.message,
+            details: { action: 'auto_connect' },
+          });
         }
       } catch (err: any) {
         useAppStore.setState({ status: 'disconnected' });
-        state.addLog('error', `Auto-connect error: ${err.message || err}`);
+        const message = err.message || String(err);
+        state.addLog('error', `Auto-connect error: ${message}`);
+        const { reportConnectionError } = await import('./lib/workshop-api');
+        reportConnectionError({
+          eventType: 'connect_fail',
+          serverName: srv.name,
+          serverAddress: srv.address,
+          serverPort: srv.port,
+          protocol: srv.protocol,
+          errorMessage: message,
+          details: { action: 'auto_connect_exception' },
+        });
       }
     }
 
@@ -183,9 +204,17 @@ function App() {
     let startupFlowTimer: ReturnType<typeof setTimeout> | undefined;
     let updateInProgress = false;
 
+    function compactHydratedStorage() {
+      const state = useAppStore.getState();
+      useAppStore.setState({
+        subscriptions: state.subscriptions.map((sub) => ({ ...sub, servers: [] })),
+      });
+    }
+
     syncSilentAdmin();
 
     const runStartupFlow = () => {
+      compactHydratedStorage();
       startupFlowTimer = setTimeout(async () => {
         updateInProgress = true;
         const installingUpdate = await checkForUpdates({ autoInstall: true });
@@ -214,10 +243,21 @@ function App() {
       });
     }
     
-    // Analytics — report launch + start heartbeat
-    import('./lib/workshop-api').then(({ reportLaunch, startHeartbeat }) => {
+    // Analytics — report launch, update event, and heartbeat
+    import('./lib/workshop-api').then(async ({ reportLaunch, startHeartbeat, reportAppUpdated }) => {
       reportLaunch();
       startHeartbeat();
+      try {
+        const { getVersion } = await import('@tauri-apps/api/app');
+        const currentVersion = await getVersion();
+        const previousVersion = localStorage.getItem('doodleray_last_seen_version');
+        if (previousVersion && previousVersion !== currentVersion) {
+          reportAppUpdated(previousVersion, currentVersion);
+        }
+        localStorage.setItem('doodleray_last_seen_version', currentVersion);
+      } catch {
+        // Version analytics must never affect startup.
+      }
     }).catch(() => { /* silent */ });
 
     return () => {

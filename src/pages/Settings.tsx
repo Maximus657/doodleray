@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Trash2, RotateCcw, Database, Zap, Monitor, Download, ShieldCheck, ChevronDown, RefreshCw } from 'lucide-react';
+import { Settings as SettingsIcon, Trash2, RotateCcw, Database, Zap, Monitor, Download, ShieldCheck, ChevronDown, RefreshCw, Network, HardDrive, ClipboardCopy } from 'lucide-react';
 import { disable } from '@tauri-apps/plugin-autostart';
 import { useTranslation } from '../locales';
 import { useAppStore } from '../stores/app-store';
 import { checkForAppUpdate, getCachedUpdate, installAppUpdate } from '../lib/app-updater';
+import { clearAppCache, diagnosticsReportToText, getStorageReport, runNetworkDiagnostics, type DiagnosticCheck, type NetworkDiagnosticsReport, type StorageReport } from '../lib/diagnostics';
+import { reportConnectionError } from '../lib/workshop-api';
 
 function Toggle({ checked, onChange, label, description, warning }: { checked: boolean; onChange: (v: boolean) => void; label: string; description?: string; warning?: string }) {
   return (
@@ -21,6 +23,111 @@ function Toggle({ checked, onChange, label, description, warning }: { checked: b
   );
 }
 
+function formatMessage(template: string, values: Record<string, string | number>) {
+  return Object.entries(values).reduce(
+    (message, [key, value]) => message.replace(new RegExp(`\\{${key}\\}`, 'g'), String(value)),
+    template
+  );
+}
+
+const diagnosticTitles: Record<string, Record<string, string>> = {
+  ru: {
+    hosts_override: 'Подписка найдена в hosts',
+    subscription_dns_public: 'DNS подписки ведет на публичные IP',
+    subscription_dns_private: 'DNS подписки ведет на приватный/локальный IP',
+    subscription_dns_failed: 'DNS подписки не резолвится',
+    subscription_not_checked: 'Подписка не проверялась',
+    subscription_fetch_blocked: 'Загрузка подписки заблокирована до HTTP-запроса',
+    subscription_fetch_client_failed: 'HTTP-клиент подписки не запустился',
+    subscription_http_status_bad: 'Подписка вернула HTTP-ошибку',
+    subscription_body_empty: 'Подписка вернула пустой ответ',
+    subscription_fetch_ok: 'Подписка загрузилась',
+    subscription_body_read_failed: 'Не удалось прочитать тело подписки',
+    subscription_fetch_failed: 'HTTP-запрос подписки не прошел',
+    conflicts_none_detected: 'Известных конфликтующих программ не найдено',
+    conflicts_detected: 'Найдены возможные конфликтующие программы',
+    network_services_detected: 'Найдены возможные конфликтующие сетевые службы',
+    network_services_clean: 'Конфликтующие службы Windows не найдены',
+    socks_port_busy: 'SOCKS порт',
+    socks_port_free: 'SOCKS порт',
+    http_port_busy: 'HTTP порт',
+    http_port_free: 'HTTP порт',
+    public_tcp_443: 'Проверка публичного TCP/443',
+    system_dns_resolve: 'Проверка системного DNS',
+    active_server_tcp: 'Доступность активного сервера по TCP',
+    active_server_udp_protocol: 'Активный сервер использует UDP-протокол',
+    active_server_dns_ok: 'DNS активного сервера резолвится',
+    active_server_dns_failed: 'DNS активного сервера не резолвится',
+    active_server_not_selected: 'Активный сервер не выбран',
+    socks_handshake_failed: 'SOCKS порт отвечает некорректно',
+    socks_handshake_ok: 'SOCKS5 handshake прошел',
+    socks_handshake_rejected: 'SOCKS5 handshake отклонен',
+    socks_handshake_timeout: 'SOCKS порт не ответил на handshake',
+    socks_port_closed: 'SOCKS порт закрыт',
+    split_rules_proxy_mode: 'Правила Мастерской включены, но активен Proxy Mode',
+    split_rules_tun_mode: 'Правила Мастерской могут примениться',
+    default_route_unavailable: 'Default route недоступен',
+    default_route_snapshot: 'Снимок default route',
+    dns_snapshot_unavailable: 'Снимок DNS недоступен',
+    dns_snapshot: 'Снимок DNS-резолверов',
+    app_network_settings: 'Сетевые настройки DoodleRay',
+  },
+  zh: {
+    hosts_override: '订阅主机出现在 hosts 文件中',
+    subscription_dns_public: '订阅 DNS 解析到公网 IP',
+    subscription_dns_private: '订阅 DNS 解析到私有/本地 IP',
+    subscription_dns_failed: '订阅 DNS 解析失败',
+    subscription_not_checked: '未检查订阅',
+    subscription_fetch_blocked: 'HTTP 前订阅拉取被阻止',
+    subscription_fetch_client_failed: '订阅 HTTP 客户端初始化失败',
+    subscription_http_status_bad: '订阅返回 HTTP 错误',
+    subscription_body_empty: '订阅返回空内容',
+    subscription_fetch_ok: '订阅拉取成功',
+    subscription_body_read_failed: '订阅内容读取失败',
+    subscription_fetch_failed: '订阅 HTTP 请求失败',
+    conflicts_none_detected: '未检测到已知冲突程序',
+    conflicts_detected: '检测到可能冲突的程序',
+    network_services_detected: '检测到可能冲突的网络服务',
+    network_services_clean: '未检测到冲突的 Windows 服务',
+    socks_port_busy: 'SOCKS 端口',
+    socks_port_free: 'SOCKS 端口',
+    http_port_busy: 'HTTP 端口',
+    http_port_free: 'HTTP 端口',
+    public_tcp_443: '公网 TCP/443 检查',
+    system_dns_resolve: '系统 DNS 检查',
+    active_server_tcp: '活动服务器 TCP 可达性',
+    active_server_udp_protocol: '活动服务器使用 UDP 协议',
+    active_server_dns_ok: '活动服务器 DNS 已解析',
+    active_server_dns_failed: '活动服务器 DNS 解析失败',
+    active_server_not_selected: '未选择活动服务器',
+    socks_handshake_failed: 'SOCKS 端口响应异常',
+    socks_handshake_ok: 'SOCKS5 握手通过',
+    socks_handshake_rejected: 'SOCKS5 握手被拒绝',
+    socks_handshake_timeout: 'SOCKS 端口握手超时',
+    socks_port_closed: 'SOCKS 端口已关闭',
+    split_rules_proxy_mode: '创意工坊规则已启用，但当前是代理模式',
+    split_rules_tun_mode: '创意工坊规则可应用',
+    default_route_unavailable: '默认路由不可用',
+    default_route_snapshot: '默认路由快照',
+    dns_snapshot_unavailable: 'DNS 快照不可用',
+    dns_snapshot: 'DNS 解析器快照',
+    app_network_settings: 'DoodleRay 网络设置',
+  },
+};
+
+const diagnosticSeverityLabels: Record<string, Record<string, string>> = {
+  ru: { ok: 'ОК', info: 'ИНФО', warning: 'ВНИМАНИЕ', error: 'ОШИБКА' },
+  zh: { ok: '正常', info: '信息', warning: '警告', error: '错误' },
+};
+
+function diagnosticTitle(check: DiagnosticCheck, language: string) {
+  return diagnosticTitles[language]?.[check.code] || check.title;
+}
+
+function diagnosticSeverity(severity: DiagnosticCheck['severity'], language: string) {
+  return diagnosticSeverityLabels[language]?.[severity] || severity;
+}
+
 export default function Settings() {
   const {
     socksPort, setSocksPort,
@@ -35,6 +142,7 @@ export default function Settings() {
     subAutoUpdateMinutes, setSubAutoUpdateMinutes,
     showStats, setShowStats,
     language, setLanguage,
+    subscriptions,
     addLog,
     clearLogs,
     wipeData,
@@ -159,6 +267,11 @@ export default function Settings() {
   const [updateStatus, setUpdateStatus] = useState<string>('');
   const [appVersion, setAppVersion] = useState<string>('...');
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
+  const [networkReport, setNetworkReport] = useState<NetworkDiagnosticsReport | null>(null);
+  const [storageLoading, setStorageLoading] = useState(false);
+  const [storageReport, setStorageReport] = useState<StorageReport | null>(null);
+  const [cacheStatus, setCacheStatus] = useState('');
 
   useEffect(() => {
     import('@tauri-apps/api/app').then(({ getVersion }) => getVersion()).then(setAppVersion).catch(() => {});
@@ -180,6 +293,85 @@ export default function Settings() {
     } catch (e: any) {
       setUpdateStatus(`Update check failed: ${e.message || e}`);
       setTimeout(() => setUpdateStatus(''), 5000);
+    }
+  };
+
+  const handleRunDiagnostics = async () => {
+    setDiagnosticsLoading(true);
+    try {
+      const report = await runNetworkDiagnostics(subscriptions[0]?.url);
+      setNetworkReport(report);
+      const issueCount = report.checks.filter((check) => check.severity === 'error' || check.severity === 'warning').length;
+      const duration = typeof report.durationMs === 'number' ? ` (${(report.durationMs / 1000).toFixed(1)}s)` : '';
+      addLog(issueCount > 0 ? 'warning' : 'success', `${formatMessage(t('networkDiagnosticsComplete'), { count: issueCount })}${duration}`);
+      for (const check of report.checks.filter((item) => item.severity === 'error' || item.severity === 'warning').slice(0, 5)) {
+        addLog(check.severity === 'error' ? 'error' : 'warning', `${check.title}: ${check.detail}`);
+      }
+      const hasPrivateDns = report.checks.some((check) => check.code === 'subscription_dns_private');
+      if (hasPrivateDns) {
+        reportConnectionError({
+          eventType: 'dns_private_ip',
+          errorMessage: diagnosticsReportToText(report),
+          details: { source: 'manual_diagnostics' },
+        });
+      }
+    } catch (e: any) {
+      const message = e?.message || String(e);
+      addLog('error', `${t('diagnosticsFailed')}: ${message}`);
+      reportConnectionError({ eventType: 'app_error', errorMessage: message, details: { source: 'network_diagnostics' } });
+    } finally {
+      setDiagnosticsLoading(false);
+    }
+  };
+
+  const handleCopyDiagnostics = async () => {
+    if (!networkReport) return;
+    await navigator.clipboard.writeText(diagnosticsReportToText(networkReport));
+    addLog('success', t('diagnosticsReportCopied'));
+  };
+
+  const handleStorageReport = async () => {
+    setStorageLoading(true);
+    setCacheStatus('');
+    try {
+      const report = await getStorageReport();
+      setStorageReport(report);
+      addLog('info', `${t('storageReport')}: ${report.totalSize}`);
+      if (report.totalBytes > 5 * 1024 * 1024 * 1024) {
+        reportConnectionError({
+          eventType: 'cache_too_large',
+          errorMessage: `${t('appStorageIs')} ${report.totalSize}`,
+          details: {
+            total_bytes: report.totalBytes,
+            paths: report.paths.map((path) => ({ label: path.label, kind: path.kind, bytes: path.bytes, clearable: path.clearable })),
+          },
+        });
+      }
+    } catch (e: any) {
+      const message = e?.message || String(e);
+      addLog('error', `${t('storageReportFailed')}: ${message}`);
+    } finally {
+      setStorageLoading(false);
+    }
+  };
+
+  const handleClearCache = async () => {
+    setStorageLoading(true);
+    setCacheStatus('');
+    try {
+      const result = await clearAppCache();
+      const removedBytes = result.removed.reduce((sum, item) => sum + item.bytes, 0);
+      setCacheStatus(formatMessage(t('cacheClearedFolders'), { count: result.removed.length }));
+      addLog('success', `${t('cacheCleared')}: ${(removedBytes / 1024 / 1024).toFixed(1)} MB`);
+      const report = await getStorageReport();
+      setStorageReport(report);
+    } catch (e: any) {
+      const message = e?.message || String(e);
+      setCacheStatus(`${t('cacheClearFailed')}: ${message}`);
+      addLog('error', `${t('cacheClearFailed')}: ${message}`);
+      reportConnectionError({ eventType: 'app_error', errorMessage: message, details: { source: 'clear_cache' } });
+    } finally {
+      setStorageLoading(false);
     }
   };
 
@@ -370,6 +562,100 @@ export default function Settings() {
                 {defenderStatus && <p className={`text-[9px] font-bold mt-1 ${defenderStatus.startsWith('✓') ? 'text-emerald-600' : 'text-red-600'}`}>{defenderStatus}</p>}
               </div>
             </button>
+
+            <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <div className="rounded-2xl border-[3px] border-black bg-white p-4 shadow-[4px_4px_0_#000]">
+                <div className="mb-3 flex items-center gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border-[3px] border-black bg-amber-300 text-black">
+                    <Network className="h-5 w-5 stroke-[3px]" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-black uppercase tracking-tight text-black">{t('networkDiagnostics')}</h3>
+                    <p className="mt-0.5 text-[10px] font-black uppercase tracking-widest text-black/55">{t('networkDiagnosticsDesc')}</p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={handleRunDiagnostics}
+                    disabled={diagnosticsLoading}
+                    className="inline-flex items-center gap-2 rounded-xl border-[2px] border-black bg-black px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white shadow-[2px_2px_0_#000] transition-all hover:-translate-y-0.5 active:translate-y-1 active:shadow-none disabled:opacity-50"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 stroke-[3px] ${diagnosticsLoading ? 'animate-spin' : ''}`} />
+                    {t('runDiagnostics')}
+                  </button>
+                  <button
+                    onClick={handleCopyDiagnostics}
+                    disabled={!networkReport}
+                    className="inline-flex items-center gap-2 rounded-xl border-[2px] border-black bg-white px-3 py-2 text-[10px] font-black uppercase tracking-widest text-black shadow-[2px_2px_0_#000] transition-all hover:-translate-y-0.5 active:translate-y-1 active:shadow-none disabled:opacity-40"
+                  >
+                    <ClipboardCopy className="h-3.5 w-3.5 stroke-[3px]" />
+                    {t('copyReport')}
+                  </button>
+                </div>
+                {networkReport && (
+                  <div className="mt-3 max-h-44 space-y-2 overflow-y-auto rounded-xl border-[2px] border-black/20 bg-bg-primary p-2">
+                    {networkReport.checks.map((check) => (
+                      <div key={check.code} className="rounded-lg bg-white/80 px-2 py-1.5">
+                        <p className={`text-[9px] font-black uppercase tracking-widest ${
+                          check.severity === 'error' ? 'text-red-600' :
+                          check.severity === 'warning' ? 'text-amber-700' :
+                          check.severity === 'ok' ? 'text-emerald-700' :
+                          'text-black/55'
+                        }`}>{diagnosticSeverity(check.severity, language)} | {diagnosticTitle(check, language)}</p>
+                        <p className="mt-0.5 text-[9px] font-bold leading-relaxed text-black/60">{check.detail}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-2xl border-[3px] border-black bg-white p-4 shadow-[4px_4px_0_#000]">
+                <div className="mb-3 flex items-center gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border-[3px] border-black bg-sky-300 text-black">
+                    <HardDrive className="h-5 w-5 stroke-[3px]" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-black uppercase tracking-tight text-black">{t('storageTitle')}</h3>
+                    <p className="mt-0.5 text-[10px] font-black uppercase tracking-widest text-black/55">{t('storageDesc')}</p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={handleStorageReport}
+                    disabled={storageLoading}
+                    className="inline-flex items-center gap-2 rounded-xl border-[2px] border-black bg-black px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white shadow-[2px_2px_0_#000] transition-all hover:-translate-y-0.5 active:translate-y-1 active:shadow-none disabled:opacity-50"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 stroke-[3px] ${storageLoading ? 'animate-spin' : ''}`} />
+                    {t('scanStorage')}
+                  </button>
+                  <button
+                    onClick={handleClearCache}
+                    disabled={storageLoading}
+                    className="inline-flex items-center gap-2 rounded-xl border-[2px] border-black bg-amber-300 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-black shadow-[2px_2px_0_#000] transition-all hover:-translate-y-0.5 active:translate-y-1 active:shadow-none disabled:opacity-50"
+                  >
+                    <Trash2 className="h-3.5 w-3.5 stroke-[3px]" />
+                    {t('clearCache')}
+                  </button>
+                </div>
+                {cacheStatus && <p className="mt-2 text-[10px] font-black uppercase tracking-widest text-black/65">{cacheStatus}</p>}
+                {storageReport && (
+                  <div className="mt-3 max-h-44 space-y-2 overflow-y-auto rounded-xl border-[2px] border-black/20 bg-bg-primary p-2">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-black">{t('storageTotal')}: {storageReport.totalSize}</p>
+                    {storageReport.paths.map((path) => (
+                      <div key={path.path} className="rounded-lg bg-white/80 px-2 py-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="truncate text-[9px] font-black uppercase tracking-widest text-black">{path.label}</p>
+                          <span className={`shrink-0 rounded-md border-[1px] border-black px-1.5 py-0.5 text-[8px] font-black uppercase tracking-widest ${
+                            path.clearable ? 'bg-amber-200 text-black' : 'bg-black text-white'
+                          }`}>{path.size}</span>
+                        </div>
+                        <p className="mt-0.5 truncate text-[8px] font-bold text-black/45">{path.path}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
         </div>

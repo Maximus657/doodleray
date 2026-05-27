@@ -6,7 +6,7 @@ import { refreshSubscription, fetchSubscription } from '../lib/subscription';
 import { parseProxyLink } from '../lib/parser';
 import { useTranslation } from '../locales';
 import { reportConnectionError } from '../lib/workshop-api';
-import { buildConnectRequestFromState } from '../lib/connect-helpers';
+import { buildConnectRequestFromState, getActiveRoutingRules } from '../lib/connect-helpers';
 import { findMatchingServer, resolveConnectServer } from '../lib/server-selection';
 import { getSubscriptionById, getSubscriptionTrafficStatus } from '../lib/subscription-status';
 
@@ -36,6 +36,19 @@ function getProxyLogLevel(line: string): 'error' | 'warning' | null {
   if (lower.includes('[error]') || lower.includes('failed')) return 'error';
   if (lower.includes('[warning]') || lower.includes('warning')) return 'warning';
   return null;
+}
+
+function subscriptionErrorEventType(message: string) {
+  return message.toLowerCase().includes('private, loopback, or link-local')
+    ? 'dns_private_ip' as const
+    : 'subscription_fetch_fail' as const;
+}
+
+function formatMessage(template: string, values: Record<string, string | number>) {
+  return Object.entries(values).reduce(
+    (message, [key, value]) => message.replace(new RegExp(`\\{${key}\\}`, 'g'), String(value)),
+    template
+  );
 }
 
 export default function Dashboard() {
@@ -77,6 +90,8 @@ export default function Dashboard() {
     title: string;
     message: string;
     onConfirm: () => void;
+    confirmLabel?: string;
+    danger?: boolean;
   }>({ show: false, title: '', message: '', onConfirm: () => {} });
 
   // ═══════════════════════════════════════════════════
@@ -285,7 +300,17 @@ export default function Dashboard() {
           if (logSuccess) {
             addLog('info', `Auto-updated subscription: ${sub.name} (${updated.servers.length} servers)`);
           }
-        } catch { /* silently skip */ }
+        } catch (err: any) {
+          const message = err?.message || String(err);
+          if (logSuccess) {
+            addLog('error', `Auto-update failed for ${sub.name}: ${message}`);
+          }
+          reportConnectionError({
+            eventType: subscriptionErrorEventType(message),
+            errorMessage: message,
+            details: { action: 'auto_update_subscription', subscription: sub.name },
+          });
+        }
       }
     };
 
@@ -306,6 +331,24 @@ export default function Dashboard() {
 
   const handleConnect = useCallback(async () => {
     if (status === 'disconnected') {
+      const activeRoutingRules = await getActiveRoutingRules();
+      if (proxyMode !== 'tun' && activeRoutingRules.length > 0) {
+        const message = formatMessage(t('splitTunnelingProxyWarning'), { count: activeRoutingRules.length });
+        addLog('warning', message);
+        reportConnectionError({
+          eventType: 'split_rule_ignored',
+          errorMessage: message,
+          details: {
+            active_rules: activeRoutingRules.length,
+            proxy_mode: proxyMode,
+          },
+        });
+        try {
+          const { useToastStore } = await import('../stores/toast-store');
+          useToastStore.getState().addToast(t('splitTunnelingNeedsTun'), 'warning');
+        } catch { /* ignore */ }
+      }
+
       const srv = resolveConnectServer(activeServer, servers, autoSelectFastest);
       if (srv && activeServer?.id !== srv.id) {
         setActiveServer(srv);
@@ -436,7 +479,15 @@ export default function Dashboard() {
         if (server) { addServer(server); addLog('success', `Added server: ${server.name}`); setQuickInput(''); }
         else { addLog('error', 'Invalid proxy link format'); }
       } else { addLog('error', 'Paste a subscription URL (https://...) or proxy link (vless://, vmess://, etc.)'); }
-    } catch (err: any) { addLog('error', `Error: ${err.message || err}`); }
+    } catch (err: any) {
+      const message = err.message || String(err);
+      addLog('error', `Error: ${message}`);
+      reportConnectionError({
+        eventType: subscriptionErrorEventType(message),
+        errorMessage: message,
+        details: { action: 'quick_add' },
+      });
+    }
     finally { setQuickImporting(false); }
   }, [quickInput, addLog, addSubscription, addServer]);
 
@@ -468,7 +519,15 @@ export default function Dashboard() {
       const updated = await refreshSubscription(sub);
       updateSubscription(sub.id, updated);
       addLog('success', `Updated ${sub.name}: ${updated.servers.length} servers`);
-    } catch (err: any) { addLog('error', `Failed to update ${sub.name}: ${err.message || err}`); }
+    } catch (err: any) {
+      const message = err.message || String(err);
+      addLog('error', `Failed to update ${sub.name}: ${message}`);
+      reportConnectionError({
+        eventType: subscriptionErrorEventType(message),
+        errorMessage: message,
+        details: { action: 'manual_update_subscription', subscription: sub.name },
+      });
+    }
     finally { setRefreshingSubId(null); }
   };
 
@@ -494,6 +553,8 @@ export default function Dashboard() {
       show: true,
       title: t('deleteServer'),
       message: `Delete custom server "${serverName}"?`,
+      confirmLabel: t('deleteServer').split(' ')[0],
+      danger: true,
       onConfirm: () => {
         if (activeServer?.id === serverId) { handleConnect(); setActiveServer(null); }
         removeServer(serverId);
@@ -507,6 +568,8 @@ export default function Dashboard() {
       show: true,
       title: t('deleteAllProfiles'),
       message: 'Delete all manual profiles?',
+      confirmLabel: t('deleteServer').split(' ')[0],
+      danger: true,
       onConfirm: () => {
         removeAllManualServers();
         addLog('info', 'Removed all custom servers');
@@ -522,6 +585,8 @@ export default function Dashboard() {
       show: true,
       title: t('deleteSub'),
       message: `Delete subscription "${sub.name}" and all its servers?`,
+      confirmLabel: t('deleteServer').split(' ')[0],
+      danger: true,
       onConfirm: () => {
         removeSubscription(subId);
         setConfirmModal(prev => ({ ...prev, show: false }));
@@ -682,8 +747,10 @@ export default function Dashboard() {
               </button>
               <button 
                 onClick={confirmModal.onConfirm}
-                className="flex-1 py-2 bg-danger text-white border-[2px] border-black rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer shadow-[2px_2px_0_#000] hover:shadow-[3px_3px_0_#000] hover:-translate-y-0.5 active:translate-y-1 active:shadow-none transition-all">
-                {t('deleteServer').split(' ')[0]} {/* Grab 'Delete' mostly */}
+                className={`flex-1 py-2 border-[2px] border-black rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer shadow-[2px_2px_0_#000] hover:shadow-[3px_3px_0_#000] hover:-translate-y-0.5 active:translate-y-1 active:shadow-none transition-all ${
+                  confirmModal.danger ? 'bg-danger text-white' : 'bg-black text-white'
+                }`}>
+                {confirmModal.confirmLabel || 'OK'}
               </button>
             </div>
           </div>
