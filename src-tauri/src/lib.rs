@@ -86,18 +86,6 @@ fn validate_http_url(raw_url: &str) -> Result<Url, String> {
                 "Private, loopback, or link-local subscription URLs are not allowed".into(),
             );
         }
-    } else {
-        let port = parsed.port_or_known_default().unwrap_or(443);
-        if let Ok(addrs) = (host, port).to_socket_addrs() {
-            for addr in addrs {
-                if !is_public_ip(addr.ip()) {
-                    return Err(
-                        "Subscription host resolves to a private, loopback, or link-local address"
-                            .into(),
-                    );
-                }
-            }
-        }
     }
 
     Ok(parsed)
@@ -553,12 +541,7 @@ async fn subscription_fetch_check(raw_url: &str) -> serde_json::Value {
         }
     };
 
-    let client = match reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(3))
-        .timeout(Duration::from_secs(8))
-        .user_agent("DoodleRay-Diagnostics/1.0")
-        .build()
-    {
+    let client = match direct_fetch_client(&parsed, Duration::from_secs(8)).await {
         Ok(client) => client,
         Err(e) => {
             return diagnostic_item(
@@ -1877,10 +1860,8 @@ pub struct SubscriptionFetchResult {
 #[tauri::command]
 async fn fetch_url(url: String) -> Result<String, String> {
     let parsed_url = validate_http_url(&url)?;
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .timeout(Duration::from_secs(30))
-        .build()
+    let client = direct_fetch_client(&parsed_url, Duration::from_secs(30))
+        .await
         .map_err(|e| format!("HTTP client error: {}", e))?;
 
     let response = client
@@ -1916,10 +1897,8 @@ async fn fetch_url(url: String) -> Result<String, String> {
 #[tauri::command]
 async fn fetch_subscription_url(url: String) -> Result<SubscriptionFetchResult, String> {
     let parsed_url = validate_http_url(&url)?;
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .timeout(Duration::from_secs(30))
-        .build()
+    let client = direct_fetch_client(&parsed_url, Duration::from_secs(30))
+        .await
         .map_err(|e| format!("HTTP client error: {}", e))?;
 
     let response = client
@@ -3803,6 +3782,85 @@ async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
             "Cleaned up VPN engines".into()
         },
     }
+}
+
+fn system_dns_needs_public_override(host: &str, port: u16) -> bool {
+    let target = (host, port);
+    match target.to_socket_addrs() {
+        Ok(mut addrs) => addrs.any(|addr| !is_public_ip(addr.ip())),
+        Err(_) => true,
+    }
+}
+
+#[derive(Deserialize)]
+struct DnsJsonAnswer {
+    #[serde(rename = "type")]
+    record_type: Option<u16>,
+    data: String,
+}
+
+#[derive(Deserialize)]
+struct DnsJsonResponse {
+    #[serde(rename = "Answer")]
+    answer: Option<Vec<DnsJsonAnswer>>,
+}
+
+async fn resolve_public_ipv4_doh(host: &str) -> Option<Ipv4Addr> {
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .resolve(
+            "cloudflare-dns.com",
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(104, 16, 248, 249)), 443),
+        )
+        .timeout(Duration::from_secs(5))
+        .build()
+        .ok()?;
+
+    let body = client
+        .get(format!(
+            "https://cloudflare-dns.com/dns-query?name={}&type=A",
+            host
+        ))
+        .header("Accept", "application/dns-json")
+        .send()
+        .await
+        .ok()?
+        .text()
+        .await
+        .ok()?;
+
+    let response: DnsJsonResponse = serde_json::from_str(&body).ok()?;
+    response.answer?.into_iter().find_map(|answer| {
+        if answer.record_type != Some(1) {
+            return None;
+        }
+        let ip = answer.data.parse::<Ipv4Addr>().ok()?;
+        if is_public_ip(IpAddr::V4(ip)) {
+            Some(ip)
+        } else {
+            None
+        }
+    })
+}
+
+async fn direct_fetch_client(
+    parsed_url: &Url,
+    timeout: Duration,
+) -> Result<reqwest::Client, reqwest::Error> {
+    let mut builder = reqwest::Client::builder().no_proxy().timeout(timeout);
+
+    if let Some(host) = parsed_url.host_str() {
+        if host.parse::<IpAddr>().is_err() {
+            let port = parsed_url.port_or_known_default().unwrap_or(443);
+            if system_dns_needs_public_override(host, port) {
+                if let Some(ip) = resolve_public_ipv4_doh(host).await {
+                    builder = builder.resolve(host, SocketAddr::new(IpAddr::V4(ip), port));
+                }
+            }
+        }
+    }
+
+    builder.build()
 }
 
 #[tauri::command]

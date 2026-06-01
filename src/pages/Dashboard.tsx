@@ -34,6 +34,7 @@ function isProxyResponseEofLine(line: string): boolean {
 
 function getProxyLogLevel(line: string): 'error' | 'warning' | null {
   const lower = line.toLowerCase();
+  if (lower.includes('[warning]') && lower.includes('core: xray') && lower.includes('started')) return null;
   if (lower.includes('[error]') || lower.includes('failed')) return 'error';
   if (lower.includes('[warning]') || lower.includes('warning')) return 'warning';
   return null;
