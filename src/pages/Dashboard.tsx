@@ -21,6 +21,7 @@ import LogsStrip from '../components/dashboard/LogsStrip';
 const TRAFFIC_LIMIT_EOF_WINDOW_MS = 12_000;
 const TRAFFIC_LIMIT_EOF_THRESHOLD = 4;
 const TRAFFIC_LIMIT_NOTICE_COOLDOWN_MS = 60_000;
+const CONNECT_TIMEOUT_MS = 45_000;
 
 function isProxyResponseEofLine(line: string): boolean {
   const lower = line.toLowerCase();
@@ -49,6 +50,24 @@ function formatMessage(template: string, values: Record<string, string | number>
     (message, [key, value]) => message.replace(new RegExp(`\\{${key}\\}`, 'g'), String(value)),
     template
   );
+}
+
+function isTauriRuntime() {
+  const tauriInternals = (window as unknown as {
+    __TAURI_INTERNALS__?: { invoke?: unknown };
+  }).__TAURI_INTERNALS__;
+  return typeof tauriInternals?.invoke === 'function';
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 export default function Dashboard() {
@@ -374,7 +393,11 @@ export default function Dashboard() {
         setConnectionStep(t('connectionCheckingServer'));
         const request = await buildConnectRequestFromState(srv);
         setConnectionStep(t('connectionSecuringTraffic'));
-        const result: any = await invoke('vpn_connect', { request });
+        const result: any = await withTimeout(
+          invoke('vpn_connect', { request }),
+          CONNECT_TIMEOUT_MS,
+          'Connection timed out while starting VPN engines'
+        );
 
         if (result.success) {
           addLog('success', result.message);
@@ -402,9 +425,30 @@ export default function Dashboard() {
           setConnectionStep(null);
         }
       } catch (err: any) {
-        addLog('warning', `Dev mode — simulating connection: ${err.message || err}`);
-        setConnectionStep(t('connectionSecuringTraffic'));
-        setTimeout(() => { addLog('success', `[SIM] Connected via ${srv!.protocol.toUpperCase()}+${srv!.transport}`); setConnectionStep(t('connectionReady')); setStatus('connected'); setConnectedAt(Date.now()); }, 1500);
+        if (isTauriRuntime()) {
+          const message = err.message || String(err);
+          addLog('error', `Connection failed: ${message}`);
+          try {
+            const { invoke: cleanupInvoke } = await import('@tauri-apps/api/core');
+            await cleanupInvoke('vpn_disconnect');
+          } catch { /* best effort cleanup */ }
+          reportConnectionError({
+            eventType: 'connect_fail',
+            serverName: srv!.name,
+            serverAddress: srv!.address,
+            serverPort: srv!.port,
+            protocol: srv!.protocol,
+            errorMessage: message,
+          });
+          setStatus('disconnected');
+          setConnectionStep(null);
+          setCurrentSpeed(0, 0);
+          resetTraffic();
+        } else {
+          addLog('warning', `Dev mode - simulating connection: ${err.message || err}`);
+          setConnectionStep(t('connectionSecuringTraffic'));
+          setTimeout(() => { addLog('success', `[SIM] Connected via ${srv!.protocol.toUpperCase()}+${srv!.transport}`); setConnectionStep(t('connectionReady')); setStatus('connected'); setConnectedAt(Date.now()); }, 1500);
+        }
       }
     } else if (status === 'connected') {
       addLog('warning', 'Disconnecting...');

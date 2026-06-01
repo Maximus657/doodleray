@@ -3744,13 +3744,6 @@ async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
         *state
     };
 
-    if !is_connected {
-        return ConnectResult {
-            success: true,
-            message: "Already disconnected".into(),
-        };
-    }
-
     // Stop all engines — always clean up everything to prevent orphaned processes
     let prev_engine = {
         let engine = ACTIVE_ENGINE.lock().unwrap();
@@ -3797,7 +3790,11 @@ async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
     update_tray_disconnected(&app);
     ConnectResult {
         success: true,
-        message: "Disconnected".into(),
+        message: if is_connected {
+            "Disconnected".into()
+        } else {
+            "Cleaned up VPN engines".into()
+        },
     }
 }
 
