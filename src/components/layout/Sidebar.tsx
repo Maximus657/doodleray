@@ -52,7 +52,6 @@ export function Sidebar() {
                 <span className="pointer-events-none absolute left-full ml-3 rounded-lg border-[2px] border-black bg-white px-2.5 py-1.5 text-[10px] font-black uppercase tracking-widest text-black opacity-0 shadow-[3px_3px_0_rgba(0,0,0,0.45)] transition-all duration-200 translate-x-[-8px] group-hover:translate-x-0 group-hover:opacity-100 whitespace-nowrap z-50">
                   {t(labelKey as any)}
                 </span>
-                <div className={`absolute -right-1 top-1/2 h-6 w-1.5 -translate-y-1/2 rounded-l-full bg-bg-primary transition-all duration-300 ${isActive ? 'opacity-100 scale-y-100' : 'opacity-0 scale-y-50'}`} />
               </>
             )}
           </NavLink>
