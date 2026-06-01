@@ -34,7 +34,7 @@ jobs:
       # Download xray-core for Windows
       - name: Download xray-core
         run: |
-          $xrayVersion = "v25.3.6"
+          $xrayVersion = "v26.6.1"
           $url = "https://github.com/XTLS/Xray-core/releases/download/$xrayVersion/Xray-windows-64.zip"
           Invoke-WebRequest -Uri $url -OutFile xray.zip
           Expand-Archive -Path xray.zip -DestinationPath xray-core-tmp
@@ -164,7 +164,7 @@ jobs:
       # Download xray-core for macOS
       - name: Download xray-core
         run: |
-          XRAY_VERSION="v25.3.6"
+          XRAY_VERSION="v26.6.1"
           if [ "${{ matrix.arch }}" = "arm64" ]; then
             XRAY_ARCH="macos-arm64-v8a"
           else
