@@ -1987,6 +1987,13 @@ async fn workshop_api(url: String, method: String, body: Option<String>) -> Resu
         .no_proxy() // IMPORTANT: bypass system proxy so API calls don't loop through VPN
         .timeout(Duration::from_secs(15));
 
+    if let Some(host) = parsed_url.host_str() {
+        if host == "94-241-172-101.sslip.io" {
+            let ip = std::net::IpAddr::V4(std::net::Ipv4Addr::new(94, 241, 172, 101));
+            builder = builder.resolve(host, std::net::SocketAddr::new(ip, 443));
+        }
+    }
+
     // Pin DNS for traefik.me domains (they embed the IP in the subdomain)
     // e.g., "...-94-241-172-101.traefik.me" → 94.241.172.101
     if url.contains("traefik.me") {

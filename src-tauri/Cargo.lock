@@ -4287,7 +4287,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-app"
-version = "5.0.6"
+version = "5.0.7"
 dependencies = [
  "ctrlc",
  "keyring",
