@@ -6,7 +6,8 @@ import { findMatchingServer } from '../lib/server-selection';
 
 // ========== Types ==========
 
-export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
+export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'disconnecting';
+export type AppUpdatePhase = 'idle' | 'checking' | 'available' | 'downloading' | 'installing' | 'error';
 
 export type ProxyMode = 'system-proxy' | 'tun';
 export type SystemProxyMode = 'set' | 'clear' | 'unchanged';
@@ -111,6 +112,9 @@ export interface AppState {
   alwaysRunAdmin: boolean;
   autoConnectOnStartup: boolean;
   availableUpdate: string | null;
+  updatePhase: AppUpdatePhase;
+  updateStatus: string;
+  updateProgress: number | null;
   showStats: boolean; // Hide/show statistics on dashboard
 
   setStatus: (status: ConnectionStatus) => void;
@@ -148,6 +152,7 @@ export interface AppState {
   clearLogs: () => void;
   wipeData: () => void;
   setAvailableUpdate: (version: string | null) => void;
+  setUpdateState: (state: Partial<Pick<AppState, 'availableUpdate' | 'updatePhase' | 'updateStatus' | 'updateProgress'>>) => void;
   addTraffic: (dl: number, ul: number) => void;
   resetTraffic: () => void;
 }
@@ -261,6 +266,9 @@ function compactStateForPersist(state: AppState): Partial<AppState> {
     'totalUp',
     'logs',
     'availableUpdate',
+    'updatePhase',
+    'updateStatus',
+    'updateProgress',
   ]);
 
   return Object.fromEntries(
@@ -310,6 +318,9 @@ export const useAppStore = create<AppState>()(
       alwaysRunAdmin: false,
       autoConnectOnStartup: false,
       availableUpdate: null,
+      updatePhase: 'idle',
+      updateStatus: '',
+      updateProgress: null,
       showStats: false,
 
       setStatus: (status) => set({ status }),
@@ -419,6 +430,7 @@ export const useAppStore = create<AppState>()(
       clearLogs: () => set({ logs: [] }),
       wipeData: () => set({ servers: [], subscriptions: [], activeServer: null }),
       setAvailableUpdate: (version) => set({ availableUpdate: version }),
+      setUpdateState: (state) => set(state),
       addTraffic: (dl, ul) => set((s) => ({ totalDown: s.totalDown + dl, totalUp: s.totalUp + ul })),
       resetTraffic: () => set({ totalDown: 0, totalUp: 0, speedHistory: [], currentDownload: 0, currentUpload: 0 }),
     }),

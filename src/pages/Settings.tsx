@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Trash2, RotateCcw, Database, Zap, Monitor, Download, ShieldCheck, ChevronDown, RefreshCw, Network, HardDrive, ClipboardCopy } from 'lucide-react';
+import { Settings as SettingsIcon, Trash2, RotateCcw, Database, Zap, Monitor, Download, ShieldCheck, ChevronDown, RefreshCw, Network, HardDrive, ClipboardCopy, Loader2 } from 'lucide-react';
 import { disable } from '@tauri-apps/plugin-autostart';
 import { useTranslation } from '../locales';
 import { useAppStore } from '../stores/app-store';
@@ -143,6 +143,10 @@ export default function Settings() {
     showStats, setShowStats,
     language, setLanguage,
     subscriptions,
+    updatePhase,
+    updateStatus,
+    updateProgress,
+    setUpdateState,
     addLog,
     clearLogs,
     wipeData,
@@ -264,7 +268,6 @@ export default function Settings() {
     }
   };
 
-  const [updateStatus, setUpdateStatus] = useState<string>('');
   const [appVersion, setAppVersion] = useState<string>('...');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
@@ -278,21 +281,49 @@ export default function Settings() {
   }, []);
 
   const handleCheckUpdate = async () => {
-    setUpdateStatus('Checking...');
+    setUpdateState({
+      updatePhase: 'checking',
+      updateStatus: 'Checking for updates...',
+      updateProgress: null,
+    });
     try {
       let update = getCachedUpdate();
       if (!update) {
         update = await checkForAppUpdate();
       }
       if (update) {
-        await installAppUpdate({ update, onStatus: setUpdateStatus });
+        setUpdateState({
+          availableUpdate: update.version,
+          updatePhase: 'downloading',
+          updateStatus: `Downloading v${update.version}...`,
+          updateProgress: 0,
+        });
+        await installAppUpdate({
+          update,
+          onStatus: (status) => {
+            setUpdateState({
+              updateStatus: status,
+              updatePhase: status.toLowerCase().includes('installing') ? 'installing' : 'downloading',
+            });
+          },
+          onProgress: (progress) => setUpdateState({ updateProgress: progress }),
+        });
       } else {
-        setUpdateStatus('You are on the latest version ✓');
-        setTimeout(() => setUpdateStatus(''), 3000);
+        setUpdateState({
+          availableUpdate: null,
+          updatePhase: 'idle',
+          updateStatus: 'You are on the latest version.',
+          updateProgress: null,
+        });
+        setTimeout(() => setUpdateState({ updateStatus: '' }), 3000);
       }
     } catch (e: any) {
-      setUpdateStatus(`Update check failed: ${e.message || e}`);
-      setTimeout(() => setUpdateStatus(''), 5000);
+      setUpdateState({
+        updatePhase: 'error',
+        updateStatus: `Update check failed: ${e.message || e}`,
+        updateProgress: null,
+      });
+      setTimeout(() => setUpdateState({ updateStatus: '' }), 5000);
     }
   };
 
@@ -662,13 +693,29 @@ export default function Settings() {
 
         {/* Footer */}
         <div className="mt-10 text-center pb-8">
-          <button onClick={handleCheckUpdate}
-            className="group inline-flex items-center gap-2 px-5 py-2.5 bg-white border-[3px] border-black shadow-[4px_4px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none rounded-xl transition-all cursor-pointer mb-4">
-            <Download className="w-4 h-4 stroke-[3px] transition-transform duration-300 group-hover:-translate-y-1" />
-            <span className="text-xs font-black uppercase tracking-widest">{t('checkForUpdates')}</span>
+          <button
+            onClick={handleCheckUpdate}
+            disabled={updatePhase === 'checking' || updatePhase === 'downloading' || updatePhase === 'installing'}
+            className="group mb-4 inline-flex cursor-pointer items-center gap-2 rounded-xl border-[3px] border-black bg-white px-5 py-2.5 shadow-[4px_4px_0_#000] transition-all hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none disabled:cursor-wait disabled:opacity-70"
+          >
+            {updatePhase === 'checking' || updatePhase === 'downloading' || updatePhase === 'installing' ? (
+              <Loader2 className="h-4 w-4 animate-spin stroke-[3px]" />
+            ) : (
+              <Download className="h-4 w-4 stroke-[3px] transition-transform duration-300 group-hover:-translate-y-1" />
+            )}
+            <span className="text-xs font-black uppercase tracking-widest">
+              {updatePhase === 'downloading' && updateProgress !== null ? `${updateProgress}%` : t('checkForUpdates')}
+            </span>
           </button>
           {updateStatus && (
-            <p className="text-[11px] font-black text-black/80 mb-3 uppercase tracking-widest">{updateStatus}</p>
+            <div className="mx-auto mb-3 max-w-xs">
+              <p className="text-[11px] font-black uppercase tracking-widest text-black/80">{updateStatus}</p>
+              {updatePhase === 'downloading' && updateProgress !== null && (
+                <div className="mt-2 h-2 overflow-hidden rounded-full border-[2px] border-black bg-black/10">
+                  <div className="h-full bg-black transition-all duration-300" style={{ width: `${updateProgress}%` }} />
+                </div>
+              )}
+            </div>
           )}
           <p className="text-sm font-black text-text-on-orange-secondary/40 tracking-widest mt-3">DoodleRay v{appVersion}</p>
         </div>

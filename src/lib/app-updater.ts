@@ -15,10 +15,12 @@ type UpdateLike = {
 type InstallOptions = {
   update?: UpdateLike | null;
   onStatus?: (status: string) => void;
+  onProgress?: (progress: number | null) => void;
   disconnectVpn?: boolean;
 };
 
 let cachedUpdate: UpdateLike | null = null;
+let installPromise: Promise<boolean> | null = null;
 
 export function getCachedUpdate() {
   return cachedUpdate;
@@ -50,16 +52,34 @@ async function disconnectBeforeInstall(onStatus: (status: string) => void) {
 export async function installAppUpdate({
   update,
   onStatus = () => {},
+  onProgress = () => {},
+  disconnectVpn = true,
+}: InstallOptions = {}) {
+  if (installPromise) return installPromise;
+
+  installPromise = installAppUpdateOnce({ update, onStatus, onProgress, disconnectVpn }).finally(() => {
+    installPromise = null;
+  });
+
+  return installPromise;
+}
+
+async function installAppUpdateOnce({
+  update,
+  onStatus = () => {},
+  onProgress = () => {},
   disconnectVpn = true,
 }: InstallOptions = {}) {
   const pendingUpdate = update ?? cachedUpdate ?? await checkForAppUpdate();
 
   if (!pendingUpdate) {
     onStatus('You are on the latest version');
+    onProgress(null);
     return false;
   }
 
   onStatus(`v${pendingUpdate.version} available. Downloading...`);
+  onProgress(0);
 
   let downloaded = 0;
   let contentLength = 0;
@@ -68,15 +88,18 @@ export async function installAppUpdate({
     switch (event.event) {
       case 'Started':
         contentLength = event.data?.contentLength || 0;
+        onProgress(0);
         break;
       case 'Progress':
         downloaded += event.data?.chunkLength || 0;
         if (contentLength > 0) {
           const percent = Math.min(100, Math.round((downloaded / contentLength) * 100));
+          onProgress(percent);
           onStatus(`Downloading... ${percent}%`);
         }
         break;
       case 'Finished':
+        onProgress(100);
         onStatus('Download complete. Preparing install...');
         break;
     }

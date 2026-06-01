@@ -1,5 +1,5 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Download, Loader2 } from 'lucide-react';
 import { Sidebar } from './components/layout/Sidebar';
@@ -40,39 +40,76 @@ function ToastContainer() {
 
 function UpdateBanner() {
   const availableUpdate = useAppStore((s) => s.availableUpdate);
-  const [installing, setInstalling] = useState(false);
+  const updatePhase = useAppStore((s) => s.updatePhase);
+  const updateStatus = useAppStore((s) => s.updateStatus);
+  const updateProgress = useAppStore((s) => s.updateProgress);
+  const setUpdateState = useAppStore((s) => s.setUpdateState);
 
   if (!availableUpdate) return null;
 
+  const isDownloading = updatePhase === 'downloading';
+  const isBusy = updatePhase === 'checking' || updatePhase === 'downloading' || updatePhase === 'installing';
+
   const handleInstall = async () => {
-    setInstalling(true);
+    if (isBusy) return;
+    setUpdateState({
+      updatePhase: 'downloading',
+      updateStatus: `Downloading v${availableUpdate}...`,
+      updateProgress: 0,
+    });
     try {
-      await installAppUpdate();
+      await installAppUpdate({
+        onStatus: (status) => {
+          setUpdateState({
+            updateStatus: status,
+            updatePhase: status.toLowerCase().includes('installing') ? 'installing' : 'downloading',
+          });
+        },
+        onProgress: (progress) => setUpdateState({ updateProgress: progress }),
+      });
     } catch (e) {
       console.error('Update failed:', e);
-      useToastStore.getState().addToast('Update failed — try again later', 'error');
-      setInstalling(false);
+      setUpdateState({
+        updatePhase: 'error',
+        updateStatus: 'Update failed. Try again later.',
+        updateProgress: null,
+      });
+      useToastStore.getState().addToast('Update failed. Try again later', 'error');
     }
   };
 
   return (
     <div className="absolute top-0 left-0 right-0 z-50 animate-slide-down">
-      <div className="mx-4 mt-3 bg-black border-[3px] border-black rounded-2xl px-5 py-3 flex items-center gap-4 shadow-[6px_6px_0_rgba(0,0,0,0.3)]">
-        <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse shrink-0" />
-        <p className="flex-1 text-white text-xs font-black uppercase tracking-wide">
-          🚀 New version <span className="text-bg-primary">v{availableUpdate}</span> is available!
-        </p>
-        <button
-          onClick={handleInstall}
-          disabled={installing}
-          className="px-4 py-2 bg-bg-primary text-black border-[3px] border-white rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer shadow-[3px_3px_0_rgba(255,255,255,0.3)] hover:-translate-y-0.5 hover:shadow-[5px_5px_0_rgba(255,255,255,0.3)] active:translate-y-1 active:shadow-none transition-all disabled:opacity-50 flex items-center gap-2 whitespace-nowrap"
-        >
-          {installing ? (
-            <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Updating...</>
-          ) : (
-            <><Download className="w-3.5 h-3.5 stroke-[3px]" /> Update Now</>
-          )}
-        </button>
+      <div className="mx-4 mt-3 overflow-hidden rounded-2xl border-[3px] border-black bg-black px-5 py-3 shadow-[6px_6px_0_rgba(0,0,0,0.3)]">
+        <div className="flex items-center gap-4">
+          <div className={`h-3 w-3 shrink-0 rounded-full ${isBusy ? 'animate-pulse bg-amber-300' : 'bg-emerald-400'}`} />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xs font-black uppercase tracking-wide text-white">
+              Update v<span className="text-bg-primary">{availableUpdate}</span> is ready
+            </p>
+            {(updateStatus || isDownloading) && (
+              <p className="mt-0.5 truncate text-[10px] font-black uppercase tracking-widest text-white/55">
+                {updateProgress !== null && isDownloading ? `Downloading ${updateProgress}%` : updateStatus}
+              </p>
+            )}
+          </div>
+          <button
+            onClick={handleInstall}
+            disabled={isBusy}
+            className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-xl border-[3px] border-white bg-bg-primary px-4 py-2 text-[10px] font-black uppercase tracking-widest text-black shadow-[3px_3px_0_rgba(255,255,255,0.3)] transition-all hover:-translate-y-0.5 hover:shadow-[5px_5px_0_rgba(255,255,255,0.3)] active:translate-y-1 active:shadow-none disabled:cursor-wait disabled:opacity-70"
+          >
+            {isBusy ? (
+              <><Loader2 className="h-3.5 w-3.5 animate-spin" /> {updateProgress !== null && isDownloading ? `${updateProgress}%` : 'Updating'}</>
+            ) : (
+              <><Download className="h-3.5 w-3.5 stroke-[3px]" /> Install</>
+            )}
+          </button>
+        </div>
+        {updateProgress !== null && isDownloading && (
+          <div className="mt-3 h-2 overflow-hidden rounded-full border-[2px] border-white/80 bg-white/15">
+            <div className="h-full bg-bg-primary transition-all duration-300" style={{ width: `${updateProgress}%` }} />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -104,29 +141,56 @@ function App() {
         const update = await checkForAppUpdate();
         if (update) {
           const prev = useAppStore.getState().availableUpdate;
-          useAppStore.getState().setAvailableUpdate(update.version);
+          useAppStore.getState().setUpdateState({
+            availableUpdate: update.version,
+            updatePhase: 'available',
+            updateStatus: '',
+            updateProgress: null,
+          });
 
           if (options.autoInstall) {
             useToastStore.getState().addToast(`Installing update v${update.version}...`, 'info');
             useAppStore.getState().addLog('info', `Auto-update found v${update.version}. Installing...`);
+            useAppStore.getState().setUpdateState({
+              updatePhase: 'downloading',
+              updateStatus: `Downloading v${update.version}...`,
+              updateProgress: 0,
+            });
             await installAppUpdate({
               update,
-              onStatus: (status) => useAppStore.getState().addLog('info', `Auto-update: ${status}`),
+              onStatus: (status) => {
+                useAppStore.getState().setUpdateState({
+                  updateStatus: status,
+                  updatePhase: status.toLowerCase().includes('installing') ? 'installing' : 'downloading',
+                });
+                useAppStore.getState().addLog('info', `Auto-update: ${status}`);
+              },
+              onProgress: (progress) => useAppStore.getState().setUpdateState({ updateProgress: progress }),
             });
             return true;
           }
 
           // Only show toast on fresh discovery (not repeated checks)
           if (!prev || prev !== update.version) {
-            useToastStore.getState().addToast(`🚀 Update v${update.version} available!`, 'info');
+            useToastStore.getState().addToast(`Update v${update.version} available`, 'info');
           }
           return false;
         }
 
-        useAppStore.getState().setAvailableUpdate(null);
+        useAppStore.getState().setUpdateState({
+          availableUpdate: null,
+          updatePhase: 'idle',
+          updateStatus: '',
+          updateProgress: null,
+        });
         return false;
       } catch (e) {
         console.log('Update check skipped:', e);
+        useAppStore.getState().setUpdateState({
+          updatePhase: 'error',
+          updateStatus: e instanceof Error ? e.message : String(e),
+          updateProgress: null,
+        });
         if (options.autoInstall) {
           useAppStore.getState().addLog('warning', `Auto-update check failed: ${e instanceof Error ? e.message : e}`);
         }

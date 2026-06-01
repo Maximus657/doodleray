@@ -183,6 +183,7 @@
   .smooth-collapse[data-open="true"] {
     grid-template-rows: 1fr;
     max-height: 3000px;
+    overflow: visible;
     opacity: 1;
     transform: translateY(0) scale(1);
     pointer-events: auto;
@@ -190,7 +191,7 @@
 
   .smooth-collapse-inner {
     min-height: 0;
-    overflow: hidden;
+    overflow: visible;
   }
 
   .drawer-collapse {

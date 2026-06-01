@@ -926,6 +926,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "doodleray"
+version = "5.0.10"
+dependencies = [
+ "ctrlc",
+ "keyring",
+ "lazy_static",
+ "libloading 0.8.9",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "socket2 0.5.10",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-autostart",
+ "tauri-plugin-http",
+ "tauri-plugin-opener",
+ "tauri-plugin-process",
+ "tauri-plugin-updater",
+ "tokio",
+ "windows-service",
+ "winreg 0.52.0",
+]
+
+[[package]]
 name = "dpi"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4283,30 +4307,6 @@ dependencies = [
  "webview2-com",
  "window-vibrancy",
  "windows",
-]
-
-[[package]]
-name = "tauri-app"
-version = "5.0.9"
-dependencies = [
- "ctrlc",
- "keyring",
- "lazy_static",
- "libloading 0.8.9",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "socket2 0.5.10",
- "tauri",
- "tauri-build",
- "tauri-plugin-autostart",
- "tauri-plugin-http",
- "tauri-plugin-opener",
- "tauri-plugin-process",
- "tauri-plugin-updater",
- "tokio",
- "windows-service",
- "winreg 0.52.0",
 ]
 
 [[package]]

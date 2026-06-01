@@ -126,7 +126,7 @@ export default function ServerList({
 
     return (
       <button key={group.id} onClick={() => onServerSelect(selectedServer)}
-        className={`w-full p-2.5 rounded-2xl flex items-center gap-3 transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] overflow-hidden relative cursor-pointer
+        className={`mr-1 w-[calc(100%-0.25rem)] min-h-[64px] p-2.5 pr-3 rounded-2xl flex items-center gap-3 transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] overflow-visible relative cursor-pointer
           ${isActive
             ? 'bg-black text-white border-[3px] border-emerald-400 shadow-[0_0_0_3px_rgba(52,211,153,0.18),4px_4px_0_rgba(0,0,0,0.4)] translate-x-[-1px] translate-y-[-1px]'
             : 'bg-white/92 text-black border-[2px] border-black shadow-[1px_1px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[4px_4px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none'}`}>
@@ -221,7 +221,7 @@ export default function ServerList({
             <span className={`rounded-lg border-[2px] border-emerald-400 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest ${
               status === 'connected' ? 'bg-emerald-400 text-black' : 'bg-amber-300 text-black'
             }`}>
-              {status === 'connected' ? t('connected') : t('connecting')}
+              {status === 'connected' ? t('connected') : status === 'disconnecting' ? t('disconnecting') : t('connecting')}
             </span>
           </div>
           <div className="flex items-center gap-3">
@@ -313,7 +313,7 @@ export default function ServerList({
 
               {/* Servers */}
               <CollapsibleSection open={!collapsedGroups[sub.id]}>
-                <div className="flex flex-col gap-2 pl-2 border-l-[3px] border-black/10 ml-2">
+                <div className="ml-2 flex flex-col gap-2 overflow-visible border-l-[3px] border-black/10 pl-2 pr-1 py-0.5">
                   {subServerGroups.map(renderServerGroup)}
                 </div>
               </CollapsibleSection>
@@ -355,7 +355,7 @@ export default function ServerList({
                 </div>
               </div>
               <CollapsibleSection open={!collapsedGroups['__custom__']}>
-                <div className="flex flex-col gap-2 pl-2 border-l-[3px] border-black/10 ml-2">
+                <div className="ml-2 flex flex-col gap-2 overflow-visible border-l-[3px] border-black/10 pl-2 pr-1 py-0.5">
                   {standalone.map((server) => {
                     const isActive = findMatchingServer(activeServer, [server]) !== null;
                     const pingColor = server.ping && server.ping > 0
@@ -373,7 +373,7 @@ export default function ServerList({
                             onServerSelect(server);
                           }
                         }}
-                        className={`w-full p-2.5 rounded-2xl flex items-center gap-3 transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] overflow-hidden relative cursor-pointer
+                        className={`mr-1 w-[calc(100%-0.25rem)] min-h-[64px] p-2.5 pr-3 rounded-2xl flex items-center gap-3 transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] overflow-visible relative cursor-pointer
                           ${isActive
                             ? 'bg-black text-white border-[3px] border-emerald-400 shadow-[0_0_0_3px_rgba(52,211,153,0.18),4px_4px_0_rgba(0,0,0,0.4)] translate-x-[-1px] translate-y-[-1px]'
                             : 'bg-white/92 text-black border-[2px] border-black shadow-[1px_1px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[4px_4px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none'}`}>

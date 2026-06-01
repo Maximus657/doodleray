@@ -44,6 +44,7 @@ export default function DashboardControlsDrawer({
 }: Props) {
   const isConnected = status === 'connected';
   const isConnecting = status === 'connecting';
+  const isBusy = isConnecting || status === 'disconnecting';
   const [modeHelp, setModeHelp] = useState<ProxyMode | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
 
@@ -163,7 +164,7 @@ export default function DashboardControlsDrawer({
                   key={mode}
                   type="button"
                   onClick={() => onSystemProxyModeChange(mode)}
-                  disabled={isConnecting || isConnected}
+                  disabled={isBusy || isConnected}
                   title={
                     mode === 'set'
                       ? t('systemProxySet')

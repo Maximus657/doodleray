@@ -92,6 +92,7 @@ export default function Dashboard() {
   const [quickImporting, setQuickImporting] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [connectionStep, setConnectionStep] = useState<string | null>(null);
+  const connectionOpRef = useRef(0);
   const [testingSubId, setTestingSubId] = useState<string | null>(null);
   const [refreshingSubId, setRefreshingSubId] = useState<string | null>(null);
   const [pingingServerId, setPingingServerId] = useState<string | null>(null);
@@ -351,6 +352,7 @@ export default function Dashboard() {
 
   const handleConnect = useCallback(async () => {
     if (status === 'disconnected') {
+      const opId = ++connectionOpRef.current;
       const activeRoutingRules = await getActiveRoutingRules();
       if (proxyMode !== 'tun' && activeRoutingRules.length > 0) {
         const message = formatMessage(t('splitTunnelingProxyWarning'), { count: activeRoutingRules.length });
@@ -400,6 +402,8 @@ export default function Dashboard() {
           'Connection timed out while starting VPN engines'
         );
 
+        if (opId !== connectionOpRef.current) return;
+
         if (result.success) {
           addLog('success', result.message);
           addLog('success', t('connectionActive'));
@@ -416,6 +420,7 @@ export default function Dashboard() {
                 await new Promise(r => setTimeout(r, 1000));
                 const retryReq = await buildConnectRequestFromState(srv!);
                 const retry: any = await invoke('vpn_connect', { request: retryReq });
+                if (opId !== connectionOpRef.current) return;
                 if (retry.success) { addLog('success', retry.message); setConnectionStep(t('connectionReady')); setStatus('connected'); setConnectedAt(Date.now()); return; }
               }
             } catch {}
@@ -426,6 +431,7 @@ export default function Dashboard() {
           setConnectionStep(null);
         }
       } catch (err: any) {
+        if (opId !== connectionOpRef.current) return;
         if (isTauriRuntime()) {
           const message = err.message || String(err);
           addLog('error', `Connection failed: ${message}`);
@@ -451,14 +457,28 @@ export default function Dashboard() {
           setTimeout(() => { addLog('success', `[SIM] Connected via ${srv!.protocol.toUpperCase()}+${srv!.transport}`); setConnectionStep(t('connectionReady')); setStatus('connected'); setConnectedAt(Date.now()); }, 1500);
         }
       }
-    } else if (status === 'connected') {
-      addLog('warning', 'Disconnecting...');
+    } else if (status === 'connecting') {
+      ++connectionOpRef.current;
+      addLog('warning', 'Cancelling connection start...');
+      setStatus('disconnecting');
+      setConnectionStep(t('connectionDisconnecting'));
       try {
         const { invoke } = await import('@tauri-apps/api/core');
         const result: any = await invoke('vpn_disconnect');
         addLog(result.success ? 'info' : 'error', result.message);
       } catch { addLog('info', '[SIM] Disconnected'); }
-      setStatus('disconnected'); setConnectionStep(null); setCurrentSpeed(0, 0); resetTraffic();
+      setStatus('disconnected'); setConnectionStep(null); setConnectedAt(null); setCurrentSpeed(0, 0); resetTraffic();
+    } else if (status === 'connected') {
+      addLog('warning', 'Disconnecting...');
+      ++connectionOpRef.current;
+      setStatus('disconnecting');
+      setConnectionStep(t('connectionDisconnecting'));
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const result: any = await invoke('vpn_disconnect');
+        addLog(result.success ? 'info' : 'error', result.message);
+      } catch { addLog('info', '[SIM] Disconnected'); }
+      setStatus('disconnected'); setConnectionStep(null); setConnectedAt(null); setCurrentSpeed(0, 0); resetTraffic();
     }
   }, [status, setStatus, setCurrentSpeed, resetTraffic, activeServer, servers, setActiveServer, addLog, proxyMode, socksPort, httpPort, autoSelectFastest, setConnectedAt, t, setProxyMode]);
 
@@ -654,7 +674,7 @@ export default function Dashboard() {
       : quickInputKind === 'link'
         ? t('detectedProxyLink')
         : t('detectedUnknown');
-  const connectionStepLabel = status === 'connecting' ? connectionStep : null;
+  const connectionStepLabel = status === 'connecting' || status === 'disconnecting' ? connectionStep : null;
 
   // ═══════════════════════════════════════════════════
   //  Render

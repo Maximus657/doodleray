@@ -1,6 +1,6 @@
 [package]
-name = "tauri-app"
-version = "5.0.9"
+name = "doodleray"
+version = "5.0.10"
 description = "DoodleRay VPN Client"
 authors = ["DoodleVPN"]
 edition = "2021"
@@ -15,7 +15,7 @@ name = "DoodleRay"
 path = "src/main.rs"
 
 [[bin]]
-name = "service"
+name = "DoodleRayService"
 path = "src/bin/service.rs"
 
 [build-dependencies]
