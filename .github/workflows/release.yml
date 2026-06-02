@@ -68,12 +68,6 @@ jobs:
           Get-Item ../libsingbox.dll
         shell: pwsh
 
-      - name: Build tunnel service
-        run: |
-          cargo build --release --manifest-path src-tauri/Cargo.toml --bin DoodleRayService
-          Copy-Item "src-tauri/target/release/DoodleRayService.exe" "src-tauri/"
-        shell: pwsh
-
       - name: Download sing-box
         run: |
           $singBoxVersion = "1.13.2"
@@ -84,6 +78,17 @@ jobs:
           $singBoxExe = Get-ChildItem $singBoxExtract -Recurse -Filter "sing-box.exe" | Select-Object -First 1
           if (-not $singBoxExe) { throw "sing-box.exe not found in downloaded archive" }
           Copy-Item $singBoxExe.FullName "src-tauri/sing-box.exe" -Force
+        shell: pwsh
+
+      - name: Build tunnel service
+        run: |
+          # tauri-build validates configured bundle resources even for this service-only binary.
+          # The real service exe replaces this placeholder immediately after compilation.
+          if (-not (Test-Path "src-tauri/DoodleRayService.exe")) {
+            New-Item -ItemType File -Path "src-tauri/DoodleRayService.exe" -Force | Out-Null
+          }
+          cargo build --release --manifest-path src-tauri/Cargo.toml --bin DoodleRayService
+          Copy-Item "src-tauri/target/release/DoodleRayService.exe" "src-tauri/" -Force
         shell: pwsh
 
       # Configure Tauri to bundle external binaries.
