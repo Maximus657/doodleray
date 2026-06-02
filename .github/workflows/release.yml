@@ -68,11 +68,14 @@ jobs:
           Get-Item ../libsingbox.dll
         shell: pwsh
 
-      # Configure Tauri to bundle external binaries
-      - name: Setup external resources
+      - name: Build tunnel service
         run: |
           cargo build --release --manifest-path src-tauri/Cargo.toml --bin DoodleRayService
           Copy-Item "src-tauri/target/release/DoodleRayService.exe" "src-tauri/"
+        shell: pwsh
+
+      - name: Download sing-box
+        run: |
           $singBoxVersion = "1.13.2"
           $singBoxZip = Join-Path $env:RUNNER_TEMP "sing-box-windows-amd64.zip"
           $singBoxExtract = Join-Path $env:RUNNER_TEMP "sing-box-windows-amd64"
@@ -81,13 +84,14 @@ jobs:
           $singBoxExe = Get-ChildItem $singBoxExtract -Recurse -Filter "sing-box.exe" | Select-Object -First 1
           if (-not $singBoxExe) { throw "sing-box.exe not found in downloaded archive" }
           Copy-Item $singBoxExe.FullName "src-tauri/sing-box.exe" -Force
+        shell: pwsh
+
+      # Configure Tauri to bundle external binaries.
+      - name: Setup external resources
+        run: |
           if (Test-Path "src-tauri/xray-core/wintun.dll") {
             Copy-Item "src-tauri/xray-core/wintun.dll" "src-tauri/wintun.dll" -Force
           }
-          $configPath = "src-tauri/tauri.conf.json"
-          $config = Get-Content $configPath -Raw | ConvertFrom-Json
-          $config.bundle.resources | Add-Member -NotePropertyName "DoodleRayService.exe" -NotePropertyValue "DoodleRayService.exe" -Force
-          $config | ConvertTo-Json -Depth 100 | Set-Content $configPath -Encoding UTF8
           # Copy binaries to where Tauri build expects them
           $targetDir = "src-tauri/target/release"
           New-Item -ItemType Directory -Force -Path "$targetDir/xray-core"
