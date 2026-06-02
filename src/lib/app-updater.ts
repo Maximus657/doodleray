@@ -42,10 +42,13 @@ async function disconnectBeforeInstall(onStatus: (status: string) => void) {
 
   try {
     const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('vpn_disconnect').catch(() => {});
+    await invoke('prepare_for_app_update');
     await invoke('vpn_disconnect');
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await new Promise((resolve) => setTimeout(resolve, 1500));
   } catch (e) {
     console.warn('Could not disconnect VPN before update:', e);
+    throw new Error(`Could not close VPN engine before update: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 

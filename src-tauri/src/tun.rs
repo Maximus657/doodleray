@@ -424,3 +424,76 @@ pub fn stop_tun() -> Result<(), String> {
 
     Ok(())
 }
+#[cfg(windows)]
+pub fn stop_tun_for_update() -> Result<(), String> {
+    let regular = Command::new("taskkill")
+        .args(&["/IM", "sing-box.exe", "/F", "/T"])
+        .creation_flags(0x08000000)
+        .output()
+        .map_err(|e| format!("Failed to run taskkill for sing-box: {}", e))?;
+
+    for _ in 0..10 {
+        if !is_singbox_running() {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+
+    let stderr = String::from_utf8_lossy(&regular.stderr).to_lowercase();
+    let stdout = String::from_utf8_lossy(&regular.stdout).to_lowercase();
+    let needs_elevation = stderr.contains("access")
+        || stderr.contains("denied")
+        || stdout.contains("access")
+        || stdout.contains("denied");
+
+    if needs_elevation || is_singbox_running() {
+        let cmd_w: Vec<u16> = "cmd.exe\0".encode_utf16().collect();
+        let args_w: Vec<u16> = "/c taskkill /IM sing-box.exe /F /T\0".encode_utf16().collect();
+        let verb: Vec<u16> = "runas\0".encode_utf16().collect();
+
+        unsafe {
+            #[link(name = "shell32")]
+            extern "system" {
+                fn ShellExecuteW(
+                    hwnd: *mut std::ffi::c_void,
+                    lpOperation: *const u16,
+                    lpFile: *const u16,
+                    lpParameters: *const u16,
+                    lpDirectory: *const u16,
+                    nShowCmd: i32,
+                ) -> isize;
+            }
+
+            let result = ShellExecuteW(
+                std::ptr::null_mut(),
+                verb.as_ptr(),
+                cmd_w.as_ptr(),
+                args_w.as_ptr(),
+                std::ptr::null(),
+                0,
+            );
+
+            if result as usize <= 32 {
+                return Err("Administrator permission is required to stop sing-box before update".into());
+            }
+        }
+
+        for _ in 0..20 {
+            if !is_singbox_running() {
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+    }
+
+    if is_singbox_running() {
+        Err("sing-box.exe is still running and blocks the update".into())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+pub fn stop_tun_for_update() -> Result<(), String> {
+    stop_tun()
+}

@@ -4640,6 +4640,13 @@ fn wait_for_port_ready(port: u16) -> Result<(), String> {
     Err(format!("127.0.0.1:{} did not open in time", port))
 }
 
+#[tauri::command]
+fn prepare_for_app_update() -> Result<String, String> {
+    let _ = singbox::stop_singbox();
+    let _ = xray::stop_xray();
+    tun::stop_tun_for_update()?;
+    Ok("Update preparation complete".into())
+}
 /// Check connection health by testing if SOCKS port is alive
 #[tauri::command]
 fn check_connection_health(socks_port: u16) -> bool {
@@ -4991,6 +4998,7 @@ pub fn run() {
             scan_installed_apps,
             check_connection_health,
             add_defender_exclusion,
+            prepare_for_app_update,
             check_defender_exclusion,
             run_network_diagnostics,
             get_storage_report,
