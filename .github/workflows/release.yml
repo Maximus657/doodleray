@@ -71,7 +71,7 @@ jobs:
       # Configure Tauri to bundle external binaries
       - name: Setup external resources
         run: |
-          cargo build --release --bin DoodleRayService
+          cargo build --release --manifest-path src-tauri/Cargo.toml --bin DoodleRayService
           Copy-Item "src-tauri/target/release/DoodleRayService.exe" "src-tauri/"
           $singBoxVersion = "1.13.2"
           $singBoxZip = Join-Path $env:RUNNER_TEMP "sing-box-windows-amd64.zip"
