@@ -110,7 +110,7 @@ function getBalancerOutbounds(json: XrayJsonConfig, balancer: XrayBalancer): Xra
 function isAggregateAutoBalancer(balancer: XrayBalancer, balancerCount: number): boolean {
   const tag = balancer.tag?.toLowerCase() || '';
   if (/entry-pool|urltest|leastping/.test(tag)) return true;
-  return balancerCount === 1 && /auto|fast|самый/.test(tag);
+  return balancerCount === 1 && /авто|auto|fast|самый/.test(tag);
 }
 
 function getAutoBalancerName(balancer: XrayBalancer): string {

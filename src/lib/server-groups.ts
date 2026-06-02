@@ -56,7 +56,7 @@ function getBestGroupPing(servers: ServerConfig[]): number | undefined {
 
 function getDisplayRank(label: string): number {
   const normalized = label.toLowerCase();
-  if (/самый быстрый|auto|entry-pool|fastest/.test(normalized)) return 0;
+  if (/авто|самый быстрый|auto|entry-pool|fastest/.test(normalized)) return 0;
   if (/обход|блокиров|white|whitelist|bypass/.test(normalized)) return 1;
   if (/нидерланд|netherlands/.test(normalized)) return 2;
   if (/герман|germany/.test(normalized)) return 3;
