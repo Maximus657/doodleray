@@ -98,6 +98,7 @@ fn create_private_dir(path: &std::path::Path) -> Result<(), String> {
 fn write_private_file(
     path: &std::path::Path,
     content: &str,
+    #[cfg_attr(not(unix), allow(unused_variables))]
     executable: bool,
 ) -> Result<(), String> {
     let mut options = std::fs::OpenOptions::new();
@@ -349,60 +350,9 @@ pub fn is_singbox_running() -> bool {
 pub fn stop_tun() -> Result<(), String> {
     #[cfg(windows)]
     {
-        let regular = Command::new("taskkill")
-            .args(&["/IM", "sing-box.exe", "/F", "/T"])
-            .creation_flags(0x08000000)
-            .output();
-
-        if let Ok(output) = &regular {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if stderr.contains("Access") || stderr.contains("Отказано") || stderr.contains("denied")
-            {
-                let kill_cmd = "taskkill /IM sing-box.exe /F /T";
-                let cmd_w: Vec<u16> = "cmd.exe\0".encode_utf16().collect();
-                let args = format!("/c {}\0", kill_cmd);
-                let args_w: Vec<u16> = args.encode_utf16().collect();
-                let verb: Vec<u16> = "runas\0".encode_utf16().collect();
-
-                unsafe {
-                    #[link(name = "shell32")]
-                    extern "system" {
-                        fn ShellExecuteW(
-                            hwnd: *mut std::ffi::c_void,
-                            lpOperation: *const u16,
-                            lpFile: *const u16,
-                            lpParameters: *const u16,
-                            lpDirectory: *const u16,
-                            nShowCmd: i32,
-                        ) -> isize;
-                    }
-
-                    ShellExecuteW(
-                        std::ptr::null_mut(),
-                        verb.as_ptr(),
-                        cmd_w.as_ptr(),
-                        args_w.as_ptr(),
-                        std::ptr::null(),
-                        0,
-                    );
-                }
-
-                // Wait for the process to actually terminate
-                for _ in 0..8 {
-                    if !is_singbox_running() {
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(250));
-                }
-            } else {
-                for _ in 0..6 {
-                    if !is_singbox_running() {
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(250));
-                }
-            }
-        }
+        // Production Windows TUN is owned by DoodleRayTunnelService. Do not kill by
+        // image name here: that can hit unrelated sing-box users and can surface
+        // taskkill/UAC dialogs during shutdown.
     }
 
     #[cfg(not(windows))]
@@ -424,73 +374,12 @@ pub fn stop_tun() -> Result<(), String> {
 
     Ok(())
 }
+
 #[cfg(windows)]
 pub fn stop_tun_for_update() -> Result<(), String> {
-    let regular = Command::new("taskkill")
-        .args(&["/IM", "sing-box.exe", "/F", "/T"])
-        .creation_flags(0x08000000)
-        .output()
-        .map_err(|e| format!("Failed to run taskkill for sing-box: {}", e))?;
-
-    for _ in 0..10 {
-        if !is_singbox_running() {
-            return Ok(());
-        }
-        std::thread::sleep(std::time::Duration::from_millis(250));
-    }
-
-    let stderr = String::from_utf8_lossy(&regular.stderr).to_lowercase();
-    let stdout = String::from_utf8_lossy(&regular.stdout).to_lowercase();
-    let needs_elevation = stderr.contains("access")
-        || stderr.contains("denied")
-        || stdout.contains("access")
-        || stdout.contains("denied");
-
-    if needs_elevation || is_singbox_running() {
-        let cmd_w: Vec<u16> = "cmd.exe\0".encode_utf16().collect();
-        let args_w: Vec<u16> = "/c taskkill /IM sing-box.exe /F /T\0".encode_utf16().collect();
-        let verb: Vec<u16> = "runas\0".encode_utf16().collect();
-
-        unsafe {
-            #[link(name = "shell32")]
-            extern "system" {
-                fn ShellExecuteW(
-                    hwnd: *mut std::ffi::c_void,
-                    lpOperation: *const u16,
-                    lpFile: *const u16,
-                    lpParameters: *const u16,
-                    lpDirectory: *const u16,
-                    nShowCmd: i32,
-                ) -> isize;
-            }
-
-            let result = ShellExecuteW(
-                std::ptr::null_mut(),
-                verb.as_ptr(),
-                cmd_w.as_ptr(),
-                args_w.as_ptr(),
-                std::ptr::null(),
-                0,
-            );
-
-            if result as usize <= 32 {
-                return Err("Administrator permission is required to stop sing-box before update".into());
-            }
-        }
-
-        for _ in 0..20 {
-            if !is_singbox_running() {
-                return Ok(());
-            }
-            std::thread::sleep(std::time::Duration::from_millis(250));
-        }
-    }
-
-    if is_singbox_running() {
-        Err("sing-box.exe is still running and blocks the update".into())
-    } else {
-        Ok(())
-    }
+    // The updater path must never display UAC/taskkill windows. The service
+    // receives PrepareForUpdate first and stops only service-owned children.
+    Ok(())
 }
 
 #[cfg(not(windows))]

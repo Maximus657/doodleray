@@ -50,15 +50,6 @@ jobs:
           Copy-Item "wintun-tmp/wintun/bin/amd64/wintun.dll" "src-tauri/"
         shell: pwsh
 
-      # Download sing-box for Windows
-      - name: Download sing-box
-        run: |
-          $sbVersion = "1.13.2"
-          $url = "https://github.com/SagerNet/sing-box/releases/download/v$sbVersion/sing-box-$sbVersion-windows-amd64.zip"
-          Invoke-WebRequest -Uri $url -OutFile singbox.zip
-          Expand-Archive -Path singbox.zip -DestinationPath singbox-tmp
-          Copy-Item "singbox-tmp/sing-box-$sbVersion-windows-amd64/sing-box.exe" "src-tauri/"
-        shell: pwsh
       # Build libsingbox.dll from Go source
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -80,6 +71,23 @@ jobs:
       # Configure Tauri to bundle external binaries
       - name: Setup external resources
         run: |
+          cargo build --release --bin DoodleRayService
+          Copy-Item "src-tauri/target/release/DoodleRayService.exe" "src-tauri/"
+          $singBoxVersion = "1.13.2"
+          $singBoxZip = Join-Path $env:RUNNER_TEMP "sing-box-windows-amd64.zip"
+          $singBoxExtract = Join-Path $env:RUNNER_TEMP "sing-box-windows-amd64"
+          Invoke-WebRequest "https://github.com/SagerNet/sing-box/releases/download/v$singBoxVersion/sing-box-$singBoxVersion-windows-amd64.zip" -OutFile $singBoxZip
+          Expand-Archive -Path $singBoxZip -DestinationPath $singBoxExtract -Force
+          $singBoxExe = Get-ChildItem $singBoxExtract -Recurse -Filter "sing-box.exe" | Select-Object -First 1
+          if (-not $singBoxExe) { throw "sing-box.exe not found in downloaded archive" }
+          Copy-Item $singBoxExe.FullName "src-tauri/sing-box.exe" -Force
+          if (Test-Path "src-tauri/xray-core/wintun.dll") {
+            Copy-Item "src-tauri/xray-core/wintun.dll" "src-tauri/wintun.dll" -Force
+          }
+          $configPath = "src-tauri/tauri.conf.json"
+          $config = Get-Content $configPath -Raw | ConvertFrom-Json
+          $config.bundle.resources | Add-Member -NotePropertyName "DoodleRayService.exe" -NotePropertyValue "DoodleRayService.exe" -Force
+          $config | ConvertTo-Json -Depth 100 | Set-Content $configPath -Encoding UTF8
           # Copy binaries to where Tauri build expects them
           $targetDir = "src-tauri/target/release"
           New-Item -ItemType Directory -Force -Path "$targetDir/xray-core"

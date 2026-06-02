@@ -223,14 +223,8 @@ pub fn stop_xray() -> Result<(), String> {
     }
     *proc = None;
 
-    // Also force-kill any orphaned xray process (e.g. after crash)
-    #[cfg(windows)]
-    {
-        let mut cmd = std::process::Command::new("taskkill");
-        cmd.args(&["/IM", "xray.exe", "/F"]);
-        cmd.creation_flags(0x08000000);
-        let _ = cmd.output();
-    }
+    // Do not kill by image name on Windows: Full Computer mode is owned by the
+    // tunnel service/job object, and global taskkill can hit unrelated Xray users.
     #[cfg(not(windows))]
     {
         let _ = std::process::Command::new("pkill")

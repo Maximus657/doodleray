@@ -1,6 +1,6 @@
 [package]
 name = "doodleray"
-version = "5.1.4"
+version = "5.1.5"
 description = "DoodleRay VPN Client"
 authors = ["DoodleVPN"]
 edition = "2021"
@@ -41,4 +41,5 @@ socket2 = "0.5"
 # Windows-only dependencies
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.7"
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_Threading"] }
 winreg = "0.52"

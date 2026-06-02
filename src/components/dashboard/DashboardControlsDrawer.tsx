@@ -45,13 +45,12 @@ export default function DashboardControlsDrawer({
   const isConnected = status === 'connected';
   const isConnecting = status === 'connecting';
   const isBusy = isConnecting || status === 'disconnecting';
-  const [modeHelp, setModeHelp] = useState<ProxyMode | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [openHelpMode, setOpenHelpMode] = useState<ProxyMode | null>(null);
 
   const activeModeLabel = proxyMode === 'tun' ? t('fullDeviceMode') : t('systemProxy');
 
   const switchMode = (mode: ProxyMode) => {
-    setModeHelp(null);
     onModeSwitch(mode);
   };
 
@@ -89,15 +88,7 @@ export default function DashboardControlsDrawer({
                 return (
                   <div
                     key={item.mode}
-                    onMouseEnter={() => setModeHelp(item.mode)}
-                    onMouseLeave={() => setModeHelp(null)}
-                    onFocus={() => setModeHelp(item.mode)}
-                    onBlur={(event) => {
-                      if (!event.currentTarget.contains(event.relatedTarget)) {
-                        setModeHelp(null);
-                      }
-                    }}
-                    className={`rounded-xl border-[3px] p-2.5 transition-all duration-300 ${
+                    className={`relative overflow-visible rounded-xl border-[3px] p-2.5 transition-all duration-300 hover:z-[70] focus-within:z-[70] ${
                       selected
                         ? 'border-black bg-white shadow-[4px_4px_0_#000]'
                         : 'border-black/45 bg-white/60 hover:border-black hover:bg-white'
@@ -130,16 +121,29 @@ export default function DashboardControlsDrawer({
                         type="button"
                         onClick={(event) => {
                           event.stopPropagation();
-                          setModeHelp(item.mode);
+                          setOpenHelpMode((mode) => (mode === item.mode ? null : item.mode));
                         }}
+                        onMouseEnter={() => setOpenHelpMode(item.mode)}
+                        onFocus={() => setOpenHelpMode(item.mode)}
+                        onMouseLeave={() => setOpenHelpMode(null)}
+                        onBlur={() => setOpenHelpMode(null)}
                         aria-label={item.help}
-                        aria-expanded={modeHelp === item.mode}
-                        title={item.body}
+                        aria-expanded={openHelpMode === item.mode}
                         className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-[2px] border-black bg-white text-black transition-all hover:-translate-y-0.5 hover:bg-black hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2"
                       >
                         <CircleHelp className="h-3.5 w-3.5 stroke-[3px]" />
                       </button>
                     </div>
+                    {openHelpMode === item.mode && (
+                      <div className="mt-2 rounded-xl border-[2px] border-black bg-white px-3 py-2.5 text-left text-black shadow-[2px_2px_0_rgba(0,0,0,0.22)]">
+                        <p className="text-[10px] font-black uppercase tracking-widest">
+                          {item.mode === 'tun' ? t('tunAdvancedTitle') : t('modeHelpProxyTitle')}
+                        </p>
+                        <p className="mt-1 text-[10px] font-bold leading-relaxed text-black/65">
+                          {item.body}
+                        </p>
+                      </div>
+                    )}
                     {item.mode === 'tun' && selected && (
                       <p className="mt-2 rounded-lg border-[2px] border-amber-500 bg-amber-200 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-black">
                         {t('adminPermissionHint')}
@@ -149,17 +153,6 @@ export default function DashboardControlsDrawer({
                 );
               })}
             </div>
-
-          {modeHelp && (
-            <div className="relative z-30 w-full rounded-xl border-[3px] border-black bg-white p-3 text-left shadow-[4px_4px_0_#000] animate-slide-up">
-              <p className="text-[11px] font-black uppercase tracking-widest text-black">
-                {modeHelp === 'tun' ? t('modeHelpTunTitle') : t('modeHelpProxyTitle')}
-              </p>
-              <p className="mt-1 text-[10px] font-bold leading-relaxed text-black/65">
-                {modeHelp === 'tun' ? t('modeHelpTunBody') : t('modeHelpProxyBody')}
-              </p>
-            </div>
-          )}
 
           {proxyMode === 'system-proxy' && (
             <div className="relative z-10 flex w-full items-center gap-1.5 rounded-xl border-[3px] border-black bg-white p-1.5 shadow-[4px_4px_0_#000]">
@@ -218,7 +211,6 @@ export default function DashboardControlsDrawer({
       <button
         type="button"
         onClick={() => setDetailsOpen((open) => {
-          if (open) setModeHelp(null);
           return !open;
         })}
         aria-expanded={detailsOpen}

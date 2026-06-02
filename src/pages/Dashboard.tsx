@@ -71,6 +71,16 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
   });
 }
 
+function extractLocalProxyPorts(message: string): { socksPort: number; httpPort: number } | null {
+  const match = message.match(/SOCKS5:\s*127\.0\.0\.1:(\d+),\s*HTTP:\s*127\.0\.0\.1:(\d+)/i);
+  if (!match) return null;
+  const parsedSocks = Number(match[1]);
+  const parsedHttp = Number(match[2]);
+  if (!Number.isInteger(parsedSocks) || !Number.isInteger(parsedHttp)) return null;
+  if (parsedSocks <= 0 || parsedSocks > 65535 || parsedHttp <= 0 || parsedHttp > 65535) return null;
+  return { socksPort: parsedSocks, httpPort: parsedHttp };
+}
+
 export default function Dashboard() {
   const {
     status, setStatus, activeServer, servers, setActiveServer,
@@ -80,7 +90,7 @@ export default function Dashboard() {
     updateSubscription, removeSubscription, autoSelectFastest,
     subAutoUpdateMinutes, connectedAt, setConnectedAt,
     addSubscription, addServer, removeServer, removeAllManualServers,
-    updateServerPing, showStats,
+    updateServerPing, showStats, setSocksPort, setHttpPort,
   } = useAppStore();
   const { t } = useTranslation();
 
@@ -92,6 +102,17 @@ export default function Dashboard() {
   const [quickImporting, setQuickImporting] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [connectionStep, setConnectionStep] = useState<string | null>(null);
+
+  const refreshTunnelServiceHealth = useCallback(async () => {
+    if (!isTauriRuntime()) return false;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('tunnel_service_health');
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
   const connectionOpRef = useRef(0);
   const [testingSubId, setTestingSubId] = useState<string | null>(null);
   const [refreshingSubId, setRefreshingSubId] = useState<string | null>(null);
@@ -184,33 +205,36 @@ export default function Dashboard() {
     const healthCheck = setInterval(async () => {
       try {
         const { invoke } = await import('@tauri-apps/api/core');
-        const healthy: boolean = await invoke('check_connection_health', { socksPort });
+        const healthy: boolean = proxyMode === 'tun'
+          ? await invoke('tunnel_service_health').then(() => true).catch(() => false)
+          : await invoke('check_connection_health', { socksPort });
         if (healthy) { healthFailRef.current = 0; }
         else {
           healthFailRef.current++;
           if (healthFailRef.current >= 3) {
-            addLog('warning', 'Connection lost — SOCKS port not responding. Auto-reconnecting...');
-            const { useToastStore } = await import('../stores/toast-store');
-            useToastStore.getState().addToast('Connection lost — reconnecting...', 'warning');
-            const currentServer = useAppStore.getState().activeServer;
+            const healthMessage = proxyMode === 'tun'
+              ? 'Tunnel health check is unstable; keeping the tunnel up and monitoring...'
+              : 'Proxy health check is unstable; keeping the connection up and monitoring...';
+            addLog('warning', healthMessage);
+            const toastStoreModule = await import('../stores/toast-store');
+            toastStoreModule.useToastStore.getState().addToast('Connection health is unstable; monitoring...', 'warning');
+            const activeHealthServer = useAppStore.getState().activeServer;
             reportConnectionError({
-              eventType: 'health_drop', serverName: currentServer?.name,
-              serverAddress: currentServer?.address, serverPort: currentServer?.port,
-              protocol: currentServer?.protocol,
-              errorMessage: 'SOCKS port not responding (3 consecutive health-check failures)',
+              eventType: 'health_drop', serverName: activeHealthServer?.name,
+              serverAddress: activeHealthServer?.address, serverPort: activeHealthServer?.port,
+              protocol: activeHealthServer?.protocol,
+              errorMessage: proxyMode === 'tun'
+                ? 'Tunnel service health check unstable (3 consecutive health-check failures)'
+                : 'SOCKS port not responding (3 consecutive health-check failures)',
             });
-            try {
-              await invoke('vpn_disconnect');
-              setStatus('disconnected');
-              healthFailRef.current = 0;
-              setTimeout(() => { document.getElementById('connect-button')?.click(); }, 2000);
-            } catch { /* ignore */ }
+            healthFailRef.current = 0;
+            return;
           }
         }
       } catch { /* not in tauri env */ }
     }, 30000);
     return () => clearInterval(healthCheck);
-  }, [status, socksPort]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [status, socksPort, proxyMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-scroll logs
   useEffect(() => {
@@ -382,10 +406,9 @@ export default function Dashboard() {
       setStatus('connecting');
       setConnectionStep(t('connectionStarting'));
 
-      // TUN mode elevates only the network engine when needed.
-      // macOS prompts for the password through osascript; Windows uses UAC for sing-box.
       if (proxyMode === 'tun') {
-        addLog('info', 'TUN mode may ask for administrator permission to create the network adapter.');
+        addLog('info', 'Full Computer mode uses DoodleRay Tunnel Service for adapter control.');
+        void refreshTunnelServiceHealth();
       }
 
       setConnectedAt(null);
@@ -405,6 +428,11 @@ export default function Dashboard() {
         if (opId !== connectionOpRef.current) return;
 
         if (result.success) {
+          const actualPorts = extractLocalProxyPorts(result.message || '');
+          if (actualPorts && proxyMode !== 'tun') {
+            setSocksPort(actualPorts.socksPort);
+            setHttpPort(actualPorts.httpPort);
+          }
           addLog('success', result.message);
           addLog('success', t('connectionActive'));
           setConnectionStep(t('connectionReady'));
@@ -421,11 +449,24 @@ export default function Dashboard() {
                 const retryReq = await buildConnectRequestFromState(srv!);
                 const retry: any = await invoke('vpn_connect', { request: retryReq });
                 if (opId !== connectionOpRef.current) return;
-                if (retry.success) { addLog('success', retry.message); setConnectionStep(t('connectionReady')); setStatus('connected'); setConnectedAt(Date.now()); return; }
+                if (retry.success) {
+                  const actualPorts = extractLocalProxyPorts(retry.message || '');
+                  if (actualPorts && proxyMode !== 'tun') {
+                    setSocksPort(actualPorts.socksPort);
+                    setHttpPort(actualPorts.httpPort);
+                  }
+                  addLog('success', retry.message); setConnectionStep(t('connectionReady')); setStatus('connected'); setConnectedAt(Date.now()); return;
+                }
               }
             } catch {}
           }
           addLog('error', result.message);
+          if (result.message.toLowerCase().includes('full computer components')) {
+            const serviceHealthy = await refreshTunnelServiceHealth();
+            if (!serviceHealthy) {
+              addLog('warning', 'Tunnel service is not ready. Please reinstall or repair DoodleRay from the installer/settings diagnostics.');
+            }
+          }
           reportConnectionError({ eventType: 'connect_fail', serverName: srv!.name, serverAddress: srv!.address, serverPort: srv!.port, protocol: srv!.protocol, errorMessage: result.message });
           setStatus('disconnected');
           setConnectionStep(null);
@@ -480,12 +521,13 @@ export default function Dashboard() {
       } catch { addLog('info', '[SIM] Disconnected'); }
       setStatus('disconnected'); setConnectionStep(null); setConnectedAt(null); setCurrentSpeed(0, 0); resetTraffic();
     }
-  }, [status, setStatus, setCurrentSpeed, resetTraffic, activeServer, servers, setActiveServer, addLog, proxyMode, socksPort, httpPort, autoSelectFastest, setConnectedAt, t, setProxyMode]);
+  }, [status, setStatus, setCurrentSpeed, resetTraffic, activeServer, servers, setActiveServer, addLog, proxyMode, socksPort, httpPort, autoSelectFastest, setConnectedAt, t, setProxyMode, refreshTunnelServiceHealth, setSocksPort, setHttpPort]);
 
   const handleModeSwitch = useCallback(async (mode: 'system-proxy' | 'tun') => {
     if (proxyMode === mode) return;
     if (mode === 'tun') {
-      addLog('info', 'TUN mode will request administrator permission when the connection starts.');
+      addLog('info', 'Full Computer mode will use the installed DoodleRay Tunnel Service.');
+      await refreshTunnelServiceHealth();
     }
     setProxyMode(mode);
     addLog('info', `Switched routing mode to ${mode === 'tun' ? 'TUN' : 'System Proxy'}`);
@@ -501,12 +543,19 @@ export default function Dashboard() {
         if (srv) {
           const request = await buildConnectRequestFromState(srv, mode);
           const result: any = await invoke('vpn_connect', { request });
-          if (result.success) { addLog('success', result.message); setConnectionStep(t('connectionReady')); setStatus('connected'); setConnectedAt(Date.now()); }
+          if (result.success) {
+            const actualPorts = extractLocalProxyPorts(result.message || '');
+            if (actualPorts && mode !== 'tun') {
+              setSocksPort(actualPorts.socksPort);
+              setHttpPort(actualPorts.httpPort);
+            }
+            addLog('success', result.message); setConnectionStep(t('connectionReady')); setStatus('connected'); setConnectedAt(Date.now());
+          }
           else { addLog('error', result.message); setStatus('disconnected'); setConnectionStep(null); }
         } else { setStatus('disconnected'); setConnectionStep(null); }
       } catch (err: any) { addLog('error', `Reconnect failed: ${err.message || err}`); setStatus('disconnected'); setConnectionStep(null); }
     }
-  }, [proxyMode, setProxyMode, status, setStatus, addLog, activeServer, socksPort, httpPort, setConnectedAt, t]);
+  }, [proxyMode, setProxyMode, status, setStatus, addLog, activeServer, socksPort, httpPort, setConnectedAt, t, refreshTunnelServiceHealth, setSocksPort, setHttpPort]);
 
   const handleServerSelect = useCallback(async (server: typeof activeServer) => {
     if (!server) return;
@@ -522,11 +571,18 @@ export default function Dashboard() {
         // and preserves the TUN bridge to avoid game disconnections
         const request = await buildConnectRequestFromState(server);
         const result: any = await invoke('vpn_connect', { request });
-        if (result.success) { addLog('success', result.message); setConnectionStep(t('connectionReady')); setStatus('connected'); setConnectedAt(Date.now()); }
+        if (result.success) {
+          const actualPorts = extractLocalProxyPorts(result.message || '');
+          if (actualPorts && proxyMode !== 'tun') {
+            setSocksPort(actualPorts.socksPort);
+            setHttpPort(actualPorts.httpPort);
+          }
+          addLog('success', result.message); setConnectionStep(t('connectionReady')); setStatus('connected'); setConnectedAt(Date.now());
+        }
         else { addLog('error', result.message); setStatus('disconnected'); setConnectionStep(null); }
       } catch (err: any) { addLog('error', `Server switch failed: ${err.message || err}`); setStatus('disconnected'); setConnectionStep(null); }
     }
-  }, [status, setStatus, activeServer, setActiveServer, addLog, proxyMode, socksPort, httpPort, setConnectedAt, t]);
+  }, [status, setStatus, activeServer, setActiveServer, addLog, proxyMode, socksPort, httpPort, setConnectedAt, t, setSocksPort, setHttpPort]);
 
   const handleQuickAdd = useCallback(async () => {
     const trimmed = quickInput.trim();

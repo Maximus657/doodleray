@@ -2,6 +2,7 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Download, Loader2 } from 'lucide-react';
+import { useTranslation } from './locales';
 import { Sidebar } from './components/layout/Sidebar';
 import Dashboard from './pages/Dashboard';
 import Servers from './pages/Servers';
@@ -39,6 +40,7 @@ function ToastContainer() {
 }
 
 function UpdateBanner() {
+  const { t } = useTranslation();
   const availableUpdate = useAppStore((s) => s.availableUpdate);
   const updatePhase = useAppStore((s) => s.updatePhase);
   const updateStatus = useAppStore((s) => s.updateStatus);
@@ -71,10 +73,10 @@ function UpdateBanner() {
       console.error('Update failed:', e);
       setUpdateState({
         updatePhase: 'error',
-        updateStatus: 'Update failed. Try again later.',
+        updateStatus: t('updateFailed'),
         updateProgress: null,
       });
-      useToastStore.getState().addToast('Update failed. Try again later', 'error');
+      useToastStore.getState().addToast(t('updateFailed'), 'error');
     }
   };
 
@@ -85,7 +87,7 @@ function UpdateBanner() {
           <div className={`h-3 w-3 shrink-0 rounded-full ${isBusy ? 'animate-pulse bg-amber-300' : 'bg-emerald-400'}`} />
           <div className="min-w-0 flex-1">
             <p className="truncate text-xs font-black uppercase tracking-wide text-white">
-              Update v<span className="text-bg-primary">{availableUpdate}</span> is ready
+              {t('newUpdate')} v<span className="text-bg-primary">{availableUpdate}</span> {t('versionAvailable')}
             </p>
             {(updateStatus || isDownloading) && (
               <p className="mt-0.5 truncate text-[10px] font-black uppercase tracking-widest text-white/55">
@@ -99,9 +101,9 @@ function UpdateBanner() {
             className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-xl border-[3px] border-white bg-bg-primary px-4 py-2 text-[10px] font-black uppercase tracking-widest text-black shadow-[3px_3px_0_rgba(255,255,255,0.3)] transition-all hover:-translate-y-0.5 hover:shadow-[5px_5px_0_rgba(255,255,255,0.3)] active:translate-y-1 active:shadow-none disabled:cursor-wait disabled:opacity-70"
           >
             {isBusy ? (
-              <><Loader2 className="h-3.5 w-3.5 animate-spin" /> {updateProgress !== null && isDownloading ? `${updateProgress}%` : 'Updating'}</>
+              <><Loader2 className="h-3.5 w-3.5 animate-spin" /> {updateProgress !== null && isDownloading ? `${updateProgress}%` : t('updating')}</>
             ) : (
-              <><Download className="h-3.5 w-3.5 stroke-[3px]" /> Install</>
+              <><Download className="h-3.5 w-3.5 stroke-[3px]" /> {t('installRestart')}</>
             )}
           </button>
         </div>
@@ -138,6 +140,10 @@ function App() {
 
     async function checkForUpdates(options: { autoInstall?: boolean } = {}) {
       try {
+        const currentVersion = await import('@tauri-apps/api/app')
+          .then(({ getVersion }) => getVersion())
+          .catch(() => 'unknown');
+        useAppStore.getState().addLog('info', `Checking for app update (current v${currentVersion})...`);
         const update = await checkForAppUpdate();
         if (update) {
           const prev = useAppStore.getState().availableUpdate;
@@ -147,6 +153,7 @@ function App() {
             updateStatus: '',
             updateProgress: null,
           });
+          useAppStore.getState().addLog('info', `App update available: v${currentVersion} -> v${update.version}`);
 
           if (options.autoInstall) {
             useToastStore.getState().addToast(`Installing update v${update.version}...`, 'info');
@@ -183,17 +190,17 @@ function App() {
           updateStatus: '',
           updateProgress: null,
         });
+        useAppStore.getState().addLog('success', `App is up to date (v${currentVersion})`);
         return false;
       } catch (e) {
         console.log('Update check skipped:', e);
+        const message = e instanceof Error ? e.message : String(e);
         useAppStore.getState().setUpdateState({
           updatePhase: 'error',
-          updateStatus: e instanceof Error ? e.message : String(e),
+          updateStatus: message,
           updateProgress: null,
         });
-        if (options.autoInstall) {
-          useAppStore.getState().addLog('warning', `Auto-update check failed: ${e instanceof Error ? e.message : e}`);
-        }
+        useAppStore.getState().addLog('warning', `App update check failed: ${message}`);
         return false;
       }
     }
@@ -281,21 +288,22 @@ function App() {
       compactHydratedStorage();
       startupFlowTimer = setTimeout(async () => {
         updateInProgress = true;
-        const installingUpdate = await checkForUpdates({ autoInstall: true });
+        const installingUpdate = await checkForUpdates({ autoInstall: false });
         updateInProgress = false;
         if (installingUpdate) return;
         autoConnectIfEnabled();
       }, 3000);
     };
 
-    // Re-check for updates every 30 minutes. Install automatically only when idle.
+    // Re-check for updates every 30 minutes and keep the install as an explicit user action.
     const updateInterval = setInterval(async () => {
       if (updateInProgress) return;
-      const state = useAppStore.getState();
-      const canInstallWithoutInterrupting = state.status === 'disconnected';
-      updateInProgress = canInstallWithoutInterrupting;
-      await checkForUpdates({ autoInstall: canInstallWithoutInterrupting });
-      updateInProgress = false;
+      updateInProgress = true;
+      try {
+        await checkForUpdates({ autoInstall: false });
+      } finally {
+        updateInProgress = false;
+      }
     }, 30 * 60 * 1000);
 
     // Auto-connect needs persisted servers/settings to be loaded first.
