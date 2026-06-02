@@ -11,8 +11,49 @@ interface Props {
   t: (key: any) => string;
 }
 
+const ISSUE_WARNING_PATTERNS = [
+  /connection lost/i,
+  /split tunneling/i,
+  /traffic .*exhausted/i,
+  /subscription .*expired/i,
+  /subscription may be out of traffic/i,
+  /proxy responses keep closing/i,
+  /private, loopback, or link-local/i,
+  /port .*busy/i,
+  /fixing connection route/i,
+  /health.*drop/i,
+  /kill switch/i,
+  /dns.*failed/i,
+  /conflict/i,
+  /blocked/i,
+];
+
+const EVENT_WARNING_PATTERNS = [
+  /^testing \d+ servers/i,
+  /^testing \d+ custom servers/i,
+  /^updating subscription/i,
+  /^refreshing subscription/i,
+  /^disconnecting/i,
+  /^cancelling connection start/i,
+  /^switching to /i,
+  /^reconnecting to apply/i,
+  /^tun mode will request/i,
+  /^tun mode may ask/i,
+  /^dev mode - simulating connection/i,
+  /^all server configurations have been wiped/i,
+];
+
+function isIssueLog(log: LogEntry) {
+  if (log.level === 'error') return true;
+  if (log.level !== 'warning') return false;
+
+  const message = log.message.trim();
+  if (EVENT_WARNING_PATTERNS.some((pattern) => pattern.test(message))) return false;
+  return ISSUE_WARNING_PATTERNS.some((pattern) => pattern.test(message));
+}
+
 export default function LogsStrip({ logs, showLogs, onToggleLogs, onClearLogs, logsEndRef, t }: Props) {
-  const issueCount = logs.filter((log) => log.level === 'error' || log.level === 'warning').length;
+  const issueCount = logs.filter(isIssueLog).length;
   const hasIssues = issueCount > 0;
 
   return (

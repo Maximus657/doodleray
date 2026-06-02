@@ -11,6 +11,7 @@ export type AppUpdatePhase = 'idle' | 'checking' | 'available' | 'downloading' |
 
 export type ProxyMode = 'system-proxy' | 'tun';
 export type SystemProxyMode = 'set' | 'clear' | 'unchanged';
+export type SupportedLanguage = 'ru' | 'en' | 'zh';
 
 export interface ServerConfig {
   id: string;
@@ -101,7 +102,7 @@ export interface AppState {
   autoStart: boolean;
   silentAdminAutostart: boolean;
   theme: 'dark' | 'light';
-  language: 'ru' | 'en' | 'zh';
+  language: SupportedLanguage;
   networkStack: 'mixed' | 'system' | 'gvisor';
   dnsMode: 'fakeip' | 'realip';
   strictRoute: boolean;
@@ -147,7 +148,7 @@ export interface AppState {
   setSocksPort: (port: number) => void;
   setHttpPort: (port: number) => void;
   setTheme: (theme: 'dark' | 'light') => void;
-  setLanguage: (lang: 'ru' | 'en' | 'zh') => void;
+  setLanguage: (lang: SupportedLanguage) => void;
   addLog: (level: LogEntry['level'], message: string) => void;
   clearLogs: () => void;
   wipeData: () => void;
@@ -186,6 +187,22 @@ const safeLocalRemove = (name: string) => {
     // Ignore cleanup failures; secure storage/fallback remains canonical.
   }
 };
+
+export function detectInitialLanguage(): SupportedLanguage {
+  if (typeof navigator === 'undefined') return 'en';
+
+  const locales = [
+    ...(Array.isArray(navigator.languages) ? navigator.languages : []),
+    navigator.language,
+  ]
+    .filter(Boolean)
+    .map((locale) => locale.toLowerCase());
+
+  if (locales.some((locale) => locale.startsWith('zh'))) return 'zh';
+  if (locales.some((locale) => /^(ru|uk|be|kk|ky|uz-cyrl|sr-cyrl)(-|$)/.test(locale) || locale === 'ru')) return 'ru';
+
+  return 'en';
+}
 
 const secureStorage: StateStorage<Promise<void> | void> = {
   async getItem(name) {
@@ -307,7 +324,7 @@ export const useAppStore = create<AppState>()(
       autoStart: false,
       silentAdminAutostart: false,
       theme: 'dark',
-      language: 'en',
+      language: detectInitialLanguage(),
       networkStack: 'mixed',
       dnsMode: 'fakeip',
       strictRoute: true,
@@ -438,6 +455,14 @@ export const useAppStore = create<AppState>()(
       name: 'doodleray-storage',
       storage: createJSONStorage(() => secureStorage),
       partialize: compactStateForPersist,
+      merge: (persisted, current) => {
+        const persistedState = persisted as Partial<AppState> | undefined;
+        return {
+          ...current,
+          ...persistedState,
+          language: persistedState?.language ?? current.language,
+        };
+      },
     }
   )
 );

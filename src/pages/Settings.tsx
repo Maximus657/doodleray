@@ -408,7 +408,7 @@ export default function Settings() {
 
   return (
     <div className="flex-1 p-5 md:p-8 overflow-y-auto animate-fade-in">
-      <div className="max-w-4xl mx-auto">
+      <div className="mx-auto max-w-5xl">
         <h1 className="text-3xl font-black text-black flex items-center gap-4 drop-shadow-[2px_2px_0_#fff] mb-10 tracking-tighter uppercase">
           <span className="p-3 bg-black text-white rounded-xl shadow-[4px_4px_0_#000] border-[3px] border-black"><SettingsIcon className="w-6 h-6 stroke-[3px]" /></span>
           {t('preferences')}
@@ -417,8 +417,8 @@ export default function Settings() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           
           {/* Section 1: Basic */}
-          <div className="bg-bg-primary border-[4px] border-black rounded-2xl p-6 shadow-[6px_6px_0_#000] lg:col-span-2">
-            <h2 className="text-xl font-black text-black mb-5 flex items-center gap-2 uppercase tracking-tight bg-white px-3 py-1 w-max rounded-lg border-[3px] border-black shadow-[2px_2px_0_#000]">
+          <div className="bg-bg-primary border-[4px] border-black rounded-2xl p-5 md:p-6 shadow-[6px_6px_0_#000] lg:col-span-2">
+            <h2 className="mb-5 flex w-max max-w-full items-center gap-2 rounded-lg border-[3px] border-black bg-white px-3 py-1 text-lg font-black uppercase tracking-tight text-black shadow-[2px_2px_0_#000] md:text-xl">
               <Monitor className="w-5 h-5 text-black stroke-[3px]" /> {t('basicSettings')}
             </h2>
             <div className="space-y-2">
@@ -517,7 +517,7 @@ export default function Settings() {
           {/* Section 2: Core Engine */}
           {showAdvanced && (
           <div className="bg-bg-primary border-[4px] border-black rounded-2xl p-6 shadow-[6px_6px_0_#000] lg:col-span-2">
-            <h2 className="text-xl font-black text-black mb-5 flex items-center gap-2 uppercase tracking-tight bg-white px-3 py-1 w-max rounded-lg border-[3px] border-black shadow-[2px_2px_0_#000]">
+            <h2 className="mb-5 flex w-max max-w-full items-center gap-2 rounded-lg border-[3px] border-black bg-white px-3 py-1 text-lg font-black uppercase tracking-tight text-black shadow-[2px_2px_0_#000] md:text-xl">
               <Zap className="w-5 h-5 text-black stroke-[3px]" /> {t('coreEngine')}
             </h2>
             <div className="space-y-2">
@@ -556,60 +556,59 @@ export default function Settings() {
 
           {/* Section 3: Maintenance */}
           <div className="bg-bg-primary border-[4px] border-black rounded-2xl p-6 shadow-[6px_6px_0_#000] lg:col-span-2">
-            <h2 className="text-xl font-black text-black mb-5 flex items-center gap-2 uppercase tracking-tight bg-white px-3 py-1 w-max rounded-lg border-[3px] border-black shadow-[2px_2px_0_#000]">
+            <h2 className="mb-5 flex w-max max-w-full items-center gap-2 rounded-lg border-[3px] border-black bg-white px-3 py-1 text-lg font-black uppercase tracking-tight text-black shadow-[2px_2px_0_#000] md:text-xl">
               <Database className="w-5 h-5 text-black stroke-[3px]" /> {t('maintenance')}
             </h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <button onClick={handleClearLogs} className="group flex items-center gap-4 bg-white border-[3px] border-black shadow-[4px_4px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none p-5 rounded-2xl transition-all cursor-pointer text-left">
-                <div className="w-12 h-12 rounded-xl border-[3px] border-black bg-black text-white flex items-center justify-center shrink-0">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+              <button onClick={handleClearLogs} className="group flex min-h-28 cursor-pointer items-center gap-4 rounded-2xl border-[3px] border-black bg-white p-5 text-left shadow-[4px_4px_0_#000] transition-all hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none lg:col-span-6">
+                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border-[3px] border-black bg-black text-white">
                   <RotateCcw className="w-6 h-6 stroke-[3px] transition-transform duration-500 group-hover:-rotate-180" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h3 className="font-black text-black text-sm uppercase tracking-tight">{t('clearLogs')}</h3>
-                  <p className="text-[10px] font-black tracking-widest uppercase text-black/60 mt-1">{t('clearLogsDesc')}</p>
+                  <h3 className="text-base font-black uppercase tracking-tight text-black">{t('clearLogs')}</h3>
+                  <p className="mt-1 text-[11px] font-black uppercase leading-relaxed tracking-widest text-black/55">{t('clearLogsDesc')}</p>
                 </div>
               </button>
-              <button onClick={handleWipeData} className="flex items-center gap-4 bg-white border-[3px] border-danger shadow-[4px_4px_0_#f87171] hover:bg-danger hover:border-black hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none p-5 rounded-2xl transition-all cursor-pointer group text-left">
-                <div className="w-12 h-12 rounded-xl border-[3px] border-danger group-hover:border-black bg-danger group-hover:bg-black text-white flex items-center justify-center shrink-0 transition-colors">
+              <button onClick={handleWipeData} className="group flex min-h-28 cursor-pointer items-center gap-4 rounded-2xl border-[3px] border-danger bg-white p-5 text-left shadow-[4px_4px_0_#f87171] transition-all hover:translate-x-[-2px] hover:translate-y-[-2px] hover:border-black hover:bg-danger hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none lg:col-span-6">
+                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border-[3px] border-danger bg-danger text-white transition-colors group-hover:border-black group-hover:bg-black">
                   <Trash2 className="w-6 h-6 stroke-[3px] transition-transform duration-300 group-hover:scale-110 group-hover:rotate-12" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h3 className="font-black text-danger group-hover:text-black text-sm uppercase tracking-tight transition-colors">{t('factoryReset')}</h3>
-                  <p className="text-[10px] font-black tracking-widest uppercase text-danger/80 group-hover:text-black mt-1 transition-colors">{t('factoryResetDesc')}</p>
+                  <h3 className="text-base font-black uppercase tracking-tight text-danger transition-colors group-hover:text-black">{t('factoryReset')}</h3>
+                  <p className="mt-1 text-[11px] font-black uppercase leading-relaxed tracking-widest text-danger/80 transition-colors group-hover:text-black">{t('factoryResetDesc')}</p>
                 </div>
               </button>
-            </div>
 
             {/* Windows Defender exclusion */}
-            <button onClick={handleDefenderExclusion} disabled={defenderLoading} className={`group flex items-center gap-4 bg-white border-[3px] border-black shadow-[4px_4px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none p-5 rounded-2xl transition-all cursor-pointer text-left mt-4 col-span-full ${defenderLoading ? 'opacity-60 cursor-wait' : ''}`}>
+            <button onClick={handleDefenderExclusion} disabled={defenderLoading} className={`group flex min-h-28 w-full cursor-pointer items-center gap-4 rounded-2xl border-[3px] border-black bg-white p-5 text-left shadow-[4px_4px_0_#000] transition-all hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none lg:col-span-12 ${defenderLoading ? 'cursor-wait opacity-60' : ''}`}>
               <div className={`w-12 h-12 rounded-xl border-[3px] border-black ${defenderStatus?.startsWith('✓') ? 'bg-emerald-500' : 'bg-emerald-400'} text-black flex items-center justify-center shrink-0`}>
                 <ShieldCheck className={`w-6 h-6 stroke-[3px] transition-transform duration-300 group-hover:scale-110 ${defenderLoading ? 'animate-pulse' : ''}`} />
               </div>
               <div className="flex-1 min-w-0">
-                <h3 className="font-black text-black text-sm uppercase tracking-tight">{t('defenderExclusion')}</h3>
-                <p className="text-[10px] font-black tracking-widest uppercase text-black/60 mt-1">
+                <h3 className="text-base font-black uppercase tracking-tight text-black">{t('defenderExclusion')}</h3>
+                <p className="mt-1 text-[11px] font-black uppercase leading-relaxed tracking-widest text-black/55">
                   {defenderLoading ? t('applyingExclusion') : t('defenderExclusionDesc')}
                 </p>
                 {defenderStatus && <p className={`text-[9px] font-bold mt-1 ${defenderStatus.startsWith('✓') ? 'text-emerald-600' : 'text-red-600'}`}>{defenderStatus}</p>}
               </div>
             </button>
 
-            <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <div className="rounded-2xl border-[3px] border-black bg-white p-4 shadow-[4px_4px_0_#000]">
-                <div className="mb-3 flex items-center gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border-[3px] border-black bg-amber-300 text-black">
+            <div className="contents">
+              <div className="flex min-h-80 flex-col rounded-2xl border-[3px] border-black bg-white p-4 shadow-[4px_4px_0_#000] lg:col-span-6">
+                <div className="mb-4 flex items-start gap-3">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border-[3px] border-black bg-amber-300 text-black">
                     <Network className="h-5 w-5 stroke-[3px]" />
                   </div>
                   <div className="min-w-0">
-                    <h3 className="text-sm font-black uppercase tracking-tight text-black">{t('networkDiagnostics')}</h3>
-                    <p className="mt-0.5 text-[10px] font-black uppercase tracking-widest text-black/55">{t('networkDiagnosticsDesc')}</p>
+                    <h3 className="text-base font-black uppercase tracking-tight text-black">{t('networkDiagnostics')}</h3>
+                    <p className="mt-1 text-[11px] font-black uppercase leading-relaxed tracking-widest text-black/55">{t('networkDiagnosticsDesc')}</p>
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button
                     onClick={handleRunDiagnostics}
                     disabled={diagnosticsLoading}
-                    className="inline-flex items-center gap-2 rounded-xl border-[2px] border-black bg-black px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white shadow-[2px_2px_0_#000] transition-all hover:-translate-y-0.5 active:translate-y-1 active:shadow-none disabled:opacity-50"
+                    className="inline-flex min-h-10 items-center gap-2 rounded-xl border-[2px] border-black bg-black px-4 py-2 text-[10px] font-black uppercase tracking-widest text-white shadow-[2px_2px_0_#000] transition-all hover:-translate-y-0.5 active:translate-y-1 active:shadow-none disabled:opacity-50"
                   >
                     <RefreshCw className={`h-3.5 w-3.5 stroke-[3px] ${diagnosticsLoading ? 'animate-spin' : ''}`} />
                     {t('runDiagnostics')}
@@ -617,16 +616,17 @@ export default function Settings() {
                   <button
                     onClick={handleCopyDiagnostics}
                     disabled={!networkReport}
-                    className="inline-flex items-center gap-2 rounded-xl border-[2px] border-black bg-white px-3 py-2 text-[10px] font-black uppercase tracking-widest text-black shadow-[2px_2px_0_#000] transition-all hover:-translate-y-0.5 active:translate-y-1 active:shadow-none disabled:opacity-40"
+                    className="inline-flex min-h-10 items-center gap-2 rounded-xl border-[2px] border-black bg-white px-4 py-2 text-[10px] font-black uppercase tracking-widest text-black shadow-[2px_2px_0_#000] transition-all hover:-translate-y-0.5 active:translate-y-1 active:shadow-none disabled:opacity-40"
                   >
                     <ClipboardCopy className="h-3.5 w-3.5 stroke-[3px]" />
                     {t('copyReport')}
                   </button>
                 </div>
-                {networkReport && (
-                  <div className="mt-3 max-h-44 space-y-2 overflow-y-auto rounded-xl border-[2px] border-black/20 bg-bg-primary p-2">
+                <div className="mt-4 min-h-44 flex-1 overflow-hidden rounded-xl border-[2px] border-black/20 bg-bg-primary/85 p-2">
+                {networkReport ? (
+                  <div className="max-h-52 space-y-2 overflow-y-auto pr-1">
                     {networkReport.checks.map((check) => (
-                      <div key={check.code} className="rounded-lg bg-white/80 px-2 py-1.5">
+                      <div key={check.code} className="rounded-lg bg-white/85 px-2.5 py-2">
                         <p className={`text-[9px] font-black uppercase tracking-widest ${
                           check.severity === 'error' ? 'text-red-600' :
                           check.severity === 'warning' ? 'text-amber-700' :
@@ -637,24 +637,27 @@ export default function Settings() {
                       </div>
                     ))}
                   </div>
+                ) : (
+                  <div className="h-full min-h-40 rounded-lg border-[2px] border-dashed border-black/20 bg-white/25" />
                 )}
+                </div>
               </div>
 
-              <div className="rounded-2xl border-[3px] border-black bg-white p-4 shadow-[4px_4px_0_#000]">
-                <div className="mb-3 flex items-center gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border-[3px] border-black bg-sky-300 text-black">
+              <div className="flex min-h-80 flex-col rounded-2xl border-[3px] border-black bg-white p-4 shadow-[4px_4px_0_#000] lg:col-span-6">
+                <div className="mb-4 flex items-start gap-3">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border-[3px] border-black bg-sky-300 text-black">
                     <HardDrive className="h-5 w-5 stroke-[3px]" />
                   </div>
                   <div className="min-w-0">
-                    <h3 className="text-sm font-black uppercase tracking-tight text-black">{t('storageTitle')}</h3>
-                    <p className="mt-0.5 text-[10px] font-black uppercase tracking-widest text-black/55">{t('storageDesc')}</p>
+                    <h3 className="text-base font-black uppercase tracking-tight text-black">{t('storageTitle')}</h3>
+                    <p className="mt-1 text-[11px] font-black uppercase leading-relaxed tracking-widest text-black/55">{t('storageDesc')}</p>
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button
                     onClick={handleStorageReport}
                     disabled={storageLoading}
-                    className="inline-flex items-center gap-2 rounded-xl border-[2px] border-black bg-black px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white shadow-[2px_2px_0_#000] transition-all hover:-translate-y-0.5 active:translate-y-1 active:shadow-none disabled:opacity-50"
+                    className="inline-flex min-h-10 items-center gap-2 rounded-xl border-[2px] border-black bg-black px-4 py-2 text-[10px] font-black uppercase tracking-widest text-white shadow-[2px_2px_0_#000] transition-all hover:-translate-y-0.5 active:translate-y-1 active:shadow-none disabled:opacity-50"
                   >
                     <RefreshCw className={`h-3.5 w-3.5 stroke-[3px] ${storageLoading ? 'animate-spin' : ''}`} />
                     {t('scanStorage')}
@@ -662,18 +665,19 @@ export default function Settings() {
                   <button
                     onClick={handleClearCache}
                     disabled={storageLoading}
-                    className="inline-flex items-center gap-2 rounded-xl border-[2px] border-black bg-amber-300 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-black shadow-[2px_2px_0_#000] transition-all hover:-translate-y-0.5 active:translate-y-1 active:shadow-none disabled:opacity-50"
+                    className="inline-flex min-h-10 items-center gap-2 rounded-xl border-[2px] border-black bg-amber-300 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-black shadow-[2px_2px_0_#000] transition-all hover:-translate-y-0.5 active:translate-y-1 active:shadow-none disabled:opacity-50"
                   >
                     <Trash2 className="h-3.5 w-3.5 stroke-[3px]" />
                     {t('clearCache')}
                   </button>
                 </div>
                 {cacheStatus && <p className="mt-2 text-[10px] font-black uppercase tracking-widest text-black/65">{cacheStatus}</p>}
-                {storageReport && (
-                  <div className="mt-3 max-h-44 space-y-2 overflow-y-auto rounded-xl border-[2px] border-black/20 bg-bg-primary p-2">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-black">{t('storageTotal')}: {storageReport.totalSize}</p>
+                <div className="mt-4 min-h-44 flex-1 overflow-hidden rounded-xl border-[2px] border-black/20 bg-bg-primary/85 p-2">
+                {storageReport ? (
+                  <div className="max-h-52 space-y-2 overflow-y-auto pr-1">
+                    <p className="px-1 text-[10px] font-black uppercase tracking-widest text-black">{t('storageTotal')}: {storageReport.totalSize}</p>
                     {storageReport.paths.map((path) => (
-                      <div key={path.path} className="rounded-lg bg-white/80 px-2 py-1.5">
+                      <div key={path.path} className="rounded-lg bg-white/85 px-2.5 py-2">
                         <div className="flex items-center justify-between gap-2">
                           <p className="truncate text-[9px] font-black uppercase tracking-widest text-black">{path.label}</p>
                           <span className={`shrink-0 rounded-md border-[1px] border-black px-1.5 py-0.5 text-[8px] font-black uppercase tracking-widest ${
@@ -684,8 +688,12 @@ export default function Settings() {
                       </div>
                     ))}
                   </div>
+                ) : (
+                  <div className="h-full min-h-40 rounded-lg border-[2px] border-dashed border-black/20 bg-white/25" />
                 )}
+                </div>
               </div>
+            </div>
             </div>
           </div>
 
