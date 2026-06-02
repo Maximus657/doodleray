@@ -55,10 +55,6 @@ export default function DashboardControlsDrawer({
     onModeSwitch(mode);
   };
 
-  const toggleModeHelp = (mode: ProxyMode) => {
-    setModeHelp((current) => current === mode ? null : mode);
-  };
-
   return (
     <div className="relative z-10 w-full max-w-sm">
       <div
@@ -93,6 +89,14 @@ export default function DashboardControlsDrawer({
                 return (
                   <div
                     key={item.mode}
+                    onMouseEnter={() => setModeHelp(item.mode)}
+                    onMouseLeave={() => setModeHelp(null)}
+                    onFocus={() => setModeHelp(item.mode)}
+                    onBlur={(event) => {
+                      if (!event.currentTarget.contains(event.relatedTarget)) {
+                        setModeHelp(null);
+                      }
+                    }}
                     className={`rounded-xl border-[3px] p-2.5 transition-all duration-300 ${
                       selected
                         ? 'border-black bg-white shadow-[4px_4px_0_#000]'
@@ -124,10 +128,14 @@ export default function DashboardControlsDrawer({
                       </button>
                       <button
                         type="button"
-                        onClick={() => toggleModeHelp(item.mode)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setModeHelp(item.mode);
+                        }}
                         aria-label={item.help}
                         aria-expanded={modeHelp === item.mode}
-                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-[2px] border-black bg-white text-black transition-all hover:bg-black hover:text-white"
+                        title={item.body}
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-[2px] border-black bg-white text-black transition-all hover:-translate-y-0.5 hover:bg-black hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2"
                       >
                         <CircleHelp className="h-3.5 w-3.5 stroke-[3px]" />
                       </button>

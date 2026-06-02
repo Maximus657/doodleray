@@ -27,7 +27,7 @@ export function Sidebar() {
   }, []);
 
   return (
-    <aside className="relative w-[86px] h-full bg-black flex flex-col items-center py-5 border-r-[4px] border-black/20 text-white">
+    <aside className="relative z-[80] h-full w-[86px] shrink-0 overflow-visible bg-black flex flex-col items-center py-5 border-r-[4px] border-black/20 text-white">
 
       {/* Navigation */}
       <nav className="flex flex-col gap-3 flex-1 w-full items-center pt-1">
@@ -49,7 +49,7 @@ export function Sidebar() {
             {({ isActive }) => (
               <>
                 <Icon className={`w-6 h-6 relative z-10 transition-transform duration-300 stroke-[2.6px] ${isActive ? 'scale-110 text-black' : 'group-hover:scale-110'}`} />
-                <span className="pointer-events-none absolute left-full ml-3 rounded-lg border-[2px] border-black bg-white px-2.5 py-1.5 text-[10px] font-black uppercase tracking-widest text-black opacity-0 shadow-[3px_3px_0_rgba(0,0,0,0.45)] transition-all duration-200 translate-x-[-8px] group-hover:translate-x-0 group-hover:opacity-100 whitespace-nowrap z-50">
+                <span className="pointer-events-none absolute left-full z-[120] ml-3 rounded-lg border-[2px] border-black bg-white px-2.5 py-1.5 text-[10px] font-black uppercase tracking-widest text-black opacity-0 shadow-[3px_3px_0_rgba(0,0,0,0.45)] transition-all duration-200 translate-x-[-8px] group-hover:translate-x-0 group-hover:opacity-100 whitespace-nowrap">
                   {t(labelKey as any)}
                 </span>
               </>
@@ -71,7 +71,7 @@ export function Sidebar() {
         title="Support"
       >
         <HelpCircle className="w-6 h-6 transition-transform duration-300 group-hover:scale-110 stroke-[2.6px]" />
-        <span className="absolute left-full ml-3 px-2.5 py-1.5 text-[10px] font-black uppercase tracking-widest bg-white text-[#8b5cf6] border-[2px] border-[#8b5cf6] rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 whitespace-nowrap shadow-[3px_3px_0_rgba(139,92,246,0.35)] z-50 translate-x-[-8px] group-hover:translate-x-0">
+        <span className="absolute left-full z-[120] ml-3 px-2.5 py-1.5 text-[10px] font-black uppercase tracking-widest bg-white text-[#8b5cf6] border-[2px] border-[#8b5cf6] rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 whitespace-nowrap shadow-[3px_3px_0_rgba(139,92,246,0.35)] translate-x-[-8px] group-hover:translate-x-0">
           {t('support' as any)}
         </span>
       </button>
@@ -90,7 +90,7 @@ export function Sidebar() {
         title="Quit DoodleRay"
       >
         <LogOut className="w-6 h-6 transition-transform duration-300 group-hover:scale-110 stroke-[2.6px]" />
-        <span className="absolute left-full ml-3 px-2.5 py-1.5 text-[10px] font-black uppercase tracking-widest bg-white text-danger border-[2px] border-danger rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 whitespace-nowrap shadow-[3px_3px_0_rgba(248,113,113,0.35)] z-50 translate-x-[-8px] group-hover:translate-x-0">
+        <span className="absolute left-full z-[120] ml-3 px-2.5 py-1.5 text-[10px] font-black uppercase tracking-widest bg-white text-danger border-[2px] border-danger rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 whitespace-nowrap shadow-[3px_3px_0_rgba(248,113,113,0.35)] translate-x-[-8px] group-hover:translate-x-0">
           {t('quit')}
         </span>
       </button>
