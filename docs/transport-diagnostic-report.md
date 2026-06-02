@@ -38,6 +38,84 @@
 
 - Not touched. No iOS build or runtime path is changed.
 
+## 2026-06-03 Investigation: PUBG micro-drop and split-routing gap
+
+### Scope
+
+- Route observed by local machine state: DoodleRay Tunnel Service reported `disconnected`, while `happ-tun` was the active TUN adapter.
+- User-visible symptom: PUBG/Discord-like traffic dropped briefly around 01:10 and 01:22 local time; for PUBG this is fatal even if the outage lasts only 1-2 seconds.
+- Product gap: the Workshop application scanner did not surface PUBG, making it hard to add direct/bypass rules.
+
+### Evidence
+
+- `DoodleRayService.exe status` returned `state=disconnected`; therefore the active DoodleRay Windows TUN graph was not carrying traffic at the time of this investigation.
+- `Get-NetAdapter` showed `happ-tun` up and no active `DoodleRay Tunnel` adapter.
+- Running/logged PUBG processes were present: `TslGame.exe`, `TslGame_ZK.exe`, `TslGame_BE.exe`, `ExecPubg.exe`, and `BEService`.
+- Windows System log around 01:10-01:22 contained PUBG/BattlEye driver activity: `BEDaisy` and `navagio` kernel driver service install events around 01:12 and 01:18.
+- NetBT interface initialization errors appeared around 01:24.
+- Route table showed both `Ethernet` and `happ-tun` default routes with route metric `0`; effective interface metric favored `happ-tun`.
+- `src/pages/Workshop.tsx` previously offered a registry-based app scanner only through `scan_installed_apps`.
+- `src-tauri/src/lib.rs::scan_installed_apps` previously read registry uninstall keys, LocalAppData apps, and AppX packages, but did not include running processes or Steam library executables.
+- `src/lib/connect-helpers.ts::buildConnectRequestFromState` sends Workshop rules only in TUN mode, so process rules are intentionally ignored in regular Proxy mode.
+
+### Classification
+
+- Proven: DoodleRay's active service-owned TUN was not connected during this specific check; current machine routing was through `happ-tun`.
+- Proven: PUBG's live/logged executable names are `TslGame.exe`, `TslGame_ZK.exe`, `TslGame_BE.exe`, and `ExecPubg.exe`, not a simple visible `PUBG.exe`.
+- Proven: the old app scanner could miss Steam games because Steam game executables are not guaranteed to appear as top-level Windows uninstall entries.
+- Proven: the generated sing-box TUN config now routes the PUBG process names to `direct`; covered by `singbox_tun_routes_pubg_processes_direct`.
+- Likely but unproven: the reported 01:10/01:22 micro-drops were not caused by DoodleRay TUN because DoodleRay service was disconnected and `happ-tun` was active.
+- Likely but unproven: PUBG/BattlEye driver activity or competing VPN/TUN route behavior contributed to the micro-drops.
+- Unknown because instrumentation was missing at the exact moment: packet loss, DNS latency, TCP reachability, adapter state, and route changes during the exact 01:10/01:22 events.
+
+### First Broken Edge
+
+The first proven DoodleRay product broken edge is split-routing discoverability and rule coverage:
+
+```text
+Workshop app scanner
+-> registry/app package scan only
+-> Steam PUBG executables not shown
+-> user cannot conveniently add direct game rules
+-> PUBG remains on full VPN route in TUN mode
+```
+
+### Fixes Applied
+
+- Extended `scan_installed_apps` to include live `.exe` processes via PowerShell `Get-Process`.
+- Extended `scan_installed_apps` to include Steam library folders from `libraryfolders.vdf`, including nested folders such as `TslGame/Binaries/Win64`.
+- Added a `PUBG DIRECT` Workshop action that creates four enabled direct rules: `TslGame.exe`, `TslGame_ZK.exe`, `TslGame_BE.exe`, and `ExecPubg.exe`.
+- Updated the Workshop app search to match both app name and executable/path.
+- Sorted/deduplicated generated sing-box process rules for stable diagnostics.
+- Added Rust coverage: `singbox_tun_routes_pubg_processes_direct`.
+- Extended `scripts/monitor-network.ps1` to capture ping, Happ/Windscribe/DoodleRay/PUBG/BattlEye/Steam process snapshots, routes, adapters, DNS servers, TCP checks, and DoodleRay service state.
+
+### Active Monitor
+
+- Started a one-hour monitor on 2026-06-03 at 02:49 local time after fixing Windows PowerShell ping compatibility.
+- Log path: `logs/network-monitor-20260603-024932.jsonl`.
+- PID: `42636`.
+
+### Minimal Follow-up Plan
+
+- If a new drop happens, compare the exact timestamp against `ping.gateway`, `ping.cloudflare`, `tcp.cloudflare_443`, `dns.discord`, route/default adapter changes, and process snapshots.
+- For DoodleRay TUN gameplay, apply `PUBG DIRECT`, switch to TUN, reconnect, then verify generated config contains the direct process rule before claiming the game is bypassed.
+
+### Windows Test Path
+
+- `npm run build` passed.
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib` passed: 11/11.
+- `cargo check --manifest-path src-tauri/Cargo.toml --bin DoodleRayService` passed.
+- `cargo check --manifest-path src-tauri/Cargo.toml --bin DoodleRay` passed.
+
+### Android Test Path
+
+- Not touched. No Android build or runtime path is changed.
+
+### iOS Test Path
+
+- Not touched. No iOS build or runtime path is changed.
+
 ## Windows Tunnel Service MVP Implementation Notes
 
 ### Implemented Service Path

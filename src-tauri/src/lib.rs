@@ -2472,6 +2472,13 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
         }
     }
 
+    proxy_processes.sort();
+    proxy_processes.dedup();
+    direct_processes.sort();
+    direct_processes.dedup();
+    block_processes.sort();
+    block_processes.dedup();
+
     let mut custom_rules = Vec::new();
 
     if !proxy_domains.is_empty() || !proxy_domain_suffixes.is_empty() || !proxy_processes.is_empty()
@@ -2906,6 +2913,48 @@ mod tests {
 
         assert_eq!(direct_names, vec!["discord.exe".to_string()]);
         assert_eq!(block_names, vec!["steam".to_string()]);
+    }
+
+    #[test]
+    fn singbox_tun_routes_pubg_processes_direct() {
+        let mut req = sample_request("tun");
+        req.routing_rules = vec![
+            RoutingRuleRequest {
+                rule_type: "exe".into(),
+                value: "TslGame.exe".into(),
+                action: "direct".into(),
+            },
+            RoutingRuleRequest {
+                rule_type: "exe".into(),
+                value: "TslGame_BE.exe".into(),
+                action: "direct".into(),
+            },
+            RoutingRuleRequest {
+                rule_type: "exe".into(),
+                value: "TslGame_ZK.exe".into(),
+                action: "direct".into(),
+            },
+            RoutingRuleRequest {
+                rule_type: "exe".into(),
+                value: "ExecPubg.exe".into(),
+                action: "direct".into(),
+            },
+        ];
+
+        let config = build_singbox_config(&req);
+        let rules = config["route"]["rules"].as_array().unwrap();
+        let direct_rule = rules
+            .iter()
+            .find(|rule| {
+                rule.get("outbound").and_then(|value| value.as_str()) == Some("direct")
+                    && rule.get("process_name").is_some()
+            })
+            .expect("direct process rule missing");
+
+        assert_eq!(
+            direct_rule["process_name"],
+            json!(["execpubg.exe", "tslgame.exe", "tslgame_be.exe", "tslgame_zk.exe"])
+        );
     }
 
     #[test]
@@ -4274,6 +4323,21 @@ fn scan_installed_apps() -> Result<Vec<serde_json::Value>, String> {
     {
         use std::collections::BTreeMap;
         let mut apps: BTreeMap<String, String> = BTreeMap::new();
+        let mut add_app = |name: String, path: String| {
+            let display = name.trim().to_string();
+            let value = path.trim().trim_matches('"').to_string();
+            if display.is_empty() || value.is_empty() {
+                return;
+            }
+            let lower_value = value.to_lowercase();
+            if apps
+                .values()
+                .any(|existing| existing.to_lowercase() == lower_value)
+            {
+                return;
+            }
+            apps.entry(display).or_insert(value);
+        };
 
         let reg_paths = [
             "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
@@ -4382,8 +4446,103 @@ fn scan_installed_apps() -> Result<Vec<serde_json::Value>, String> {
                                 continue;
                             }
 
-                            if !apps.contains_key(&name) {
-                                apps.insert(name, exe_name);
+                            add_app(name, exe_name);
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Ok(output) = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "Get-Process | Where-Object { $_.Path -and $_.Path.ToLower().EndsWith('.exe') } | ForEach-Object { $_.ProcessName + '|' + $_.Path }",
+            ])
+            .creation_flags(0x08000000)
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                let parts: Vec<&str> = line.splitn(2, '|').collect();
+                if parts.len() != 2 {
+                    continue;
+                }
+                let process_name = parts[0].trim();
+                let path = parts[1].trim();
+                let exe = std::path::Path::new(path)
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_else(|| format!("{}.exe", process_name));
+                add_app(format!("{} (running)", process_name), exe);
+            }
+        }
+
+        let mut steam_libraries: Vec<std::path::PathBuf> = Vec::new();
+        let steam_roots = [
+            std::path::PathBuf::from(r"C:\Program Files (x86)\Steam"),
+            std::path::PathBuf::from(r"C:\Program Files\Steam"),
+        ];
+        for root in steam_roots {
+            if root.is_dir() {
+                steam_libraries.push(root.clone());
+            }
+            let vdf = root.join("steamapps").join("libraryfolders.vdf");
+            if let Ok(text) = std::fs::read_to_string(vdf) {
+                for line in text.lines() {
+                    let trimmed = line.trim();
+                    if !trimmed.starts_with("\"path\"") {
+                        continue;
+                    }
+                    let parts: Vec<&str> = trimmed.split('"').collect();
+                    if parts.len() >= 4 {
+                        let library = std::path::PathBuf::from(parts[3].replace("\\\\", "\\"));
+                        if library.is_dir() {
+                            steam_libraries.push(library);
+                        }
+                    }
+                }
+            }
+        }
+        steam_libraries.sort();
+        steam_libraries.dedup();
+        for library in steam_libraries {
+            let common = library.join("steamapps").join("common");
+            if !common.is_dir() {
+                continue;
+            }
+            if let Ok(games) = std::fs::read_dir(common) {
+                for game in games.filter_map(|entry| entry.ok()) {
+                    let game_dir = game.path();
+                    if !game_dir.is_dir() {
+                        continue;
+                    }
+                    let game_name = game_dir
+                        .file_name()
+                        .map(|name| name.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "Steam game".to_string());
+                    let candidate_dirs = [
+                        game_dir.clone(),
+                        game_dir.join("Binaries").join("Win64"),
+                        game_dir.join("TslGame").join("Binaries").join("Win64"),
+                    ];
+                    for dir in candidate_dirs {
+                        if !dir.is_dir() {
+                            continue;
+                        }
+                        if let Ok(entries) = std::fs::read_dir(dir) {
+                            for entry in entries.filter_map(|entry| entry.ok()) {
+                                let file_name = entry.file_name().to_string_lossy().to_string();
+                                let lower = file_name.to_lowercase();
+                                if !lower.ends_with(".exe")
+                                    || lower.contains("crash")
+                                    || lower.contains("redist")
+                                    || lower.contains("unins")
+                                    || lower.contains("uninst")
+                                {
+                                    continue;
+                                }
+                                add_app(format!("{} - {}", game_name, file_name), file_name);
                             }
                         }
                     }
@@ -4450,9 +4609,7 @@ fn scan_installed_apps() -> Result<Vec<serde_json::Value>, String> {
                                 }
                                 s
                             };
-                            if !apps.values().any(|v| v.to_lowercase() == lower) {
-                                apps.entry(display).or_insert(fname);
-                            }
+                            add_app(display, fname);
                             break; // one exe per directory
                         }
                     }
@@ -4489,9 +4646,7 @@ fn scan_installed_apps() -> Result<Vec<serde_json::Value>, String> {
                                 && !lower.contains("unins") && !lower.contains("uninst")
                                 && !lower.contains("crash") && !lower.contains("update")
                             {
-                                if !apps.values().any(|v| v.to_lowercase() == lower) {
-                                    apps.entry(pkg_name.to_string()).or_insert(fname);
-                                }
+                                add_app(pkg_name.to_string(), fname);
                                 break;
                             }
                         }

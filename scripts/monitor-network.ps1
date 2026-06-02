@@ -53,6 +53,28 @@ function Test-DnsNameFast {
   }
 }
 
+function Test-PingFast {
+  param([string]$HostName, [int]$Count = 2)
+  $sw = [System.Diagnostics.Stopwatch]::StartNew()
+  try {
+    $items = Test-Connection -ComputerName $HostName -Count $Count -ErrorAction Stop
+    $latencies = @($items | ForEach-Object { [int64]$_.Latency })
+    return @{
+      ok = $true
+      ms = $sw.ElapsedMilliseconds
+      count = $latencies.Count
+      min_ms = if ($latencies.Count -gt 0) { ($latencies | Measure-Object -Minimum).Minimum } else { $null }
+      max_ms = if ($latencies.Count -gt 0) { ($latencies | Measure-Object -Maximum).Maximum } else { $null }
+      avg_ms = if ($latencies.Count -gt 0) { [math]::Round(($latencies | Measure-Object -Average).Average, 1) } else { $null }
+      error = $null
+    }
+  } catch {
+    return @{ ok = $false; ms = $sw.ElapsedMilliseconds; count = 0; min_ms = $null; max_ms = $null; avg_ms = $null; error = $_.Exception.Message }
+  } finally {
+    $sw.Stop()
+  }
+}
+
 function Get-DoodleRayServiceStatus {
   $exe = "C:\Program Files\DoodleRay\DoodleRayService.exe"
   if (-not (Test-Path -LiteralPath $exe)) {
@@ -107,9 +129,13 @@ function Get-DnsSnapshot {
 }
 
 function Get-ProcessSnapshot {
-  $names = @("DoodleRay", "DoodleRayService", "xray", "sing-box")
+  $names = @(
+    "DoodleRay", "DoodleRayService", "xray", "sing-box",
+    "happ", "Happ", "Windscribe", "WindscribeService",
+    "TslGame", "TslGame_BE", "ExecPubg", "BEService", "steam", "SteamService"
+  )
   $items = Get-Process -Name $names -ErrorAction SilentlyContinue |
-    Select-Object ProcessName, Id, Path, CPU
+    Select-Object ProcessName, Id, Path, CPU, StartTime
   @($items)
 }
 
@@ -157,6 +183,12 @@ while ((Get-Date) -lt $end) {
       cloudflare_443 = Test-TcpPort "1.1.1.1" 443
       google_dns_53 = Test-TcpPort "8.8.8.8" 53
       discord_443 = Test-TcpPort "gateway.discord.gg" 443
+    }
+    ping = [ordered]@{
+      gateway = Test-PingFast "192.168.0.1" 2
+      cloudflare = Test-PingFast "1.1.1.1" 2
+      google_dns = Test-PingFast "8.8.8.8" 2
+      discord = Test-PingFast "gateway.discord.gg" 2
     }
     dns = [ordered]@{
       cloudflare = Test-DnsNameFast "cloudflare.com"
