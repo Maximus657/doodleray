@@ -253,6 +253,12 @@ jobs:
           echo "=== libsingbox ==="
           ls -la src-tauri/libsingbox.dylib
 
+      - name: Prepare macOS resource placeholders
+        run: |
+          # Windows tunnel service is bundled only for Windows, but the shared
+          # Tauri resource map is validated on macOS too.
+          touch src-tauri/DoodleRayService.exe
+
       # Strip trailing whitespace/newlines from signing key
       - name: Clean signing key
         shell: bash
