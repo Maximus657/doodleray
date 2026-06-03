@@ -769,7 +769,7 @@ mod windows_service_main {
         set_phase("singbox_ready", started, generation)?;
         set_doodleray_interface_metric();
         set_phase("adapter_ready", started, generation)?;
-        ensure_doodleray_route_preferred()?;
+        wait_for_doodleray_route_preferred(Duration::from_secs(12), generation)?;
         set_phase("routes_ready", started, generation)?;
         ensure_current_generation(generation)?;
 
@@ -1061,13 +1061,28 @@ $tunSplitRoutes = @(
 ) | Where-Object { $_ }
 
 $tunRoutes = @()
+$routeShape = 'none'
 if ($tunDefaultRoute) {
   $tunRoutes += $tunDefaultRoute
+  $routeShape = 'default'
 } elseif ($tunSplitRoutes.Count -eq 2) {
   $tunRoutes += $tunSplitRoutes
+  $routeShape = 'split'
 } else {
-  Write-Output 'DoodleRay Tunnel IPv4 default or split routes are missing'
-  exit 2
+  $tunCustomRoutes = Get-NetRoute -InterfaceAlias 'DoodleRay Tunnel' -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+    Where-Object {
+      $_.DestinationPrefix -notin @('172.30.255.0/30', '255.255.255.255/32') -and
+      $_.DestinationPrefix -notlike '224.*' -and
+      $_.DestinationPrefix -notlike '239.*'
+    } |
+    Sort-Object RouteMetric
+  if ($tunCustomRoutes.Count -ge 4) {
+    $tunRoutes += $tunCustomRoutes
+    $routeShape = 'custom'
+  } else {
+    Write-Output ("DoodleRay Tunnel IPv4 routes are missing: default=0 split={0} custom={1}" -f $tunSplitRoutes.Count, $tunCustomRoutes.Count)
+    exit 2
+  }
 }
 
 $tunEffective = ($tunRoutes | ForEach-Object { [int]$_.RouteMetric + [int]$tunIface.InterfaceMetric } | Measure-Object -Maximum).Maximum
@@ -1088,7 +1103,6 @@ if ($bestOther -and $tunEffective -ge [int]$bestOther.Effective) {
   Write-Output ("DoodleRay Tunnel route is not preferred: tun={0}, other={1}:{2}" -f $tunEffective, $bestOther.Alias, $bestOther.Effective)
   exit 3
 }
-$routeShape = if ($tunDefaultRoute) { 'default' } else { 'split' }
 Write-Output ("DoodleRay Tunnel route preferred: shape={0}, tun={1}, best_other={2}" -f $routeShape, $tunEffective, $(if ($bestOther) { "$($bestOther.Alias):$($bestOther.Effective)" } else { 'none' }))
 "#;
         match Command::new("powershell")
@@ -1118,6 +1132,20 @@ Write-Output ("DoodleRay Tunnel route preferred: shape={0}, tun={1}, best_other=
                 Err(message)
             }
         }
+    }
+
+    fn wait_for_doodleray_route_preferred(timeout: Duration, generation: u64) -> Result<(), String> {
+        let deadline = Instant::now() + timeout;
+        let mut last_error = "DoodleRay Tunnel route did not become ready".to_string();
+        while Instant::now() < deadline {
+            ensure_current_generation(generation)?;
+            match ensure_doodleray_route_preferred() {
+                Ok(()) => return Ok(()),
+                Err(message) => last_error = message,
+            }
+            std::thread::sleep(Duration::from_millis(300));
+        }
+        Err(last_error)
     }
 
     fn with_tun_interface_name(mut config: Value) -> Value {
