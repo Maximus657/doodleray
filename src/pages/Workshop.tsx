@@ -25,13 +25,6 @@ import { useTranslation } from '../locales';
 
 const ACTION_ORDER: RoutingRule['action'][] = ['proxy', 'direct', 'block'];
 
-const PUBG_DIRECT_RULES: Array<Pick<RoutingRule, 'type' | 'value' | 'action' | 'comment'>> = [
-  { type: 'exe', value: 'TslGame.exe', action: 'direct', comment: 'PUBG main game process' },
-  { type: 'exe', value: 'TslGame_ZK.exe', action: 'direct', comment: 'PUBG protected game process' },
-  { type: 'exe', value: 'TslGame_BE.exe', action: 'direct', comment: 'PUBG BattlEye launcher' },
-  { type: 'exe', value: 'ExecPubg.exe', action: 'direct', comment: 'PUBG Steam launcher' },
-];
-
 const ACTION_CONFIG: Record<RoutingRule['action'], {
   label: string;
   shortLabel: string;
@@ -356,25 +349,6 @@ function MyRulesTab({ onOpenBrowse }: { onOpenBrowse: () => void }) {
     setNewComment('');
   }, [newValue, newComment, newType, newAction, addRule]);
 
-  const handleAddPubgDirect = useCallback(() => {
-    const existing = new Set(allRules.map((rule) => `${rule.type}:${rule.value.toLowerCase()}:${rule.action}`));
-    for (const rule of PUBG_DIRECT_RULES) {
-      const key = `${rule.type}:${rule.value.toLowerCase()}:${rule.action}`;
-      if (existing.has(key)) continue;
-      addRule({
-        id: crypto.randomUUID(),
-        type: rule.type,
-        value: rule.value,
-        action: rule.action,
-        enabled: true,
-        comment: rule.comment,
-      });
-    }
-    setShowManual(true);
-    setNewType('exe');
-    setNewAction('direct');
-  }, [addRule, allRules]);
-
   const handleScanApps = useCallback(async () => {
     setShowAppScanner(true);
     setScanningApps(true);
@@ -518,20 +492,6 @@ function MyRulesTab({ onOpenBrowse }: { onOpenBrowse: () => void }) {
       )}
 
       <div className="bg-white border-[4px] border-black rounded-2xl shadow-[6px_6px_0_#000] overflow-hidden">
-        <div className="border-b-[3px] border-black bg-emerald-300/80 px-5 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm font-black uppercase tracking-widest text-black">Game bypass</p>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-black/60 mt-1">
-              PUBG will go direct in TUN mode: TslGame.exe, TslGame_ZK.exe, TslGame_BE.exe, ExecPubg.exe.
-            </p>
-          </div>
-          <button
-            onClick={handleAddPubgDirect}
-            className="shrink-0 px-4 py-2 bg-black text-white border-[3px] border-black shadow-[3px_3px_0_#000] rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer hover:-translate-y-0.5 hover:shadow-[5px_5px_0_#000] active:translate-y-0.5 active:shadow-none transition-all"
-          >
-            PUBG DIRECT
-          </button>
-        </div>
         <button
           onClick={() => setShowManual(!showManual)}
           className="w-full flex items-center justify-between gap-4 px-5 py-4 text-left cursor-pointer hover:bg-black/5 transition-colors"

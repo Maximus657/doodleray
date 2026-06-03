@@ -45,6 +45,33 @@ export interface AppliedPreset {
   appliedAt: string;
 }
 
+const BUILTIN_PRESETS: RoutingPreset[] = [
+  {
+    id: 'builtin-gaming-direct',
+    title: '🎮 Геймерский набор',
+    description: 'Игры и античит идут напрямую в TUN-режиме, чтобы матч не зависел от VPN-маршрута.',
+    author: 'DoodleRay',
+    rules: [
+      { id: 'builtin-gaming-pubg-main', type: 'exe', value: 'TslGame.exe', action: 'direct', enabled: true, comment: 'PUBG main game process' },
+      { id: 'builtin-gaming-pubg-zk', type: 'exe', value: 'TslGame_ZK.exe', action: 'direct', enabled: true, comment: 'PUBG protected game process' },
+      { id: 'builtin-gaming-pubg-be', type: 'exe', value: 'TslGame_BE.exe', action: 'direct', enabled: true, comment: 'PUBG BattlEye launcher' },
+      { id: 'builtin-gaming-pubg-exec', type: 'exe', value: 'ExecPubg.exe', action: 'direct', enabled: true, comment: 'PUBG Steam launcher' },
+      { id: 'builtin-gaming-battleye', type: 'exe', value: 'BEService.exe', action: 'direct', enabled: true, comment: 'BattlEye service' },
+    ],
+    stars: 5,
+    totalRatings: 1,
+    myRating: undefined,
+    upvotes: 999,
+    hasUpvoted: false,
+    createdAt: '2026-06-03T00:00:00.000Z',
+  },
+];
+
+function mergeBuiltinPresets(apiPresets: RoutingPreset[]): RoutingPreset[] {
+  const apiIds = new Set(apiPresets.map((preset) => preset.id));
+  return [...BUILTIN_PRESETS.filter((preset) => !apiIds.has(preset.id)), ...apiPresets];
+}
+
 interface WorkshopState {
   myRules: RoutingRule[];
   appliedPresets: AppliedPreset[];
@@ -131,9 +158,9 @@ export const useWorkshopStore = create<WorkshopState>()(persist((set, get) => ({
         hasUpvoted: p.hasUpvoted,
         createdAt: p.createdAt,
       }));
-      set({ presets, loading: false });
+      set({ presets: mergeBuiltinPresets(presets), loading: false });
     } catch {
-      set({ loading: false });
+      set({ presets: mergeBuiltinPresets([]), loading: false });
     }
   },
 

@@ -84,7 +84,7 @@ Workshop app scanner
 
 - Extended `scan_installed_apps` to include live `.exe` processes via PowerShell `Get-Process`.
 - Extended `scan_installed_apps` to include Steam library folders from `libraryfolders.vdf`, including nested folders such as `TslGame/Binaries/Win64`.
-- Added a `PUBG DIRECT` Workshop action that creates four enabled direct rules: `TslGame.exe`, `TslGame_ZK.exe`, `TslGame_BE.exe`, and `ExecPubg.exe`.
+- Added a built-in Workshop preset, `Геймерский набор`, that users can choose explicitly. It routes PUBG and BattlEye process rules directly in TUN mode without adding a standalone PUBG-only button to the main rules UI.
 - Updated the Workshop app search to match both app name and executable/path.
 - Sorted/deduplicated generated sing-box process rules for stable diagnostics.
 - Added Rust coverage: `singbox_tun_routes_pubg_processes_direct`.
@@ -99,7 +99,7 @@ Workshop app scanner
 ### Minimal Follow-up Plan
 
 - If a new drop happens, compare the exact timestamp against `ping.gateway`, `ping.cloudflare`, `tcp.cloudflare_443`, `dns.discord`, route/default adapter changes, and process snapshots.
-- For DoodleRay TUN gameplay, apply `PUBG DIRECT`, switch to TUN, reconnect, then verify generated config contains the direct process rule before claiming the game is bypassed.
+- For DoodleRay TUN gameplay, apply the `Геймерский набор` preset, switch to TUN, reconnect, then verify generated config contains the direct process rule before claiming the game is bypassed.
 
 ### Windows Test Path
 
