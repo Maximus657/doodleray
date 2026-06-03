@@ -1498,6 +1498,18 @@ fn tun_mtu_value(req: &ConnectRequest) -> u16 {
         .unwrap_or(1408)
 }
 
+fn tun_route_exclude_addresses(req: &ConnectRequest) -> Vec<String> {
+    req.server_address
+        .parse::<IpAddr>()
+        .ok()
+        .map(|ip| match ip {
+            IpAddr::V4(value) => format!("{}/32", value),
+            IpAddr::V6(value) => format!("{}/128", value),
+        })
+        .into_iter()
+        .collect()
+}
+
 fn tun_inbound_value(
     req: &ConnectRequest,
     interface_name: Option<&str>,
@@ -1519,6 +1531,10 @@ fn tun_inbound_value(
 
     if let Some(name) = interface_name {
         inbound["interface_name"] = serde_json::json!(name);
+    }
+    let route_exclude_address = tun_route_exclude_addresses(req);
+    if !route_exclude_address.is_empty() {
+        inbound["route_exclude_address"] = serde_json::json!(route_exclude_address);
     }
     if matches!(stack, "mixed" | "gvisor") {
         inbound["endpoint_independent_nat"] = serde_json::json!(true);
@@ -2975,6 +2991,19 @@ mod tests {
         assert_eq!(
             tun_address_values(),
             json!(["172.30.255.1/30", "fdfe:dcba:9876::1/126"])
+        );
+    }
+
+    #[test]
+    fn tun_inbound_excludes_ip_endpoint_from_auto_route() {
+        let mut req = sample_request("tun");
+        req.server_address = "89.58.26.124".into();
+
+        let inbound = tun_inbound_value(&req, Some("DoodleRay Tunnel"), true);
+
+        assert_eq!(
+            inbound["route_exclude_address"],
+            json!(["89.58.26.124/32"])
         );
     }
 
