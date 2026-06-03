@@ -321,7 +321,7 @@ export const useAppStore = create<AppState>()(
       logs: [],
       socksPort: 10808,
       httpPort: 10809,
-      autoStart: false,
+      autoStart: true,
       silentAdminAutostart: false,
       theme: 'dark',
       language: detectInitialLanguage(),

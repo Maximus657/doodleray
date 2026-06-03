@@ -175,14 +175,33 @@ function App() {
       return typeof tauriInternals?.invoke === 'function';
     };
 
-    async function syncSilentAdmin() {
+    async function syncStartupAutostart() {
       if (!isTauriRuntime()) return;
 
+      let silentEnabled = false;
       try {
-        const silentEnabled: boolean = await invoke('check_silent_autostart');
+        silentEnabled = await invoke('check_silent_autostart');
         useAppStore.setState({ silentAdminAutostart: silentEnabled });
       } catch (err) {
         console.error('Failed to query silent autostart:', err);
+      }
+
+      if (silentEnabled) {
+        useAppStore.setState({ autoStart: false });
+        return;
+      }
+
+      try {
+        const { enable, isEnabled } = await import('@tauri-apps/plugin-autostart');
+        const enabled = await isEnabled();
+        if (!enabled) {
+          await enable();
+          useAppStore.getState().addLog('success', 'App autostart enabled');
+        }
+        useAppStore.setState({ autoStart: true });
+      } catch (err) {
+        useAppStore.setState({ autoStart: false });
+        useAppStore.getState().addLog('warning', `App autostart could not be enabled: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 
@@ -330,7 +349,7 @@ function App() {
       });
     }
 
-    syncSilentAdmin();
+    syncStartupAutostart();
 
     const runStartupFlow = () => {
       compactHydratedStorage();
