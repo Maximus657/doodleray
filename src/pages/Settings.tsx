@@ -30,6 +30,46 @@ function formatMessage(template: string, values: Record<string, string | number>
   );
 }
 
+function updatePhaseFromStatus(status: string): 'installing' | 'downloading' {
+  return status === 'updateClosingProcesses' ||
+    status === 'updatePreparingInstall' ||
+    status === 'updateInstallingRestarting'
+    ? 'installing'
+    : 'downloading';
+}
+
+function updateStatusLabel(
+  status: string,
+  phase: string,
+  progress: number | null,
+  version: string | null,
+  t: (key: any) => string,
+) {
+  if (progress !== null && phase === 'downloading') {
+    return formatMessage(t('updateDownloadingProgress'), { progress });
+  }
+
+  switch (status) {
+    case 'updateChecking':
+      return t('updateChecking');
+    case 'updateDownloading':
+    case 'updateDownloadingProgress':
+      return version
+        ? formatMessage(t('updateDownloadingVersion'), { version })
+        : t('updateDownloading');
+    case 'updatePreparingInstall':
+      return t('updatePreparingInstall');
+    case 'updateClosingProcesses':
+      return t('updateClosingProcesses');
+    case 'updateInstallingRestarting':
+      return t('updateInstallingRestarting');
+    case 'updateLatest':
+      return t('updateLatest');
+    default:
+      return status;
+  }
+}
+
 const diagnosticTitles: Record<string, Record<string, string>> = {
   ru: {
     hosts_override: 'Подписка найдена в hosts',
@@ -143,6 +183,7 @@ export default function Settings() {
     showStats, setShowStats,
     language, setLanguage,
     subscriptions,
+    availableUpdate,
     updatePhase,
     updateStatus,
     updateProgress,
@@ -275,6 +316,7 @@ export default function Settings() {
   const [storageLoading, setStorageLoading] = useState(false);
   const [storageReport, setStorageReport] = useState<StorageReport | null>(null);
   const [cacheStatus, setCacheStatus] = useState('');
+  const updateStatusText = updateStatusLabel(updateStatus, updatePhase, updateProgress, availableUpdate || appVersion, t);
 
   useEffect(() => {
     import('@tauri-apps/api/app').then(({ getVersion }) => getVersion()).then(setAppVersion).catch(() => {});
@@ -283,7 +325,7 @@ export default function Settings() {
   const handleCheckUpdate = async () => {
     setUpdateState({
       updatePhase: 'checking',
-      updateStatus: 'Checking for updates...',
+      updateStatus: 'updateChecking',
       updateProgress: null,
     });
     try {
@@ -295,7 +337,7 @@ export default function Settings() {
         setUpdateState({
           availableUpdate: update.version,
           updatePhase: 'downloading',
-          updateStatus: `Downloading v${update.version}...`,
+          updateStatus: 'updateDownloading',
           updateProgress: 0,
         });
         await installAppUpdate({
@@ -303,7 +345,7 @@ export default function Settings() {
           onStatus: (status) => {
             setUpdateState({
               updateStatus: status,
-              updatePhase: status.toLowerCase().includes('installing') ? 'installing' : 'downloading',
+              updatePhase: updatePhaseFromStatus(status),
             });
           },
           onProgress: (progress) => setUpdateState({ updateProgress: progress }),
@@ -312,7 +354,7 @@ export default function Settings() {
         setUpdateState({
           availableUpdate: null,
           updatePhase: 'idle',
-          updateStatus: 'You are on the latest version.',
+          updateStatus: 'updateLatest',
           updateProgress: null,
         });
         setTimeout(() => setUpdateState({ updateStatus: '' }), 3000);
@@ -320,7 +362,7 @@ export default function Settings() {
     } catch (e: any) {
       setUpdateState({
         updatePhase: 'error',
-        updateStatus: `Update check failed: ${e.message || e}`,
+        updateStatus: `${t('updateCheckFailed')}: ${e.message || e}`,
         updateProgress: null,
       });
       setTimeout(() => setUpdateState({ updateStatus: '' }), 5000);
@@ -715,9 +757,9 @@ export default function Settings() {
               {updatePhase === 'downloading' && updateProgress !== null ? `${updateProgress}%` : t('checkForUpdates')}
             </span>
           </button>
-          {updateStatus && (
+          {updateStatusText && (
             <div className="mx-auto mb-3 max-w-xs">
-              <p className="text-[11px] font-black uppercase tracking-widest text-black/80">{updateStatus}</p>
+              <p className="text-[11px] font-black uppercase tracking-widest text-black/80">{updateStatusText}</p>
               {updatePhase === 'downloading' && updateProgress !== null && (
                 <div className="mt-2 h-2 overflow-hidden rounded-full border-[2px] border-black bg-black/10">
                   <div className="h-full bg-black transition-all duration-300" style={{ width: `${updateProgress}%` }} />

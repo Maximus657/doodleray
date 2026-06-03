@@ -88,7 +88,12 @@ export default function DashboardControlsDrawer({
                 return (
                   <div
                     key={item.mode}
-                    className={`relative overflow-visible rounded-xl border-[3px] p-2.5 transition-all duration-300 hover:z-[70] focus-within:z-[70] ${
+                    onMouseLeave={() => {
+                      if (openHelpMode === item.mode) setOpenHelpMode(null);
+                    }}
+                    className={`relative overflow-visible rounded-xl border-[3px] p-2.5 transition-all duration-300 ${
+                      openHelpMode === item.mode ? 'z-[90]' : 'hover:z-[70] focus-within:z-[70]'
+                    } ${
                       selected
                         ? 'border-black bg-white shadow-[4px_4px_0_#000]'
                         : 'border-black/45 bg-white/60 hover:border-black hover:bg-white'
@@ -125,7 +130,6 @@ export default function DashboardControlsDrawer({
                         }}
                         onMouseEnter={() => setOpenHelpMode(item.mode)}
                         onFocus={() => setOpenHelpMode(item.mode)}
-                        onMouseLeave={() => setOpenHelpMode(null)}
                         onBlur={() => setOpenHelpMode(null)}
                         aria-label={item.help}
                         aria-expanded={openHelpMode === item.mode}
@@ -135,7 +139,7 @@ export default function DashboardControlsDrawer({
                       </button>
                     </div>
                     {openHelpMode === item.mode && (
-                      <div className="mt-2 rounded-xl border-[2px] border-black bg-white px-3 py-2.5 text-left text-black shadow-[2px_2px_0_rgba(0,0,0,0.22)]">
+                      <div className="pointer-events-none absolute right-2 top-12 z-[100] w-[min(19rem,calc(100%-1rem))] rounded-xl border-[2px] border-black bg-white px-3 py-2.5 text-left text-black shadow-[4px_4px_0_rgba(0,0,0,0.24)]">
                         <p className="text-[10px] font-black uppercase tracking-widest">
                           {item.mode === 'tun' ? t('tunAdvancedTitle') : t('modeHelpProxyTitle')}
                         </p>

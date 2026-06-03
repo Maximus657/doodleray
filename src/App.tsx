@@ -16,6 +16,53 @@ import { resolveConnectServer } from './lib/server-selection';
 import { checkForAppUpdate, installAppUpdate } from './lib/app-updater';
 import './index.css';
 
+function formatMessage(template: string, values: Record<string, string | number>) {
+  return Object.entries(values).reduce(
+    (message, [key, value]) => message.replace(new RegExp(`\\{${key}\\}`, 'g'), String(value)),
+    template
+  );
+}
+
+function updatePhaseFromStatus(status: string): 'installing' | 'downloading' {
+  return status === 'updateClosingProcesses' ||
+    status === 'updatePreparingInstall' ||
+    status === 'updateInstallingRestarting'
+    ? 'installing'
+    : 'downloading';
+}
+
+function updateStatusLabel(
+  status: string,
+  phase: string,
+  progress: number | null,
+  version: string | null,
+  t: (key: any) => string,
+) {
+  if (progress !== null && phase === 'downloading') {
+    return formatMessage(t('updateDownloadingProgress'), { progress });
+  }
+
+  switch (status) {
+    case 'updateChecking':
+      return t('updateChecking');
+    case 'updateDownloading':
+    case 'updateDownloadingProgress':
+      return version
+        ? formatMessage(t('updateDownloadingVersion'), { version })
+        : t('updateDownloading');
+    case 'updatePreparingInstall':
+      return t('updatePreparingInstall');
+    case 'updateClosingProcesses':
+      return t('updateClosingProcesses');
+    case 'updateInstallingRestarting':
+      return t('updateInstallingRestarting');
+    case 'updateLatest':
+      return t('updateLatest');
+    default:
+      return status;
+  }
+}
+
 function ToastContainer() {
   const toasts = useToastStore(s => s.toasts);
   const removeToast = useToastStore(s => s.removeToast);
@@ -51,12 +98,13 @@ function UpdateBanner() {
 
   const isDownloading = updatePhase === 'downloading';
   const isBusy = updatePhase === 'checking' || updatePhase === 'downloading' || updatePhase === 'installing';
+  const statusLabel = updateStatusLabel(updateStatus, updatePhase, updateProgress, availableUpdate, t);
 
   const handleInstall = async () => {
     if (isBusy) return;
     setUpdateState({
       updatePhase: 'downloading',
-      updateStatus: `Downloading v${availableUpdate}...`,
+      updateStatus: 'updateDownloading',
       updateProgress: 0,
     });
     try {
@@ -64,7 +112,7 @@ function UpdateBanner() {
         onStatus: (status) => {
           setUpdateState({
             updateStatus: status,
-            updatePhase: status.toLowerCase().includes('installing') ? 'installing' : 'downloading',
+            updatePhase: updatePhaseFromStatus(status),
           });
         },
         onProgress: (progress) => setUpdateState({ updateProgress: progress }),
@@ -81,17 +129,17 @@ function UpdateBanner() {
   };
 
   return (
-    <div className="absolute top-0 left-0 right-0 z-50 animate-slide-down">
-      <div className="mx-4 mt-3 overflow-hidden rounded-2xl border-[3px] border-black bg-black px-5 py-3 shadow-[6px_6px_0_rgba(0,0,0,0.3)]">
-        <div className="flex items-center gap-4">
+    <div className="fixed bottom-4 right-4 z-[9000] w-[min(420px,calc(100vw-2rem))] animate-slide-in-right pointer-events-none">
+      <div className="pointer-events-auto overflow-hidden rounded-2xl border-[3px] border-black bg-black px-4 py-3 shadow-[6px_6px_0_rgba(0,0,0,0.3)]">
+        <div className="flex items-center gap-3">
           <div className={`h-3 w-3 shrink-0 rounded-full ${isBusy ? 'animate-pulse bg-amber-300' : 'bg-emerald-400'}`} />
           <div className="min-w-0 flex-1">
             <p className="truncate text-xs font-black uppercase tracking-wide text-white">
               {t('newUpdate')} v<span className="text-bg-primary">{availableUpdate}</span> {t('versionAvailable')}
             </p>
-            {(updateStatus || isDownloading) && (
+            {(statusLabel || isDownloading) && (
               <p className="mt-0.5 truncate text-[10px] font-black uppercase tracking-widest text-white/55">
-                {updateProgress !== null && isDownloading ? `Downloading ${updateProgress}%` : updateStatus}
+                {statusLabel}
               </p>
             )}
           </div>
@@ -160,7 +208,7 @@ function App() {
             useAppStore.getState().addLog('info', `Auto-update found v${update.version}. Installing...`);
             useAppStore.getState().setUpdateState({
               updatePhase: 'downloading',
-              updateStatus: `Downloading v${update.version}...`,
+              updateStatus: 'updateDownloading',
               updateProgress: 0,
             });
             await installAppUpdate({
@@ -168,7 +216,7 @@ function App() {
               onStatus: (status) => {
                 useAppStore.getState().setUpdateState({
                   updateStatus: status,
-                  updatePhase: status.toLowerCase().includes('installing') ? 'installing' : 'downloading',
+                  updatePhase: updatePhaseFromStatus(status),
                 });
                 useAppStore.getState().addLog('info', `Auto-update: ${status}`);
               },

@@ -38,7 +38,7 @@ export async function checkForAppUpdate() {
 }
 
 async function disconnectBeforeInstall(onStatus: (status: string) => void) {
-  onStatus('Closing background processes...');
+  onStatus('updateClosingProcesses');
 
   try {
     const { invoke } = await import('@tauri-apps/api/core');
@@ -76,12 +76,12 @@ async function installAppUpdateOnce({
   const pendingUpdate = update ?? cachedUpdate ?? await checkForAppUpdate();
 
   if (!pendingUpdate) {
-    onStatus('You are on the latest version');
+    onStatus('updateLatest');
     onProgress(null);
     return false;
   }
 
-  onStatus(`v${pendingUpdate.version} available. Downloading...`);
+  onStatus('updateDownloading');
   onProgress(0);
 
   let downloaded = 0;
@@ -98,12 +98,12 @@ async function installAppUpdateOnce({
         if (contentLength > 0) {
           const percent = Math.min(100, Math.round((downloaded / contentLength) * 100));
           onProgress(percent);
-          onStatus(`Downloading... ${percent}%`);
+          onStatus('updateDownloadingProgress');
         }
         break;
       case 'Finished':
         onProgress(100);
-        onStatus('Download complete. Preparing install...');
+        onStatus('updatePreparingInstall');
         break;
     }
   });
@@ -112,7 +112,7 @@ async function installAppUpdateOnce({
     await disconnectBeforeInstall(onStatus);
   }
 
-  onStatus('Installing and restarting...');
+  onStatus('updateInstallingRestarting');
   await pendingUpdate.install();
   cachedUpdate = null;
 
