@@ -19,6 +19,8 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, ToSocketAdd
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
+use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{
@@ -33,6 +35,8 @@ static CONNECTION_STATE: Mutex<bool> = Mutex::new(false);
 static ACTIVE_ENGINE: Mutex<Option<String>> = Mutex::new(None);
 static SYSTEM_PROXY_MANAGED: Mutex<bool> = Mutex::new(false);
 static ACTIVE_XRAY_API_PORT: Mutex<u16> = Mutex::new(10813);
+#[cfg(windows)]
+static APP_INSTANCE_MUTEX_HANDLE: AtomicIsize = AtomicIsize::new(0);
 // sing-box clash API traffic tracking (previous totals for delta calculation)
 static SB_PREV_DOWN: Mutex<i64> = Mutex::new(0);
 static SB_PREV_UP: Mutex<i64> = Mutex::new(0);
@@ -53,6 +57,33 @@ const SECURE_STORE_CHUNK_BYTES: usize = 1800;
 const SECURE_STORE_CHUNK_PREFIX: &str = "chunked:v1:";
 const APP_IDENTIFIER: &str = "com.doodlevpn.doodleray";
 const APP_PRODUCT_NAME: &str = "DoodleRay";
+
+#[cfg(windows)]
+fn claim_single_app_instance() -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
+    use windows_sys::Win32::System::Threading::CreateMutexW;
+
+    let name: Vec<u16> = "Global\\DoodleRay.VPN.AppInstance.v1\0"
+        .encode_utf16()
+        .collect();
+    let handle = unsafe { CreateMutexW(std::ptr::null(), 1, name.as_ptr()) };
+    if handle.is_null() {
+        return true;
+    }
+    if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        unsafe {
+            CloseHandle(handle);
+        }
+        return false;
+    }
+    APP_INSTANCE_MUTEX_HANDLE.store(handle as isize, Ordering::SeqCst);
+    true
+}
+
+#[cfg(not(windows))]
+fn claim_single_app_instance() -> bool {
+    true
+}
 
 fn vpn_log(msg: &str) {
     let line = format!("[vpn] {}", msg);
@@ -1359,7 +1390,7 @@ fn singbox_dns_config(mode: &str) -> serde_json::Value {
                 }
             ],
             "final": "dns-remote",
-            "strategy": "prefer_ipv4"
+            "strategy": "ipv4_only"
         }),
         _ => serde_json::json!({
             "servers": [
@@ -1377,15 +1408,14 @@ fn singbox_dns_config(mode: &str) -> serde_json::Value {
                 {
                     "tag": "dns-fakeip",
                     "type": "fakeip",
-                    "inet4_range": "198.18.0.0/15",
-                    "inet6_range": "fc00::/18"
+                    "inet4_range": "198.18.0.0/15"
                 }
             ],
             "rules": [
-                { "query_type": ["A", "AAAA"], "server": "dns-fakeip" }
+                { "query_type": "A", "server": "dns-fakeip" }
             ],
             "final": "dns-remote",
-            "strategy": "prefer_ipv4",
+            "strategy": "ipv4_only",
             "independent_cache": true
         }),
     }
@@ -2896,6 +2926,18 @@ mod tests {
 
         assert_eq!(config["inbounds"][0]["udp_timeout"], json!("10m"));
         assert_eq!(config["inbounds"][0]["endpoint_independent_nat"], json!(true));
+    }
+
+    #[test]
+    fn singbox_dns_is_ipv4_only_for_windows_tun_stability() {
+        let dns = singbox_dns_config("fakeip");
+
+        assert_eq!(dns["strategy"], json!("ipv4_only"));
+        assert!(dns["servers"][0].get("strategy").is_none());
+        assert!(dns["servers"][1].get("strategy").is_none());
+        assert_eq!(dns["servers"][2]["inet4_range"], json!("198.18.0.0/15"));
+        assert!(dns["servers"][2].get("inet6_range").is_none());
+        assert_eq!(dns["rules"][0]["query_type"], json!("A"));
     }
 
     #[test]
@@ -5041,11 +5083,14 @@ async fn force_free_managed_port(port: u16) -> String {
                     if let Some(pid_str) = line.split_whitespace().last() {
                         if let Ok(pid) = pid_str.parse::<u32>() {
                             if windows_pid_is_doodleray_owned(pid) {
-                                let mut kill = std::process::Command::new("taskkill");
-                                kill.args(&["/PID", &pid.to_string(), "/F"]);
-                                kill.creation_flags(0x08000000);
-                                let _ = kill.output();
-                                return format!("Killed DoodleRay-owned PID {} on port {}", pid, port);
+                                return match windows_terminate_pid(pid) {
+                                    Ok(()) => {
+                                        format!("Terminated DoodleRay-owned PID {} on port {}", pid, port)
+                                    }
+                                    Err(err) => {
+                                        format!("Failed to terminate DoodleRay-owned PID {} on port {}: {}", pid, port, err)
+                                    }
+                                };
                             }
                             return format!(
                                 "Port {} is used by PID {}, but it is not DoodleRay-owned",
@@ -5075,6 +5120,27 @@ async fn force_free_managed_port(port: u16) -> String {
         }
     }
     format!("Port {} is already free", port)
+}
+
+#[cfg(windows)]
+fn windows_terminate_pid(pid: u32) -> Result<(), String> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, TerminateProcess, PROCESS_TERMINATE,
+    };
+
+    let process = unsafe { OpenProcess(PROCESS_TERMINATE, 0, pid) };
+    if process.is_null() {
+        return Err(format!("{}", std::io::Error::last_os_error()));
+    }
+    let ok = unsafe { TerminateProcess(process, 1) };
+    unsafe {
+        CloseHandle(process);
+    }
+    if ok == 0 {
+        return Err(format!("{}", std::io::Error::last_os_error()));
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -5740,6 +5806,10 @@ fn full_cleanup() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if !claim_single_app_instance() {
+        return;
+    }
+
     // ── Startup cleanup ──
     // If previous session crashed, clean up orphaned processes and stale proxy
     // This runs BEFORE the UI loads, so the user never sees broken internet
@@ -5852,9 +5922,17 @@ pub fn run() {
                 window.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                         // Hide instead of close → minimize to tray
-                        api.prevent_close();
-                        if let Some(win) = app_handle.get_webview_window("main") {
-                            let _ = win.hide();
+                        #[cfg(windows)]
+                        {
+                            let _ = &app_handle;
+                            let _ = api;
+                        }
+                        #[cfg(not(windows))]
+                        {
+                            api.prevent_close();
+                            if let Some(win) = app_handle.get_webview_window("main") {
+                                let _ = win.hide();
+                            }
                         }
                     }
                 });

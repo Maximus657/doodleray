@@ -14,11 +14,15 @@
 
 !macro NSIS_HOOK_PREINSTALL
   DetailPrint "Preparing DoodleRay Tunnel Service for update..."
-  nsExec::ExecToLog '"$INSTDIR\DoodleRayService.exe" prepare-update'
-  nsExec::ExecToLog '"$INSTDIR\DoodleRayService.exe" uninstall'
+  ; Do not call the previously installed DoodleRayService.exe here: older
+  ; service builds used a different pipe/protocol and can block the updater.
+  ; The app calls PrepareForUpdate before launching the updater; this hook is a
+  ; last-resort SCM cleanup so installer replacement never depends on old code.
+  nsExec::ExecToLog 'sc stop DoodleRayTunnelService'
+  Sleep 1000
   nsExec::ExecToLog 'sc stop DoodleRayTunnelService'
   nsExec::ExecToLog 'sc delete DoodleRayTunnelService'
-  Sleep 1500
+  Sleep 2000
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
@@ -29,6 +33,8 @@
 
 !macro NSIS_HOOK_PREUNINSTALL
   DetailPrint "Removing DoodleRay Tunnel Service..."
-  nsExec::ExecToLog '"$INSTDIR\DoodleRayService.exe" prepare-update'
-  nsExec::ExecToLog '"$INSTDIR\DoodleRayService.exe" uninstall'
+  nsExec::ExecToLog 'sc stop DoodleRayTunnelService'
+  Sleep 1000
+  nsExec::ExecToLog 'sc stop DoodleRayTunnelService'
+  nsExec::ExecToLog 'sc delete DoodleRayTunnelService'
 !macroend

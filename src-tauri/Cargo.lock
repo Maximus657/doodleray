@@ -927,7 +927,7 @@ dependencies = [
 
 [[package]]
 name = "doodleray"
-version = "5.1.12"
+version = "5.1.13"
 dependencies = [
  "ctrlc",
  "keyring",

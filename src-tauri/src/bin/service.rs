@@ -602,6 +602,51 @@ mod windows_service_main {
         TunnelDiagnostics {
             status: status_snapshot(),
             log_tail: sanitized_log_tail(),
+            network_snapshot: sanitized_network_snapshot(),
+        }
+    }
+
+    fn sanitized_network_snapshot() -> Vec<String> {
+        let script = r#"
+Write-Output '--- adapters'
+Get-NetAdapter -ErrorAction SilentlyContinue |
+  Where-Object { $_.Name -match 'DoodleRay|tun|happ|Wintun|sing' -or $_.InterfaceDescription -match 'DoodleRay|tun|happ|Wintun|sing' } |
+  Select-Object Name, InterfaceDescription, Status, ifIndex |
+  Format-Table -AutoSize | Out-String -Width 220
+Write-Output '--- ipv4 interfaces'
+Get-NetIPInterface -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+  Sort-Object InterfaceMetric |
+  Select-Object ifIndex, InterfaceAlias, InterfaceMetric, ConnectionState, NlMtu |
+  Format-Table -AutoSize | Out-String -Width 220
+Write-Output '--- ipv4 default/split routes'
+Get-NetRoute -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+  Where-Object { $_.DestinationPrefix -in @('0.0.0.0/0','0.0.0.0/1','128.0.0.0/1') -or $_.InterfaceAlias -match 'DoodleRay|happ|tun' } |
+  Sort-Object InterfaceAlias, DestinationPrefix, RouteMetric |
+  Select-Object InterfaceAlias, DestinationPrefix, NextHop, RouteMetric, Protocol |
+  Format-Table -AutoSize | Out-String -Width 220
+Write-Output '--- owned/competing processes'
+Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+  Where-Object { $_.Name -in @('DoodleRay.exe','DoodleRayService.exe','xray.exe','sing-box.exe','Happ.exe') -or $_.ExecutablePath -match 'DoodleRay|Happ|sing-box|xray' } |
+  Select-Object ProcessId, Name, ExecutablePath |
+  Format-Table -AutoSize | Out-String -Width 260
+"#;
+        let output = Command::new("powershell")
+            .args(["-NoProfile", "-Command", script])
+            .creation_flags(0x08000000)
+            .output();
+
+        match output {
+            Ok(output) => {
+                let mut text = String::new();
+                text.push_str(&String::from_utf8_lossy(&output.stdout));
+                text.push_str(&String::from_utf8_lossy(&output.stderr));
+                text.lines()
+                    .map(redact_sensitive_line)
+                    .filter(|line| !line.trim().is_empty())
+                    .take(220)
+                    .collect()
+            }
+            Err(e) => vec![format!("network snapshot failed: {}", e)],
         }
     }
 
@@ -1099,7 +1144,7 @@ $bestOther = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyCo
   } |
   Sort-Object Effective |
   Select-Object -First 1
-if ($bestOther -and $tunEffective -ge [int]$bestOther.Effective) {
+if ($routeShape -eq 'default' -and $bestOther -and $tunEffective -ge [int]$bestOther.Effective) {
   Write-Output ("DoodleRay Tunnel route is not preferred: tun={0}, other={1}:{2}" -f $tunEffective, $bestOther.Alias, $bestOther.Effective)
   exit 3
 }

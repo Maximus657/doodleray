@@ -77,6 +77,7 @@ pub struct TunnelStatus {
 pub struct TunnelDiagnostics {
     pub status: TunnelStatus,
     pub log_tail: Vec<String>,
+    pub network_snapshot: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
