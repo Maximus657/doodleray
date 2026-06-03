@@ -1048,13 +1048,29 @@ mod windows_service_main {
 
     fn ensure_doodleray_route_preferred() -> Result<(), String> {
         let script = r#"
-$tunRoute = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -InterfaceAlias 'DoodleRay Tunnel' -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
 $tunIface = Get-NetIPInterface -InterfaceAlias 'DoodleRay Tunnel' -AddressFamily IPv4 -ErrorAction SilentlyContinue
-if (-not $tunRoute -or -not $tunIface) {
-  Write-Output 'DoodleRay Tunnel IPv4 default route or interface metric is missing'
+if (-not $tunIface) {
+  Write-Output 'DoodleRay Tunnel IPv4 interface metric is missing'
   exit 2
 }
-$tunEffective = [int]$tunRoute.RouteMetric + [int]$tunIface.InterfaceMetric
+
+$tunDefaultRoute = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -InterfaceAlias 'DoodleRay Tunnel' -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
+$tunSplitRoutes = @(
+  Get-NetRoute -DestinationPrefix '0.0.0.0/1' -InterfaceAlias 'DoodleRay Tunnel' -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
+  Get-NetRoute -DestinationPrefix '128.0.0.0/1' -InterfaceAlias 'DoodleRay Tunnel' -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
+) | Where-Object { $_ }
+
+$tunRoutes = @()
+if ($tunDefaultRoute) {
+  $tunRoutes += $tunDefaultRoute
+} elseif ($tunSplitRoutes.Count -eq 2) {
+  $tunRoutes += $tunSplitRoutes
+} else {
+  Write-Output 'DoodleRay Tunnel IPv4 default or split routes are missing'
+  exit 2
+}
+
+$tunEffective = ($tunRoutes | ForEach-Object { [int]$_.RouteMetric + [int]$tunIface.InterfaceMetric } | Measure-Object -Maximum).Maximum
 $bestOther = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
   Where-Object { $_.InterfaceAlias -ne 'DoodleRay Tunnel' } |
   ForEach-Object {
@@ -1072,7 +1088,8 @@ if ($bestOther -and $tunEffective -ge [int]$bestOther.Effective) {
   Write-Output ("DoodleRay Tunnel route is not preferred: tun={0}, other={1}:{2}" -f $tunEffective, $bestOther.Alias, $bestOther.Effective)
   exit 3
 }
-Write-Output ("DoodleRay Tunnel route preferred: tun={0}, best_other={1}" -f $tunEffective, $(if ($bestOther) { "$($bestOther.Alias):$($bestOther.Effective)" } else { 'none' }))
+$routeShape = if ($tunDefaultRoute) { 'default' } else { 'split' }
+Write-Output ("DoodleRay Tunnel route preferred: shape={0}, tun={1}, best_other={2}" -f $routeShape, $tunEffective, $(if ($bestOther) { "$($bestOther.Alias):$($bestOther.Effective)" } else { 'none' }))
 "#;
         match Command::new("powershell")
             .args(["-NoProfile", "-Command", script])
