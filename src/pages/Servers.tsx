@@ -17,6 +17,7 @@ import { parseProxyLink } from '../lib/parser';
 import { fetchSubscription, refreshSubscription } from '../lib/subscription';
 import { formatPing, protocolLabel, pingServerSmart } from '../lib/utils';
 import { buildServerDisplayGroups, type ServerDisplayGroup } from '../lib/server-groups';
+import { findMatchingServer } from '../lib/server-selection';
 import type { ServerConfig } from '../stores/app-store';
 import { useTranslation } from '../locales';
 import { reportConnectionError } from '../lib/workshop-api';
@@ -215,7 +216,7 @@ export default function Servers() {
 
   // Render a normalized server group item
   const renderServerGroup = (group: ServerDisplayGroup) => {
-    const activeGroupServer = group.servers.find((server) => activeServer?.id === server.id);
+    const activeGroupServer = findMatchingServer(activeServer, group.servers);
     const selectedServer = activeGroupServer || group.selectedServer;
     const isActive = !!activeGroupServer;
 

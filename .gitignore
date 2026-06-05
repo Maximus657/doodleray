@@ -45,6 +45,7 @@ src-tauri/singbox-core/*.h
 src-tauri/singbox-core/build_log.txt
 
 # Debug/test files
+.playwright-cli/
 *_debug_config.json
 test*.json
 xray_config.json

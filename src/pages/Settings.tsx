@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Trash2, RotateCcw, Database, Zap, Monitor, Download, ShieldCheck, ChevronDown, RefreshCw, Network, HardDrive, ClipboardCopy, Loader2 } from 'lucide-react';
+import { Settings as SettingsIcon, Trash2, RotateCcw, Database, Zap, Monitor, Download, ShieldCheck, ChevronDown, RefreshCw, Network, HardDrive, ClipboardCopy, Loader2, Wrench } from 'lucide-react';
 import { disable } from '@tauri-apps/plugin-autostart';
 import { useTranslation } from '../locales';
 import { useAppStore } from '../stores/app-store';
@@ -104,7 +104,7 @@ const diagnosticTitles: Record<string, Record<string, string>> = {
     socks_handshake_rejected: 'SOCKS5 handshake отклонен',
     socks_handshake_timeout: 'SOCKS порт не ответил на handshake',
     socks_port_closed: 'SOCKS порт закрыт',
-    split_rules_proxy_mode: 'Правила Мастерской включены, но активен Proxy Mode',
+    split_rules_proxy_mode: 'Правила Мастерской работают в режиме «Весь компьютер»',
     split_rules_tun_mode: 'Правила Мастерской могут примениться',
     default_route_unavailable: 'Default route недоступен',
     default_route_snapshot: 'Снимок default route',
@@ -145,7 +145,7 @@ const diagnosticTitles: Record<string, Record<string, string>> = {
     socks_handshake_rejected: 'SOCKS5 握手被拒绝',
     socks_handshake_timeout: 'SOCKS 端口握手超时',
     socks_port_closed: 'SOCKS 端口已关闭',
-    split_rules_proxy_mode: '创意工坊规则已启用，但当前是代理模式',
+    split_rules_proxy_mode: '创意工坊规则需要全设备模式',
     split_rules_tun_mode: '创意工坊规则可应用',
     default_route_unavailable: '默认路由不可用',
     default_route_snapshot: '默认路由快照',
@@ -172,7 +172,6 @@ export default function Settings() {
   const {
     socksPort, setSocksPort,
     httpPort, setHttpPort,
-    systemProxyMode, setSystemProxyMode,
     networkStack, setNetworkStack,
     dnsMode, setDnsMode,
     strictRoute, setStrictRoute,
@@ -287,7 +286,7 @@ export default function Settings() {
             setConfirmModal({
               show: true,
               title: 'Restart Required',
-              message: 'Admin autostart is set for next login.\n\nRestart as Administrator now?\nThis will give full access to TUN mode and other admin features immediately.',
+              message: 'Admin autostart is set for next login.\n\nRestart as Administrator now?\nThis will give full access to Whole computer mode and other admin features immediately.',
               onConfirm: async () => {
                 addLog('info', 'Restarting as administrator...');
                 await invoke('restart_as_admin');
@@ -316,11 +315,47 @@ export default function Settings() {
   const [storageLoading, setStorageLoading] = useState(false);
   const [storageReport, setStorageReport] = useState<StorageReport | null>(null);
   const [cacheStatus, setCacheStatus] = useState('');
+  const [proxyStaleState, setProxyStaleState] = useState<string>('unknown');
+  const [proxyRepairLoading, setProxyRepairLoading] = useState(false);
+  const [proxyRepairStatus, setProxyRepairStatus] = useState('');
   const updateStatusText = updateStatusLabel(updateStatus, updatePhase, updateProgress, availableUpdate || appVersion, t);
+  const showProxyRepair = ['orphaned_managed', 'legacy_disabled_values', 'legacy_enabled_values'].includes(proxyStaleState);
 
   useEffect(() => {
     import('@tauri-apps/api/app').then(({ getVersion }) => getVersion()).then(setAppVersion).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const state = await invoke<string>('detect_stale_doodleray_proxy');
+        setProxyStaleState(state);
+      } catch {
+        setProxyStaleState('unsupported');
+      }
+    })();
+  }, []);
+
+  const handleRepairStaleProxy = async () => {
+    setProxyRepairLoading(true);
+    setProxyRepairStatus('');
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const outcome = await invoke<string>('repair_stale_doodleray_proxy_only');
+      setProxyRepairStatus(`${t('windowsProxyRepairDone')}: ${outcome}`);
+      setProxyStaleState('none');
+      addLog('success', `${t('windowsProxyRepair')}: ${outcome}`);
+      const { useToastStore } = await import('../stores/toast-store');
+      useToastStore.getState().addToast(t('windowsProxyRepairDone'), 'success');
+    } catch (e: any) {
+      const message = e?.message || String(e);
+      setProxyRepairStatus(message);
+      addLog('error', `${t('windowsProxyRepairFailed')}: ${message}`);
+    } finally {
+      setProxyRepairLoading(false);
+    }
+  };
 
   const handleCheckUpdate = async () => {
     setUpdateState({
@@ -536,17 +571,15 @@ export default function Settings() {
               </div>
               <div className="py-3 px-4 bg-white border-[3px] border-black shadow-[2px_2px_0_#000] rounded-xl space-y-2">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm font-black text-black uppercase tracking-tight">{t('systemProxyBehavior')}</span>
-                  <select value={systemProxyMode} onChange={(e) => setSystemProxyMode(e.target.value as any)}
-                    className="bg-white border-[3px] border-black shadow-[2px_2px_0_#000] rounded-lg px-3 py-1.5 text-xs text-black font-black uppercase tracking-widest focus:outline-none cursor-pointer">
-                    <option value="set">{t('systemProxySet')}</option>
-                    <option value="unchanged">{t('systemProxyUnchanged')}</option>
-                    <option value="clear">{t('systemProxyClear')}</option>
-                  </select>
+                  <span className="text-sm font-black text-black uppercase tracking-tight">{t('manualProxyPorts')}</span>
+                  <span className="rounded-lg border-[2px] border-black bg-bg-primary px-2 py-1 text-[9px] font-black uppercase tracking-widest text-black">
+                    {t('manualProxyModeTitle')}
+                  </span>
                 </div>
-                <p className="text-[10px] font-black text-black/60 uppercase tracking-widest">
-                  {t('systemProxyBehaviorDesc')}
-                </p>
+                <div className="grid gap-1.5 text-[10px] font-black uppercase tracking-widest text-black/65">
+                  <span>HTTP 127.0.0.1:{httpPort}</span>
+                  <span>SOCKS5 127.0.0.1:{socksPort}</span>
+                </div>
               </div>
               <p className="text-[10px] font-black text-text-on-orange-secondary/70 px-2 uppercase tracking-widest mt-1">
                 {t('portChangeHint')}
@@ -634,6 +667,21 @@ export default function Settings() {
                 {defenderStatus && <p className={`text-[9px] font-bold mt-1 ${defenderStatus.startsWith('✓') ? 'text-emerald-600' : 'text-red-600'}`}>{defenderStatus}</p>}
               </div>
             </button>
+
+            {showProxyRepair && (
+              <button onClick={handleRepairStaleProxy} disabled={proxyRepairLoading} className={`group flex min-h-28 w-full cursor-pointer items-center gap-4 rounded-2xl border-[3px] border-black bg-white p-5 text-left shadow-[4px_4px_0_#000] transition-all hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none lg:col-span-12 ${proxyRepairLoading ? 'cursor-wait opacity-60' : ''}`}>
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border-[3px] border-black bg-amber-300 text-black">
+                  {proxyRepairLoading ? <Loader2 className="h-6 w-6 animate-spin stroke-[3px]" /> : <Wrench className="h-6 w-6 stroke-[3px] transition-transform duration-300 group-hover:-rotate-12" />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-base font-black uppercase tracking-tight text-black">{t('windowsProxyRepair')}</h3>
+                  <p className="mt-1 text-[11px] font-black uppercase leading-relaxed tracking-widest text-black/55">
+                    {proxyRepairLoading ? t('windowsProxyRepairing') : t('windowsProxyRepairDesc')}
+                  </p>
+                  {proxyRepairStatus && <p className="mt-1 text-[9px] font-bold text-black/60">{proxyRepairStatus}</p>}
+                </div>
+              </button>
+            )}
 
             <div className="contents">
               <div className="flex min-h-80 flex-col rounded-2xl border-[3px] border-black bg-white p-4 shadow-[4px_4px_0_#000] lg:col-span-6">

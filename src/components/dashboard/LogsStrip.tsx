@@ -14,6 +14,8 @@ interface Props {
 const ISSUE_WARNING_PATTERNS = [
   /connection lost/i,
   /split tunneling/i,
+  /workshop .*rule/i,
+  /мастерск/i,
   /traffic .*exhausted/i,
   /subscription .*expired/i,
   /subscription may be out of traffic/i,
@@ -39,6 +41,8 @@ const EVENT_WARNING_PATTERNS = [
   /^reconnecting to apply/i,
   /^tun mode will request/i,
   /^tun mode may ask/i,
+  /^режим подключения:/i,
+  /^режим «весь компьютер»/i,
   /^dev mode - simulating connection/i,
   /^all server configurations have been wiped/i,
 ];

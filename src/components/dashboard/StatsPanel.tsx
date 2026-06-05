@@ -53,8 +53,9 @@ export default function StatsPanel({ currentDownload, currentUpload, totalDown, 
           <Timer className="w-5 h-5 mx-auto text-black mb-1 stroke-[3px]" />
           <p className={statValueClass}>{formatDuration(connectTime)}</p>
           <p className="text-[10px] font-black text-black/60 uppercase tracking-widest mt-0.5">{t('time')}</p>
-          <p className="text-[10px] font-black font-mono text-black/40 mt-1 flex items-center justify-center gap-1">
-            <Shield className="w-3 h-3" /> {proxyMode === 'tun' ? 'TUN' : 'PROXY'}
+          <p className="text-[10px] font-black font-mono text-black/40 mt-1 flex min-w-0 items-center justify-center gap-1">
+            <Shield className="w-3 h-3 shrink-0" />
+            <span className="truncate">{proxyMode === 'tun' ? t('fullDeviceMode') : t('systemProxy')}</span>
           </p>
         </div>
       </div>

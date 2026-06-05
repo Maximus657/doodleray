@@ -61,6 +61,20 @@ const SORT_LABELS: Record<'popular' | 'newest' | 'top-rated', string> = {
   'top-rated': 'Лучшие',
 };
 
+function isGamingMinPingPreset(preset: Pick<RoutingPreset, 'id' | 'title'> | { presetId: string; title: string }) {
+  const id = 'id' in preset ? preset.id : preset.presetId;
+  const title = preset.title.toLowerCase();
+  return id === 'builtin-gaming-direct' ||
+    id === 'builtin-gaming-min-ping' ||
+    (title.includes('геймер') && title.includes('пинг'));
+}
+
+function isPresetApplied(appliedPresets: Array<{ presetId: string; title: string }>, preset: RoutingPreset) {
+  return appliedPresets.some((applied) =>
+    applied.presetId === preset.id || (isGamingMinPingPreset(applied) && isGamingMinPingPreset(preset))
+  );
+}
+
 export default function Workshop() {
   const [tab, setTab] = useState<'browse' | 'rules'>('browse');
   const init = useWorkshopStore((s) => s.init);
@@ -153,7 +167,7 @@ function BrowseTab({ onOpenRules }: { onOpenRules: () => void }) {
           <div>
             <h2 className="text-xl font-black uppercase tracking-tight text-black">Готовые наборы</h2>
             <p className="text-xs font-bold text-black/55 mt-1 leading-relaxed">
-              Работают в TUN-режиме. Proxy остается обычным локальным прокси и эти наборы его не меняют.
+              Работают в режиме «Весь компьютер». В обычном Proxy эти наборы просто сохраняются и не меняют трафик.
             </p>
           </div>
 
@@ -206,7 +220,7 @@ function BrowseTab({ onOpenRules }: { onOpenRules: () => void }) {
               key={preset.id}
               preset={preset}
               isExpanded={expandedId === preset.id}
-              isApplied={appliedPresets.some((ap) => ap.presetId === preset.id)}
+              isApplied={isPresetApplied(appliedPresets, preset)}
               justApplied={appliedId === preset.id}
               onToggle={() => setExpandedId(expandedId === preset.id ? null : preset.id)}
               onApply={() => handleApply(preset.id)}
@@ -540,8 +554,8 @@ function MyRulesTab({ onOpenBrowse }: { onOpenBrowse: () => void }) {
             </div>
             <p className="text-[10px] font-bold uppercase tracking-widest text-black/45">
               {newType === 'exe'
-                ? 'Приложения работают только в TUN-режиме.'
-                : 'Сайты работают в TUN-режиме. Proxy эти правила не меняют.'}
+                ? 'Приложения можно направлять только в режиме «Весь компьютер».'
+                : 'Сайты можно направлять только в режиме «Весь компьютер». В Proxy эти правила просто сохраняются.'}
             </p>
 
             <div className="flex flex-col sm:flex-row gap-3">

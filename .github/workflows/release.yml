@@ -50,27 +50,9 @@ jobs:
           Copy-Item "wintun-tmp/wintun/bin/amd64/wintun.dll" "src-tauri/"
         shell: pwsh
 
-      # Build libsingbox.dll from Go source
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.26'
-          cache-dependency-path: src-tauri/singbox-core/go.sum
-
-      - name: Build libsingbox.dll
-        run: |
-          cd src-tauri/singbox-core
-          $env:CGO_ENABLED = "1"
-          $env:GOOS = "windows"
-          $env:GOARCH = "amd64"
-          go build -tags "with_quic,with_utls,with_dhcp,with_clash_api" -buildmode=c-shared -o ../libsingbox.dll .
-          Write-Host "Built libsingbox.dll:"
-          Get-Item ../libsingbox.dll
-        shell: pwsh
-
       - name: Download sing-box
         run: |
-          $singBoxVersion = "1.13.2"
+          $singBoxVersion = "1.13.13"
           $singBoxZip = Join-Path $env:RUNNER_TEMP "sing-box-windows-amd64.zip"
           $singBoxExtract = Join-Path $env:RUNNER_TEMP "sing-box-windows-amd64"
           Invoke-WebRequest "https://github.com/SagerNet/sing-box/releases/download/v$singBoxVersion/sing-box-$singBoxVersion-windows-amd64.zip" -OutFile $singBoxZip
@@ -198,7 +180,7 @@ jobs:
       # Download sing-box for macOS
       - name: Download sing-box
         run: |
-          SB_VERSION="1.13.2"
+          SB_VERSION="1.13.13"
           if [ "${{ matrix.arch }}" = "arm64" ]; then
             SB_ARCH="darwin-arm64"
           else
@@ -209,49 +191,23 @@ jobs:
           cp sing-box-${SB_VERSION}-${SB_ARCH}/sing-box src-tauri/
           chmod +x src-tauri/sing-box
 
-      # Build libsingbox.dylib from Go source
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.26'
-          cache-dependency-path: src-tauri/singbox-core/go.sum
-
-      - name: Build libsingbox.dylib
-        run: |
-          cd src-tauri/singbox-core
-          if [ "${{ matrix.arch }}" = "arm64" ]; then
-            export GOARCH=arm64
-          else
-            export GOARCH=amd64
-          fi
-          export CGO_ENABLED=1
-          export GOOS=darwin
-          go build -tags "with_quic,with_utls,with_dhcp,with_clash_api" -buildmode=c-shared -o ../libsingbox.dylib .
-          echo "Built libsingbox.dylib:"
-          ls -la ../libsingbox.dylib
-
       # Ad-hoc codesign the external binaries so macOS doesn't quarantine them
       - name: Codesign external binaries
         run: |
           # Remove quarantine attributes
           xattr -cr src-tauri/xray-core/xray 2>/dev/null || true
           xattr -cr src-tauri/sing-box 2>/dev/null || true
-          xattr -cr src-tauri/libsingbox.dylib 2>/dev/null || true
           # Ad-hoc codesign (required for macOS to allow execution)
           codesign --force --sign - src-tauri/xray-core/xray
           codesign --force --sign - src-tauri/sing-box
-          codesign --force --sign - src-tauri/libsingbox.dylib
           # Verify
           codesign -v src-tauri/xray-core/xray && echo "xray signed OK"
           codesign -v src-tauri/sing-box && echo "sing-box signed OK"
-          codesign -v src-tauri/libsingbox.dylib && echo "libsingbox signed OK"
           # List what Tauri will bundle
           echo "=== xray-core/ contents ==="
           ls -la src-tauri/xray-core/
           echo "=== sing-box ==="
           ls -la src-tauri/sing-box
-          echo "=== libsingbox ==="
-          ls -la src-tauri/libsingbox.dylib
 
       - name: Prepare macOS resource placeholders
         run: |

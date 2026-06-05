@@ -98,8 +98,7 @@ fn create_private_dir(path: &std::path::Path) -> Result<(), String> {
 fn write_private_file(
     path: &std::path::Path,
     content: &str,
-    #[cfg_attr(not(unix), allow(unused_variables))]
-    executable: bool,
+    #[cfg_attr(not(unix), allow(unused_variables))] executable: bool,
 ) -> Result<(), String> {
     let mut options = std::fs::OpenOptions::new();
     options.create(true).write(true).truncate(true);

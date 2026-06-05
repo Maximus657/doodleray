@@ -8,7 +8,7 @@ type UpdateEvent = {
 
 type UpdateLike = {
   version: string;
-  download: (callback?: (event: UpdateEvent) => void) => Promise<void>;
+  download: (callback?: (event: UpdateEvent) => void, options?: { timeout?: number }) => Promise<void>;
   install: () => Promise<void>;
 };
 
@@ -21,6 +21,28 @@ type InstallOptions = {
 
 let cachedUpdate: UpdateLike | null = null;
 let installPromise: Promise<boolean> | null = null;
+const UPDATE_CHECK_TIMEOUT_MS = 15_000;
+const UPDATE_DOWNLOAD_TIMEOUT_MS = 5 * 60_000;
+const UPDATE_INSTALL_TIMEOUT_MS = 4 * 60_000;
+const UPDATE_PREPARE_STEP_TIMEOUT_MS = 8_000;
+
+function timeoutError(label: string, timeoutMs: number) {
+  return new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s`);
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(timeoutError(label, timeoutMs)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 export function getCachedUpdate() {
   return cachedUpdate;
@@ -32,7 +54,7 @@ export function setCachedUpdate(update: UpdateLike | null) {
 
 export async function checkForAppUpdate() {
   const { check } = await import('@tauri-apps/plugin-updater');
-  const update = (await check()) as UpdateLike | null;
+  const update = (await check({ timeout: UPDATE_CHECK_TIMEOUT_MS })) as UpdateLike | null;
   cachedUpdate = update;
   return update;
 }
@@ -42,13 +64,12 @@ async function disconnectBeforeInstall(onStatus: (status: string) => void) {
 
   try {
     const { invoke } = await import('@tauri-apps/api/core');
-    await invoke('vpn_disconnect').catch(() => {});
-    await invoke('prepare_for_app_update');
-    await invoke('vpn_disconnect');
+    await withTimeout(invoke('vpn_disconnect').catch(() => {}), UPDATE_PREPARE_STEP_TIMEOUT_MS, 'VPN disconnect');
+    await withTimeout(invoke('prepare_for_app_update'), UPDATE_PREPARE_STEP_TIMEOUT_MS, 'Update preparation');
+    await withTimeout(invoke('vpn_disconnect').catch(() => {}), UPDATE_PREPARE_STEP_TIMEOUT_MS, 'Final VPN disconnect');
     await new Promise((resolve) => setTimeout(resolve, 1500));
   } catch (e) {
     console.warn('Could not disconnect VPN before update:', e);
-    throw new Error(`Could not close VPN engine before update: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
@@ -106,14 +127,14 @@ async function installAppUpdateOnce({
         onStatus('updatePreparingInstall');
         break;
     }
-  });
+  }, { timeout: UPDATE_DOWNLOAD_TIMEOUT_MS });
 
   if (disconnectVpn) {
     await disconnectBeforeInstall(onStatus);
   }
 
   onStatus('updateInstallingRestarting');
-  await pendingUpdate.install();
+  await withTimeout(pendingUpdate.install(), UPDATE_INSTALL_TIMEOUT_MS, 'Update installation');
   cachedUpdate = null;
 
   const { relaunch } = await import('@tauri-apps/plugin-process');

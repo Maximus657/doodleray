@@ -47,16 +47,40 @@ export interface AppliedPreset {
 
 const BUILTIN_PRESETS: RoutingPreset[] = [
   {
-    id: 'builtin-gaming-direct',
-    title: '🎮 Геймерский набор',
-    description: 'Игры и античит идут напрямую в TUN-режиме, чтобы матч не зависел от VPN-маршрута.',
+    id: 'builtin-gaming-min-ping',
+    title: '🎮 Геймерский — минимальный пинг',
+    description: 'Игры, лаунчеры, PUBG и античит идут напрямую. Discord, Twitch и YouTube остаются через VPN.',
     author: 'DoodleRay',
     rules: [
-      { id: 'builtin-gaming-pubg-main', type: 'exe', value: 'TslGame.exe', action: 'direct', enabled: true, comment: 'PUBG main game process' },
-      { id: 'builtin-gaming-pubg-zk', type: 'exe', value: 'TslGame_ZK.exe', action: 'direct', enabled: true, comment: 'PUBG protected game process' },
+      { id: 'builtin-gaming-steam-domain', type: 'domain', value: 'steampowered.com', action: 'direct', enabled: true, comment: 'Steam' },
+      { id: 'builtin-gaming-steam-community', type: 'domain', value: 'steamcommunity.com', action: 'direct', enabled: true, comment: 'Steam Community' },
+      { id: 'builtin-gaming-steam-cdn', type: 'domain', value: 'steamcdn-a.akamaihd.net', action: 'direct', enabled: true, comment: 'Steam CDN' },
+      { id: 'builtin-gaming-epic', type: 'domain', value: 'epicgames.com', action: 'direct', enabled: true, comment: 'Epic Games' },
+      { id: 'builtin-gaming-unreal', type: 'domain', value: 'unrealengine.com', action: 'direct', enabled: true, comment: 'Unreal Engine' },
+      { id: 'builtin-gaming-riot', type: 'domain', value: 'riotgames.com', action: 'direct', enabled: true, comment: 'Riot Games' },
+      { id: 'builtin-gaming-lol', type: 'domain', value: 'leagueoflegends.com', action: 'direct', enabled: true, comment: 'League of Legends' },
+      { id: 'builtin-gaming-blizzard', type: 'domain', value: 'blizzard.com', action: 'direct', enabled: true, comment: 'Blizzard' },
+      { id: 'builtin-gaming-battlenet', type: 'domain', value: 'battle.net', action: 'direct', enabled: true, comment: 'Battle.net' },
+      { id: 'builtin-gaming-ea', type: 'domain', value: 'ea.com', action: 'direct', enabled: true, comment: 'EA Games' },
+      { id: 'builtin-gaming-ubisoft', type: 'domain', value: 'ubisoft.com', action: 'direct', enabled: true, comment: 'Ubisoft' },
+      { id: 'builtin-gaming-steam-exe', type: 'exe', value: 'steam.exe', action: 'direct', enabled: true, comment: 'Steam клиент' },
+      { id: 'builtin-gaming-cs2', type: 'exe', value: 'cs2.exe', action: 'direct', enabled: true, comment: 'Counter-Strike 2' },
+      { id: 'builtin-gaming-valorant', type: 'exe', value: 'valorant.exe', action: 'direct', enabled: true, comment: 'Valorant' },
+      { id: 'builtin-gaming-dota2', type: 'exe', value: 'dota2.exe', action: 'direct', enabled: true, comment: 'Dota 2' },
+      { id: 'builtin-gaming-genshin', type: 'exe', value: 'GenshinImpact.exe', action: 'direct', enabled: true, comment: 'Genshin Impact' },
+      { id: 'builtin-gaming-valorant-shipping', type: 'exe', value: 'VALORANT-Win64-Shipping.exe', action: 'direct', enabled: true, comment: 'Valorant' },
+      { id: 'builtin-gaming-fortnite-shipping', type: 'exe', value: 'FortniteClient-Win64-Shipping.exe', action: 'direct', enabled: true, comment: 'Fortnite' },
+      { id: 'builtin-gaming-pubg-main', type: 'exe', value: 'TslGame.exe', action: 'direct', enabled: true, comment: 'PUBG' },
+      { id: 'builtin-gaming-pubg-zk', type: 'exe', value: 'TslGame_ZK.exe', action: 'direct', enabled: true, comment: 'PUBG protected process' },
       { id: 'builtin-gaming-pubg-be', type: 'exe', value: 'TslGame_BE.exe', action: 'direct', enabled: true, comment: 'PUBG BattlEye launcher' },
       { id: 'builtin-gaming-pubg-exec', type: 'exe', value: 'ExecPubg.exe', action: 'direct', enabled: true, comment: 'PUBG Steam launcher' },
       { id: 'builtin-gaming-battleye', type: 'exe', value: 'BEService.exe', action: 'direct', enabled: true, comment: 'BattlEye service' },
+      { id: 'builtin-gaming-discord-domain', type: 'domain', value: 'discord.com', action: 'proxy', enabled: true, comment: 'Discord voice' },
+      { id: 'builtin-gaming-discord-cdn', type: 'domain', value: 'discordapp.com', action: 'proxy', enabled: true, comment: 'Discord CDN' },
+      { id: 'builtin-gaming-discord-exe', type: 'exe', value: 'Discord.exe', action: 'proxy', enabled: true, comment: 'Discord клиент' },
+      { id: 'builtin-gaming-twitch', type: 'domain', value: 'twitch.tv', action: 'proxy', enabled: true, comment: 'стримы' },
+      { id: 'builtin-gaming-youtube', type: 'domain', value: 'youtube.com', action: 'proxy', enabled: true, comment: 'гайды/ролики' },
+      { id: 'builtin-gaming-googlevideo', type: 'domain', value: 'googlevideo.com', action: 'proxy', enabled: true, comment: 'YouTube CDN' },
     ],
     stars: 5,
     totalRatings: 1,
@@ -67,9 +91,92 @@ const BUILTIN_PRESETS: RoutingPreset[] = [
   },
 ];
 
+function isGamingMinPingPreset(preset: { id?: string; presetId?: string; title: string }) {
+  const id = preset.id ?? preset.presetId;
+  const title = preset.title.toLowerCase();
+  return id === 'builtin-gaming-direct' ||
+    id === 'builtin-gaming-min-ping' ||
+    (title.includes('геймер') && title.includes('пинг'));
+}
+
+function routingRuleKey(rule: Pick<RoutingRule, 'type' | 'value'>) {
+  return `${rule.type}:${rule.value.trim().toLowerCase()}`;
+}
+
+function mergeRoutingRules(primary: RoutingRule[], additions: RoutingRule[]) {
+  const seen = new Set(primary.map(routingRuleKey));
+  const merged = [...primary];
+  for (const rule of additions) {
+    const key = routingRuleKey(rule);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(rule);
+  }
+  return merged;
+}
+
 function mergeBuiltinPresets(apiPresets: RoutingPreset[]): RoutingPreset[] {
+  let mergedIntoApiGamingPreset = false;
+  const mergedApiPresets = apiPresets.map((preset) => {
+    if (!isGamingMinPingPreset(preset)) return preset;
+    mergedIntoApiGamingPreset = true;
+    return {
+      ...preset,
+      description: 'Игры, лаунчеры, PUBG и античит идут напрямую. Discord, Twitch и YouTube остаются через VPN.',
+      rules: mergeRoutingRules(preset.rules, BUILTIN_PRESETS[0].rules),
+    };
+  });
+
+  if (mergedIntoApiGamingPreset) {
+    return mergedApiPresets;
+  }
+
   const apiIds = new Set(apiPresets.map((preset) => preset.id));
   return [...BUILTIN_PRESETS.filter((preset) => !apiIds.has(preset.id)), ...apiPresets];
+}
+
+function appliedPresetMatchesPreset(applied: AppliedPreset, preset: RoutingPreset) {
+  return applied.presetId === preset.id || (isGamingMinPingPreset(applied) && isGamingMinPingPreset(preset));
+}
+
+function normalizeAppliedPreset(applied: AppliedPreset): AppliedPreset {
+  if (!isGamingMinPingPreset({ id: applied.presetId, title: applied.title })) {
+    return applied;
+  }
+
+  return {
+    ...applied,
+    presetId: 'builtin-gaming-min-ping',
+    title: '🎮 Геймерский — минимальный пинг',
+    description: 'Игры, лаунчеры, PUBG и античит идут напрямую. Discord, Twitch и YouTube остаются через VPN.',
+    rules: mergeRoutingRules(applied.rules, BUILTIN_PRESETS[0].rules),
+  };
+}
+
+function appliedPresetKey(applied: AppliedPreset) {
+  return isGamingMinPingPreset(applied) ? 'builtin-gaming-min-ping' : applied.presetId;
+}
+
+function normalizeAppliedPresets(appliedPresets: AppliedPreset[]) {
+  return appliedPresets.reduce<AppliedPreset[]>((merged, applied) => {
+    const normalized = normalizeAppliedPreset(applied);
+    const key = appliedPresetKey(normalized);
+    const existingIndex = merged.findIndex((item) => appliedPresetKey(item) === key);
+
+    if (existingIndex === -1) {
+      merged.push(normalized);
+      return merged;
+    }
+
+    const existing = merged[existingIndex];
+    merged[existingIndex] = {
+      ...existing,
+      ...normalized,
+      appliedAt: existing.appliedAt,
+      rules: mergeRoutingRules(existing.rules, normalized.rules),
+    };
+    return merged;
+  }, []);
 }
 
 interface WorkshopState {
@@ -123,6 +230,7 @@ export const useWorkshopStore = create<WorkshopState>()(persist((set, get) => ({
 
   // ── Init: register device + load presets ──
   init: async () => {
+    set((s) => ({ appliedPresets: normalizeAppliedPresets(s.appliedPresets) }));
     const nickname = await api.registerDevice();
     set({ nickname });
     await get().loadPresets();
@@ -195,9 +303,9 @@ export const useWorkshopStore = create<WorkshopState>()(persist((set, get) => ({
     const preset = s.presets.find((p) => p.id === id);
     if (!preset) return {};
     // Don't add if already applied
-    if (s.appliedPresets.some((ap) => ap.presetId === id)) return {};
+    if (s.appliedPresets.some((ap) => appliedPresetMatchesPreset(ap, preset))) return {};
     const applied: AppliedPreset = {
-      presetId: preset.id,
+      presetId: isGamingMinPingPreset(preset) ? 'builtin-gaming-min-ping' : preset.id,
       title: preset.title,
       description: preset.description,
       author: preset.author,

@@ -2,7 +2,7 @@
  * Shared helper to build the vpn_connect request object.
  * Previously this ~45-line object was copy-pasted in 4 places.
  */
-import type { ServerConfig, ProxyMode } from '../stores/app-store';
+import type { ServerConfig, ProxyMode, SystemProxyMode } from '../stores/app-store';
 import { useAppStore } from '../stores/app-store';
 
 export interface ConnectOpts {
@@ -14,10 +14,17 @@ export interface ConnectOpts {
   strictRoute: boolean;
   killSwitch: boolean;
   routingRules: Array<{ rule_type: string; value: string; action: string }>;
+  systemProxyMode?: SystemProxyMode;
 }
 
 /** Build the request payload for the `vpn_connect` Tauri command. */
 export function buildConnectRequest(server: ServerConfig, opts: ConnectOpts) {
+  const requestedSystemProxyMode = opts.systemProxyMode ?? useAppStore.getState().systemProxyMode;
+  const systemProxyMode =
+    opts.proxyMode === 'tun' || requestedSystemProxyMode === 'clear'
+      ? 'unchanged'
+      : requestedSystemProxyMode;
+
   return {
     server_address: server.address,
     server_port: server.port,
@@ -34,7 +41,7 @@ export function buildConnectRequest(server: ServerConfig, opts: ConnectOpts) {
     short_id: server.shortId || null,
     flow: server.flow || null,
     proxy_mode: opts.proxyMode,
-    system_proxy_mode: useAppStore.getState().systemProxyMode,
+    system_proxy_mode: systemProxyMode,
     socks_port: opts.socksPort,
     http_port: opts.httpPort,
     network_stack: opts.networkStack,
@@ -79,7 +86,8 @@ export async function getActiveRoutingRules() {
  */
 export async function buildConnectRequestFromState(
   server: ServerConfig,
-  proxyModeOverride?: ProxyMode
+  proxyModeOverride?: ProxyMode,
+  systemProxyModeOverride?: SystemProxyMode,
 ) {
   const state = useAppStore.getState();
   const proxyMode = proxyModeOverride ?? state.proxyMode;
@@ -93,5 +101,6 @@ export async function buildConnectRequestFromState(
     strictRoute: state.strictRoute,
     killSwitch: state.killSwitch,
     routingRules,
+    systemProxyMode: systemProxyModeOverride,
   });
 }

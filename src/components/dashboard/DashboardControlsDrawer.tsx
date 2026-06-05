@@ -20,12 +20,15 @@ interface Props {
   currentUpload: number;
   totalDown: number;
   totalUp: number;
+  socksPort: number;
+  httpPort: number;
   speedHistory: SpeedPoint[];
   showStats: boolean;
-  onModeSwitch: (mode: ProxyMode) => void;
-  onSystemProxyModeChange: (mode: SystemProxyMode) => void;
+  onModeSwitch: (mode: ProxyMode, systemProxyMode?: SystemProxyMode) => void;
   t: (key: any) => string;
 }
+
+type ProductModeKey = 'browser-apps' | 'whole-computer' | 'manual-proxy';
 
 export default function DashboardControlsDrawer({
   status,
@@ -36,23 +39,72 @@ export default function DashboardControlsDrawer({
   currentUpload,
   totalDown,
   totalUp,
+  socksPort,
+  httpPort,
   speedHistory,
   showStats,
   onModeSwitch,
-  onSystemProxyModeChange,
   t,
 }: Props) {
   const isConnected = status === 'connected';
   const isConnecting = status === 'connecting';
   const isBusy = isConnecting || status === 'disconnecting';
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [openHelpMode, setOpenHelpMode] = useState<ProxyMode | null>(null);
+  const [openHelpMode, setOpenHelpMode] = useState<ProductModeKey | null>(null);
 
-  const activeModeLabel = proxyMode === 'tun' ? t('fullDeviceMode') : t('systemProxy');
+  const selectedModeKey: ProductModeKey = proxyMode === 'tun'
+    ? 'whole-computer'
+    : systemProxyMode === 'set'
+      ? 'browser-apps'
+      : 'manual-proxy';
+  const activeModeLabel =
+    selectedModeKey === 'whole-computer'
+      ? t('fullDeviceMode')
+      : selectedModeKey === 'browser-apps'
+        ? t('browserAppsModeTitle')
+        : t('manualProxyModeTitle');
 
-  const switchMode = (mode: ProxyMode) => {
-    onModeSwitch(mode);
+  const switchMode = (mode: ProxyMode, nextSystemProxyMode: SystemProxyMode) => {
+    onModeSwitch(mode, nextSystemProxyMode);
   };
+
+  const modeCards: Array<{
+    key: ProductModeKey;
+    proxyMode: ProxyMode;
+    systemProxyMode: SystemProxyMode;
+    icon: typeof Globe;
+    title: string;
+    badge: string;
+    body: string;
+  }> = [
+    {
+      key: 'browser-apps',
+      proxyMode: 'system-proxy',
+      systemProxyMode: 'set',
+      icon: Globe,
+      title: t('browserAppsModeTitle'),
+      badge: t('recommended'),
+      body: t('browserAppsModeBody'),
+    },
+    {
+      key: 'whole-computer',
+      proxyMode: 'tun',
+      systemProxyMode: 'unchanged',
+      icon: Network,
+      title: t('tunAdvancedTitle'),
+      badge: t('fullDeviceMode'),
+      body: t('modeHelpTunBody'),
+    },
+    {
+      key: 'manual-proxy',
+      proxyMode: 'system-proxy',
+      systemProxyMode: 'unchanged',
+      icon: SlidersHorizontal,
+      title: t('manualProxyModeTitle'),
+      badge: t('manualProxyBadge'),
+      body: t('manualProxyModeBody'),
+    },
+  ];
 
   return (
     <div className="relative z-10 w-full max-w-sm">
@@ -65,34 +117,17 @@ export default function DashboardControlsDrawer({
         <div className="drawer-collapse-inner">
           <div className="flex w-full flex-col gap-3 pb-3">
             <div className="grid w-full gap-2">
-              {([
-                {
-                  mode: 'system-proxy' as const,
-                  icon: Globe,
-                  title: t('proxyRecommendedTitle'),
-                  badge: t('recommended'),
-                  body: t('modeHelpProxyBody'),
-                  help: t('modeHelpProxyTitle'),
-                },
-                {
-                  mode: 'tun' as const,
-                  icon: Network,
-                  title: t('tunAdvancedTitle'),
-                  badge: t('fullDeviceMode'),
-                  body: t('modeHelpTunBody'),
-                  help: t('modeHelpTunTitle'),
-                },
-              ]).map((item) => {
+              {modeCards.map((item) => {
                 const Icon = item.icon;
-                const selected = proxyMode === item.mode;
+                const selected = selectedModeKey === item.key;
                 return (
                   <div
-                    key={item.mode}
+                    key={item.key}
                     onMouseLeave={() => {
-                      if (openHelpMode === item.mode) setOpenHelpMode(null);
+                      if (openHelpMode === item.key) setOpenHelpMode(null);
                     }}
                     className={`relative overflow-visible rounded-xl border-[3px] p-2.5 transition-all duration-300 ${
-                      openHelpMode === item.mode ? 'z-[90]' : 'hover:z-[70] focus-within:z-[70]'
+                      openHelpMode === item.key ? 'z-[90]' : 'hover:z-[70] focus-within:z-[70]'
                     } ${
                       selected
                         ? 'border-black bg-white shadow-[4px_4px_0_#000]'
@@ -102,8 +137,9 @@ export default function DashboardControlsDrawer({
                     <div className="flex items-start gap-2">
                       <button
                         type="button"
-                        onClick={() => switchMode(item.mode)}
-                        className="flex min-w-0 flex-1 cursor-pointer items-start gap-2 text-left"
+                        onClick={() => switchMode(item.proxyMode, item.systemProxyMode)}
+                        disabled={isBusy}
+                        className="flex min-w-0 flex-1 cursor-pointer items-start gap-2 text-left disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border-[2px] border-black ${
                           selected ? 'bg-bg-primary text-black' : 'bg-black/5 text-black/50'
@@ -126,68 +162,42 @@ export default function DashboardControlsDrawer({
                         type="button"
                         onClick={(event) => {
                           event.stopPropagation();
-                          setOpenHelpMode((mode) => (mode === item.mode ? null : item.mode));
+                          setOpenHelpMode((mode) => (mode === item.key ? null : item.key));
                         }}
-                        onMouseEnter={() => setOpenHelpMode(item.mode)}
-                        onFocus={() => setOpenHelpMode(item.mode)}
+                        onMouseEnter={() => setOpenHelpMode(item.key)}
+                        onFocus={() => setOpenHelpMode(item.key)}
                         onBlur={() => setOpenHelpMode(null)}
-                        aria-label={item.help}
-                        aria-expanded={openHelpMode === item.mode}
+                        aria-label={item.title}
+                        aria-expanded={openHelpMode === item.key}
                         className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-[2px] border-black bg-white text-black transition-all hover:-translate-y-0.5 hover:bg-black hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2"
                       >
                         <CircleHelp className="h-3.5 w-3.5 stroke-[3px]" />
                       </button>
                     </div>
-                    {openHelpMode === item.mode && (
-                      <div className="pointer-events-none absolute right-2 top-12 z-[100] w-[min(19rem,calc(100%-1rem))] rounded-xl border-[2px] border-black bg-white px-3 py-2.5 text-left text-black shadow-[4px_4px_0_rgba(0,0,0,0.24)]">
+                    {openHelpMode === item.key && (
+                      <div className="mt-2 w-full rounded-xl border-[2px] border-black bg-white px-3 py-2.5 text-left text-black shadow-[3px_3px_0_rgba(0,0,0,0.18)]">
                         <p className="text-[10px] font-black uppercase tracking-widest">
-                          {item.mode === 'tun' ? t('tunAdvancedTitle') : t('modeHelpProxyTitle')}
+                          {item.title}
                         </p>
                         <p className="mt-1 text-[10px] font-bold leading-relaxed text-black/65">
                           {item.body}
                         </p>
                       </div>
                     )}
-                    {item.mode === 'tun' && selected && (
+                    {item.key === 'whole-computer' && selected && (
                       <p className="mt-2 rounded-lg border-[2px] border-amber-500 bg-amber-200 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-black">
                         {t('adminPermissionHint')}
+                      </p>
+                    )}
+                    {item.key === 'manual-proxy' && selected && (
+                      <p className="mt-2 rounded-lg border-[2px] border-black bg-bg-primary px-2 py-1 text-[9px] font-black uppercase tracking-widest text-black">
+                        HTTP 127.0.0.1:{httpPort} · SOCKS5 127.0.0.1:{socksPort}
                       </p>
                     )}
                   </div>
                 );
               })}
             </div>
-
-          {proxyMode === 'system-proxy' && (
-            <div className="relative z-10 flex w-full items-center gap-1.5 rounded-xl border-[3px] border-black bg-white p-1.5 shadow-[4px_4px_0_#000]">
-              {([
-                ['set', 'systemProxyShortSet'],
-                ['unchanged', 'systemProxyShortKeep'],
-                ['clear', 'systemProxyShortClear'],
-              ] as const).map(([mode, labelKey]) => (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={() => onSystemProxyModeChange(mode)}
-                  disabled={isBusy || isConnected}
-                  title={
-                    mode === 'set'
-                      ? t('systemProxySet')
-                      : mode === 'unchanged'
-                        ? t('systemProxyUnchanged')
-                        : t('systemProxyClear')
-                  }
-                  className={`flex-1 rounded-lg border-[2px] border-black px-2 py-1.5 text-[9px] font-black uppercase tracking-widest transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
-                    systemProxyMode === mode
-                      ? 'bg-black text-white shadow-[2px_2px_0_rgba(0,0,0,0.3)]'
-                      : 'bg-bg-primary text-black hover:-translate-y-0.5 hover:shadow-[2px_2px_0_#000]'
-                  }`}
-                >
-                  {t(labelKey)}
-                </button>
-              ))}
-            </div>
-          )}
 
             {showStats && (isConnected || speedHistory.length > 0) && (
               <div className="w-full">

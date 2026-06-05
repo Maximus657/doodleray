@@ -1,5 +1,126 @@
 # DoodleRay Transport Diagnostic Report
 
+## 2026-06-05 Investigation: Workshop Routing Quality and Gaming Preset Merge
+
+### Scope
+
+- Route: Windows Workshop rules in Proxy mode and Whole computer mode.
+- User-visible issue: two gaming presets were shown, with PUBG/BattlEye rules isolated in a separate local preset instead of merged into the existing "Геймерский — минимальный пинг" preset.
+- UX issue: warnings and helper text used engineering terms like `TUN` and `split tunneling` that normal users do not understand.
+
+### Evidence
+
+- `src/lib/connect-helpers.ts::buildConnectRequestFromState` sends Workshop rules only when `proxyMode == "tun"`. In Proxy mode, the request intentionally sends an empty routing rule list.
+- The Workshop API currently returns `Геймерский — минимальный пинг` with Steam/Epic/Riot/Blizzard/EA/Ubisoft, game process, Discord, Twitch, and YouTube rules.
+- `src/stores/workshop-store.ts` also added a local `builtin-gaming-direct` preset containing only PUBG/BattlEye process rules, which created a second gaming card.
+- `src-tauri/src/lib.rs::process_rule_names` normalizes executable rules to lower-case process names, and `push_process_route` emits sing-box `process_name` route rules.
+- Existing Rust coverage proves PUBG process names are emitted as a direct rule in generated sing-box TUN config: `singbox_tun_routes_pubg_processes_direct`.
+
+### Classification
+
+- Proven: Workshop rules are intentionally not applied in Proxy mode.
+- Proven: the duplicate gaming preset was caused by a local builtin PUBG-only preset being displayed next to the API gaming preset.
+- Proven: app rules are process-name based, not full-path based.
+- Likely but unproven: for normal games/apps this works well when every real child executable is covered.
+- Unknown because instrumentation is missing: per-connection proof that a selected app's live traffic matched the intended outbound at runtime.
+
+### First Broken Edge
+
+```text
+Workshop API preset: "Геймерский — минимальный пинг"
+local builtin preset: PUBG/BattlEye only
+-> merge by id only
+-> UI shows two gaming presets
+-> user has to understand and apply both
+```
+
+### Fixes Applied
+
+- Renamed the local fallback preset to `Геймерский — минимальный пинг`.
+- Merged PUBG/BattlEye rules into the existing API gaming preset by preset family instead of showing a second card.
+- Added a fallback full gaming preset for API outage, including the low-ping baseline plus PUBG/BattlEye rules.
+- Migrated previously applied local gaming presets to the unified gaming preset shape.
+- Changed user-facing copy from `TUN` / `split tunneling` to "Whole computer" / "Весь компьютер" and "Workshop rules" / "правила Мастерской".
+
+### Risk Notes
+
+- Process-name routing is convenience routing, not a security boundary. A different process with the same executable name can match the rule.
+- Some games launch multiple child processes; each must be covered for reliable direct/proxy/block behavior.
+- Runtime proof still needs instrumentation that reports which Workshop rules were compiled into the active tunnel and, ideally, a redacted count of matched process/domain rules.
+
+### Windows Test Path
+
+- `npm run build`.
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`.
+- Manual runtime follow-up: load Workshop presets with API reachable, verify only one gaming preset appears, expand it, and confirm PUBG/BattlEye rules are inside `Геймерский — минимальный пинг`.
+- Apply that preset, switch to Whole computer mode, connect, and verify generated sing-box config contains direct process rules for Steam/game/PUBG executables.
+
+### Android Test Path
+
+- Not touched. No Android build or runtime path is changed.
+
+### iOS Test Path
+
+- Not touched. No iOS build or runtime path is changed.
+
+## 2026-06-05 Fix Plan: Windows WS Whitelist Bypass and Server Selection Persistence
+
+### Scope
+
+- Route: Windows `system-proxy` and `tun` modes for VLESS/Xray WebSocket whitelist bypass.
+- Build target: local `5.1.14`.
+- Platform: Windows desktop Tauri client.
+
+### Evidence
+
+- User logs from `5.1.13` show Xray warnings for WebSocket transport and deprecated `headers.Host`.
+- `src-tauri/src/lib.rs::vpn_connect` selected the Xray engine only for `transport == "xhttp"` or raw Xray JSON, so plain `vless://...?type=ws` profiles were not guaranteed to use the Xray path.
+- `src-tauri/src/lib.rs::build_xray_config` already had a `wsSettings` branch, proving the missing edge was route selection/config modernization rather than complete absence of a WS builder.
+- The generated Xray WS config used deprecated `wsSettings.headers.Host` instead of the newer independent `wsSettings.host`.
+- `src/stores/app-store.ts::updateSubscription` replaced subscription servers with newly generated ids, then relied on `findMatchingServer`.
+- `src/lib/server-selection.ts::getServerIdentityKey` previously included volatile display name/id-adjacent behavior and did not persist an independent endpoint selection key.
+- `src/pages/Servers.tsx` marked selected groups by `activeServer?.id === server.id`, so refreshed subscription ids could visually unselect the current server even when the endpoint was still present.
+
+### Classification
+
+- Proven: WebSocket-generated Xray config existed but WS was not included in Xray engine selection.
+- Proven: generated WS host placement used a deprecated Xray field shape.
+- Proven: subscription refresh can replace server ids and break id-only UI selection checks.
+- Likely but unproven: the user's "last server forgotten on restart" symptom is the same stable-selection-key gap after hydration or refresh.
+- Unknown because live secret profile material is intentionally unavailable here: exact server-side CDN/WebSocket path and SNI/host values.
+
+### First Broken Edge
+
+```text
+VLESS WebSocket subscription/link
+-> transport parsed as ws
+-> vpn_connect treats only xhttp/raw JSON as Xray-owned
+-> WS bypass route does not reliably run through Xray WebSocket config
+```
+
+### Minimal Fix Plan
+
+- Treat `ws` as an Xray-owned transport alongside `xhttp`.
+- Generate Xray WS with `wsSettings.host` and TLS/REALITY settings, and normalize raw JSON configs away from deprecated `headers.Host`.
+- Persist a stable selected-server key based on endpoint/auth/transport fields.
+- Match active servers after refresh/hydration by stable key before falling back to fastest/default.
+- Update UI active checks to use the same matcher instead of raw ids.
+
+### Windows Test Path
+
+- `npm run build`.
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`.
+- `cargo check --manifest-path src-tauri/Cargo.toml --bin DoodleRay`.
+- Manual runtime follow-up: connect a redacted VLESS WS whitelist-bypass profile in System Proxy and TUN, verify Xray starts, verify no `headers.Host` deprecation warning in generated configs, refresh subscription, restart client, and confirm the same server remains selected.
+
+### Android Test Path
+
+- Not touched. No Android build or runtime path is changed.
+
+### iOS Test Path
+
+- Not touched. No iOS build or runtime path is changed.
+
 ## 2026-06-02 Hotfix: Windows TUN/Xray Connect Spinner
 
 ### Scope

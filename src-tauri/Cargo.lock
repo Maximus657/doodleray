@@ -927,7 +927,7 @@ dependencies = [
 
 [[package]]
 name = "doodleray"
-version = "5.1.13"
+version = "5.2.0"
 dependencies = [
  "ctrlc",
  "keyring",
@@ -945,6 +945,7 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-updater",
  "tokio",
+ "uuid",
  "windows-service",
  "windows-sys 0.59.0",
  "winreg 0.52.0",

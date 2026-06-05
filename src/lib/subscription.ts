@@ -65,9 +65,11 @@ interface XrayOutbound {
     xhttpSettings?: {
       mode?: string;
       path?: string;
+      host?: string;
     };
     wsSettings?: {
       path?: string;
+      host?: string;
       headers?: { Host?: string };
     };
     grpcSettings?: {
@@ -179,6 +181,8 @@ function parseXrayOutbound(
     const reality = stream?.realitySettings;
     const tls = stream?.tlsSettings;
     const user = vnext.users?.[0];
+    const wsHost = stream?.wsSettings?.host || stream?.wsSettings?.headers?.Host;
+    const xhttpHost = stream?.xhttpSettings?.host;
     const name =
       options.name ||
       json.remarks ||
@@ -199,9 +203,9 @@ function parseXrayOutbound(
       security: stream?.security || (reality ? 'reality' : tls ? 'tls' : 'none'),
       fingerprint: reality?.fingerprint || tls?.fingerprint,
       publicKey: reality?.publicKey,
-      sni: reality?.serverName || tls?.serverName || stream?.wsSettings?.headers?.Host,
+      sni: reality?.serverName || tls?.serverName || wsHost || xhttpHost,
       shortId: reality?.shortId,
-      host: stream?.wsSettings?.headers?.Host,
+      host: wsHost || xhttpHost,
       path: stream?.xhttpSettings?.path || stream?.wsSettings?.path || stream?.grpcSettings?.serviceName,
       flow: user?.flow || undefined,
       encryption: user?.encryption || user?.security || 'none',

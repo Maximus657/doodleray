@@ -188,7 +188,7 @@ export default function ServerList({
             <div className="h-2 overflow-hidden rounded-full border-[2px] border-black bg-black/10">
               <div className={`h-full ${quotaFillClass}`} style={{ width: `${trafficStatus.usedPercent}%` }} />
             </div>
-            <div className="mt-1.5 flex items-center justify-between gap-2 text-[8px] font-black uppercase tracking-widest text-black/55">
+            <div className="mt-1.5 flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-0.5 text-[8px] font-black uppercase tracking-widest text-black/55">
               <span className="truncate">
                 {`${formatTrafficQuotaBytes(trafficStatus.used)} / ${formatTrafficQuotaBytes(trafficStatus.total)}`}
               </span>
@@ -201,7 +201,7 @@ export default function ServerList({
           </p>
         )}
         {updated && (
-          <p className="mt-1 text-[8px] font-black uppercase tracking-widest text-black/35">
+          <p className="mt-1 break-words text-[8px] font-black uppercase tracking-widest text-black/35">
             {t('lastUpdated')} {updated}
             {autoUpdateInterval && <> | {t('autoUpdateLabel')} {autoUpdateInterval}</>}
           </p>
@@ -211,7 +211,7 @@ export default function ServerList({
   };
 
   return (
-    <div className="w-full max-w-sm mt-4 relative z-10 pb-4">
+    <div className="w-full max-w-md mt-4 relative z-10 pb-4">
       {showCurrentServer && visibleActiveServer && (
         <div className="mb-3 w-full rounded-2xl border-[3px] border-black bg-black p-3 text-white shadow-[5px_5px_0_rgba(0,0,0,0.35)]">
           <div className="mb-2 flex items-center justify-between gap-3">
@@ -270,10 +270,10 @@ export default function ServerList({
             <div key={sub.id} className="w-full">
               {/* Subscription Header */}
               <div className="w-full bg-white/90 border-[2px] border-black/70 rounded-xl p-2.5 mb-2 shadow-[1px_1px_0_rgba(0,0,0,0.35)] backdrop-blur transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]">
-                <div className="w-full flex items-center justify-between">
+                <div className="flex w-full min-w-0 items-center justify-between gap-2">
                   <button
                     type="button"
-                    className="flex min-w-0 cursor-pointer appearance-none items-center gap-2 bg-transparent pr-2 text-left select-none"
+                    className="flex min-w-0 flex-1 cursor-pointer appearance-none items-center gap-2 bg-transparent pr-1 text-left select-none"
                     onClick={() => onToggleGroup(sub.id)}
                   >
                     <ChevronDown className={`w-4 h-4 text-black shrink-0 stroke-[3px] transition-transform duration-300 ${collapsedGroups[sub.id] ? '-rotate-90' : 'rotate-0'}`} />
@@ -286,19 +286,19 @@ export default function ServerList({
                       </span>
                     )}
                   </button>
-                  <div className="flex items-center gap-1.5 shrink-0 px-1">
+                  <div className="ml-auto flex shrink-0 items-center gap-1">
                     <button onClick={() => onUpdateSubscription(sub)} disabled={refreshingSubId === sub.id}
                       className={`w-7 h-7 flex items-center justify-center bg-white border-[2px] border-black rounded-lg cursor-pointer text-black transition-all shadow-[2px_2px_0_#000] hover:-translate-y-[1px] hover:-translate-x-[1px] hover:shadow-[3px_3px_0_#000] active:translate-y-[1px] active:translate-x-[1px] active:shadow-none ${refreshingSubId === sub.id ? 'opacity-70 cursor-wait' : ''}`} title={t('refreshSub')}>
                       <RefreshCw className={`w-3.5 h-3.5 stroke-[3px] ${refreshingSubId === sub.id ? 'animate-spin' : ''}`} />
                     </button>
                     <button onClick={() => onTestSubscription(sub)} disabled={testingSubId === sub.id}
-                      className={`h-7 px-2.5 flex items-center justify-center gap-1 border-[2px] border-black rounded-lg cursor-pointer transition-all shadow-[2px_2px_0_#000] ${
+                      className={`h-7 w-7 md:w-auto md:px-2.5 flex items-center justify-center gap-1 border-[2px] border-black rounded-lg cursor-pointer transition-all shadow-[2px_2px_0_#000] ${
                         testingSubId === sub.id
                           ? 'bg-amber-400 animate-pulse text-black cursor-wait'
                           : 'bg-emerald-400 text-black hover:-translate-y-[1px] hover:-translate-x-[1px] hover:shadow-[3px_3px_0_#000] active:translate-y-[1px] active:translate-x-[1px] active:shadow-none'
                       }`} title={t('testLatency')}>
                       {testingSubId === sub.id ? <Loader2 className="w-3.5 h-3.5 stroke-[3px] animate-spin" /> : <Activity className="w-3.5 h-3.5 stroke-[3px]" />}
-                      <span className="text-[10px] font-black tracking-widest uppercase">{testingSubId === sub.id ? t('testing') : t('test')}</span>
+                      <span className="hidden text-[10px] font-black tracking-widest uppercase md:inline">{testingSubId === sub.id ? t('testing') : t('test')}</span>
                     </button>
                     <button onClick={() => onRemoveSubscription(sub.id)}
                       className="w-7 h-7 flex items-center justify-center bg-white border-[2px] border-black rounded-lg text-danger cursor-pointer transition-all shadow-[1px_1px_0_#000] hover:bg-danger hover:text-white hover:-translate-y-[1px] hover:-translate-x-[1px] hover:shadow-[2px_2px_0_#000] active:translate-y-[1px] active:translate-x-[1px] active:shadow-none" title={t('deleteSub')}>
@@ -331,22 +331,22 @@ export default function ServerList({
 
           return (
             <div className="w-full mt-2">
-              <div className="w-full flex items-center justify-between bg-white/90 border-[2px] border-black/70 rounded-xl p-2.5 mb-2 shadow-[1px_1px_0_rgba(0,0,0,0.35)] backdrop-blur transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]">
-                <div className="flex items-center gap-2 min-w-0 pr-2 cursor-pointer select-none" onClick={() => onToggleGroup('__custom__')}>
+              <div className="flex w-full min-w-0 items-center justify-between gap-2 bg-white/90 border-[2px] border-black/70 rounded-xl p-2.5 mb-2 shadow-[1px_1px_0_rgba(0,0,0,0.35)] backdrop-blur transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]">
+                <div className="flex min-w-0 flex-1 items-center gap-2 pr-1 cursor-pointer select-none" onClick={() => onToggleGroup('__custom__')}>
                   <ChevronDown className={`w-4 h-4 text-black shrink-0 stroke-[3px] transition-transform duration-300 ${collapsedGroups['__custom__'] ? '-rotate-90' : 'rotate-0'}`} />
                   <SettingsIcon className="w-3.5 h-3.5 text-black shrink-0 stroke-[3px]" />
                   <span className="text-[10px] font-black text-black uppercase tracking-widest truncate">{t('customServers')}</span>
                   <span className="text-[9px] font-black bg-black text-white px-1.5 py-0.5 rounded-md uppercase tracking-widest shrink-0">{standalone.length}</span>
                 </div>
-                <div className="flex items-center gap-1.5 shrink-0 px-1">
+                <div className="ml-auto flex shrink-0 items-center gap-1">
                   <button onClick={onTestCustomServers} disabled={testingSubId === '__custom__'}
-                    className={`h-7 px-2.5 flex items-center justify-center gap-1 border-[2px] border-black rounded-lg cursor-pointer transition-all shadow-[2px_2px_0_#000] ${
+                    className={`h-7 w-7 md:w-auto md:px-2.5 flex items-center justify-center gap-1 border-[2px] border-black rounded-lg cursor-pointer transition-all shadow-[2px_2px_0_#000] ${
                       testingSubId === '__custom__'
                         ? 'bg-amber-400 animate-pulse text-black cursor-wait'
                         : 'bg-emerald-400 text-black hover:-translate-y-[1px] hover:-translate-x-[1px] hover:shadow-[3px_3px_0_#000] active:translate-y-[1px] active:translate-x-[1px] active:shadow-none'
                     }`} title={t('testLatency')}>
                     {testingSubId === '__custom__' ? <Loader2 className="w-3.5 h-3.5 stroke-[3px] animate-spin" /> : <Activity className="w-3.5 h-3.5 stroke-[3px]" />}
-                    <span className="text-[10px] font-black tracking-widest uppercase">{testingSubId === '__custom__' ? t('testing') : t('test')}</span>
+                    <span className="hidden text-[10px] font-black tracking-widest uppercase md:inline">{testingSubId === '__custom__' ? t('testing') : t('test')}</span>
                   </button>
                   <button onClick={onRemoveAllCustomServers}
                     className="w-7 h-7 flex items-center justify-center bg-white border-[2px] border-black rounded-lg text-danger cursor-pointer transition-all shadow-[1px_1px_0_#000] hover:bg-danger hover:text-white hover:-translate-y-[1px] hover:-translate-x-[1px] hover:shadow-[2px_2px_0_#000] active:translate-y-[1px] active:translate-x-[1px] active:shadow-none">

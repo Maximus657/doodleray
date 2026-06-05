@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/core';
-import { findMatchingServer } from '../lib/server-selection';
+import { findMatchingServer, findServerBySelectionKey, getServerSelectionKey } from '../lib/server-selection';
 // Trigger HMR
 
 // ========== Types ==========
@@ -86,6 +86,7 @@ export interface SpeedPoint {
 export interface AppState {
   status: ConnectionStatus;
   activeServer: ServerConfig | null;
+  lastSelectedServerKey: string | null;
   proxyMode: ProxyMode;
   systemProxyMode: SystemProxyMode;
 
@@ -273,6 +274,33 @@ function compactServerReference(server: ServerConfig | null): ServerConfig | nul
   };
 }
 
+function resolveStoredActiveServer(
+  activeServer: ServerConfig | null,
+  lastSelectedServerKey: string | null | undefined,
+  servers: ServerConfig[],
+): ServerConfig | null {
+  return findMatchingServer(activeServer, servers) || findServerBySelectionKey(lastSelectedServerKey, servers);
+}
+
+function activeServerUpdate(
+  activeServer: ServerConfig | null,
+  lastSelectedServerKey: string | null | undefined,
+  servers: ServerConfig[],
+) {
+  const resolved = resolveStoredActiveServer(activeServer, lastSelectedServerKey, servers);
+  return {
+    activeServer: resolved,
+    lastSelectedServerKey: resolved
+      ? getServerSelectionKey(resolved)
+      : lastSelectedServerKey ?? (activeServer ? getServerSelectionKey(activeServer) : null),
+  };
+}
+
+function normalizeSystemProxyMode(mode: SystemProxyMode | undefined, proxyMode?: ProxyMode): SystemProxyMode {
+  if (proxyMode === 'tun' || mode === 'clear' || !mode) return 'unchanged';
+  return mode;
+}
+
 function compactStateForPersist(state: AppState): Partial<AppState> {
   const excluded = new Set([
     'status',
@@ -308,6 +336,7 @@ export const useAppStore = create<AppState>()(
     (set) => ({
       status: 'disconnected',
       activeServer: null,
+      lastSelectedServerKey: null,
       proxyMode: 'system-proxy',
       systemProxyMode: 'set',
 
@@ -341,9 +370,17 @@ export const useAppStore = create<AppState>()(
       showStats: false,
 
       setStatus: (status) => set({ status }),
-      setActiveServer: (server) => set({ activeServer: server }),
-      setProxyMode: (mode) => set({ proxyMode: mode }),
-      setSystemProxyMode: (mode) => set({ systemProxyMode: mode }),
+      setActiveServer: (server) => set({
+        activeServer: server,
+        lastSelectedServerKey: server ? getServerSelectionKey(server) : null,
+      }),
+      setProxyMode: (mode) => set((state) => ({
+        proxyMode: mode,
+        systemProxyMode: normalizeSystemProxyMode(state.systemProxyMode, mode),
+      })),
+      setSystemProxyMode: (mode) => set((state) => ({
+        systemProxyMode: normalizeSystemProxyMode(mode, state.proxyMode),
+      })),
 
       setNetworkStack: (stack) => set({ networkStack: stack }),
       setDnsMode: (mode) => set({ dnsMode: mode }),
@@ -360,17 +397,22 @@ export const useAppStore = create<AppState>()(
 
 
       addServer: (server) => set((s) => ({ servers: [...s.servers, server] })),
-      removeServer: (id) => set((s) => ({
-        servers: s.servers.filter((s2) => s2.id !== id),
-        activeServer: s.activeServer?.id === id ? null : s.activeServer
-      })),
+      removeServer: (id) => set((s) => {
+        const removingActive = s.activeServer?.id === id;
+        return {
+          servers: s.servers.filter((s2) => s2.id !== id),
+          activeServer: removingActive ? null : s.activeServer,
+          lastSelectedServerKey: removingActive ? null : s.lastSelectedServerKey,
+        };
+      }),
       removeAllManualServers: () => set((s) => ({
         servers: s.servers.filter((srv) => srv.subscriptionId !== undefined),
-        activeServer: (!s.activeServer?.subscriptionId) ? null : s.activeServer
+        activeServer: (!s.activeServer?.subscriptionId) ? null : s.activeServer,
+        lastSelectedServerKey: (!s.activeServer?.subscriptionId) ? null : s.lastSelectedServerKey,
       })),
       setServers: (servers) => set((s) => ({
         servers,
-        activeServer: findMatchingServer(s.activeServer, servers),
+        ...activeServerUpdate(s.activeServer, s.lastSelectedServerKey, servers),
       })),
 
       addSubscription: (sub) => set((s) => {
@@ -394,14 +436,18 @@ export const useAppStore = create<AppState>()(
         return {
           subscriptions: newSubscriptions,
           servers: deduped,
-          activeServer: findMatchingServer(s.activeServer, deduped),
+          ...activeServerUpdate(s.activeServer, s.lastSelectedServerKey, deduped),
         };
       }),
-      removeSubscription: (id) => set((s) => ({
-        subscriptions: s.subscriptions.filter((sub) => sub.id !== id),
-        servers: s.servers.filter((srv) => srv.subscriptionId !== id),
-        activeServer: s.activeServer?.subscriptionId === id ? null : s.activeServer
-      })),
+      removeSubscription: (id) => set((s) => {
+        const removingActive = s.activeServer?.subscriptionId === id;
+        return {
+          subscriptions: s.subscriptions.filter((sub) => sub.id !== id),
+          servers: s.servers.filter((srv) => srv.subscriptionId !== id),
+          activeServer: removingActive ? null : s.activeServer,
+          lastSelectedServerKey: removingActive ? null : s.lastSelectedServerKey,
+        };
+      }),
       updateSubscription: (id, newSub) => set((s) => {
         const newServers = [
           ...s.servers.filter((srv) => srv.subscriptionId !== id),
@@ -418,7 +464,7 @@ export const useAppStore = create<AppState>()(
         return {
           subscriptions: s.subscriptions.map((sub) => sub.id === id ? compactSubscriptionForStore(newSub) : sub),
           servers: deduped,
-          activeServer: findMatchingServer(s.activeServer, deduped),
+          ...activeServerUpdate(s.activeServer, s.lastSelectedServerKey, deduped),
         };
       }),
 
@@ -445,7 +491,7 @@ export const useAppStore = create<AppState>()(
         logs: [...s.logs.slice(-99), { id: crypto.randomUUID(), time: new Date().toLocaleTimeString(), level, message }],
       })),
       clearLogs: () => set({ logs: [] }),
-      wipeData: () => set({ servers: [], subscriptions: [], activeServer: null }),
+      wipeData: () => set({ servers: [], subscriptions: [], activeServer: null, lastSelectedServerKey: null }),
       setAvailableUpdate: (version) => set({ availableUpdate: version }),
       setUpdateState: (state) => set(state),
       addTraffic: (dl, ul) => set((s) => ({ totalDown: s.totalDown + dl, totalUp: s.totalUp + ul })),
@@ -457,10 +503,23 @@ export const useAppStore = create<AppState>()(
       partialize: compactStateForPersist,
       merge: (persisted, current) => {
         const persistedState = persisted as Partial<AppState> | undefined;
-        return {
+        const merged = {
           ...current,
           ...persistedState,
           language: persistedState?.language ?? current.language,
+        } as AppState;
+        merged.systemProxyMode = normalizeSystemProxyMode(merged.systemProxyMode, merged.proxyMode);
+        const storedKey =
+          merged.lastSelectedServerKey ??
+          (merged.activeServer ? getServerSelectionKey(merged.activeServer) : null);
+        const activeServer =
+          resolveStoredActiveServer(merged.activeServer, storedKey, merged.servers) ||
+          (merged.servers.length === 0 ? merged.activeServer : null);
+
+        return {
+          ...merged,
+          activeServer,
+          lastSelectedServerKey: activeServer ? getServerSelectionKey(activeServer) : storedKey,
         };
       },
     }

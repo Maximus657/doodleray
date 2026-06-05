@@ -1,6 +1,6 @@
 [package]
 name = "doodleray"
-version = "5.1.13"
+version = "5.2.0"
 description = "DoodleRay VPN Client"
 authors = ["DoodleVPN"]
 edition = "2021"
@@ -37,9 +37,10 @@ tauri-plugin-http = "2.5.7"
 ctrlc = "3"
 keyring = "3"
 socket2 = "0.5"
+uuid = { version = "1", features = ["v4", "serde"] }
 
 # Windows-only dependencies
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.7"
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_Threading"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Networking_WinInet", "Win32_Security", "Win32_Security_Authorization", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_Threading"] }
 winreg = "0.52"

@@ -15,8 +15,8 @@ mod windows_service_main {
     };
     use std::time::{Duration, Instant};
     use tauri_app_lib::tunnel_service::{
-        runtime_root, StartTunnelRequest, StopTunnelRequest, TunnelCommand, TunnelEngineKind,
-        TunnelDiagnostics, TunnelResponse, TunnelState, TunnelStatus, TUNNEL_PIPE_NAME,
+        runtime_root, StartTunnelRequest, StopTunnelRequest, TunnelCommand, TunnelDiagnostics,
+        TunnelEngineKind, TunnelResponse, TunnelState, TunnelStatus, TUNNEL_PIPE_NAME,
         TUNNEL_PROTOCOL_VERSION, TUNNEL_SERVICE_DISPLAY_NAME, TUNNEL_SERVICE_NAME,
     };
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -163,18 +163,18 @@ mod windows_service_main {
         STOP_REQUESTED.store(false, Ordering::SeqCst);
         let stopped = Arc::new(AtomicBool::new(false));
         let stopped_for_handler = stopped.clone();
-        let status_handle = service_control_handler::register(
-            TUNNEL_SERVICE_NAME,
-            move |control_event| match control_event {
-                ServiceControl::Stop | ServiceControl::Interrogate => {
-                    if matches!(control_event, ServiceControl::Stop) {
-                        stopped_for_handler.store(true, Ordering::SeqCst);
+        let status_handle =
+            service_control_handler::register(TUNNEL_SERVICE_NAME, move |control_event| {
+                match control_event {
+                    ServiceControl::Stop | ServiceControl::Interrogate => {
+                        if matches!(control_event, ServiceControl::Stop) {
+                            stopped_for_handler.store(true, Ordering::SeqCst);
+                        }
+                        ServiceControlHandlerResult::NoError
                     }
-                    ServiceControlHandlerResult::NoError
+                    _ => ServiceControlHandlerResult::NotImplemented,
                 }
-                _ => ServiceControlHandlerResult::NotImplemented,
-            },
-        )?;
+            })?;
 
         set_service_status(&status_handle, ServiceState::Running, 0)?;
         let runtime = tokio::runtime::Runtime::new()
@@ -304,8 +304,7 @@ mod windows_service_main {
         }
 
         let mut sid_string_ptr: *mut u16 = std::ptr::null_mut();
-        let ok =
-            unsafe { ConvertSidToStringSidW(sid.as_mut_ptr() as PSID, &mut sid_string_ptr) };
+        let ok = unsafe { ConvertSidToStringSidW(sid.as_mut_ptr() as PSID, &mut sid_string_ptr) };
         if ok == 0 || sid_string_ptr.is_null() {
             return Err(format!(
                 "ConvertSidToStringSidW({}) failed: {}",
@@ -319,9 +318,8 @@ mod windows_service_main {
                 len += 1;
             }
         }
-        let sid_string = unsafe {
-            String::from_utf16_lossy(std::slice::from_raw_parts(sid_string_ptr, len))
-        };
+        let sid_string =
+            unsafe { String::from_utf16_lossy(std::slice::from_raw_parts(sid_string_ptr, len)) };
         unsafe {
             LocalFree(sid_string_ptr as _);
         }
@@ -478,7 +476,10 @@ mod windows_service_main {
             .and_then(|v| v.to_str())
             .unwrap_or_default()
             .to_ascii_lowercase();
-        if matches!(client_name.as_str(), "doodleray.exe" | "doodlerayservice.exe") {
+        if matches!(
+            client_name.as_str(),
+            "doodleray.exe" | "doodlerayservice.exe"
+        ) {
             Ok(())
         } else {
             Err(format!(
@@ -520,10 +521,7 @@ mod windows_service_main {
             TunnelCommand::Hello(hello) => {
                 if hello.protocol_version != TUNNEL_PROTOCOL_VERSION {
                     return TunnelResponse::Error {
-                        message: format!(
-                            "Unsupported tunnel protocol {}",
-                            hello.protocol_version
-                        ),
+                        message: format!("Unsupported tunnel protocol {}", hello.protocol_version),
                     };
                 }
                 TunnelResponse::Status(status_snapshot())
@@ -684,7 +682,14 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
                 lines.extend(tail);
             }
         }
-        lines.into_iter().rev().take(240).collect::<Vec<_>>().into_iter().rev().collect()
+        lines
+            .into_iter()
+            .rev()
+            .take(240)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect()
     }
 
     fn collect_log_files(dir: &Path, files: &mut Vec<PathBuf>, depth: usize) {
@@ -786,7 +791,12 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             let xray_config_path = runtime_dir.join("xray_config.json");
             write_json_file(&xray_config_path, xray_config)?;
             let xray_log_path = runtime_dir.join("xray.log");
-            let child = spawn_engine(xray_exe_path()?, &["run", "-c"], &xray_config_path, &xray_log_path)?;
+            let child = spawn_engine(
+                xray_exe_path()?,
+                &["run", "-c"],
+                &xray_config_path,
+                &xray_log_path,
+            )?;
             assign_child_to_job(&child)?;
             state().lock().unwrap().xray = Some(child);
             wait_for_port(request.socks_port, Duration::from_secs(8), generation)?;
@@ -850,7 +860,11 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             let mut runtime = state().lock().unwrap();
             runtime.state = TunnelState::Disconnecting;
             runtime.phase = Some(reason.into());
-            (runtime.singbox.take(), runtime.xray.take(), runtime.job.take())
+            (
+                runtime.singbox.take(),
+                runtime.xray.take(),
+                runtime.job.take(),
+            )
         };
 
         drop(job);
@@ -1025,11 +1039,7 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             if let Some(child) = runtime.singbox.as_mut() {
                 if let Ok(Some(status)) = child.try_wait() {
                     let log = std::fs::read_to_string(log_path).unwrap_or_default();
-                    return Err(format!(
-                        "sing-box exited with {}: {}",
-                        status,
-                        redact(&log)
-                    ));
+                    return Err(format!("sing-box exited with {}: {}", status, redact(&log)));
                 }
             } else {
                 return Err("sing-box process is not running".to_string());
@@ -1044,7 +1054,11 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         Ok(())
     }
 
-    fn wait_for_adapter(adapter_name: &str, timeout: Duration, generation: u64) -> Result<(), String> {
+    fn wait_for_adapter(
+        adapter_name: &str,
+        timeout: Duration,
+        generation: u64,
+    ) -> Result<(), String> {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
             ensure_current_generation(generation)?;
@@ -1179,7 +1193,10 @@ Write-Output ("DoodleRay Tunnel route preferred: shape={0}, tun={1}, best_other=
         }
     }
 
-    fn wait_for_doodleray_route_preferred(timeout: Duration, generation: u64) -> Result<(), String> {
+    fn wait_for_doodleray_route_preferred(
+        timeout: Duration,
+        generation: u64,
+    ) -> Result<(), String> {
         let deadline = Instant::now() + timeout;
         let mut last_error = "DoodleRay Tunnel route did not become ready".to_string();
         while Instant::now() < deadline {
@@ -1198,7 +1215,10 @@ Write-Output ("DoodleRay Tunnel route preferred: shape={0}, tun={1}, best_other=
             for inbound in inbounds {
                 if inbound.get("type").and_then(|v| v.as_str()) == Some("tun") {
                     if let Some(obj) = inbound.as_object_mut() {
-                        obj.insert("interface_name".into(), Value::String("DoodleRay Tunnel".into()));
+                        obj.insert(
+                            "interface_name".into(),
+                            Value::String("DoodleRay Tunnel".into()),
+                        );
                     }
                 }
             }

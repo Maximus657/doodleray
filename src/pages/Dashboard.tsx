@@ -396,7 +396,7 @@ export default function Dashboard() {
       }
 
       const srv = resolveConnectServer(activeServer, servers, autoSelectFastest);
-      if (srv && activeServer?.id !== srv.id) {
+      if (srv && findMatchingServer(activeServer, [srv]) === null) {
         setActiveServer(srv);
         if (!activeServer && autoSelectFastest && srv.ping !== undefined && srv.ping > 0) {
           addLog('info', `Auto-selected fastest: ${srv.name} (${srv.ping}ms)`);
@@ -407,7 +407,7 @@ export default function Dashboard() {
       setConnectionStep(t('connectionStarting'));
 
       if (proxyMode === 'tun') {
-        addLog('info', 'Full Computer mode uses DoodleRay Tunnel Service for adapter control.');
+        addLog('info', 'Режим «Весь компьютер»: DoodleRay управляет сетевым адаптером через свой сервис.');
         void refreshTunnelServiceHealth();
       }
 
@@ -442,7 +442,7 @@ export default function Dashboard() {
           if (result.message.includes('bind') || result.message.includes('10808') || result.message.includes('port')) {
             try {
               const portInfo: any = await invoke('check_port', { port: socksPort });
-              if (portInfo.busy) {
+              if (portInfo.busy && portInfo.doodleray_owned) {
                 addLog('warning', 'Fixing connection route automatically...');
                 await invoke('force_free_port', { port: socksPort });
                 await new Promise(r => setTimeout(r, 1000));
@@ -457,6 +457,8 @@ export default function Dashboard() {
                   }
                   addLog('success', retry.message); setConnectionStep(t('connectionReady')); setStatus('connected'); setConnectedAt(Date.now()); return;
                 }
+              } else if (portInfo.busy) {
+                addLog('warning', `${portInfo.message}. Change local proxy ports in Settings, for example SOCKS5 20808 and HTTP 20809.`);
               }
             } catch {}
           }
@@ -523,14 +525,20 @@ export default function Dashboard() {
     }
   }, [status, setStatus, setCurrentSpeed, resetTraffic, activeServer, servers, setActiveServer, addLog, proxyMode, socksPort, httpPort, autoSelectFastest, setConnectedAt, t, setProxyMode, refreshTunnelServiceHealth, setSocksPort, setHttpPort]);
 
-  const handleModeSwitch = useCallback(async (mode: 'system-proxy' | 'tun') => {
-    if (proxyMode === mode) return;
+  const handleModeSwitch = useCallback(async (mode: 'system-proxy' | 'tun', nextSystemProxyMode = systemProxyMode) => {
+    const normalizedSystemProxyMode = mode === 'tun' || nextSystemProxyMode === 'clear'
+      ? 'unchanged'
+      : nextSystemProxyMode;
+    const modeChanged = proxyMode !== mode;
+    const systemProxyChanged = systemProxyMode !== normalizedSystemProxyMode;
+    if (!modeChanged && !systemProxyChanged) return;
     if (mode === 'tun') {
-      addLog('info', 'Full Computer mode will use the installed DoodleRay Tunnel Service.');
+      addLog('info', 'Режим «Весь компьютер» будет использовать сервис DoodleRay для сетевого адаптера.');
       await refreshTunnelServiceHealth();
     }
     setProxyMode(mode);
-    addLog('info', `Switched routing mode to ${mode === 'tun' ? 'TUN' : 'System Proxy'}`);
+    if (systemProxyChanged) setSystemProxyMode(normalizedSystemProxyMode);
+    addLog('info', `Режим подключения: ${mode === 'tun' ? t('fullDeviceMode') : t('systemProxy')}`);
     if (status === 'connected') {
       addLog('warning', 'Reconnecting to apply new routing mode...');
       setStatus('connecting');
@@ -541,7 +549,7 @@ export default function Dashboard() {
         await new Promise(r => setTimeout(r, 2000));
         const srv = activeServer;
         if (srv) {
-          const request = await buildConnectRequestFromState(srv, mode);
+          const request = await buildConnectRequestFromState(srv, mode, normalizedSystemProxyMode);
           const result: any = await invoke('vpn_connect', { request });
           if (result.success) {
             const actualPorts = extractLocalProxyPorts(result.message || '');
@@ -555,11 +563,11 @@ export default function Dashboard() {
         } else { setStatus('disconnected'); setConnectionStep(null); }
       } catch (err: any) { addLog('error', `Reconnect failed: ${err.message || err}`); setStatus('disconnected'); setConnectionStep(null); }
     }
-  }, [proxyMode, setProxyMode, status, setStatus, addLog, activeServer, socksPort, httpPort, setConnectedAt, t, refreshTunnelServiceHealth, setSocksPort, setHttpPort]);
+  }, [proxyMode, systemProxyMode, setProxyMode, setSystemProxyMode, status, setStatus, addLog, activeServer, socksPort, httpPort, setConnectedAt, t, refreshTunnelServiceHealth, setSocksPort, setHttpPort]);
 
   const handleServerSelect = useCallback(async (server: typeof activeServer) => {
     if (!server) return;
-    const isSameServer = activeServer?.id === server.id;
+    const isSameServer = findMatchingServer(activeServer, [server]) !== null;
     setActiveServer(server); setSearchQuery('');
     if (status === 'connected' && !isSameServer) {
       addLog('warning', `Switching to ${server.name}...`);
@@ -836,9 +844,9 @@ export default function Dashboard() {
             connectTime={connectTime}
             currentDownload={currentDownload} currentUpload={currentUpload}
             totalDown={totalDown} totalUp={totalUp}
+            socksPort={socksPort} httpPort={httpPort}
             speedHistory={speedHistory} showStats={showStats}
             onModeSwitch={handleModeSwitch}
-            onSystemProxyModeChange={setSystemProxyMode}
             t={t}
           />
         </div>

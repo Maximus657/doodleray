@@ -4,6 +4,10 @@ use std::fs::OpenOptions;
 use std::io::{Read, Write};
 #[cfg(windows)]
 use std::os::windows::fs::OpenOptionsExt;
+#[cfg(windows)]
+use std::sync::mpsc;
+#[cfg(windows)]
+use std::time::Duration;
 
 #[cfg(windows)]
 use crate::tunnel_service::{
@@ -19,7 +23,7 @@ pub fn send_tunnel_command(command: &TunnelCommand) -> Result<TunnelResponse, St
 
     let mut last_error = String::new();
     for attempt in 0..3 {
-        match send_tunnel_payload(&payload) {
+        match send_tunnel_payload_with_timeout(payload.clone(), Duration::from_secs(6)) {
             Ok(response) => return Ok(response),
             Err(error) => {
                 last_error = error;
@@ -30,6 +34,27 @@ pub fn send_tunnel_command(command: &TunnelCommand) -> Result<TunnelResponse, St
         }
     }
     Err(last_error)
+}
+
+#[cfg(windows)]
+fn send_tunnel_payload_with_timeout(
+    payload: Vec<u8>,
+    timeout: Duration,
+) -> Result<TunnelResponse, String> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(send_tunnel_payload(&payload));
+    });
+    match rx.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(format!(
+            "Tunnel service IPC timed out after {}s",
+            timeout.as_secs()
+        )),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err("Tunnel service IPC worker stopped unexpectedly".into())
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -63,7 +88,10 @@ fn send_tunnel_payload(payload: &[u8]) -> Result<TunnelResponse, String> {
         .map_err(|e| format!("Failed to read response length: {}", e))?;
     let response_len = u32::from_le_bytes(len_buf) as usize;
     if response_len == 0 || response_len > 4 * 1024 * 1024 {
-        return Err(format!("Invalid tunnel service response length: {}", response_len));
+        return Err(format!(
+            "Invalid tunnel service response length: {}",
+            response_len
+        ));
     }
     let mut response = vec![0; response_len];
     client
@@ -92,6 +120,8 @@ pub fn tunnel_service_hello(client_version: &str) -> Result<TunnelResponse, Stri
 }
 
 #[cfg(not(windows))]
-pub fn send_tunnel_command(_: &crate::tunnel_service::TunnelCommand) -> Result<crate::tunnel_service::TunnelResponse, String> {
+pub fn send_tunnel_command(
+    _: &crate::tunnel_service::TunnelCommand,
+) -> Result<crate::tunnel_service::TunnelResponse, String> {
     Err("Tunnel service is only available on Windows".into())
 }
