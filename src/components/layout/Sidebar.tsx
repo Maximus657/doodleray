@@ -30,7 +30,7 @@ export function Sidebar() {
     <aside className="relative z-[80] h-full w-[86px] shrink-0 overflow-visible bg-black flex flex-col items-center py-5 border-r-[4px] border-black/20 text-white">
 
       {/* Navigation */}
-      <nav className="flex flex-col gap-3 flex-1 w-full items-center pt-1">
+      <nav className="flex flex-col gap-3 flex-1 w-full items-center pt-1 pb-5">
         {NAV_ITEMS.map(({ path, icon: Icon, labelKey }) => (
           <NavLink
             key={path}
@@ -58,42 +58,44 @@ export function Sidebar() {
         ))}
       </nav>
 
-      <button
-        onClick={async () => {
-          try {
-            const { openUrl } = await import('@tauri-apps/plugin-opener');
-            await openUrl('https://t.me/doodlevpn_support');
-          } catch (e) {
-            console.error(e);
-          }
-        }}
-        className="group relative flex h-14 w-14 items-center justify-center rounded-2xl border-[2px] border-[#8b5cf6]/70 bg-white/[0.04] text-[#8b5cf6] transition-all duration-300 hover:-translate-y-0.5 hover:border-[#8b5cf6] hover:bg-[#8b5cf6] hover:text-black hover:shadow-[4px_4px_0_rgba(139,92,246,0.35)] active:translate-y-0 active:shadow-none cursor-pointer mb-3"
-        title="Support"
-      >
-        <HelpCircle className="w-6 h-6 transition-transform duration-300 group-hover:scale-110 stroke-[2.6px]" />
-        <span className="absolute left-full z-[120] ml-3 px-2.5 py-1.5 text-[10px] font-black uppercase tracking-widest bg-white text-[#8b5cf6] border-[2px] border-[#8b5cf6] rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 whitespace-nowrap shadow-[3px_3px_0_rgba(139,92,246,0.35)] translate-x-[-8px] group-hover:translate-x-0">
-          {t('support' as any)}
-        </span>
-      </button>
+      <div className="mt-auto mb-8 flex flex-col items-center gap-5">
+        <button
+          onClick={async () => {
+            try {
+              const { openUrl } = await import('@tauri-apps/plugin-opener');
+              await openUrl('https://t.me/doodlevpn_support');
+            } catch (e) {
+              console.error(e);
+            }
+          }}
+          className="group relative flex h-14 w-14 items-center justify-center rounded-2xl border-[2px] border-[#8b5cf6]/70 bg-white/[0.04] text-[#8b5cf6] transition-all duration-300 hover:-translate-y-0.5 hover:border-[#8b5cf6] hover:bg-[#8b5cf6] hover:text-black hover:shadow-[4px_4px_0_rgba(139,92,246,0.35)] active:translate-y-0 active:shadow-none cursor-pointer"
+          title="Support"
+        >
+          <HelpCircle className="w-6 h-6 transition-transform duration-300 group-hover:scale-110 stroke-[2.6px]" />
+          <span className="absolute left-full z-[120] ml-3 px-2.5 py-1.5 text-[10px] font-black uppercase tracking-widest bg-white text-[#8b5cf6] border-[2px] border-[#8b5cf6] rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 whitespace-nowrap shadow-[3px_3px_0_rgba(139,92,246,0.35)] translate-x-[-8px] group-hover:translate-x-0">
+            {t('support' as any)}
+          </span>
+        </button>
 
-      <button
-        onClick={async () => {
-          try {
-            const { invoke } = await import('@tauri-apps/api/core');
-            await invoke('vpn_disconnect').catch(() => {});
-            await invoke('quit_app');
-          } catch {
-            window.close();
-          }
-        }}
-        className="group relative flex h-14 w-14 items-center justify-center rounded-2xl border-[2px] border-danger/80 bg-white/[0.04] text-danger transition-all duration-300 hover:-translate-y-0.5 hover:border-danger hover:bg-danger hover:text-black hover:shadow-[4px_4px_0_rgba(248,113,113,0.32)] active:translate-y-0 active:shadow-none cursor-pointer mb-4"
-        title="Quit DoodleRay"
-      >
-        <LogOut className="w-6 h-6 transition-transform duration-300 group-hover:scale-110 stroke-[2.6px]" />
-        <span className="absolute left-full z-[120] ml-3 px-2.5 py-1.5 text-[10px] font-black uppercase tracking-widest bg-white text-danger border-[2px] border-danger rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 whitespace-nowrap shadow-[3px_3px_0_rgba(248,113,113,0.35)] translate-x-[-8px] group-hover:translate-x-0">
-          {t('quit')}
-        </span>
-      </button>
+        <button
+          onClick={async () => {
+            try {
+              const { invoke } = await import('@tauri-apps/api/core');
+              await invoke('vpn_disconnect').catch(() => {});
+              await invoke('quit_app');
+            } catch {
+              window.close();
+            }
+          }}
+          className="group relative flex h-14 w-14 items-center justify-center rounded-2xl border-[2px] border-danger/80 bg-white/[0.04] text-danger transition-all duration-300 hover:-translate-y-0.5 hover:border-danger hover:bg-danger hover:text-black hover:shadow-[4px_4px_0_rgba(248,113,113,0.32)] active:translate-y-0 active:shadow-none cursor-pointer"
+          title="Quit DoodleRay"
+        >
+          <LogOut className="w-6 h-6 transition-transform duration-300 group-hover:scale-110 stroke-[2.6px]" />
+          <span className="absolute left-full z-[120] ml-3 px-2.5 py-1.5 text-[10px] font-black uppercase tracking-widest bg-white text-danger border-[2px] border-danger rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 whitespace-nowrap shadow-[3px_3px_0_rgba(248,113,113,0.35)] translate-x-[-8px] group-hover:translate-x-0">
+            {t('quit')}
+          </span>
+        </button>
+      </div>
 
       {ver && <div className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[9px] text-white/22 font-black tracking-widest opacity-60">{ver}</div>}
     </aside>

@@ -11,7 +11,7 @@ interface Props {
 
 export default function OnboardingCard({ quickInput, setQuickInput, onQuickAdd, onQuickPaste, importing, t }: Props) {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center w-full max-w-md relative z-10 animate-slide-up gap-6 py-10">
+    <div className="flex-1 flex flex-col items-center justify-center w-full max-w-md relative z-10 animate-slide-up gap-5 py-8 min-[520px]:gap-6 min-[520px]:py-10">
       {/* Logo */}
       <div className="flex items-center gap-3 mb-2">
         <div className="w-14 h-14 bg-black rounded-2xl flex items-center justify-center border-[3px] border-black shadow-[4px_4px_0_#000]">
@@ -24,7 +24,7 @@ export default function OnboardingCard({ quickInput, setQuickInput, onQuickAdd, 
       </div>
 
       {/* Big onboarding card */}
-      <div className="w-full bg-white border-[4px] border-black rounded-3xl p-8 shadow-[8px_8px_0_#000] space-y-5">
+      <div className="w-full bg-white border-[4px] border-black rounded-3xl p-5 shadow-[8px_8px_0_#000] space-y-5 min-[520px]:p-8">
         <div className="text-center space-y-2">
           <h2 className="text-xl font-black text-black uppercase tracking-tight">{t('welcome')}</h2>
           <p className="text-xs font-bold text-black/50 uppercase tracking-widest">
@@ -32,7 +32,7 @@ export default function OnboardingCard({ quickInput, setQuickInput, onQuickAdd, 
           </p>
         </div>
 
-        <div className="flex gap-2">
+        <div className="grid grid-cols-1 gap-2 min-[520px]:grid-cols-[minmax(0,1fr)_3.5rem]">
           <input
             type="text"
             value={quickInput}
@@ -40,11 +40,11 @@ export default function OnboardingCard({ quickInput, setQuickInput, onQuickAdd, 
             onKeyDown={(e) => e.key === 'Enter' && onQuickAdd()}
             autoFocus
             placeholder={t('pasteHint')}
-            className="flex-1 bg-gray-50 border-[3px] border-black rounded-xl px-4 py-4 text-sm text-black placeholder:text-black/25 focus:outline-none focus:shadow-[2px_2px_0_#000] font-bold tracking-tight transition-shadow"
+            className="min-w-0 bg-gray-50 border-[3px] border-black rounded-xl px-4 py-4 text-sm text-black placeholder:text-black/25 focus:outline-none focus:shadow-[2px_2px_0_#000] font-bold tracking-tight transition-shadow"
           />
           <button
             onClick={onQuickPaste}
-            className="group p-4 bg-white border-[3px] border-black rounded-xl shadow-[2px_2px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none cursor-pointer transition-all hover:bg-gray-50"
+            className="group h-14 w-full bg-white border-[3px] border-black rounded-xl shadow-[2px_2px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none cursor-pointer transition-all hover:bg-gray-50 flex items-center justify-center min-[520px]:w-14"
             title="Paste from clipboard"
           >
             <ClipboardPaste className="w-5 h-5 text-black stroke-[2.5px] transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-6" />

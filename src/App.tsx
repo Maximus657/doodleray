@@ -69,11 +69,11 @@ function ToastContainer() {
 
   if (toasts.length === 0) return null;
   return (
-    <div className="fixed top-4 right-4 z-[9999] flex flex-col gap-2 pointer-events-none">
+    <div className="flex flex-col gap-2 pointer-events-none">
       {toasts.map((t) => (
         <div key={t.id}
           onClick={() => removeToast(t.id)}
-          className={`pointer-events-auto px-5 py-3 rounded-xl border-[3px] border-black shadow-[4px_4px_0_#000] font-black text-sm uppercase tracking-tight cursor-pointer
+          className={`pointer-events-auto px-4 py-2.5 rounded-xl border-[3px] border-black shadow-[4px_4px_0_#000] font-black text-xs uppercase tracking-tight cursor-pointer
             animate-slide-up transition-all hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000]
             ${t.type === 'success' ? 'bg-emerald-400 text-black' :
               t.type === 'error' ? 'bg-danger text-white' :
@@ -99,6 +99,9 @@ function UpdateBanner() {
   const isDownloading = updatePhase === 'downloading';
   const isBusy = updatePhase === 'checking' || updatePhase === 'downloading' || updatePhase === 'installing';
   const statusLabel = updateStatusLabel(updateStatus, updatePhase, updateProgress, availableUpdate, t);
+  const secondaryLabel = isBusy || updatePhase === 'error'
+    ? statusLabel || t('updating')
+    : null;
   const progressLabel = updateProgress !== null && isDownloading ? `${updateProgress}%` : null;
 
   const handleInstall = async () => {
@@ -130,63 +133,68 @@ function UpdateBanner() {
   };
 
   return (
-    <div className="fixed right-5 top-24 z-[9000] w-[min(470px,calc(100vw-9.5rem))] animate-slide-in-right pointer-events-none max-[760px]:left-4 max-[760px]:right-4 max-[760px]:top-4 max-[760px]:w-auto">
-      <div className="pointer-events-auto rounded-[22px] border-[3px] border-black bg-black p-3 shadow-[7px_7px_0_rgba(0,0,0,0.32)]">
-        <div className="rounded-[16px] border border-white/12 bg-white/[0.06] px-4 py-3">
-          <div className="flex items-start gap-3">
-            <div className={`mt-1 h-3.5 w-3.5 shrink-0 rounded-full ${isBusy ? 'animate-pulse bg-amber-300' : 'bg-emerald-400'}`} />
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                <p className="text-[13px] font-black uppercase leading-tight tracking-[0.18em] text-white">
-                  {t('newUpdate')} v<span className="text-bg-primary">{availableUpdate}</span>
-                </p>
-                {!isBusy && (
-                  <span className="rounded-full bg-bg-primary px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-black">
-                    {t('versionAvailable')}
-                  </span>
-                )}
-              </div>
-              <p className="mt-1 text-[11px] font-black uppercase leading-snug tracking-widest text-white/70">
-                {statusLabel || (isBusy ? t('updating') : t('installRestart'))}
-              </p>
-            </div>
-            {progressLabel && (
-              <span className="shrink-0 rounded-xl border-2 border-white bg-bg-primary px-2.5 py-1 text-[11px] font-black tabular-nums tracking-wider text-black">
-                {progressLabel}
+    <div className="pointer-events-auto w-full animate-slide-in-right rounded-2xl border-[3px] border-black bg-black px-4 py-3 text-white shadow-[5px_5px_0_rgba(0,0,0,0.28)]">
+      <div className="flex items-start gap-3">
+        <div className={`mt-1.5 h-3 w-3 shrink-0 rounded-full ${isBusy ? 'animate-pulse bg-amber-300' : 'bg-emerald-400'}`} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <p className="text-[12px] font-black uppercase leading-tight tracking-[0.14em] text-white">
+              {t('newUpdate')} v<span className="text-bg-primary">{availableUpdate}</span>
+            </p>
+            {!isBusy && (
+              <span className="rounded-full bg-bg-primary px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-black">
+                {t('versionAvailable')}
               </span>
             )}
           </div>
-
-          {(isBusy || updateProgress !== null) && (
-            <div className="mt-3 h-3 overflow-hidden rounded-full border-[2px] border-white bg-white/15">
-              {updateProgress !== null && isDownloading ? (
-                <div className="h-full bg-bg-primary transition-all duration-300" style={{ width: `${updateProgress}%` }} />
-              ) : (
-                <div className="h-full w-1/2 animate-pulse rounded-full bg-bg-primary" />
-              )}
-            </div>
+          {secondaryLabel && (
+            <p className="mt-1 text-[10px] font-black uppercase leading-snug tracking-widest text-white/65">
+              {secondaryLabel}
+            </p>
           )}
-
-          <button
-            onClick={handleInstall}
-            disabled={isBusy}
-            className="mt-3 flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border-[3px] border-white bg-bg-primary px-4 py-2.5 text-[11px] font-black uppercase tracking-widest text-black shadow-[3px_3px_0_rgba(255,255,255,0.3)] transition-all hover:-translate-y-0.5 hover:shadow-[5px_5px_0_rgba(255,255,255,0.3)] active:translate-y-1 active:shadow-none disabled:cursor-wait disabled:opacity-75"
-          >
-            {isBusy ? (
-              <><Loader2 className="h-3.5 w-3.5 animate-spin" /> {progressLabel ? `${t('updateDownloading')} ${progressLabel}` : t('updating')}</>
-            ) : (
-              <><Download className="h-3.5 w-3.5 stroke-[3px]" /> {t('installRestart')}</>
-            )}
-          </button>
         </div>
+        {progressLabel && (
+          <span className="shrink-0 rounded-lg border-2 border-white bg-bg-primary px-2 py-0.5 text-[10px] font-black tabular-nums tracking-wider text-black">
+            {progressLabel}
+          </span>
+        )}
       </div>
+
+      {(isBusy || updateProgress !== null) && (
+        <div className="mt-2.5 h-2 overflow-hidden rounded-full border-2 border-white bg-white/15">
+          {updateProgress !== null && isDownloading ? (
+            <div className="h-full bg-bg-primary transition-all duration-300" style={{ width: `${updateProgress}%` }} />
+          ) : (
+            <div className="h-full w-1/2 animate-pulse rounded-full bg-bg-primary" />
+          )}
+        </div>
+      )}
+
+      <button
+        onClick={handleInstall}
+        disabled={isBusy}
+        className="mt-2 flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-white bg-bg-primary px-3 py-2 text-[10px] font-black uppercase tracking-widest text-black shadow-[3px_3px_0_rgba(255,255,255,0.3)] transition-all hover:-translate-y-0.5 hover:shadow-[5px_5px_0_rgba(255,255,255,0.3)] active:translate-y-1 active:shadow-none disabled:cursor-wait disabled:opacity-75"
+      >
+        {isBusy ? (
+          <><Loader2 className="h-3.5 w-3.5 animate-spin" /> {progressLabel ? `${t('updateDownloading')} ${progressLabel}` : t('updating')}</>
+        ) : (
+          <><Download className="h-3.5 w-3.5 stroke-[3px]" /> {t('installRestart')}</>
+        )}
+      </button>
+    </div>
+  );
+}
+
+function NotificationStack() {
+  return (
+    <div className="fixed right-4 top-4 z-[9999] flex w-[min(320px,calc(100vw-6.5rem))] flex-col gap-2 pointer-events-none">
+      <UpdateBanner />
+      <ToastContainer />
     </div>
   );
 }
 
 function App() {
-  const { t } = useTranslation();
-
   useEffect(() => {
     const isTauriRuntime = () => {
       if (typeof window === 'undefined') return false;
@@ -244,7 +252,6 @@ function App() {
           useAppStore.getState().addLog('info', `App update available: v${currentVersion} -> v${update.version}`);
 
           if (options.autoInstall) {
-            useToastStore.getState().addToast(formatMessage(t('updateDownloadingVersion'), { version: update.version }), 'info');
             useAppStore.getState().addLog('info', `Auto-update found v${update.version}. Installing...`);
             useAppStore.getState().setUpdateState({
               updatePhase: 'downloading',
@@ -265,9 +272,8 @@ function App() {
             return true;
           }
 
-          // Only show toast on fresh discovery (not repeated checks)
           if (!prev || prev !== update.version) {
-            useToastStore.getState().addToast(`${t('newUpdate')} v${update.version} ${t('versionAvailable')}`, 'info');
+            useAppStore.getState().addLog('info', `Showing app update banner for v${update.version}`);
           }
           return false;
         }
@@ -433,7 +439,6 @@ function App() {
       <div className="flex h-screen bg-bg-primary">
         <Sidebar />
         <div className="flex-1 flex flex-col relative overflow-hidden">
-          <UpdateBanner />
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/servers" element={<Servers />} />
@@ -441,7 +446,7 @@ function App() {
             <Route path="/settings" element={<Settings />} />
           </Routes>
         </div>
-        <ToastContainer />
+        <NotificationStack />
       </div>
     </Router>
   );
