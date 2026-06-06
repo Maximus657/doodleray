@@ -4897,6 +4897,7 @@ fn scan_installed_apps() -> Result<Vec<serde_json::Value>, String> {
     {
         use std::collections::BTreeMap;
         let mut apps: BTreeMap<String, String> = BTreeMap::new();
+        let mut seen_app_paths: HashSet<String> = HashSet::new();
         let mut add_app = |name: String, path: String| {
             let display = name.trim().to_string();
             let value = path.trim().trim_matches('"').to_string();
@@ -4904,13 +4905,11 @@ fn scan_installed_apps() -> Result<Vec<serde_json::Value>, String> {
                 return;
             }
             let lower_value = value.to_lowercase();
-            if apps
-                .values()
-                .any(|existing| existing.to_lowercase() == lower_value)
-            {
+            if seen_app_paths.contains(&lower_value) || apps.contains_key(&display) {
                 return;
             }
-            apps.entry(display).or_insert(value);
+            seen_app_paths.insert(lower_value);
+            apps.insert(display, value);
         };
 
         let reg_paths = [

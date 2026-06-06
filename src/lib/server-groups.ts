@@ -38,22 +38,6 @@ export function serverMatchesGroupQuery(server: ServerConfig, query: string): bo
   ].some((value) => value?.toLowerCase().includes(normalizedQuery));
 }
 
-function selectBestServer(servers: ServerConfig[]): ServerConfig {
-  const withPing = servers.filter((server) => server.ping !== undefined && server.ping > 0);
-  if (withPing.length === 0) return servers[0];
-  return withPing.reduce((best, server) => (server.ping! < best.ping! ? server : best));
-}
-
-function getBestGroupPing(servers: ServerConfig[]): number | undefined {
-  const positivePings = servers
-    .map((server) => server.ping)
-    .filter((ping): ping is number => ping !== undefined && ping > 0);
-
-  if (positivePings.length > 0) return Math.min(...positivePings);
-  if (servers.length > 0 && servers.every((server) => server.ping === -1)) return -1;
-  return undefined;
-}
-
 function getDisplayRank(label: string): number {
   const normalized = label.toLowerCase();
   if (/авто|самый быстрый|auto|entry-pool|fastest/.test(normalized)) return 0;
@@ -65,37 +49,60 @@ function getDisplayRank(label: string): number {
   return 50;
 }
 
+interface MutableServerDisplayGroup extends ServerDisplayGroup {
+  bestPositivePing?: number;
+  displayRank: number;
+  originalIndex: number;
+  allFailed: boolean;
+}
+
 export function buildServerDisplayGroups(servers: ServerConfig[]): ServerDisplayGroup[] {
-  const groups = new Map<string, ServerDisplayGroup>();
+  const groups = new Map<string, MutableServerDisplayGroup>();
 
   for (const server of servers) {
     const label = getServerGroupLabel(server);
     const key = label.toLowerCase();
     const group = groups.get(key);
+    const ping = server.ping;
 
     if (group) {
       group.servers.push(server);
       if (!group.countryCode && server.countryCode) group.countryCode = server.countryCode;
+      if (ping !== -1) group.allFailed = false;
+      if (ping !== undefined && ping > 0 && (group.bestPositivePing === undefined || ping < group.bestPositivePing)) {
+        group.bestPositivePing = ping;
+        group.ping = ping;
+        group.selectedServer = server;
+      }
       continue;
     }
 
+    const hasPositivePing = ping !== undefined && ping > 0;
     groups.set(key, {
       id: `${key}-${server.subscriptionId || 'manual'}`,
       label,
       servers: [server],
       selectedServer: server,
       countryCode: server.countryCode,
+      ping: hasPositivePing ? ping : undefined,
+      bestPositivePing: hasPositivePing ? ping : undefined,
+      displayRank: getDisplayRank(label),
+      originalIndex: groups.size,
+      allFailed: ping === -1,
     });
   }
 
   return Array.from(groups.values())
-    .map((group, index) => ({
+    .map((group) => ({
       ...group,
-      selectedServer: selectBestServer(group.servers),
-      ping: getBestGroupPing(group.servers),
-      displayRank: getDisplayRank(group.label),
-      originalIndex: index,
+      ping: group.bestPositivePing ?? (group.allFailed ? -1 : undefined),
     }))
     .sort((a, b) => a.displayRank - b.displayRank || a.originalIndex - b.originalIndex)
-    .map(({ displayRank: _displayRank, originalIndex: _originalIndex, ...group }) => group);
+    .map(({
+      bestPositivePing: _bestPositivePing,
+      displayRank: _displayRank,
+      originalIndex: _originalIndex,
+      allFailed: _allFailed,
+      ...group
+    }) => group);
 }

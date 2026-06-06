@@ -12,11 +12,11 @@ import {
   Settings as SettingsIcon,
   Trash2,
 } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import type { ConnectionStatus, ServerConfig, Subscription } from '../../stores/app-store';
 import { formatBytes, protocolLabel } from '../../lib/utils';
 import { buildServerDisplayGroups, serverMatchesGroupQuery, type ServerDisplayGroup } from '../../lib/server-groups';
-import { findMatchingServer } from '../../lib/server-selection';
+import { buildServerSelectionIndex, findMatchingServerInIndex } from '../../lib/server-selection';
 import { getSubscriptionTrafficStatus } from '../../lib/subscription-status';
 
 interface Props {
@@ -37,7 +37,7 @@ interface Props {
   onRemoveServer: (serverId: string, serverName: string) => void;
   testingSubId: string | null;
   refreshingSubId: string | null;
-  pingingServerId: string | null;
+  pingingServerIds: Set<string>;
   subAutoUpdateMinutes: number;
   t: (key: any) => string;
 }
@@ -103,9 +103,49 @@ export default function ServerList({
   collapsedGroups, onToggleGroup, onServerSelect,
   onTestSubscription, onUpdateSubscription, onRemoveSubscription,
   onTestCustomServers, onRemoveAllCustomServers, onRemoveServer,
-  testingSubId, refreshingSubId, pingingServerId, subAutoUpdateMinutes, t,
+  testingSubId, refreshingSubId, pingingServerIds, subAutoUpdateMinutes, t,
 }: Props) {
-  const visibleActiveServer = findMatchingServer(activeServer, servers) || activeServer;
+  const selectionIndex = useMemo(() => buildServerSelectionIndex(servers), [servers]);
+  const visibleActiveServer = findMatchingServerInIndex(activeServer, selectionIndex) || activeServer;
+  const { subscriptionRows, standalone } = useMemo(() => {
+    const allBySubscription = new Map<string, ServerConfig[]>();
+    const visibleBySubscription = new Map<string, ServerConfig[]>();
+    const visibleStandalone: ServerConfig[] = [];
+
+    for (const server of servers) {
+      const matchesQuery = serverMatchesGroupQuery(server, searchQuery);
+      if (!server.subscriptionId) {
+        if (matchesQuery) visibleStandalone.push(server);
+        continue;
+      }
+
+      const allServers = allBySubscription.get(server.subscriptionId);
+      if (allServers) {
+        allServers.push(server);
+      } else {
+        allBySubscription.set(server.subscriptionId, [server]);
+      }
+
+      if (matchesQuery) {
+        const visibleServers = visibleBySubscription.get(server.subscriptionId);
+        if (visibleServers) {
+          visibleServers.push(server);
+        } else {
+          visibleBySubscription.set(server.subscriptionId, [server]);
+        }
+      }
+    }
+
+    return {
+      subscriptionRows: subscriptions.map((sub) => ({
+        sub,
+        subServerGroups: buildServerDisplayGroups(visibleBySubscription.get(sub.id) || []),
+        subGroupCount: buildServerDisplayGroups(allBySubscription.get(sub.id) || []).length,
+        trafficStatus: getSubscriptionTrafficStatus(sub),
+      })),
+      standalone: visibleStandalone,
+    };
+  }, [servers, subscriptions, searchQuery]);
   const showCurrentServer = status !== 'disconnected' && !!visibleActiveServer;
   const activeServerPingText = visibleActiveServer?.ping === undefined
     ? null
@@ -114,10 +154,12 @@ export default function ServerList({
       : `tcp ${visibleActiveServer.ping}ms`;
 
   const renderServerGroup = (group: ServerDisplayGroup) => {
-    const activeGroupServer = findMatchingServer(activeServer, group.servers);
+    const activeGroupServer = visibleActiveServer && group.servers.some((server) => server.id === visibleActiveServer.id)
+      ? visibleActiveServer
+      : null;
     const selectedServer = activeGroupServer || group.selectedServer;
     const isActive = !!activeGroupServer;
-    const isPinging = group.servers.some((server) => pingingServerId === server.id);
+    const isPinging = group.servers.some((server) => pingingServerIds.has(server.id));
     const pingText = group.ping === undefined
       ? null
       : group.ping < 0
@@ -256,14 +298,7 @@ export default function ServerList({
 
       <div className="flex flex-col gap-4 relative z-20">
         {/* Subscription groups */}
-        {subscriptions.map(sub => {
-          const subServers = servers.filter(
-            s => s.subscriptionId === sub.id &&
-            serverMatchesGroupQuery(s, searchQuery)
-          );
-          const subServerGroups = buildServerDisplayGroups(subServers);
-          const subGroupCount = buildServerDisplayGroups(servers.filter((s) => s.subscriptionId === sub.id)).length;
-          const trafficStatus = getSubscriptionTrafficStatus(sub);
+        {subscriptionRows.map(({ sub, subServerGroups, subGroupCount, trafficStatus }) => {
           if (subServerGroups.length === 0 && searchQuery) return null;
 
           return (
@@ -323,10 +358,6 @@ export default function ServerList({
 
         {/* Custom / standalone servers */}
         {(() => {
-          const standalone = servers.filter(
-            s => !s.subscriptionId &&
-            serverMatchesGroupQuery(s, searchQuery)
-          );
           if (standalone.length === 0) return null;
 
           return (
@@ -357,7 +388,8 @@ export default function ServerList({
               <CollapsibleSection open={!collapsedGroups['__custom__']}>
                 <div className="ml-2 flex flex-col gap-2 overflow-visible border-l-[3px] border-black/10 pl-2 pr-1 py-0.5">
                   {standalone.map((server) => {
-                    const isActive = findMatchingServer(activeServer, [server]) !== null;
+                    const isActive = visibleActiveServer?.id === server.id;
+                    const isPinging = pingingServerIds.has(server.id);
                     const pingColor = server.ping && server.ping > 0
                       ? server.ping < 100 ? 'text-emerald-600' : server.ping < 300 ? 'text-amber-600' : 'text-red-600'
                       : server.ping === -1 ? 'text-red-600' : 'text-black/40';
@@ -387,7 +419,9 @@ export default function ServerList({
                               {protocolLabel(server.protocol, server.transport)}
                             </p>
                           </div>
-                          {server.ping !== undefined && (
+                          {isPinging ? (
+                            <Loader2 className={`w-4 h-4 animate-spin shrink-0 ${isActive ? 'text-white/80' : 'text-black/40'}`} />
+                          ) : server.ping !== undefined && (
                             <span className={`text-[10px] whitespace-nowrap font-black uppercase tracking-widest pl-1 shrink-0 ${isActive ? 'text-white/80' : pingColor}`}>
                               {server.ping === -1 ? t('errorLabel') : `tcp ${server.ping}ms`}
                             </span>

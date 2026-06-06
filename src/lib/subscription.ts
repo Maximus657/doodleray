@@ -78,6 +78,11 @@ interface XrayOutbound {
   };
 }
 
+interface XrayParseContext {
+  supportedOutbounds: XrayOutbound[];
+  balancers: XrayBalancer[];
+}
+
 function isSupportedXrayOutbound(outbound: XrayOutbound): boolean {
   return outbound.protocol === 'vless' && !!outbound.settings?.vnext?.[0];
 }
@@ -88,6 +93,13 @@ function getSupportedXrayOutbounds(json: XrayJsonConfig): XrayOutbound[] {
 
 function getXrayBalancers(json: XrayJsonConfig): XrayBalancer[] {
   return json.routing?.balancers?.filter((balancer) => !!balancer.tag) || [];
+}
+
+function createXrayParseContext(json: XrayJsonConfig): XrayParseContext {
+  return {
+    supportedOutbounds: getSupportedXrayOutbounds(json),
+    balancers: getXrayBalancers(json),
+  };
 }
 
 function outboundMatchesBalancer(outbound: XrayOutbound, balancer: XrayBalancer): boolean {
@@ -103,10 +115,9 @@ function outboundMatchesBalancer(outbound: XrayOutbound, balancer: XrayBalancer)
   );
 }
 
-function getBalancerOutbounds(json: XrayJsonConfig, balancer: XrayBalancer): XrayOutbound[] {
-  const supported = getSupportedXrayOutbounds(json);
-  const selected = supported.filter((outbound) => outboundMatchesBalancer(outbound, balancer));
-  return selected.length > 0 ? selected : supported;
+function getBalancerOutbounds(context: XrayParseContext, balancer: XrayBalancer): XrayOutbound[] {
+  const selected = context.supportedOutbounds.filter((outbound) => outboundMatchesBalancer(outbound, balancer));
+  return selected.length > 0 ? selected : context.supportedOutbounds;
 }
 
 function isAggregateAutoBalancer(balancer: XrayBalancer, balancerCount: number): boolean {
@@ -221,9 +232,10 @@ function parseXrayOutbound(
 }
 
 function parseXrayJsonConfig(json: XrayJsonConfig): ServerConfig | null {
+  const supportedOutbounds = getSupportedXrayOutbounds(json);
   const proxyOutbound =
-    json.outbounds?.find((o) => o.tag === 'proxy' && isSupportedXrayOutbound(o)) ||
-    getSupportedXrayOutbounds(json)[0];
+    supportedOutbounds.find((o) => o.tag === 'proxy') ||
+    supportedOutbounds[0];
 
   if (!proxyOutbound) return null;
 
@@ -234,10 +246,11 @@ function parseXrayJsonConfig(json: XrayJsonConfig): ServerConfig | null {
 }
 
 function parseXrayJsonSubscription(json: XrayJsonConfig, subscriptionName: string): ServerConfig[] {
-  const balancers = getXrayBalancers(json);
+  const context = createXrayParseContext(json);
+  const balancers = context.balancers;
   const autoBalancer = balancers.find((balancer) => isAggregateAutoBalancer(balancer, balancers.length));
   if (autoBalancer) {
-    const autoOutbound = getBalancerOutbounds(json, autoBalancer)[0];
+    const autoOutbound = getBalancerOutbounds(context, autoBalancer)[0];
     const autoServer = autoOutbound
       ? parseXrayOutbound(json, autoOutbound, {
         name: getAutoBalancerName(autoBalancer),
@@ -245,7 +258,7 @@ function parseXrayJsonSubscription(json: XrayJsonConfig, subscriptionName: strin
       })
       : null;
 
-    const outboundServers = getSupportedXrayOutbounds(json)
+    const outboundServers = context.supportedOutbounds
       .map((outbound, index) => parseXrayOutbound(json, outbound, {
         name: outbound.tag || json.remarks || json.remark || `${subscriptionName} ${index + 1}`,
         rawConfig: cloneConfigForOutbound(json, outbound.tag),
@@ -258,7 +271,7 @@ function parseXrayJsonSubscription(json: XrayJsonConfig, subscriptionName: strin
   if (balancers.length > 0) {
     const servers = balancers
       .map((balancer, index) => {
-        const outbound = getBalancerOutbounds(json, balancer)[0];
+        const outbound = getBalancerOutbounds(context, balancer)[0];
         if (!outbound) return null;
 
         return parseXrayOutbound(json, outbound, {
@@ -271,7 +284,7 @@ function parseXrayJsonSubscription(json: XrayJsonConfig, subscriptionName: strin
     if (servers.length > 0) return servers;
   }
 
-  const outbounds = getSupportedXrayOutbounds(json);
+  const outbounds = context.supportedOutbounds;
   if (outbounds.length === 0) return [];
 
   return outbounds

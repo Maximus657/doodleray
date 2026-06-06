@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   Plus,
   Trash2,
@@ -15,12 +15,13 @@ import {
 import { useAppStore } from '../stores/app-store';
 import { parseProxyLink } from '../lib/parser';
 import { fetchSubscription, refreshSubscription } from '../lib/subscription';
-import { formatPing, protocolLabel, pingServerSmart } from '../lib/utils';
+import { formatPing, protocolLabel } from '../lib/utils';
 import { buildServerDisplayGroups, type ServerDisplayGroup } from '../lib/server-groups';
-import { findMatchingServer } from '../lib/server-selection';
+import { buildServerSelectionIndex, findMatchingServerInIndex } from '../lib/server-selection';
 import type { ServerConfig } from '../stores/app-store';
 import { useTranslation } from '../locales';
 import { reportConnectionError } from '../lib/workshop-api';
+import { pingServersWithLimit } from '../lib/ping-runner';
 
 export default function Servers() {
   const {
@@ -33,7 +34,7 @@ export default function Servers() {
     addSubscription,
     removeSubscription,
     updateSubscription,
-    updateServerPing,
+    updateServerPings,
     addLog,
     removeAllManualServers,
   } = useAppStore();
@@ -45,6 +46,8 @@ export default function Servers() {
   const [refreshingSub, setRefreshingSub] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const autoPingStartedRef = useRef<Set<string>>(new Set());
+  const serverSelectionIndex = useMemo(() => buildServerSelectionIndex(servers), [servers]);
+  const visibleActiveServer = findMatchingServerInIndex(activeServer, serverSelectionIndex) || activeServer;
 
   const [confirmModal, setConfirmModal] = useState<{
     show: boolean;
@@ -59,26 +62,22 @@ export default function Servers() {
       s => (s.ping === undefined || (s.ping > 0 && s.ping <= 5)) && !autoPingStartedRef.current.has(s.id)
     );
     if (unpinged.length === 0) return;
+    for (const server of unpinged) {
+      autoPingStartedRef.current.add(server.id);
+    }
     
     let cancelled = false;
     (async () => {
       try {
         const { invoke } = await import('@tauri-apps/api/core');
-        for (const server of unpinged) {
-          if (cancelled) break;
-          autoPingStartedRef.current.add(server.id);
-          try {
-            const ping = await pingServerSmart(server, invoke);
-            updateServerPing(server.id, ping);
-          } catch {
-            updateServerPing(server.id, -1);
-          }
-          await new Promise(r => setTimeout(r, 30));
-        }
+        await pingServersWithLimit(unpinged, invoke, {
+          isCancelled: () => cancelled,
+          onBatch: (updates) => updateServerPings(updates),
+        });
       } catch { /* not in tauri env */ }
     })();
     return () => { cancelled = true; };
-  }, [servers, updateServerPing]);
+  }, [servers, updateServerPings]);
 
   // Auto-detect input type
   const detectType = (input: string): 'sub' | 'link' | 'unknown' => {
@@ -142,18 +141,15 @@ export default function Servers() {
 
   const handleTestGroup = useCallback(async (groupId: string, groupServers: ServerConfig[]) => {
     setTestingGroup(groupId);
-    const { invoke } = await import('@tauri-apps/api/core');
-    for (const server of groupServers) {
-      try {
-        const ping = await pingServerSmart(server, invoke);
-        updateServerPing(server.id, ping);
-      } catch {
-        updateServerPing(server.id, -1);
-      }
-      await new Promise((r) => setTimeout(r, 50));
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await pingServersWithLimit(groupServers, invoke, {
+        onBatch: (updates) => useAppStore.getState().updateServerPings(updates),
+      });
+    } finally {
+      setTestingGroup(null);
     }
-    setTestingGroup(null);
-  }, [updateServerPing]);
+  }, []);
 
   const handleRefreshSub = useCallback(async (subId: string) => {
     const sub = subscriptions.find((s) => s.id === subId);
@@ -194,13 +190,37 @@ export default function Servers() {
   }, [removeSubscription, addLog, t]);
 
   // Group servers
-  const manualServers = servers.filter((s) => !s.subscriptionId);
-  const manualServerGroups = buildServerDisplayGroups(manualServers);
-  const subGroups = subscriptions.map((sub) => ({
-    sub,
-    servers: servers.filter((s) => s.subscriptionId === sub.id),
-    serverGroups: buildServerDisplayGroups(servers.filter((s) => s.subscriptionId === sub.id)),
-  }));
+  const { manualServers, manualServerGroups, subGroups } = useMemo(() => {
+    const manual: ServerConfig[] = [];
+    const bySubscription = new Map<string, ServerConfig[]>();
+
+    for (const server of servers) {
+      if (!server.subscriptionId) {
+        manual.push(server);
+        continue;
+      }
+
+      const subServers = bySubscription.get(server.subscriptionId);
+      if (subServers) {
+        subServers.push(server);
+      } else {
+        bySubscription.set(server.subscriptionId, [server]);
+      }
+    }
+
+    return {
+      manualServers: manual,
+      manualServerGroups: buildServerDisplayGroups(manual),
+      subGroups: subscriptions.map((sub) => {
+        const subServers = bySubscription.get(sub.id) || [];
+        return {
+          sub,
+          servers: subServers,
+          serverGroups: buildServerDisplayGroups(subServers),
+        };
+      }),
+    };
+  }, [servers, subscriptions]);
 
   const renderFlag = (code?: string) => {
     if (!code || code.length !== 2) return <Globe className="w-5 h-5 text-current opacity-70" />;
@@ -216,7 +236,9 @@ export default function Servers() {
 
   // Render a normalized server group item
   const renderServerGroup = (group: ServerDisplayGroup) => {
-    const activeGroupServer = findMatchingServer(activeServer, group.servers);
+    const activeGroupServer = visibleActiveServer && group.servers.some((server) => server.id === visibleActiveServer.id)
+      ? visibleActiveServer
+      : null;
     const selectedServer = activeGroupServer || group.selectedServer;
     const isActive = !!activeGroupServer;
 

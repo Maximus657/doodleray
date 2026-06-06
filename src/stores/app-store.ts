@@ -1,7 +1,12 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/core';
-import { findMatchingServer, findServerBySelectionKey, getServerSelectionKey } from '../lib/server-selection';
+import {
+  buildServerSelectionIndex,
+  findMatchingServerInIndex,
+  findServerBySelectionKeyInIndex,
+  getServerSelectionKey,
+} from '../lib/server-selection';
 // Trigger HMR
 
 // ========== Types ==========
@@ -83,6 +88,11 @@ export interface SpeedPoint {
   upload: number;
 }
 
+export interface ServerPingUpdate {
+  id: string;
+  ping: number;
+}
+
 export interface AppState {
   status: ConnectionStatus;
   activeServer: ServerConfig | null;
@@ -144,6 +154,7 @@ export interface AppState {
   removeSubscription: (id: string) => void;
   updateSubscription: (id: string, newSub: Subscription) => void;
   updateServerPing: (id: string, ping: number) => void;
+  updateServerPings: (updates: ServerPingUpdate[]) => void;
   addSpeedPoint: (point: SpeedPoint) => void;
   setCurrentSpeed: (download: number, upload: number) => void;
   setSocksPort: (port: number) => void;
@@ -279,7 +290,8 @@ function resolveStoredActiveServer(
   lastSelectedServerKey: string | null | undefined,
   servers: ServerConfig[],
 ): ServerConfig | null {
-  return findMatchingServer(activeServer, servers) || findServerBySelectionKey(lastSelectedServerKey, servers);
+  const index = buildServerSelectionIndex(servers);
+  return findMatchingServerInIndex(activeServer, index) || findServerBySelectionKeyInIndex(lastSelectedServerKey, index);
 }
 
 function activeServerUpdate(
@@ -329,6 +341,37 @@ function compactStateForPersist(state: AppState): Partial<AppState> {
         return [key, value];
       })
   ) as Partial<AppState>;
+}
+
+function applyServerPingUpdates(state: AppState, updates: ServerPingUpdate[]): Partial<AppState> {
+  if (updates.length === 0) return {};
+
+  const pingById = new Map<string, number>();
+  for (const update of updates) {
+    pingById.set(update.id, update.ping);
+  }
+
+  let serversChanged = false;
+  const servers = state.servers.map((server) => {
+    if (!pingById.has(server.id)) return server;
+    const ping = pingById.get(server.id)!;
+    if (server.ping === ping) return server;
+    serversChanged = true;
+    return { ...server, ping };
+  });
+
+  let activeServer = state.activeServer;
+  if (activeServer && pingById.has(activeServer.id)) {
+    const ping = pingById.get(activeServer.id)!;
+    if (activeServer.ping !== ping) {
+      activeServer = { ...activeServer, ping };
+    }
+  }
+
+  return {
+    servers: serversChanged ? servers : state.servers,
+    activeServer,
+  };
 }
 
 export const useAppStore = create<AppState>()(
@@ -468,12 +511,8 @@ export const useAppStore = create<AppState>()(
         };
       }),
 
-      updateServerPing: (id, ping) => set((s) => ({
-        servers: s.servers.map((srv) =>
-          srv.id === id ? { ...srv, ping } : srv
-        ),
-        activeServer: s.activeServer?.id === id ? { ...s.activeServer, ping } : s.activeServer
-      })),
+      updateServerPing: (id, ping) => set((s) => applyServerPingUpdates(s, [{ id, ping }])),
+      updateServerPings: (updates) => set((s) => applyServerPingUpdates(s, updates)),
 
       addSpeedPoint: (point) => set((s) => ({
         speedHistory: [...s.speedHistory.slice(-239), point],

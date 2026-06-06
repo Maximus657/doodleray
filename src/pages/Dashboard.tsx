@@ -1,14 +1,15 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Plus, Loader2, ClipboardPaste } from 'lucide-react';
 import { useAppStore } from '../stores/app-store';
-import { formatTime, pingServerSmart } from '../lib/utils';
+import { formatTime } from '../lib/utils';
 import { refreshSubscription, fetchSubscription } from '../lib/subscription';
 import { parseProxyLink } from '../lib/parser';
 import { useTranslation } from '../locales';
 import { reportConnectionError } from '../lib/workshop-api';
 import { buildConnectRequestFromState, getActiveRoutingRules } from '../lib/connect-helpers';
-import { findMatchingServer, resolveConnectServer } from '../lib/server-selection';
+import { buildServerSelectionIndex, findMatchingServer, findMatchingServerInIndex, resolveConnectServer } from '../lib/server-selection';
 import { getSubscriptionById, getSubscriptionTrafficStatus } from '../lib/subscription-status';
+import { pingServersWithLimit } from '../lib/ping-runner';
 
 // Sub-components
 import RetroBackground from '../components/dashboard/RetroBackground';
@@ -90,7 +91,7 @@ export default function Dashboard() {
     updateSubscription, removeSubscription, autoSelectFastest,
     subAutoUpdateMinutes, connectedAt, setConnectedAt,
     addSubscription, addServer, removeServer, removeAllManualServers,
-    updateServerPing, showStats, setSocksPort, setHttpPort,
+    updateServerPings, showStats, setSocksPort, setHttpPort,
   } = useAppStore();
   const { t } = useTranslation();
 
@@ -116,7 +117,8 @@ export default function Dashboard() {
   const connectionOpRef = useRef(0);
   const [testingSubId, setTestingSubId] = useState<string | null>(null);
   const [refreshingSubId, setRefreshingSubId] = useState<string | null>(null);
-  const [pingingServerId, setPingingServerId] = useState<string | null>(null);
+  const [pingingServerIds, setPingingServerIds] = useState<Set<string>>(() => new Set());
+  const serverSelectionIndex = useMemo(() => buildServerSelectionIndex(servers), [servers]);
   const autoPingStartedRef = useRef<Set<string>>(new Set());
   const autoSubRefreshStartedRef = useRef(false);
   const trafficLimitNoticeKeyRef = useRef<string | null>(null);
@@ -146,23 +148,21 @@ export default function Dashboard() {
       s => (s.ping === undefined || (s.ping > 0 && s.ping <= 5)) && !autoPingStartedRef.current.has(s.id)
     );
     if (unpinged.length === 0) return;
+    for (const server of unpinged) {
+      autoPingStartedRef.current.add(server.id);
+    }
     let cancelled = false;
     (async () => {
       try {
         const { invoke } = await import('@tauri-apps/api/core');
-        for (const server of unpinged) {
-          if (cancelled) break;
-          autoPingStartedRef.current.add(server.id);
-          try {
-            const ping = await pingServerSmart(server, invoke);
-            updateServerPing(server.id, ping);
-          } catch { updateServerPing(server.id, -1); }
-          await new Promise(r => setTimeout(r, 30));
-        }
+        await pingServersWithLimit(unpinged, invoke, {
+          isCancelled: () => cancelled,
+          onBatch: (updates) => updateServerPings(updates),
+        });
       } catch { /* not in tauri env */ }
     })();
     return () => { cancelled = true; };
-  }, [servers, updateServerPing]);
+  }, [servers, updateServerPings]);
 
   // Connection time counter
   const [connectTime, setConnectTime] = useState(0);
@@ -178,11 +178,11 @@ export default function Dashboard() {
   // Keep persisted selections aligned with refreshed subscription server ids.
   useEffect(() => {
     if (!activeServer) return;
-    const matchedServer = findMatchingServer(activeServer, servers);
+    const matchedServer = findMatchingServerInIndex(activeServer, serverSelectionIndex);
     if (matchedServer && matchedServer.id !== activeServer.id) {
       setActiveServer(matchedServer);
     }
-  }, [activeServer, servers, setActiveServer]);
+  }, [activeServer, serverSelectionIndex, setActiveServer]);
 
   // Sync connection state from backend on mount
   useEffect(() => {
@@ -630,15 +630,13 @@ export default function Dashboard() {
       const { invoke } = await import('@tauri-apps/api/core');
       const toUpdate = servers.filter(s => s.subscriptionId === sub.id);
       addLog('warning', `Testing ${toUpdate.length} servers...`);
-      for (const s of toUpdate) {
-        if (!s.address) continue;
-        setPingingServerId(s.id);
-        try { useAppStore.getState().updateServerPing(s.id, await pingServerSmart(s, invoke)); }
-        catch { useAppStore.getState().updateServerPing(s.id, -1); }
-      }
+      await pingServersWithLimit(toUpdate.filter((s) => s.address), invoke, {
+        onActiveIdsChange: setPingingServerIds,
+        onBatch: (updates) => useAppStore.getState().updateServerPings(updates),
+      });
       addLog('success', 'Ping test complete');
     } catch (err: any) { addLog('error', `Ping test failed: ${err?.message || err}`); }
-    finally { setPingingServerId(null); setTestingSubId(null); }
+    finally { setPingingServerIds(new Set()); setTestingSubId(null); }
   };
 
   const handleUpdateSubscription = async (sub: any) => {
@@ -666,15 +664,13 @@ export default function Dashboard() {
       const { invoke } = await import('@tauri-apps/api/core');
       const custom = servers.filter(s => !s.subscriptionId);
       addLog('warning', `Testing ${custom.length} custom servers...`);
-      for (const s of custom) {
-        if (!s.address) continue;
-        setPingingServerId(s.id);
-        try { useAppStore.getState().updateServerPing(s.id, await pingServerSmart(s, invoke)); }
-        catch { useAppStore.getState().updateServerPing(s.id, -1); }
-      }
+      await pingServersWithLimit(custom.filter((s) => s.address), invoke, {
+        onActiveIdsChange: setPingingServerIds,
+        onBatch: (updates) => useAppStore.getState().updateServerPings(updates),
+      });
       addLog('success', 'Custom servers ping test complete');
     } catch (err: any) { addLog('error', `Custom ping test failed: ${err?.message || err}`); }
-    finally { setPingingServerId(null); setTestingSubId(null); }
+    finally { setPingingServerIds(new Set()); setTestingSubId(null); }
   };
 
   const handleRemoveServer = useCallback((serverId: string, serverName: string) => {
@@ -829,7 +825,7 @@ export default function Dashboard() {
               onRemoveAllCustomServers={handleRemoveAllCustom}
               onRemoveServer={handleRemoveServer}
               testingSubId={testingSubId} refreshingSubId={refreshingSubId}
-              pingingServerId={pingingServerId}
+              pingingServerIds={pingingServerIds}
               subAutoUpdateMinutes={subAutoUpdateMinutes}
               t={t}
             />

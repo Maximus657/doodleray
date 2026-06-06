@@ -26,6 +26,24 @@ function getCredentialPart(server: ServerConfig): string {
   );
 }
 
+function scopedKey(subscriptionId: string | undefined, key: string): string {
+  return `${subscriptionId ?? ''}\u0000${key}`;
+}
+
+function setFirst(map: Map<string, ServerConfig>, key: string | undefined, server: ServerConfig) {
+  if (!key || map.has(key)) return;
+  map.set(key, server);
+}
+
+export interface ServerSelectionIndex {
+  byId: Map<string, ServerConfig>;
+  byRawLink: Map<string, ServerConfig>;
+  byIdentity: Map<string, ServerConfig>;
+  bySubscriptionIdentity: Map<string, ServerConfig>;
+  bySelection: Map<string, ServerConfig>;
+  bySubscriptionSelection: Map<string, ServerConfig>;
+}
+
 export function getServerIdentityKey(server: ServerConfig): string {
   return [
     getServerSelectionKey(server),
@@ -48,46 +66,84 @@ export function getServerSelectionKey(server: ServerConfig): string {
   ].join('|');
 }
 
+export function buildServerSelectionIndex(servers: ServerConfig[]): ServerSelectionIndex {
+  const index: ServerSelectionIndex = {
+    byId: new Map(),
+    byRawLink: new Map(),
+    byIdentity: new Map(),
+    bySubscriptionIdentity: new Map(),
+    bySelection: new Map(),
+    bySubscriptionSelection: new Map(),
+  };
+
+  for (const server of servers) {
+    const identityKey = getServerIdentityKey(server);
+    const selectionKey = getServerSelectionKey(server);
+
+    setFirst(index.byId, server.id, server);
+    setFirst(index.byRawLink, server.rawLink, server);
+    setFirst(index.byIdentity, identityKey, server);
+    setFirst(index.bySubscriptionIdentity, scopedKey(server.subscriptionId, identityKey), server);
+    setFirst(index.bySelection, selectionKey, server);
+    setFirst(index.bySubscriptionSelection, scopedKey(server.subscriptionId, selectionKey), server);
+  }
+
+  return index;
+}
+
 export function findServerBySelectionKey(
   selectionKey: string | null | undefined,
   servers: ServerConfig[],
 ): ServerConfig | null {
   if (!selectionKey) return null;
-  return servers.find((server) => getServerSelectionKey(server) === selectionKey) || null;
+  return buildServerSelectionIndex(servers).bySelection.get(selectionKey) || null;
+}
+
+export function findServerBySelectionKeyInIndex(
+  selectionKey: string | null | undefined,
+  index: ServerSelectionIndex,
+): ServerConfig | null {
+  if (!selectionKey) return null;
+  return index.bySelection.get(selectionKey) || null;
+}
+
+export function findMatchingServerInIndex(
+  target: ServerConfig | null | undefined,
+  index: ServerSelectionIndex,
+): ServerConfig | null {
+  if (!target) return null;
+
+  const byId = index.byId.get(target.id);
+  if (byId) return byId;
+
+  if (target.rawLink) {
+    const byRawLink = index.byRawLink.get(target.rawLink);
+    if (byRawLink) return byRawLink;
+  }
+
+  const targetIdentityKey = getServerIdentityKey(target);
+  const byIdentityInSameSubscription = index.bySubscriptionIdentity.get(
+    scopedKey(target.subscriptionId, targetIdentityKey)
+  );
+  if (byIdentityInSameSubscription) return byIdentityInSameSubscription;
+
+  const byIdentity = index.byIdentity.get(targetIdentityKey);
+  if (byIdentity) return byIdentity;
+
+  const targetSelectionKey = getServerSelectionKey(target);
+  const bySelectionInSameSubscription = index.bySubscriptionSelection.get(
+    scopedKey(target.subscriptionId, targetSelectionKey)
+  );
+  if (bySelectionInSameSubscription) return bySelectionInSameSubscription;
+
+  return findServerBySelectionKeyInIndex(targetSelectionKey, index);
 }
 
 export function findMatchingServer(
   target: ServerConfig | null | undefined,
   servers: ServerConfig[],
 ): ServerConfig | null {
-  if (!target) return null;
-
-  const byId = servers.find((server) => server.id === target.id);
-  if (byId) return byId;
-
-  if (target.rawLink) {
-    const byRawLink = servers.find((server) => server.rawLink && server.rawLink === target.rawLink);
-    if (byRawLink) return byRawLink;
-  }
-
-  const targetIdentityKey = getServerIdentityKey(target);
-  const byIdentityInSameSubscription = servers.find((server) =>
-    server.subscriptionId === target.subscriptionId &&
-    getServerIdentityKey(server) === targetIdentityKey
-  );
-  if (byIdentityInSameSubscription) return byIdentityInSameSubscription;
-
-  const byIdentity = servers.find((server) => getServerIdentityKey(server) === targetIdentityKey);
-  if (byIdentity) return byIdentity;
-
-  const targetSelectionKey = getServerSelectionKey(target);
-  const bySelectionInSameSubscription = servers.find((server) =>
-    server.subscriptionId === target.subscriptionId &&
-    getServerSelectionKey(server) === targetSelectionKey
-  );
-  if (bySelectionInSameSubscription) return bySelectionInSameSubscription;
-
-  return findServerBySelectionKey(targetSelectionKey, servers);
+  return findMatchingServerInIndex(target, buildServerSelectionIndex(servers));
 }
 
 export function selectPreferredServer(
@@ -97,10 +153,14 @@ export function selectPreferredServer(
   if (servers.length === 0) return null;
   if (!autoSelectFastest) return servers[0];
 
-  const withPing = servers.filter((server) => server.ping !== undefined && server.ping > 0);
-  if (withPing.length === 0) return servers[0];
+  let fastest: ServerConfig | null = null;
+  for (const server of servers) {
+    if (server.ping !== undefined && server.ping > 0 && (!fastest || server.ping < fastest.ping!)) {
+      fastest = server;
+    }
+  }
 
-  return withPing.reduce((best, server) => (server.ping! < best.ping! ? server : best));
+  return fastest || servers[0];
 }
 
 export function resolveConnectServer(
