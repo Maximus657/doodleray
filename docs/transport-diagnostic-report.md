@@ -1,5 +1,80 @@
 # DoodleRay Transport Diagnostic Report
 
+## 2026-06-06 Hotfix: Windows Full Computer sing-box 1.13 Inbound Migration
+
+### Scope
+
+- Route: Windows Full Computer mode through `DoodleRayTunnelService`.
+- Engine: bundled `sing-box.exe` 1.13.13 in this workspace.
+- User-visible issue: connect to Germany failed at service readiness with `sing-box config check failed: initialize inbound[0]: legacy inbound fields are deprecated in sing-box 1.11.0 and removed in sing-box 1.13.0`.
+
+### Evidence
+
+- `src-tauri/singbox-core/go.mod` pins `github.com/sagernet/sing-box v1.13.2`, while `src-tauri/sing-box.exe version` reports 1.13.13 in this workspace; both are in the 1.13 line where legacy inbound fields are removed.
+- `src-tauri/src/bin/service.rs::check_singbox_config` runs `sing-box check -c` before the service launches the TUN engine, so this failure happens before adapter creation.
+- `src-tauri/src/lib.rs::tun_inbound_value` emitted TUN inbound fields `sniff: true` and `sniff_override_destination: false`.
+- The official sing-box migration guide maps legacy inbound sniff fields to route actions such as `{ "action": "sniff" }`, which DoodleRay already emits in Full Computer route rules.
+- `src/lib/config-generator.ts` also carried a stale helper generator shape with inbound `sniff` and a legacy DNS outbound route.
+
+### Classification
+
+- Proven: the service-owned TUN config check fails on sing-box 1.13.x because DoodleRay still generated legacy inbound sniff fields.
+- Proven: the first failing edge is config validation, before any local process/core readiness, adapter readiness, DNS path, TCP HTTPS path, or exit canary can run.
+- Proven: removing inbound sniff fields does not remove sniffing from the Full Computer route because route rule `{ "action": "sniff" }` is still emitted.
+- Unknown because the failing live profile is unavailable here: whether the selected German exit has any independent server-side issue after config validation is fixed.
+
+### First Broken Edge
+
+```text
+Full Computer connect
+-> vpn_connect builds sing-box TUN config
+-> tun_inbound_value emits inbound.sniff / inbound.sniff_override_destination
+-> DoodleRayTunnelService writes singbox_tun_config.json
+-> sing-box 1.13.x check -c rejects inbound[0]
+-> tunnel never reaches adapter/DNS/TCP readiness
+```
+
+### Fix Applied
+
+- Removed legacy `sniff`, `sniff_override_destination`, `sniff_timeout`, and `domain_strategy` exposure from generated TUN inbounds.
+- Kept sniffing as the route action `{ "action": "sniff" }` before DNS hijack and routing rules.
+- Modernized the frontend helper generator to avoid reintroducing inbound `sniff`, legacy TUN address fields, and the old DNS special outbound pattern.
+- Added Rust regression coverage for the sing-box 1.13 route-action sniff shape.
+
+### Safety Notes
+
+- Production route material remains in Rust/service-owned config generation, not Flutter UI logs.
+- No local SOCKS/HTTP bridge was added to the Full Computer path.
+- The service still owns the TUN graph and validates config before launch.
+- No secrets, UUIDs, SNI values, subscription URLs, or server hostnames were written into this report.
+
+### Windows Test Path
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`.
+- `npm run build`.
+- `src-tauri\sing-box.exe check -c <safe synthetic DoodleRay TUN config>`.
+- Manual runtime follow-up: reconnect Full Computer mode, verify `sing-box config check failed` is gone, `DoodleRay Tunnel` appears, DNS and TCP HTTPS readiness pass, and disconnect leaves no service-owned `sing-box.exe`.
+
+### 2026-06-06 Installed Smoke Result
+
+- Bumped the hotfix release to `5.2.2` because an installed `5.2.1` build had already reached users and still reproduced the legacy inbound config failure.
+- Built `DoodleRay_5.2.2_x64-setup.exe`; local build returned non-zero only after producing the installer because `TAURI_SIGNING_PRIVATE_KEY` is not present locally.
+- Installed the NSIS build into `C:\Program Files\DoodleRay`.
+- Verified installed `DoodleRay.exe` and `DoodleRayService.exe` report `ProductVersion/FileVersion = 5.2.2`.
+- Verified `DoodleRayService.exe status` responds with `service_version = 5.2.2`.
+- Verified service diagnostics include `network_snapshot`.
+- Verified real Full Computer mode reached `connected` through `starting_xray`, `xray_ready`, `starting_tun`, `waiting_adapter`, `singbox_ready`, `adapter_ready`, `routes_ready`, and `total_connect`.
+- Verified a TCP 443 canary used `DoodleRay Tunnel` as the source interface.
+- Verified DNS fake-ip resolution returns a fake-ip address.
+
+### Android Test Path
+
+- Not touched. No Android build or runtime path is changed.
+
+### iOS Test Path
+
+- Not touched. No iOS build or runtime path is changed.
+
 ## 2026-06-05 Investigation: Workshop Routing Quality and Gaming Preset Merge
 
 ### Scope

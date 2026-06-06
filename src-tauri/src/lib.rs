@@ -1667,8 +1667,6 @@ fn tun_inbound_value(
         "auto_route": true,
         "strict_route": strict_route,
         "stack": stack,
-        "sniff": true,
-        "sniff_override_destination": false,
         "udp_timeout": "10m"
     });
 
@@ -3515,6 +3513,20 @@ mod tests {
         let inbound = tun_inbound_value(&req, Some("DoodleRay Tunnel"), true);
 
         assert_eq!(inbound["route_exclude_address"], json!(["89.58.26.124/32"]));
+    }
+
+    #[test]
+    fn singbox_tun_uses_route_action_sniff_not_legacy_inbound_fields() {
+        let req = sample_request("tun");
+
+        let config = build_singbox_config(&req);
+        let inbound = config["inbounds"][0].as_object().unwrap();
+
+        assert!(!inbound.contains_key("sniff"));
+        assert!(!inbound.contains_key("sniff_override_destination"));
+        assert!(!inbound.contains_key("sniff_timeout"));
+        assert!(!inbound.contains_key("domain_strategy"));
+        assert_eq!(config["route"]["rules"][0], json!({ "action": "sniff" }));
     }
 
     #[test]

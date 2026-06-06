@@ -32,13 +32,13 @@ export function generateSingboxConfig(
     outbounds: [
       generateOutbound(server),
       { type: 'direct', tag: 'direct' },
-      { type: 'dns', tag: 'dns-out' },
       { type: 'block', tag: 'block' },
     ],
     route: {
       auto_detect_interface: true,
       rules: [
-        { protocol: 'dns', outbound: 'dns-out' },
+        { action: 'sniff' },
+        { protocol: 'dns', action: 'hijack-dns' },
       ],
     },
   };
@@ -77,17 +77,15 @@ function generateInbounds(
     return [{
       type: 'tun',
       tag: 'tun-in',
-      inet4_address: '172.19.0.1/30',
-      inet6_address: 'fdfe:dcba:9876::1/126',
+      address: ['172.30.255.1/30', 'fdfe:dcba:9876::1/126'],
       auto_route: true,
       strict_route: strictRoute,
       stack: networkStack,
-      sniff: true,
     }];
   }
   return [
-    { type: 'socks', tag: 'socks-in', listen: '127.0.0.1', listen_port: socksPort, sniff: true },
-    { type: 'http', tag: 'http-in', listen: '127.0.0.1', listen_port: httpPort, sniff: true },
+    { type: 'socks', tag: 'socks-in', listen: '127.0.0.1', listen_port: socksPort },
+    { type: 'http', tag: 'http-in', listen: '127.0.0.1', listen_port: httpPort },
   ];
 }
 
