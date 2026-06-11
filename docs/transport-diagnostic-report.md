@@ -1,5 +1,151 @@
 # DoodleRay Transport Diagnostic Report
 
+## 2026-06-11 Hotfix: Windows TUN IPv4 Interface Readiness Race
+
+### Scope
+
+- Route: Windows Full Computer mode through `DoodleRayTunnelService`.
+- User-visible issue: connect fails with `Full Computer components not installed or not ready: route readiness failed: DoodleRay Tunnel IPv4 interface metric is missing`.
+- Platform: Windows desktop Tauri client.
+
+### Evidence
+
+- `src-tauri/src/bin/service.rs::start_tunnel` currently waits for the `DoodleRay Tunnel` adapter by name, then runs `set_doodleray_interface_metric`, then immediately starts route readiness polling.
+- `set_doodleray_interface_metric` calls `Set-NetIPInterface -InterfaceAlias 'DoodleRay Tunnel' ... -ErrorAction SilentlyContinue`, so failure to find the IPv4 interface can be swallowed.
+- `ensure_doodleray_route_preferred` treats a missing `Get-NetIPInterface -InterfaceAlias 'DoodleRay Tunnel' -AddressFamily IPv4` result as `DoodleRay Tunnel IPv4 interface metric is missing`, although the actual failing edge is the IPv4 interface object not being ready or not existing.
+- The failure happens after the adapter name is visible and after `sing-box check -c` / process startup, so this is local Windows adapter/IP route readiness rather than a subscription, server, or remote blocking failure.
+
+### Classification
+
+- Proven: the current diagnostic message is misleading; it says the metric is missing when the IPv4 interface lookup itself failed.
+- Proven: metric application is best-effort and silent before route readiness, so transient Windows adapter binding delays can surface as a hard Full Computer startup failure.
+- Likely but unproven: affected machines have a race between Wintun adapter creation and IPv4 binding/route publication, or a local VPN/driver conflict that delays that binding beyond the current readiness window.
+- Unknown because the user's diagnostics are not available here: whether IPv4 binding is disabled on `DoodleRay Tunnel`, a competing TUN is present, or Windows simply published the IPv4 interface late.
+
+### First Broken Edge
+
+```text
+sing-box starts TUN
+-> Windows exposes adapter named DoodleRay Tunnel
+-> service marks adapter discovered
+-> Get-NetIPInterface IPv4 still returns nothing
+-> route readiness fails with misleading metric error
+-> Full Computer mode aborts
+```
+
+### Fix Applied
+
+- Add an explicit IPv4 interface readiness phase after adapter discovery and before route readiness.
+- Apply the DoodleRay interface metric by adapter `InterfaceIndex`, not only by alias.
+- Retry metric application while the IPv4 binding is coming up instead of doing a one-shot silent best-effort command.
+- Improve failure text to distinguish adapter missing, IPv4 binding disabled/not ready, metric application failure, missing routes, and route preference failure.
+- Keep the service-owned TUN architecture unchanged and do not add any local proxy/listener bridge.
+
+### Windows Test Path
+
+- `cargo check --manifest-path src-tauri/Cargo.toml --bin DoodleRayService`: passed.
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`: passed, 24 passed, 2 ignored.
+- Manual runtime follow-up:
+  - Install the patched service.
+  - Connect Full Computer mode five times after reboot and after sleep/resume.
+  - Confirm phases include IPv4 readiness before route readiness.
+  - Confirm diagnostics show `DoodleRay Tunnel` IPv4 interface metric `1`.
+  - Confirm a failing machine now reports whether IPv4 binding is disabled/not ready instead of the old metric-missing message.
+
+### Android Test Path
+
+- Not touched. No Android build or runtime path is changed.
+
+### iOS Test Path
+
+- Not touched. No iOS build or runtime path is changed.
+
+## 2026-06-07 Investigation: Gold Apple Split Routing Failure on Windows TUN
+
+### Scope
+
+- Route: Windows Full Computer mode through `DoodleRayTunnelService`.
+- Engine: current installed `5.2.2` service path, `xray + sing-box TUN bridge`.
+- User-visible issue: `2ip.ru` can look acceptable, but `https://goldapple.ru/` does not fully load; the same site reportedly loads through Happ.
+- Platform: Windows desktop Tauri client.
+
+### Evidence
+
+- `DoodleRayService.exe status` reported `state=connected`, `phase=connected`, service version `5.2.2`.
+- WinINet and WinHTTP proxy were disabled, so the observed route was Whole Computer/TUN, not Windows system proxy.
+- `Test-NetConnection goldapple.ru -Port 443` succeeded through `DoodleRay Tunnel`; the failing edge is not raw TCP 443 reachability.
+- System DNS for `goldapple.ru`, `www.goldapple.ru`, `sp.goldapple.ru`, and `mc.yandex.ru` returned sing-box fake-ip addresses from `198.18.0.0/15`, proving DNS hijack/fake-ip is active.
+- Browser-like `curl` to `https://goldapple.ru/` returned HTTP 200, and the two main `/_static-files/...js` assets returned HTTP 200.
+- Browser-like `GET https://goldapple.ru/web/api/v1/settings`, with home-page cookies, `Referer`, `Origin`, and Russian accept-language headers, returned HTTP 403. The page bootstrap calls this endpoint repeatedly, so a browser can appear stuck even when the shell HTML and static JS load.
+- Playwright screenshot after 15 seconds under the current DoodleRay route showed only a partially loaded page shell/carousel, consistent with the settings API failing.
+- External IP canary through the current DoodleRay route reported a non-RU/DE exit at the time of this investigation. Exact IP and hostname are redacted.
+- `src/lib/connect-helpers.ts::buildConnectRequestFromState` sends Workshop routing rules only when `proxyMode === "tun"`.
+- `src-tauri/src/lib.rs::build_singbox_config` compiles domain and process Workshop rules for the sing-box-owned paths.
+- `src-tauri/src/lib.rs::build_xray_config` compiles domain Workshop rules for generated Xray configs.
+- `src-tauri/src/lib.rs::inject_xray_inbounds` preserves raw Xray subscription routing and injects DoodleRay inbounds/API/DNS, but does not merge `req.routing_rules` into the raw Xray routing graph.
+- In Windows `xray + TUN bridge`, sing-box mainly owns TUN capture and forwards to local Xray; domain routing for the proxied path must happen in Xray when Xray is the engine owner.
+
+### Classification
+
+- Proven: under the current DoodleRay Windows TUN route, `goldapple.ru` resolves and TCP connects, but the site bootstrap settings API returns HTTP 403.
+- Proven: a simple `2ip.ru`-style external IP check is insufficient for this failure; the main HTML/static route and the API route have different outcomes.
+- Proven: the current machine's active DoodleRay exit was not RU during the live check, despite the user's earlier observation that `2ip.ru` looked Russian.
+- Proven: Workshop domain rules are compiled for generated Xray configs, but not merged into raw Xray configs handled by `inject_xray_inbounds`.
+- Likely but unproven: Happ succeeds because it is using a different exit or route policy for the Gold Apple API edge.
+- Likely but unproven: if the active DoodleRay server is a raw Xray subscription profile, user-added `goldapple.ru` / `*.goldapple.ru` Workshop rules will not affect Xray routing.
+- Unknown because runtime config files are ACL-protected from the non-elevated client: whether the currently active raw Xray config already contains any Gold Apple or RU-site rule.
+
+### First Broken Edge
+
+Runtime edge proven by network checks:
+
+```text
+Gold Apple browser bootstrap
+-> https://goldapple.ru/ returns 200
+-> /_static-files JS returns 200
+-> /web/api/v1/settings returns 403 over current DoodleRay route
+-> app shell remains partially loaded / stuck
+```
+
+Product edge proven by code inspection:
+
+```text
+Raw Xray subscription profile
+-> inject_xray_inbounds(raw, request)
+-> DoodleRay inbounds/API/DNS injected
+-> raw routing preserved and sanitized
+-> request.routing_rules are not merged
+-> Workshop domain rules cannot force Gold Apple direct/proxy/block on this path
+```
+
+### Minimal Fix Plan
+
+- Add a shared helper that compiles Workshop domain rules into Xray routing rules using the same domain format currently used by `build_xray_config`.
+- Call that helper from both `build_xray_config` and `inject_xray_inbounds`, inserting DoodleRay Workshop rules after the API/DNS rules and before preserved broad/default raw routing where possible.
+- Preserve raw subscription routing and balancers; do not delete provider rules except existing unsupported-value sanitization.
+- Add regression coverage showing a raw Xray config plus `goldapple.ru` and `*.goldapple.ru` Workshop rules emits the expected Xray field rules.
+- Add a redacted diagnostics check for website bootstrap health: home page HTTP status, key static JS status, and `/web/api/v1/settings` status.
+- UX follow-up: expose an actual exit-country canary from the active tunnel instead of relying on users to infer routing from `2ip.ru`.
+
+### Windows Test Path
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`.
+- `npm run build`.
+- Manual runtime follow-up:
+  - Connect a raw Xray subscription profile in Whole Computer mode.
+  - Add Workshop domain rules for `goldapple.ru` and `*.goldapple.ru` with the intended action.
+  - Reconnect and verify the generated redacted routing summary includes those domain rules.
+  - Load `https://goldapple.ru/` in a browser and verify `/web/api/v1/settings` no longer returns 403 for the intended route.
+  - Confirm the active tunnel exit-country canary matches the user's expectation before judging site behavior.
+
+### Android Test Path
+
+- Not touched. No Android build or runtime path is changed.
+
+### iOS Test Path
+
+- Not touched. No iOS build or runtime path is changed.
+
 ## 2026-06-06 Hotfix: Windows Full Computer sing-box 1.13 Inbound Migration
 
 ### Scope

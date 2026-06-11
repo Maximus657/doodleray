@@ -234,12 +234,14 @@ function App() {
       }
     }
 
-    async function checkForUpdates(options: { autoInstall?: boolean } = {}) {
+    async function checkForUpdates(options: { autoInstall?: boolean; silent?: boolean } = {}) {
       try {
         const currentVersion = await import('@tauri-apps/api/app')
           .then(({ getVersion }) => getVersion())
           .catch(() => 'unknown');
-        useAppStore.getState().addLog('info', `Checking for app update (current v${currentVersion})...`);
+        if (!options.silent) {
+          useAppStore.getState().addLog('info', `Checking for app update (current v${currentVersion})...`);
+        }
         const update = await checkForAppUpdate();
         if (update) {
           const prev = useAppStore.getState().availableUpdate;
@@ -249,7 +251,9 @@ function App() {
             updateStatus: '',
             updateProgress: null,
           });
-          useAppStore.getState().addLog('info', `App update available: v${currentVersion} -> v${update.version}`);
+          if (!options.silent || !prev || prev !== update.version) {
+            useAppStore.getState().addLog('info', `App update available: v${currentVersion} -> v${update.version}`);
+          }
 
           if (options.autoInstall) {
             useAppStore.getState().addLog('info', `Auto-update found v${update.version}. Installing...`);
@@ -284,17 +288,21 @@ function App() {
           updateStatus: '',
           updateProgress: null,
         });
-        useAppStore.getState().addLog('success', `App is up to date (v${currentVersion})`);
+        if (!options.silent) {
+          useAppStore.getState().addLog('success', `App is up to date (v${currentVersion})`);
+        }
         return false;
       } catch (e) {
         console.log('Update check skipped:', e);
         const message = e instanceof Error ? e.message : String(e);
-        useAppStore.getState().setUpdateState({
-          updatePhase: 'error',
-          updateStatus: message,
-          updateProgress: null,
-        });
-        useAppStore.getState().addLog('warning', `App update check failed: ${message}`);
+        if (!options.silent) {
+          useAppStore.getState().setUpdateState({
+            updatePhase: 'error',
+            updateStatus: message,
+            updateProgress: null,
+          });
+          useAppStore.getState().addLog('warning', `App update check failed: ${message}`);
+        }
         return false;
       }
     }
@@ -382,7 +390,7 @@ function App() {
       compactHydratedStorage();
       startupFlowTimer = setTimeout(async () => {
         updateInProgress = true;
-        const installingUpdate = await checkForUpdates({ autoInstall: false });
+        const installingUpdate = await checkForUpdates({ autoInstall: false, silent: true });
         updateInProgress = false;
         if (installingUpdate) return;
         autoConnectIfEnabled();
@@ -394,7 +402,7 @@ function App() {
       if (updateInProgress) return;
       updateInProgress = true;
       try {
-        await checkForUpdates({ autoInstall: false });
+        await checkForUpdates({ autoInstall: false, silent: true });
       } finally {
         updateInProgress = false;
       }

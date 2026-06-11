@@ -6486,17 +6486,9 @@ pub fn run() {
                 window.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                         // Hide instead of close → minimize to tray
-                        #[cfg(windows)]
-                        {
-                            let _ = &app_handle;
-                            let _ = api;
-                        }
-                        #[cfg(not(windows))]
-                        {
-                            api.prevent_close();
-                            if let Some(win) = app_handle.get_webview_window("main") {
-                                let _ = win.hide();
-                            }
+                        api.prevent_close();
+                        if let Some(win) = app_handle.get_webview_window("main") {
+                            let _ = win.hide();
                         }
                     }
                 });

@@ -819,12 +819,13 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         state().lock().unwrap().singbox = Some(child);
 
         set_phase("waiting_adapter", started, generation)?;
-        wait_for_adapter("DoodleRay Tunnel", Duration::from_secs(12), generation)?;
+        wait_for_adapter("DoodleRay Tunnel", Duration::from_secs(15), generation)?;
         ensure_singbox_alive(&singbox_log_path)?;
-        set_phase("singbox_ready", started, generation)?;
-        set_doodleray_interface_metric();
         set_phase("adapter_ready", started, generation)?;
-        wait_for_doodleray_route_preferred(Duration::from_secs(12), generation)?;
+        set_phase("singbox_ready", started, generation)?;
+        wait_for_doodleray_ipv4_interface(Duration::from_secs(20), generation)?;
+        set_phase("ipv4_ready", started, generation)?;
+        wait_for_doodleray_route_preferred(Duration::from_secs(20), generation)?;
         set_phase("routes_ready", started, generation)?;
         ensure_current_generation(generation)?;
 
@@ -1084,39 +1085,103 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         Err("DoodleRay Tunnel adapter did not become ready".into())
     }
 
-    fn set_doodleray_interface_metric() {
-        let script = "Set-NetIPInterface -InterfaceAlias 'DoodleRay Tunnel' -AddressFamily IPv4 -InterfaceMetric 1 -ErrorAction SilentlyContinue; Set-NetIPInterface -InterfaceAlias 'DoodleRay Tunnel' -AddressFamily IPv6 -InterfaceMetric 1 -ErrorAction SilentlyContinue";
+    fn apply_doodleray_interface_metric() -> Result<String, String> {
+        let script = r#"
+$ErrorActionPreference = 'Stop'
+$adapter = Get-NetAdapter -Name 'DoodleRay Tunnel' -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $adapter) {
+  Write-Output 'DoodleRay Tunnel adapter is missing'
+  exit 2
+}
+
+$binding = Get-NetAdapterBinding -Name $adapter.Name -ComponentID 'ms_tcpip' -ErrorAction SilentlyContinue
+if ($binding -and -not $binding.Enabled) {
+  Enable-NetAdapterBinding -Name $adapter.Name -ComponentID 'ms_tcpip' -ErrorAction SilentlyContinue
+  Start-Sleep -Milliseconds 150
+}
+
+$tunIface = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
+if (-not $tunIface) {
+  $binding = Get-NetAdapterBinding -Name $adapter.Name -ComponentID 'ms_tcpip' -ErrorAction SilentlyContinue
+  $bindingState = if ($binding) { $binding.Enabled } else { 'unknown' }
+  Write-Output ("DoodleRay Tunnel IPv4 interface is not ready: ifIndex={0}, adapterStatus={1}, ipv4Binding={2}" -f $adapter.ifIndex, $adapter.Status, $bindingState)
+  exit 2
+}
+
+Set-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -AutomaticMetric Disabled -InterfaceMetric 1 -ErrorAction Stop
+$ipv6Iface = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -ErrorAction SilentlyContinue
+if ($ipv6Iface) {
+  Set-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -AutomaticMetric Disabled -InterfaceMetric 1 -ErrorAction SilentlyContinue
+}
+
+$tunIface = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction Stop
+if ([int]$tunIface.InterfaceMetric -ne 1) {
+  Write-Output ("DoodleRay Tunnel IPv4 metric was not applied: ifIndex={0}, metric={1}" -f $adapter.ifIndex, $tunIface.InterfaceMetric)
+  exit 3
+}
+
+Write-Output ("DoodleRay Tunnel IPv4 ready: ifIndex={0}, metric={1}, state={2}, mtu={3}" -f $adapter.ifIndex, $tunIface.InterfaceMetric, $tunIface.ConnectionState, $tunIface.NlMtu)
+"#;
         match Command::new("powershell")
             .args(["-NoProfile", "-Command", script])
             .creation_flags(0x08000000)
             .output()
         {
             Ok(output) if output.status.success() => {
-                log_service_event("applied DoodleRay Tunnel interface metric");
+                Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
             }
-            Ok(output) => {
-                log_service_event(&format!(
-                    "failed to apply interface metric: {}{}",
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
-                ));
-            }
-            Err(e) => log_service_event(&format!("failed to run metric command: {}", e)),
+            Ok(output) => Err(format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )),
+            Err(e) => Err(format!("failed to run metric command: {}", e)),
         }
+    }
+
+    fn wait_for_doodleray_ipv4_interface(timeout: Duration, generation: u64) -> Result<(), String> {
+        let deadline = Instant::now() + timeout;
+        let mut last_error = "DoodleRay Tunnel IPv4 interface did not become ready".to_string();
+        while Instant::now() < deadline {
+            ensure_current_generation(generation)?;
+            match apply_doodleray_interface_metric() {
+                Ok(message) => {
+                    log_service_event(&format!(
+                        "applied DoodleRay Tunnel interface metric: {}",
+                        message
+                    ));
+                    return Ok(());
+                }
+                Err(message) => last_error = message,
+            }
+            std::thread::sleep(Duration::from_millis(300));
+        }
+        Err(format!(
+            "DoodleRay Tunnel IPv4 readiness failed: {}",
+            last_error
+        ))
     }
 
     fn ensure_doodleray_route_preferred() -> Result<(), String> {
         let script = r#"
-$tunIface = Get-NetIPInterface -InterfaceAlias 'DoodleRay Tunnel' -AddressFamily IPv4 -ErrorAction SilentlyContinue
-if (-not $tunIface) {
-  Write-Output 'DoodleRay Tunnel IPv4 interface metric is missing'
+$adapter = Get-NetAdapter -Name 'DoodleRay Tunnel' -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $adapter) {
+  Write-Output 'DoodleRay Tunnel adapter is missing'
   exit 2
 }
 
-$tunDefaultRoute = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -InterfaceAlias 'DoodleRay Tunnel' -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
+$tunIface = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
+if (-not $tunIface) {
+  $binding = Get-NetAdapterBinding -Name $adapter.Name -ComponentID 'ms_tcpip' -ErrorAction SilentlyContinue
+  $bindingState = if ($binding) { $binding.Enabled } else { 'unknown' }
+  Write-Output ("DoodleRay Tunnel IPv4 interface is not ready: ifIndex={0}, adapterStatus={1}, ipv4Binding={2}" -f $adapter.ifIndex, $adapter.Status, $bindingState)
+  exit 2
+}
+
+$tunDefaultRoute = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -InterfaceIndex $adapter.ifIndex -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
 $tunSplitRoutes = @(
-  Get-NetRoute -DestinationPrefix '0.0.0.0/1' -InterfaceAlias 'DoodleRay Tunnel' -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
-  Get-NetRoute -DestinationPrefix '128.0.0.0/1' -InterfaceAlias 'DoodleRay Tunnel' -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
+  Get-NetRoute -DestinationPrefix '0.0.0.0/1' -InterfaceIndex $adapter.ifIndex -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
+  Get-NetRoute -DestinationPrefix '128.0.0.0/1' -InterfaceIndex $adapter.ifIndex -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
 ) | Where-Object { $_ }
 
 $tunRoutes = @()
@@ -1128,7 +1193,7 @@ if ($tunDefaultRoute) {
   $tunRoutes += $tunSplitRoutes
   $routeShape = 'split'
 } else {
-  $tunCustomRoutes = Get-NetRoute -InterfaceAlias 'DoodleRay Tunnel' -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+  $tunCustomRoutes = Get-NetRoute -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
     Where-Object {
       $_.DestinationPrefix -notin @('172.30.255.0/30', '255.255.255.255/32') -and
       $_.DestinationPrefix -notlike '224.*' -and
@@ -1146,7 +1211,7 @@ if ($tunDefaultRoute) {
 
 $tunEffective = ($tunRoutes | ForEach-Object { [int]$_.RouteMetric + [int]$tunIface.InterfaceMetric } | Measure-Object -Maximum).Maximum
 $bestOther = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
-  Where-Object { $_.InterfaceAlias -ne 'DoodleRay Tunnel' } |
+  Where-Object { $_.InterfaceIndex -ne $adapter.ifIndex } |
   ForEach-Object {
     $iface = Get-NetIPInterface -InterfaceIndex $_.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
     if ($iface) {
