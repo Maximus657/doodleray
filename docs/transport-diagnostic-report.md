@@ -1,5 +1,150 @@
 # DoodleRay Transport Diagnostic Report
 
+## 2026-06-16 Hotfix: Windows Shutdown Xray Teardown Error Flash
+
+### Scope
+
+- Route: Windows Browser & apps / system proxy mode and any in-process Xray-backed route.
+- User-visible issue: during Windows shutdown, DoodleRay can show an Xray error for a few seconds before the computer continues shutting down.
+- Platform: Windows desktop Tauri client.
+
+### Evidence
+
+- `src-tauri/src/lib.rs::run` only performed cleanup on final `tauri::RunEvent::Exit`; Tauri also emits `ExitRequested` earlier.
+- `src-tauri/src/xray.rs` captured Xray stdout/stderr into `XRAY_LOGS` until the child process was killed and the pipe readers finished.
+- `src/pages/Dashboard.tsx` polled `get_proxy_logs` while UI status was still `connected`, so late Xray socket teardown messages could be promoted to red UI errors during OS shutdown.
+- Xray is already started with `CREATE_NO_WINDOW`, so the visible annoyance is the user-facing DoodleRay log strip, not a standalone Xray console window.
+
+### Classification
+
+- Proven: controlled shutdown/disconnect can produce late Xray stderr/stdout lines after Windows or DoodleRay starts tearing down sockets.
+- Proven: those late lines are not a route-selection, subscription, or remote-server failure by themselves.
+- Likely but unproven: the user's shutdown flash is one of these late Xray teardown/reset/cancel messages.
+- Unknown because the exact user's shutdown line is not available: the precise Xray module and wording shown during shutdown.
+
+### First Broken Edge
+
+```text
+Windows shutdown begins
+-> DoodleRay UI still has status=connected briefly
+-> Xray/local sockets are being torn down
+-> Xray emits a reset/cancel/closed-connection line
+-> Dashboard polls get_proxy_logs and classifies "failed" as error
+-> user sees an unpleasant red Xray error during shutdown
+```
+
+### Fix Applied
+
+- Added `xray::begin_shutdown()` and call it on `tauri::RunEvent::ExitRequested`, before final `Exit` cleanup.
+- Added `XRAY_STOPPING` in `src-tauri/src/xray.rs`; while set, pipe-reader threads skip new Xray lines and `get_new_logs()` returns empty.
+- `stop_xray()` now clears the Xray log buffer and keeps the stopping marker set until the next `start_xray()` resets it.
+- Expanded the frontend filter in `src/pages/Dashboard.tsx` for non-actionable Xray teardown/reset lines with proxy context, while keeping startup/bind/readiness errors visible.
+- Existing EOF response handling for subscription/traffic-limit diagnostics remains unchanged.
+
+### Windows Test Path
+
+- `npm run build`: passed for `5.3.1`; Vite reported only existing chunk/dynamic-import warnings.
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`: passed, 26 passed, 2 ignored.
+- `cargo build --release --manifest-path src-tauri/Cargo.toml --bin DoodleRayService`: passed.
+- Fresh `src-tauri\DoodleRayService.exe` resource was replaced from `src-tauri\target\release\DoodleRayService.exe` and reports `ProductVersion/FileVersion = 5.3.1`.
+- `npm run tauri build -- --bundles nsis`: produced:
+  - `src-tauri\target\release\bundle\nsis\DoodleRay_5.3.1_x64-setup.exe`
+  - `src-tauri\target\release\bundle\nsis\DoodleRay_5.3.1_x64-setup.nsis.zip`
+- Local Tauri build exited non-zero only because `TAURI_SIGNING_PRIVATE_KEY` is not present locally; `latest.json` was not generated. Auto-update release must be produced by the GitHub Actions release workflow where the updater signing secret is available.
+- Manual runtime follow-up:
+  - Connect an Xray-backed profile in Browser & apps mode.
+  - Quit DoodleRay from tray and verify no late red Xray reset/cancel error appears.
+  - Reconnect after quit/restart and verify real Xray bind/start failures are still visible.
+  - During Windows shutdown, verify the app closes without flashing an Xray teardown error.
+
+### Android Test Path
+
+- Not touched. No Android build or runtime path is changed.
+
+### iOS Test Path
+
+- Not touched. No iOS build or runtime path is changed.
+
+## 2026-06-16 Investigation: Windows Browser & Apps HTTP Inbound Reset Warnings
+
+### Scope
+
+- Route: Windows Browser & apps / system proxy mode.
+- User-visible issue: user sent Xray warnings like `APP/PROXYMAN/INBOUND: connection ends > proxy/http: failed to read http request > read tcp 127.0.0.1:<client>->127.0.0.1:<http-in>: wsarecv: An existing connection was forcibly closed by the remote host`.
+- Platform: Windows desktop Tauri client.
+
+### Evidence
+
+- The screenshot shows Xray `PROXY/HTTP` inbound warnings, not a DoodleRay `FATAL` connect failure.
+- The inbound listen side in the screenshot is a runtime HTTP proxy port, redacted here as `<http-in>`, not necessarily the default `10809`.
+- `src-tauri/src/lib.rs::vpn_connect` reserves runtime loopback ports in non-TUN mode when requested proxy ports are busy, then updates `request.socks_port`, `request.http_port`, and `request.api_port`.
+- `src-tauri/src/lib.rs::vpn_connect` waits for `request.http_port` before applying Windows system proxy when `system_proxy_mode == "set"`.
+- `src-tauri/src/lib.rs::apply_system_proxy_mode` passes the final `request.http_port` to `sysproxy::apply_doodleray_proxy`.
+- `src-tauri/src/sysproxy.rs::apply_doodleray_proxy` writes a simple WinINet `ProxyServer` value of `127.0.0.1:<http_port>` only after the HTTP proxy port is reachable.
+- Local inspection on this workstation at the time of this entry showed no active DoodleRay system proxy and no listener on the default/runtime proxy ports, so the live user's exact Windows proxy state is not available here.
+
+### Classification
+
+- Proven: this log line is generated by the local HTTP proxy inbound after a loopback client closes a TCP connection before a complete HTTP request is read.
+- Proven: current source code is intended to point WinINet at the final runtime HTTP port, including when the default `10809` is busy.
+- Likely but unproven: if browsing still works, the warning is benign noise from browser/app preconnect, cancellation, probe, or shutdown behavior and should not be shown to users as a scary red error.
+- Unknown because user diagnostics are missing: whether this user's Windows `ProxyServer` equals the runtime HTTP inbound port shown by the connected session.
+- Unknown because user diagnostics are missing: whether another proxy/VPN/client changed WinINet after DoodleRay connected, leaving browsers pointed at a stale or wrong loopback port.
+
+### First Broken Edge
+
+For the screenshot alone, the first proven product edge is diagnostic/UX noise:
+
+```text
+browser/proxy-aware app opens local proxy TCP connection
+-> client closes before sending a complete HTTP request
+-> Xray logs PROXY/HTTP failed to read http request as warning
+-> DoodleRay/user treats it as a connection failure
+```
+
+If the user's internet is actually broken, the first edge is not proven yet. The next check must prove whether Windows points at the active runtime HTTP inbound:
+
+```text
+DoodleRay connected in Browser & apps mode
+-> Xray/sing-box HTTP inbound listens on 127.0.0.1:<http-in>
+-> WinINet ProxyServer should be exactly 127.0.0.1:<http-in>
+-> browser/app should connect to that port
+```
+
+### Minimal Fix Plan
+
+- Ask the user for DoodleRay diagnostics immediately after the warning appears: active mode, connected message with SOCKS/HTTP ports, Windows `ProxyServer`, listeners for the active HTTP port, and whether pages actually fail to load.
+- Treat isolated `failed to read http request` / `forcibly closed by the remote host` warnings from loopback HTTP inbound as non-fatal UI noise unless accompanied by a DoodleRay `FATAL`, closed HTTP port, wrong WinINet `ProxyServer`, or failed canary.
+- Consider filtering or downgrading this specific inbound warning in the user-facing log strip while keeping it available in support diagnostics.
+- If diagnostics show `ProxyServer` does not match the runtime HTTP port, fix the apply/restore/race path around runtime port selection and WinINet notification.
+- If diagnostics show the active HTTP port is closed while `ProxyServer` still points to it, fix guardian/recovery so Windows proxy is restored immediately.
+
+### Fix Applied
+
+- Added a narrow frontend filter in `src/pages/Dashboard.tsx` for Xray HTTP inbound reset warnings that match all of:
+  - `PROXY/HTTP`
+  - `failed to read http request`
+  - loopback-to-loopback endpoint pair
+  - reset wording such as `forcibly closed by the remote host`, `connection reset by peer`, `wsarecv`, or `wsasend`
+- The filter runs before generic `failed` lines are promoted to error logs, so this specific benign local reset no longer turns the user-facing log strip red.
+- Other failed proxy lines remain visible as errors or warnings.
+
+### Windows Test Path
+
+- With `10809` deliberately occupied, connect Browser & apps mode and verify DoodleRay chooses runtime ports.
+- Verify `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings\ProxyServer` equals `127.0.0.1:<runtime_http_port>`.
+- Open Edge/Chrome and verify HTTPS pages load through the runtime HTTP proxy.
+- Close/reopen a tab or cancel a page load and confirm any Xray `failed to read http request` warning does not change connection state to failed.
+- Disconnect and verify WinINet proxy is restored or cleared according to the previous state.
+
+### Android Test Path
+
+- Not touched. No Android build or runtime path is changed.
+
+### iOS Test Path
+
+- Not touched. No iOS build or runtime path is changed.
+
 ## 2026-06-11 Hotfix: Windows TUN IPv4 Interface Readiness Race
 
 ### Scope

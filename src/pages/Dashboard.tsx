@@ -33,6 +33,54 @@ function isProxyResponseEofLine(line: string): boolean {
   );
 }
 
+function isBenignProxyHttpRequestResetLine(line: string): boolean {
+  const lower = line.toLowerCase();
+  const isLoopbackHttpInbound =
+    /127\.0\.0\.1:\d+\s*->\s*127\.0\.0\.1:\d+/.test(line) ||
+    /\[::1\]:\d+\s*->\s*\[::1\]:\d+/.test(line);
+
+  return (
+    lower.includes('proxy/http') &&
+    lower.includes('failed to read http request') &&
+    isLoopbackHttpInbound &&
+    (
+      lower.includes('forcibly closed by the remote host') ||
+      lower.includes('connection reset by peer') ||
+      lower.includes('wsarecv') ||
+      lower.includes('wsasend')
+    )
+  );
+}
+
+function isBenignProxyTeardownLine(line: string): boolean {
+  if (isBenignProxyHttpRequestResetLine(line)) return true;
+
+  const lower = line.toLowerCase();
+  const hasProxyContext =
+    lower.includes('app/proxyman') ||
+    lower.includes('proxy/') ||
+    lower.includes('transport/internet') ||
+    lower.includes('connection ends');
+  const hasTeardownReason =
+    lower.includes('context canceled') ||
+    lower.includes('operation was canceled') ||
+    lower.includes('use of closed network connection') ||
+    lower.includes('forcibly closed') ||
+    lower.includes('connection reset by peer') ||
+    lower.includes('broken pipe') ||
+    lower.includes('wsarecv') ||
+    lower.includes('wsasend') ||
+    lower.includes('aborted by the software');
+  const isStartupOrReadinessError =
+    lower.includes('failed to start') ||
+    lower.includes('bind:') ||
+    lower.includes('address already in use') ||
+    lower.includes('not ready') ||
+    lower.includes('initialize');
+
+  return hasProxyContext && hasTeardownReason && !isStartupOrReadinessError;
+}
+
 function getProxyLogLevel(line: string): 'error' | 'warning' | null {
   const lower = line.toLowerCase();
   if (lower.includes('[warning]') && lower.includes('core: xray') && lower.includes('started')) return null;
@@ -250,6 +298,7 @@ export default function Dashboard() {
         const lines: string[] = await invoke('get_proxy_logs');
         for (const line of lines) {
           if (!line.trim() || line.match(/tunneling request to tcp|accepted (?:tcp|udp)/)) continue;
+          if (isBenignProxyTeardownLine(line)) continue;
           if (isProxyResponseEofLine(line)) {
             const state = useAppStore.getState();
             const activeSub = getSubscriptionById(state.subscriptions, state.activeServer?.subscriptionId);

@@ -7,12 +7,62 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 lazy_static! {
     static ref XRAY_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
     static ref XRAY_LOGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
     static ref LOG_CURSOR: Mutex<usize> = Mutex::new(0);
+}
+
+static XRAY_STOPPING: AtomicBool = AtomicBool::new(false);
+
+pub fn begin_shutdown() {
+    XRAY_STOPPING.store(true, Ordering::SeqCst);
+    clear_log_buffer();
+}
+
+fn clear_log_buffer() {
+    if let Ok(mut logs) = XRAY_LOGS.lock() {
+        logs.clear();
+    }
+    if let Ok(mut cursor) = LOG_CURSOR.lock() {
+        *cursor = 0;
+    }
+}
+
+fn should_skip_xray_log_line(line: &str) -> bool {
+    if XRAY_STOPPING.load(Ordering::Relaxed) {
+        return true;
+    }
+
+    line.contains("api -> api")
+        || line.contains("api]")
+        || line.contains("172.19.0.2:53")
+        || line.contains("fdfe:dcba")
+        || line.contains("dokodemo")
+        || line.contains("The feature VLESS")
+        || line.contains("An established connection was aborted by the software")
+        || line.contains("dns-out")
+        || line.contains("cannot find the pending request")
+        || line.contains("app/observatory/burst")
+        || line.contains("REALITY: received real certificate")
+}
+
+fn push_xray_log_line(line: String) {
+    if should_skip_xray_log_line(&line) {
+        return;
+    }
+
+    let mut logs = XRAY_LOGS.lock().unwrap();
+    if logs.len() > 1000 {
+        logs.drain(0..500);
+        if let Ok(mut c) = LOG_CURSOR.lock() {
+            *c = c.saturating_sub(500).min(logs.len());
+        }
+    }
+    logs.push(line);
 }
 
 fn create_private_dir(path: &std::path::Path) -> Result<(), String> {
@@ -69,12 +119,8 @@ fn get_xray_resource_dir() -> PathBuf {
 pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
     let _ = stop_xray();
 
-    {
-        let mut logs = XRAY_LOGS.lock().unwrap();
-        logs.clear();
-        let mut cursor = LOG_CURSOR.lock().unwrap();
-        *cursor = 0;
-    }
+    XRAY_STOPPING.store(false, Ordering::SeqCst);
+    clear_log_buffer();
 
     let exe_dir = std::env::current_exe()
         .unwrap()
@@ -125,29 +171,7 @@ pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
         std::thread::spawn(move || {
             let reader = std::io::BufReader::new(stdout);
             for line in reader.lines().map_while(Result::ok) {
-                if line.contains("api -> api")
-                    || line.contains("api]")
-                    || line.contains("172.19.0.2:53")
-                    || line.contains("fdfe:dcba")
-                    || line.contains("dokodemo")
-                    || line.contains("The feature VLESS")
-                    || line.contains("An established connection was aborted by the software")
-                    || line.contains("dns-out")
-                    || line.contains("cannot find the pending request")
-                    || line.contains("app/observatory/burst")
-                    || line.contains("REALITY: received real certificate")
-                {
-                    continue;
-                }
-                let mut logs = XRAY_LOGS.lock().unwrap();
-                if logs.len() > 1000 {
-                    logs.drain(0..500);
-                    // Adjust cursor so it doesn't point past the end
-                    if let Ok(mut c) = LOG_CURSOR.lock() {
-                        *c = c.saturating_sub(500).min(logs.len());
-                    }
-                }
-                logs.push(line);
+                push_xray_log_line(line);
             }
         });
     }
@@ -157,25 +181,7 @@ pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
         std::thread::spawn(move || {
             let reader = std::io::BufReader::new(stderr);
             for line in reader.lines().map_while(Result::ok) {
-                if line.contains("api -> api")
-                    || line.contains("api]")
-                    || line.contains("172.19.0.2:53")
-                    || line.contains("dokodemo")
-                    || line.contains("The feature VLESS")
-                    || line.contains("An established connection was aborted by the software")
-                    || line.contains("app/observatory/burst")
-                    || line.contains("REALITY: received real certificate")
-                {
-                    continue;
-                }
-                let mut logs = XRAY_LOGS.lock().unwrap();
-                if logs.len() > 1000 {
-                    logs.drain(0..500);
-                    if let Ok(mut c) = LOG_CURSOR.lock() {
-                        *c = c.saturating_sub(500).min(logs.len());
-                    }
-                }
-                logs.push(line);
+                push_xray_log_line(line);
             }
         });
     }
@@ -216,6 +222,7 @@ pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
 }
 
 pub fn stop_xray() -> Result<(), String> {
+    XRAY_STOPPING.store(true, Ordering::SeqCst);
     let mut proc = XRAY_PROCESS.lock().unwrap();
     if let Some(ref mut child) = *proc {
         let _ = child.kill();
@@ -234,10 +241,15 @@ pub fn stop_xray() -> Result<(), String> {
 
     // Brief pause to let ports release
     std::thread::sleep(std::time::Duration::from_millis(300));
+    clear_log_buffer();
     Ok(())
 }
 
 pub fn get_new_logs() -> Vec<String> {
+    if XRAY_STOPPING.load(Ordering::Relaxed) {
+        return Vec::new();
+    }
+
     let logs = XRAY_LOGS.lock().unwrap();
     let mut cursor = LOG_CURSOR.lock().unwrap();
     // Clamp cursor to valid range
@@ -252,4 +264,26 @@ pub fn get_new_logs() -> Vec<String> {
 /// showed fabricated speeds to the user. Honest zeros are better than lies.
 pub fn get_recent_activity() -> (i64, i64) {
     (0, 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skips_all_xray_logs_while_stopping() {
+        XRAY_STOPPING.store(true, Ordering::SeqCst);
+        assert!(should_skip_xray_log_line(
+            "2026/06/16 [error] proxy/vless/outbound: failed during shutdown"
+        ));
+        XRAY_STOPPING.store(false, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn keeps_bind_failures_when_xray_is_running() {
+        XRAY_STOPPING.store(false, Ordering::SeqCst);
+        assert!(!should_skip_xray_log_line(
+            "Failed to start: listen tcp 127.0.0.1:10809: bind: address already in use"
+        ));
+    }
 }

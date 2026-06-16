@@ -6500,8 +6500,14 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|_app_handle, event| {
             // Catch ALL exit paths — OS shutdown, task manager kill, etc.
-            if let tauri::RunEvent::Exit = event {
-                full_cleanup();
+            match event {
+                tauri::RunEvent::ExitRequested { .. } => {
+                    xray::begin_shutdown();
+                }
+                tauri::RunEvent::Exit => {
+                    full_cleanup();
+                }
+                _ => {}
             }
         });
 }
