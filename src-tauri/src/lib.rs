@@ -1468,6 +1468,150 @@ fn xray_tun_bridge_udp_rule() -> serde_json::Value {
     })
 }
 
+const DEFAULT_DIRECT_DOMAIN_SUFFIXES: &[&str] = &[
+    "2ip.ru",
+    "vk.com",
+    "vk.ru",
+    "ok.ru",
+    "mail.ru",
+    "yandex.ru",
+    "yandex.com",
+    "yandex.net",
+    "ya.ru",
+    "dzen.ru",
+    "rutube.ru",
+    "gosuslugi.ru",
+    "mos.ru",
+    "nalog.gov.ru",
+    "sberbank.ru",
+    "sber.ru",
+    "tbank.ru",
+    "tinkoff.ru",
+    "alfabank.ru",
+];
+
+const DEFAULT_DIRECT_SINGBOX_DOMAIN_REGEXES: &[&str] = &[
+    r"(^|\.)[^.]+\.ru$",
+    r"(^|\.)[^.]+\.su$",
+    r"(^|\.)[^.]+\.xn--p1ai$",
+    r"(^|\.)[^.]+\.xn--p1acf$",
+    r"(^|\.)[^.]+\.moscow$",
+    r"(^|\.)[^.]+\.xn--80adxhks$",
+];
+
+const DEFAULT_DIRECT_XRAY_DOMAIN_REGEXES: &[&str] = &[
+    r"regexp:.*\.ru$",
+    r"regexp:.*\.su$",
+    r"regexp:.*\.xn--p1ai$",
+    r"regexp:.*\.xn--p1acf$",
+    r"regexp:.*\.moscow$",
+    r"regexp:.*\.xn--80adxhks$",
+];
+
+fn default_direct_singbox_rule() -> serde_json::Value {
+    serde_json::json!({
+        "domain_suffix": DEFAULT_DIRECT_DOMAIN_SUFFIXES,
+        "domain_regex": DEFAULT_DIRECT_SINGBOX_DOMAIN_REGEXES,
+        "outbound": "direct"
+    })
+}
+
+fn push_default_direct_singbox_rule(rules: &mut Vec<serde_json::Value>) {
+    rules.push(default_direct_singbox_rule());
+}
+
+fn default_direct_xray_domains() -> Vec<String> {
+    DEFAULT_DIRECT_XRAY_DOMAIN_REGEXES
+        .iter()
+        .map(|value| (*value).to_string())
+        .chain(
+            DEFAULT_DIRECT_DOMAIN_SUFFIXES
+                .iter()
+                .map(|value| format!("domain:{}", value)),
+        )
+        .collect()
+}
+
+fn default_direct_xray_rule() -> serde_json::Value {
+    serde_json::json!({
+        "type": "field",
+        "domain": default_direct_xray_domains(),
+        "outboundTag": "direct"
+    })
+}
+
+fn xray_rule_has_default_direct_domains(rule: &serde_json::Value) -> bool {
+    rule.get("outboundTag").and_then(|value| value.as_str()) == Some("direct")
+        && rule
+            .get("domain")
+            .and_then(|value| value.as_array())
+            .map(|domains| {
+                domains
+                    .iter()
+                    .any(|value| value.as_str() == Some("domain:2ip.ru"))
+            })
+            .unwrap_or(false)
+}
+
+fn ensure_xray_direct_outbound(config: &mut serde_json::Value) {
+    let direct_outbound = serde_json::json!({
+        "tag": "direct",
+        "protocol": "freedom"
+    });
+
+    let Some(outbounds) = config
+        .get_mut("outbounds")
+        .and_then(|value| value.as_array_mut())
+    else {
+        config["outbounds"] = serde_json::json!([direct_outbound]);
+        return;
+    };
+
+    let has_direct = outbounds
+        .iter()
+        .any(|outbound| outbound.get("tag").and_then(|value| value.as_str()) == Some("direct"));
+    if !has_direct {
+        outbounds.push(direct_outbound);
+    }
+}
+
+fn ensure_xray_default_direct_routing(config: &mut serde_json::Value) {
+    if !config
+        .get("routing")
+        .map(|value| value.is_object())
+        .unwrap_or(false)
+    {
+        config["routing"] = serde_json::json!({});
+    }
+    if !config["routing"]
+        .get("rules")
+        .map(|value| value.is_array())
+        .unwrap_or(false)
+    {
+        config["routing"]["rules"] = serde_json::json!([]);
+    }
+
+    let Some(rules) = config["routing"]["rules"].as_array_mut() else {
+        return;
+    };
+
+    if rules.iter().any(xray_rule_has_default_direct_domains) {
+        return;
+    }
+
+    let insert_at = rules
+        .iter()
+        .position(|rule| {
+            rule.get("inboundTag")
+                .and_then(|value| value.as_array())
+                .map(|tags| tags.iter().any(|tag| tag.as_str() == Some("api")))
+                .unwrap_or(false)
+        })
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    rules.insert(insert_at, default_direct_xray_rule());
+}
+
 fn xray_dns_servers(mode: &str) -> serde_json::Value {
     match mode {
         "fakeip" => serde_json::json!({
@@ -2487,7 +2631,8 @@ fn start_isolated_profile_ping_runtime(
     http_port: u16,
 ) -> Result<ProfilePingProcess, String> {
     let exe = if use_xray {
-        profile_ping_xray_path().ok_or_else(|| "xray.exe is unavailable for profile ping".to_string())?
+        profile_ping_xray_path()
+            .ok_or_else(|| "xray.exe is unavailable for profile ping".to_string())?
     } else {
         profile_ping_singbox_path()
             .ok_or_else(|| "sing-box.exe is unavailable for profile ping".to_string())?
@@ -2573,7 +2718,10 @@ fn profile_ping_singbox_path() -> Option<PathBuf> {
     let exe_name = "sing-box";
 
     for root in profile_ping_search_roots() {
-        for candidate in [root.join(exe_name), root.join("singbox-core").join(exe_name)] {
+        for candidate in [
+            root.join(exe_name),
+            root.join("singbox-core").join(exe_name),
+        ] {
             if candidate.exists() {
                 return Some(candidate);
             }
@@ -3031,6 +3179,7 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
     }
 
     rules.extend(custom_rules);
+    push_default_direct_singbox_rule(&mut rules);
 
     // Default route remains the VPN outbound. Kill Switch hardens TUN routing with strict_route;
     // setting final=block here would block normal VPN traffic that has no custom rule.
@@ -3129,6 +3278,8 @@ fn inject_xray_inbounds(mut config: serde_json::Value, req: &ConnectRequest) -> 
 
     normalize_xray_transport_settings(&mut config);
     sanitize_xray_routing_rules(&mut config);
+    ensure_xray_direct_outbound(&mut config);
+    ensure_xray_default_direct_routing(&mut config);
 
     // Make sure routing rules include the API rule
     if let Some(routing) = config.get_mut("routing") {
@@ -3288,6 +3439,13 @@ mod tests {
             encryption: None,
             raw_xray_config: None,
         }
+    }
+
+    fn json_array_contains_str(value: &serde_json::Value, expected: &str) -> bool {
+        value
+            .as_array()
+            .map(|items| items.iter().any(|item| item.as_str() == Some(expected)))
+            .unwrap_or(false)
     }
 
     #[cfg(windows)]
@@ -3533,6 +3691,60 @@ mod tests {
     }
 
     #[test]
+    fn singbox_routes_ru_domains_direct_by_default() {
+        let req = sample_request("tun");
+
+        let config = build_singbox_config(&req);
+        let rules = config["route"]["rules"].as_array().unwrap();
+        let default_direct_rule = rules
+            .iter()
+            .find(|rule| {
+                rule.get("outbound").and_then(|value| value.as_str()) == Some("direct")
+                    && json_array_contains_str(&rule["domain_suffix"], "2ip.ru")
+            })
+            .expect("default direct RU/domain rule missing");
+
+        assert!(json_array_contains_str(
+            &default_direct_rule["domain_suffix"],
+            "gosuslugi.ru"
+        ));
+        assert!(json_array_contains_str(
+            &default_direct_rule["domain_regex"],
+            r"(^|\.)[^.]+\.ru$"
+        ));
+        assert_eq!(config["route"]["final"], json!("proxy"));
+    }
+
+    #[test]
+    fn custom_singbox_proxy_rules_override_default_ru_direct() {
+        let mut req = sample_request("tun");
+        req.routing_rules = vec![RoutingRuleRequest {
+            rule_type: "domain".into(),
+            value: "*.ru".into(),
+            action: "proxy".into(),
+        }];
+
+        let config = build_singbox_config(&req);
+        let rules = config["route"]["rules"].as_array().unwrap();
+        let proxy_index = rules
+            .iter()
+            .position(|rule| {
+                rule.get("outbound").and_then(|value| value.as_str()) == Some("proxy")
+                    && json_array_contains_str(&rule["domain_suffix"], "ru")
+            })
+            .expect("custom proxy rule missing");
+        let default_direct_index = rules
+            .iter()
+            .position(|rule| {
+                rule.get("outbound").and_then(|value| value.as_str()) == Some("direct")
+                    && json_array_contains_str(&rule["domain_suffix"], "2ip.ru")
+            })
+            .expect("default direct rule missing");
+
+        assert!(proxy_index < default_direct_index);
+    }
+
+    #[test]
     fn tauri_config_bundles_offline_webview2_installer() {
         let config_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tauri.conf.json");
         let config: serde_json::Value =
@@ -3651,6 +3863,24 @@ mod tests {
     }
 
     #[test]
+    fn xray_tun_bridge_routes_ru_domains_direct_by_default() {
+        let mut rules = Vec::new();
+
+        push_default_direct_singbox_rule(&mut rules);
+
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0]["outbound"], json!("direct"));
+        assert!(json_array_contains_str(
+            &rules[0]["domain_suffix"],
+            "2ip.ru"
+        ));
+        assert!(json_array_contains_str(
+            &rules[0]["domain_regex"],
+            r"(^|\.)[^.]+\.ru$"
+        ));
+    }
+
+    #[test]
     fn xray_socks_udp_is_bound_to_loopback_for_tun_bridge() {
         let req = sample_request("tun");
 
@@ -3688,6 +3918,53 @@ mod tests {
         req.security = "tls".into();
 
         assert!(!uses_xray_engine(&req));
+    }
+
+    #[test]
+    fn xray_routes_ru_domains_direct_by_default() {
+        let req = sample_request("system-proxy");
+
+        let config = build_xray_config(&req);
+        let rules = config["routing"]["rules"].as_array().unwrap();
+        let direct_rule = rules
+            .iter()
+            .find(|rule| xray_rule_has_default_direct_domains(rule))
+            .expect("default xray direct RU/domain rule missing");
+
+        assert!(json_array_contains_str(
+            &direct_rule["domain"],
+            "domain:2ip.ru"
+        ));
+        assert!(json_array_contains_str(
+            &direct_rule["domain"],
+            r"regexp:.*\.ru$"
+        ));
+    }
+
+    #[test]
+    fn raw_xray_injection_adds_default_ru_direct_rule_and_outbound() {
+        let req = sample_request("system-proxy");
+        let raw = json!({
+            "outbounds": [
+                { "tag": "proxy", "protocol": "freedom" }
+            ]
+        });
+
+        let config = inject_xray_inbounds(raw, &req);
+        let outbounds = config["outbounds"].as_array().unwrap();
+        let rules = config["routing"]["rules"].as_array().unwrap();
+
+        assert!(outbounds.iter().any(|outbound| {
+            outbound.get("tag").and_then(|value| value.as_str()) == Some("direct")
+                && outbound.get("protocol").and_then(|value| value.as_str()) == Some("freedom")
+        }));
+        assert!(rules.iter().any(|rule| {
+            rule.get("inboundTag")
+                .and_then(|value| value.as_array())
+                .map(|tags| tags.iter().any(|tag| tag.as_str() == Some("api")))
+                .unwrap_or(false)
+        }));
+        assert!(rules.iter().any(xray_rule_has_default_direct_domains));
     }
 
     #[cfg(windows)]
@@ -4095,6 +4372,8 @@ fn build_xray_config(req: &ConnectRequest) -> serde_json::Value {
         }));
     }
 
+    routing_rules.push(default_direct_xray_rule());
+
     // Default: private IPs go direct
     routing_rules.push(serde_json::json!({
         "type": "field",
@@ -4435,6 +4714,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
             push_process_route(&mut tun_bridge_rules, &block_exes, "block");
             push_process_route(&mut tun_bridge_rules, &direct_exes, "direct");
             push_process_route(&mut tun_bridge_rules, &proxy_exes, "proxy");
+            push_default_direct_singbox_rule(&mut tun_bridge_rules);
             tun_bridge_rules
                 .push(serde_json::json!({ "ip_is_private": true, "outbound": "direct" }));
             tun_bridge_rules.push(xray_tun_bridge_udp_rule());
@@ -4565,6 +4845,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
         push_process_route(&mut tun_bridge_rules, &block_exes, "block");
         push_process_route(&mut tun_bridge_rules, &direct_exes, "direct");
         push_process_route(&mut tun_bridge_rules, &proxy_exes, "proxy");
+        push_default_direct_singbox_rule(&mut tun_bridge_rules);
         tun_bridge_rules.push(serde_json::json!({ "ip_is_private": true, "outbound": "direct" }));
         tun_bridge_rules.push(xray_tun_bridge_udp_rule());
 
@@ -4739,6 +5020,8 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
 
                     // 4. Proxy apps — route through xray SOCKS5
                     push_process_route(&mut tun_rules, &proxy_exes, "proxy");
+
+                    push_default_direct_singbox_rule(&mut tun_rules);
 
                     // 5. Private IPs always go direct
                     tun_rules
@@ -5047,6 +5330,8 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
 
                     // 4. Proxy apps — route through SOCKS5
                     push_process_route(&mut tun_rules, &proxy_exes, "proxy");
+
+                    push_default_direct_singbox_rule(&mut tun_rules);
 
                     // 5. Private IPs always go direct
                     tun_rules

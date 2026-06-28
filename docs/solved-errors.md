@@ -1,5 +1,12 @@
 # Solved Errors
 
+## 2026-06-29 - Windows protected mode - default RU split routing missing
+
+- Symptom/command: in protected/TUN mode, opening `2ip.ru` showed the VPN exit country/IP instead of the user's direct Russian connection.
+- Root cause: default RU/direct routing was not part of the generated runtime configs; Workshop rules were empty unless the user explicitly applied a preset, and xray TUN bridge paths only applied process rules.
+- Fix: added backend default direct rules for `.ru`, `.su`, `.рф`/punycode, Moscow TLDs, `2ip.ru`, and common Russian service domains across sing-box TUN, xray configs, raw xray injection, and xray-to-sing-box TUN bridge configs. User custom proxy/block/direct rules still take priority over the default list.
+- Verification: `cargo test --manifest-path src-tauri/Cargo.toml --lib` passed with split-routing coverage for sing-box, xray, raw xray injection, and TUN bridge defaults.
+
 ## 2026-06-29 - App updater - WebView2 V8 out-of-memory on 5.3.1 to 5.4.0 update
 
 - Symptom/command: in-app update from installed `DoodleRay.exe` 5.3.1 showed the WebView2 error page `Out of Memory`; Crashpad dump contained `v8-oom-last-few-messages` with old-space around 2112 MB.
