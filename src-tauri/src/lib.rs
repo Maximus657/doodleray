@@ -57,6 +57,7 @@ const SECURE_STORE_CHUNK_BYTES: usize = 1800;
 const SECURE_STORE_CHUNK_PREFIX: &str = "chunked:v1:";
 const APP_IDENTIFIER: &str = "com.doodlevpn.doodleray";
 const APP_PRODUCT_NAME: &str = "DoodleRay";
+const PROFILE_PING_URL: &str = "https://captive.apple.com/hotspot-detect.html";
 
 #[cfg(windows)]
 fn claim_single_app_instance() -> bool {
@@ -1434,6 +1435,39 @@ fn singbox_dns_config(mode: &str) -> serde_json::Value {
     }
 }
 
+fn xray_tun_bridge_dns_config() -> serde_json::Value {
+    // FakeIP mappings are local to sing-box and can be lost when TUN traffic is handed
+    // to xray through SOCKS. Use real IP DNS for the bridge so no-proxy apps get a
+    // routable destination after DNS resolution.
+    singbox_dns_config("realip")
+}
+
+fn xray_tun_bridge_outbounds(req: &ConnectRequest) -> serde_json::Value {
+    serde_json::json!([
+        {
+            "type": "http",
+            "tag": "proxy",
+            "server": "127.0.0.1",
+            "server_port": req.http_port
+        },
+        {
+            "type": "socks",
+            "tag": "proxy-udp",
+            "server": "127.0.0.1",
+            "server_port": req.socks_port
+        },
+        { "type": "direct", "tag": "direct" },
+        { "type": "block", "tag": "block" }
+    ])
+}
+
+fn xray_tun_bridge_udp_rule() -> serde_json::Value {
+    serde_json::json!({
+        "network": "udp",
+        "outbound": "proxy-udp"
+    })
+}
+
 fn xray_dns_servers(mode: &str) -> serde_json::Value {
     match mode {
         "fakeip" => serde_json::json!({
@@ -1682,6 +1716,33 @@ fn tun_inbound_value(
     }
 
     inbound
+}
+
+fn loopback_proxy_inbounds(req: &ConnectRequest) -> Vec<serde_json::Value> {
+    vec![
+        serde_json::json!({
+            "type": "socks",
+            "tag": "socks-in",
+            "listen": "127.0.0.1",
+            "listen_port": req.socks_port,
+        }),
+        serde_json::json!({
+            "type": "http",
+            "tag": "http-in",
+            "listen": "127.0.0.1",
+            "listen_port": req.http_port,
+        }),
+    ]
+}
+
+fn singbox_tun_inbounds(
+    req: &ConnectRequest,
+    interface_name: Option<&str>,
+    strict_route: bool,
+) -> serde_json::Value {
+    let mut inbounds = vec![tun_inbound_value(req, interface_name, strict_route)];
+    inbounds.extend(loopback_proxy_inbounds(req));
+    serde_json::json!(inbounds)
 }
 
 fn write_debug_config(path: &std::path::Path, config: &serde_json::Value) {
@@ -2042,6 +2103,24 @@ pub struct RoutingRuleRequest {
 pub struct ConnectResult {
     pub success: bool,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub health: Option<ConnectionHealthReport>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ConnectionHealthReport {
+    pub verdict: String,
+    pub mode: String,
+    pub generated_at_ms: u128,
+    pub checks: Vec<ConnectionHealthCheck>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ConnectionHealthCheck {
+    pub code: String,
+    pub severity: String,
+    pub title: String,
+    pub detail: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -2266,6 +2345,256 @@ async fn ping_server(address: String, port: u16, server_id: String) -> PingResul
         server_id: sid,
         ping_ms: tcp_result,
     }
+}
+
+/// Check a full VPN profile by starting an isolated local proxy and performing
+/// an HTTP GET through it. This avoids false-green TCP port checks.
+#[tauri::command]
+async fn ping_server_profile(mut request: ConnectRequest, server_id: String) -> PingResult {
+    let sid = server_id.clone();
+    let ping_ms = match profile_http_ping_ms(&mut request).await {
+        Ok(ms) => ms,
+        Err(error) => {
+            eprintln!("[ping] profile GET probe failed: {}", error);
+            -1
+        }
+    };
+
+    PingResult {
+        server_id: sid,
+        ping_ms,
+    }
+}
+
+async fn profile_http_ping_ms(request: &mut ConnectRequest) -> Result<i32, String> {
+    let use_xray = uses_xray_engine(request);
+    let ports = reserve_profile_ping_ports(if use_xray { 3 } else { 2 })?;
+    request.socks_port = ports[0];
+    request.http_port = ports[1];
+    request.api_port = *ports.get(2).unwrap_or(&0);
+    request.proxy_mode = "system-proxy".into();
+    request.system_proxy_mode = "unchanged".into();
+    request.network_stack = "system".into();
+    request.dns_mode = "realip".into();
+    request.strict_route = false;
+    request.kill_switch = false;
+    request.routing_rules.clear();
+
+    let mut config = if use_xray {
+        if let Some(ref raw) = request.raw_xray_config {
+            inject_xray_inbounds(raw.clone(), request)
+        } else {
+            build_xray_config(request)
+        }
+    } else {
+        let mut config = build_singbox_config(request);
+        if let Some(object) = config.as_object_mut() {
+            object.remove("experimental");
+        }
+        config
+    };
+
+    if !use_xray {
+        if let Some(route) = config.get_mut("route") {
+            route["final"] = serde_json::json!("proxy");
+        }
+    }
+
+    let _guard = start_isolated_profile_ping_runtime(use_xray, &config, request.http_port)?;
+    wait_for_profile_ping_port(request.http_port)?;
+    http_get_profile_ping(request.http_port).await
+}
+
+fn reserve_profile_ping_ports(count: usize) -> Result<Vec<u16>, String> {
+    let mut listeners = Vec::with_capacity(count);
+    let mut ports = Vec::with_capacity(count);
+    for _ in 0..count {
+        let listener = TcpListener::bind(("127.0.0.1", 0))
+            .map_err(|e| format!("bind 127.0.0.1:0 failed: {}", e))?;
+        let port = listener
+            .local_addr()
+            .map_err(|e| format!("read reserved local port failed: {}", e))?
+            .port();
+        ports.push(port);
+        listeners.push(listener);
+    }
+    drop(listeners);
+    Ok(ports)
+}
+
+fn wait_for_profile_ping_port(port: u16) -> Result<(), String> {
+    let addr: SocketAddr = format!("127.0.0.1:{}", port).parse().unwrap();
+    for _ in 0..80 {
+        if TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok() {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    Err(format!("127.0.0.1:{} did not open for profile ping", port))
+}
+
+async fn http_get_profile_ping(http_port: u16) -> Result<i32, String> {
+    let proxy = reqwest::Proxy::http(format!("http://127.0.0.1:{}", http_port))
+        .map_err(|e| format!("profile ping proxy error: {}", e))?;
+    let client = reqwest::Client::builder()
+        .proxy(proxy)
+        .timeout(Duration::from_secs(8))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| format!("profile ping HTTP client error: {}", e))?;
+
+    let started = Instant::now();
+    let response = client
+        .get(PROFILE_PING_URL)
+        .header("User-Agent", "DoodleRay/2.0")
+        .header("Cache-Control", "no-cache")
+        .send()
+        .await
+        .map_err(|e| {
+            if e.is_timeout() {
+                "profile ping GET timed out".to_string()
+            } else {
+                format!("profile ping GET failed: {}", e)
+            }
+        })?;
+
+    if !response.status().is_success() {
+        return Err(format!("profile ping HTTP {}", response.status().as_u16()));
+    }
+
+    let _ = response.bytes().await;
+    Ok(started.elapsed().as_millis().max(1) as i32)
+}
+
+struct ProfilePingProcess {
+    child: Option<std::process::Child>,
+    config_path: PathBuf,
+}
+
+impl Drop for ProfilePingProcess {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        let _ = std::fs::remove_file(&self.config_path);
+    }
+}
+
+fn start_isolated_profile_ping_runtime(
+    use_xray: bool,
+    config: &serde_json::Value,
+    http_port: u16,
+) -> Result<ProfilePingProcess, String> {
+    let exe = if use_xray {
+        profile_ping_xray_path().ok_or_else(|| "xray.exe is unavailable for profile ping".to_string())?
+    } else {
+        profile_ping_singbox_path()
+            .ok_or_else(|| "sing-box.exe is unavailable for profile ping".to_string())?
+    };
+
+    let temp_dir = std::env::temp_dir().join("DoodleRay").join("ping-probes");
+    std::fs::create_dir_all(&temp_dir)
+        .map_err(|e| format!("create profile ping temp dir failed: {}", e))?;
+    let runtime_name = if use_xray { "xray" } else { "singbox" };
+    let config_path = temp_dir.join(format!(
+        "{}-{}-{}-{}.json",
+        runtime_name,
+        std::process::id(),
+        http_port,
+        unix_ms()
+    ));
+    write_private_file(
+        &config_path,
+        serde_json::to_string_pretty(config)
+            .map_err(|e| format!("serialize profile ping config failed: {}", e))?
+            .as_bytes(),
+    )
+    .map_err(|e| format!("write profile ping config failed: {}", e))?;
+
+    let mut cmd = std::process::Command::new(&exe);
+    if use_xray {
+        cmd.arg("run").arg("-c").arg(&config_path);
+    } else {
+        cmd.arg("run").arg("-c").arg(&config_path);
+    }
+    if let Some(dir) = exe.parent() {
+        cmd.current_dir(dir);
+    }
+    cmd.stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000);
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("start profile ping runtime failed: {}", e))?;
+    std::thread::sleep(Duration::from_millis(350));
+    if let Ok(Some(status)) = child.try_wait() {
+        let _ = std::fs::remove_file(&config_path);
+        return Err(format!(
+            "profile ping runtime exited early with status {}",
+            status
+        ));
+    }
+
+    Ok(ProfilePingProcess {
+        child: Some(child),
+        config_path,
+    })
+}
+
+fn profile_ping_search_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            roots.push(dir.to_path_buf());
+            if let Some(parent) = dir.parent() {
+                roots.push(parent.to_path_buf());
+            }
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        roots.push(cwd.clone());
+        roots.push(cwd.join("src-tauri"));
+    }
+
+    let mut seen = HashSet::new();
+    roots
+        .into_iter()
+        .filter(|path| seen.insert(path.clone()))
+        .collect()
+}
+
+fn profile_ping_singbox_path() -> Option<PathBuf> {
+    #[cfg(windows)]
+    let exe_name = "sing-box.exe";
+    #[cfg(not(windows))]
+    let exe_name = "sing-box";
+
+    for root in profile_ping_search_roots() {
+        for candidate in [root.join(exe_name), root.join("singbox-core").join(exe_name)] {
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+fn profile_ping_xray_path() -> Option<PathBuf> {
+    #[cfg(windows)]
+    let exe_name = "xray.exe";
+    #[cfg(not(windows))]
+    let exe_name = "xray";
+
+    for root in profile_ping_search_roots() {
+        let candidate = root.join("xray-core").join(exe_name);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 fn tcp_connect_samples(addrs: &[SocketAddr], source_ipv4s: &[Ipv4Addr]) -> Vec<i32> {
@@ -2565,9 +2894,10 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
     // DNS config — sing-box 1.13+ format
     let dns = singbox_dns_config(&req.dns_mode);
 
-    // Inbound config: TUN or SOCKS+HTTP
+    // Inbound config: protected TUN also exposes local SOCKS/HTTP listeners so
+    // Windows system proxy can be used as a compatibility helper.
     let inbounds = if req.proxy_mode == "tun" {
-        serde_json::json!([tun_inbound_value(req, None, req.strict_route)])
+        singbox_tun_inbounds(req, None, req.strict_route)
     } else {
         serde_json::json!([
             {
@@ -2711,7 +3041,7 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
 
     // Update inbounds strict_route if TUN mode
     let effective_inbounds = if req.proxy_mode == "tun" {
-        serde_json::json!([tun_inbound_value(req, None, effective_strict_route)])
+        singbox_tun_inbounds(req, None, effective_strict_route)
     } else {
         inbounds
     };
@@ -3056,10 +3386,7 @@ mod tests {
                         .collect::<Vec<_>>()
                 })
             }),
-            mtu: server
-                .get("mtu")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u16),
+            mtu: server.get("mtu").and_then(|v| v.as_u64()).map(|v| v as u16),
             workers: server
                 .get("workers")
                 .and_then(|v| v.as_u64())
@@ -3076,10 +3403,7 @@ mod tests {
             .parent()
             .unwrap()
             .to_path_buf();
-        let source = exe_dir
-            .parent()
-            .unwrap_or(&exe_dir)
-            .join("xray-core");
+        let source = exe_dir.parent().unwrap_or(&exe_dir).join("xray-core");
         let dest = exe_dir.join("xray-core");
         if dest.join("xray.exe").exists() {
             return;
@@ -3188,6 +3512,71 @@ mod tests {
     }
 
     #[test]
+    fn singbox_tun_includes_loopback_compatibility_inbounds() {
+        let req = sample_request("tun");
+
+        let config = build_singbox_config(&req);
+        let inbounds = config["inbounds"].as_array().unwrap();
+
+        assert_eq!(config["route"]["final"], json!("proxy"));
+        assert_eq!(inbounds[0]["type"], json!("tun"));
+        assert_eq!(inbounds[1]["type"], json!("socks"));
+        assert_eq!(inbounds[1]["listen"], json!("127.0.0.1"));
+        assert_eq!(inbounds[1]["listen_port"], json!(10808));
+        assert_eq!(inbounds[2]["type"], json!("http"));
+        assert_eq!(inbounds[2]["listen"], json!("127.0.0.1"));
+        assert_eq!(inbounds[2]["listen_port"], json!(10809));
+        assert_eq!(
+            config["route"]["rules"][1],
+            json!({ "protocol": "dns", "action": "hijack-dns" })
+        );
+    }
+
+    #[test]
+    fn tauri_config_bundles_offline_webview2_installer() {
+        let config_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tauri.conf.json");
+        let config: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(config_path).unwrap()).unwrap();
+
+        assert_eq!(
+            config["bundle"]["windows"]["webviewInstallMode"]["type"],
+            json!("offlineInstaller")
+        );
+        assert_eq!(
+            config["bundle"]["windows"]["webviewInstallMode"]["silent"],
+            json!(true)
+        );
+        assert_eq!(
+            config["bundle"]["windows"]["signCommand"]["cmd"],
+            json!("powershell")
+        );
+    }
+
+    #[test]
+    fn support_bundle_redaction_strips_urls_uuids_ips_and_keys() {
+        let input = [
+            "url=https://user:pass@example.com/sub",
+            "id=11111111-2222-3333-4444-555555555555",
+            "endpoint=203.0.113.7:443",
+            "private_key=super-secret",
+            "loopback=127.0.0.1:10809",
+        ]
+        .join("\n");
+
+        let redacted = redact_support_text(&input);
+
+        assert!(!redacted.contains("https://"));
+        assert!(!redacted.contains("11111111-2222-3333-4444-555555555555"));
+        assert!(!redacted.contains("203.0.113.7"));
+        assert!(!redacted.contains("super-secret"));
+        assert!(redacted.contains("[redacted-url]"));
+        assert!(redacted.contains("[redacted-uuid]"));
+        assert!(redacted.contains("[redacted-ip]"));
+        assert!(redacted.contains("[redacted-sensitive-line]"));
+        assert!(redacted.contains("127.0.0.1:10809"));
+    }
+
+    #[test]
     fn singbox_tun_uses_profile_mtu() {
         let mut req = sample_request("tun");
         req.mtu = Some(1408);
@@ -3231,6 +3620,34 @@ mod tests {
         assert_eq!(dns["servers"][2]["inet4_range"], json!("198.18.0.0/15"));
         assert!(dns["servers"][2].get("inet6_range").is_none());
         assert_eq!(dns["rules"][0]["query_type"], json!("A"));
+    }
+
+    #[test]
+    fn xray_tun_bridge_dns_uses_real_ips() {
+        let dns = xray_tun_bridge_dns_config();
+
+        assert_eq!(dns["strategy"], json!("ipv4_only"));
+        assert_eq!(dns["final"], json!("dns-remote"));
+        assert!(dns["rules"].is_null());
+        assert!(dns["servers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|server| server["type"] != json!("fakeip")));
+    }
+
+    #[test]
+    fn xray_tun_bridge_uses_http_for_tcp_and_socks_for_udp() {
+        let req = sample_request("tun");
+        let outbounds = xray_tun_bridge_outbounds(&req);
+
+        assert_eq!(outbounds[0]["tag"], json!("proxy"));
+        assert_eq!(outbounds[0]["type"], json!("http"));
+        assert_eq!(outbounds[0]["server_port"], json!(10809));
+        assert_eq!(outbounds[1]["tag"], json!("proxy-udp"));
+        assert_eq!(outbounds[1]["type"], json!("socks"));
+        assert_eq!(outbounds[1]["server_port"], json!(10808));
+        assert_eq!(xray_tun_bridge_udp_rule()["outbound"], json!("proxy-udp"));
     }
 
     #[test]
@@ -3324,7 +3741,10 @@ mod tests {
         sysproxy::restore_previous_proxy_state().expect("WinINet proxy restore should succeed");
         xray::stop_xray().expect("xray should stop cleanly");
         let after = wininet_snapshot_for_smoke();
-        assert_eq!(after, before, "WinINet proxy state must be restored exactly");
+        assert_eq!(
+            after, before,
+            "WinINet proxy state must be restored exactly"
+        );
     }
 
     #[cfg(windows)]
@@ -3779,9 +4199,6 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
 
     let use_xray = uses_xray_engine(&request);
     let is_tun = request.proxy_mode == "tun";
-    if is_tun {
-        request.system_proxy_mode = "unchanged".into();
-    }
 
     #[cfg(windows)]
     if is_tun && use_xray {
@@ -3814,6 +4231,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                 return ConnectResult {
                     success: false,
                     message: format!("Failed to reserve local tunnel ports: {}", e),
+                    health: None,
                 };
             }
         }
@@ -3950,6 +4368,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                     return ConnectResult {
                         success: false,
                         message: format!("Failed to reserve local proxy ports: {}", e),
+                        health: None,
                     };
                 }
             }
@@ -4018,21 +4437,13 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
             push_process_route(&mut tun_bridge_rules, &proxy_exes, "proxy");
             tun_bridge_rules
                 .push(serde_json::json!({ "ip_is_private": true, "outbound": "direct" }));
+            tun_bridge_rules.push(xray_tun_bridge_udp_rule());
 
             let tun_bridge = serde_json::json!({
                 "log": { "level": "warn" },
-                "dns": singbox_dns_config(&request.dns_mode),
+                "dns": xray_tun_bridge_dns_config(),
                 "inbounds": [tun_inbound_value(&request, Some("DoodleRay Tunnel"), effective_tun_strict_route(&request))],
-                "outbounds": [
-                    {
-                        "type": "socks",
-                        "tag": "proxy",
-                        "server": "127.0.0.1",
-                        "server_port": request.socks_port
-                    },
-                    { "type": "direct", "tag": "direct" },
-                    { "type": "block", "tag": "block" }
-                ],
+                "outbounds": xray_tun_bridge_outbounds(&request),
                 "route": {
                     "auto_detect_interface": true,
                     "default_domain_resolver": "dns-direct",
@@ -4053,6 +4464,28 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                         "Tunnel Service connected: phase={:?}",
                         status.phase
                     ));
+                    let proxy_action = match apply_compat_proxy_after_tun(&request) {
+                        Ok(action) => action,
+                        Err(e) => {
+                            vpn_log(&format!(
+                                "FATAL: protected compatibility proxy failed: {}",
+                                e
+                            ));
+                            let _ = tunnel_service_stop("protected_proxy_failed");
+                            return ConnectResult {
+                                success: false,
+                                message: format!(
+                                    "Protected mode started but Windows proxy compatibility failed: {}",
+                                    e
+                                ),
+                                health: None,
+};
+                        }
+                    };
+                    vpn_log(&format!(
+                        "protected system proxy mode applied: {}",
+                        proxy_action
+                    ));
                     let mut state = CONNECTION_STATE.lock().unwrap();
                     *state = true;
                     let mut engine = ACTIVE_ENGINE.lock().unwrap();
@@ -4061,6 +4494,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                     ConnectResult {
                         success: true,
                         message: "Whole computer connected via DoodleRay Tunnel Service".into(),
+                        health: connect_result_health_for_request(&request),
                     }
                 }
                 Err(e) => {
@@ -4071,6 +4505,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                             "Full Computer components not installed or not ready: {}",
                             e
                         ),
+                        health: None,
                     }
                 }
             };
@@ -4099,6 +4534,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
             return ConnectResult {
                 success: false,
                 message: format!("Failed to start xray-core: {}", e),
+                health: None,
             };
         }
         vpn_log("xray-core started OK");
@@ -4111,6 +4547,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
             return ConnectResult {
                 success: false,
                 message: format!("xray started but local proxy is not ready: {}", e),
+                health: None,
             };
         }
 
@@ -4129,21 +4566,13 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
         push_process_route(&mut tun_bridge_rules, &direct_exes, "direct");
         push_process_route(&mut tun_bridge_rules, &proxy_exes, "proxy");
         tun_bridge_rules.push(serde_json::json!({ "ip_is_private": true, "outbound": "direct" }));
+        tun_bridge_rules.push(xray_tun_bridge_udp_rule());
 
         let tun_bridge = serde_json::json!({
             "log": { "level": "warn" },
-            "dns": singbox_dns_config(&request.dns_mode),
+            "dns": xray_tun_bridge_dns_config(),
             "inbounds": [tun_inbound_value(&request, None, effective_tun_strict_route(&request))],
-            "outbounds": [
-                {
-                    "type": "socks",
-                    "tag": "proxy",
-                    "server": "127.0.0.1",
-                    "server_port": request.socks_port
-                },
-                { "type": "direct", "tag": "direct" },
-                { "type": "block", "tag": "block" }
-            ],
+            "outbounds": xray_tun_bridge_outbounds(&request),
             "route": {
                 "auto_detect_interface": true,
                 "default_domain_resolver": "dns-direct",
@@ -4161,6 +4590,29 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
         match tun::start_tun_elevated(&tun_bridge) {
             Ok(_) => {
                 vpn_log("TUN bridge started OK — connection established");
+                let proxy_action = match apply_compat_proxy_after_tun(&request) {
+                    Ok(action) => action,
+                    Err(e) => {
+                        vpn_log(&format!(
+                            "FATAL: protected compatibility proxy failed: {}",
+                            e
+                        ));
+                        let _ = tun::stop_tun();
+                        let _ = xray::stop_xray();
+                        return ConnectResult {
+                            success: false,
+                            message: format!(
+                                "Protected mode started but system proxy compatibility failed: {}",
+                                e
+                            ),
+                            health: None,
+                        };
+                    }
+                };
+                vpn_log(&format!(
+                    "protected system proxy mode applied: {}",
+                    proxy_action
+                ));
                 let mut state = CONNECTION_STATE.lock().unwrap();
                 *state = true;
                 let mut engine = ACTIVE_ENGINE.lock().unwrap();
@@ -4169,6 +4621,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                 ConnectResult {
                     success: true,
                     message: "Whole computer connected".into(),
+                    health: connect_result_health_for_request(&request),
                 }
             }
             Err(e) => {
@@ -4177,6 +4630,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                 ConnectResult {
                     success: false,
                     message: format!("Whole computer mode failed: {}", e),
+                    health: None,
                 }
             }
         }
@@ -4217,6 +4671,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                     return ConnectResult {
                         success: false,
                         message: format!("xray started but local proxy is not ready: {}", e),
+                        health: None,
                     };
                 }
                 if safe_system_proxy_mode(&request.system_proxy_mode) == "set" {
@@ -4229,6 +4684,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                                 "xray started but local HTTP proxy is not ready: {}",
                                 e
                             ),
+                            health: None,
                         };
                     }
                 }
@@ -4248,6 +4704,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                                     "xray started but failed to apply system proxy mode: {}",
                                     e
                                 ),
+                                health: None,
                             };
                         }
                     };
@@ -4286,21 +4743,13 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                     // 5. Private IPs always go direct
                     tun_rules
                         .push(serde_json::json!({ "ip_is_private": true, "outbound": "direct" }));
+                    tun_rules.push(xray_tun_bridge_udp_rule());
 
                     let tun_bridge = serde_json::json!({
                         "log": { "level": "warn" },
-                        "dns": singbox_dns_config(&request.dns_mode),
+                        "dns": xray_tun_bridge_dns_config(),
                         "inbounds": [tun_inbound_value(&request, None, false)],
-                        "outbounds": [
-                            { "type": "direct", "tag": "direct" },
-                            {
-                                "type": "socks",
-                                "tag": "proxy",
-                                "server": "127.0.0.1",
-                                "server_port": request.socks_port
-                            },
-                            { "type": "block", "tag": "block" }
-                        ],
+                        "outbounds": xray_tun_bridge_outbounds(&request),
                         "route": {
                             "auto_detect_interface": true,
                             "default_domain_resolver": "dns-direct",
@@ -4323,6 +4772,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                                     "Server switched (app routing preserved, {} app rules active)",
                                     total
                                 ),
+                                health: connect_result_health_for_request(&request),
                             };
                         }
                     }
@@ -4341,8 +4791,14 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                                 let total = proxy_exes.len() + direct_exes.len() + block_exes.len();
                                 ConnectResult {
                                     success: true,
-                                    message: format!("Browsers/apps with service app routing ({} rules: {} proxy, {} direct, {} block)",
-                                        total, proxy_exes.len(), direct_exes.len(), block_exes.len()),
+                                    message: format!(
+                                        "Browsers/apps with service app routing ({} rules: {} proxy, {} direct, {} block)",
+                                        total,
+                                        proxy_exes.len(),
+                                        direct_exes.len(),
+                                        block_exes.len()
+                                    ),
+                                    health: connect_result_health_for_request(&request),
                                 }
                             }
                             Err(e) => ConnectResult {
@@ -4351,6 +4807,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                                     "Full Computer components not installed or not ready: {}",
                                     e
                                 ),
+                                health: None,
                             },
                         };
                     }
@@ -4363,8 +4820,14 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                             let total = proxy_exes.len() + direct_exes.len() + block_exes.len();
                             return ConnectResult {
                                 success: true,
-                                message: format!("Browsers/apps with app routing ({} rules: {} proxy, {} direct, {} block)",
-                                    total, proxy_exes.len(), direct_exes.len(), block_exes.len()),
+                                message: format!(
+                                    "Browsers/apps with app routing ({} rules: {} proxy, {} direct, {} block)",
+                                    total,
+                                    proxy_exes.len(),
+                                    direct_exes.len(),
+                                    block_exes.len()
+                                ),
+                                health: connect_result_health_for_request(&request),
                             };
                         }
                     }
@@ -4378,6 +4841,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                         request.socks_port,
                         request.http_port,
                     ),
+                    health: connect_result_health_for_request(&request),
                 }
             }
             Err(e) => {
@@ -4385,6 +4849,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                 ConnectResult {
                     success: false,
                     message: format!("Failed to start xray-core: {}", e),
+                    health: None,
                 }
             }
         }
@@ -4408,6 +4873,28 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                         "Tunnel Service connected: phase={:?}",
                         status.phase
                     ));
+                    let proxy_action = match apply_compat_proxy_after_tun(&request) {
+                        Ok(action) => action,
+                        Err(e) => {
+                            vpn_log(&format!(
+                                "FATAL: protected compatibility proxy failed: {}",
+                                e
+                            ));
+                            let _ = tunnel_service_stop("protected_proxy_failed");
+                            return ConnectResult {
+                                success: false,
+                                message: format!(
+                                    "Protected mode started but Windows proxy compatibility failed: {}",
+                                    e
+                                ),
+                                health: None,
+};
+                        }
+                    };
+                    vpn_log(&format!(
+                        "protected system proxy mode applied: {}",
+                        proxy_action
+                    ));
                     let mut state = CONNECTION_STATE.lock().unwrap();
                     *state = true;
                     let mut engine = ACTIVE_ENGINE.lock().unwrap();
@@ -4416,6 +4903,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                     ConnectResult {
                         success: true,
                         message: "Whole computer connected via DoodleRay Tunnel Service".into(),
+                        health: connect_result_health_for_request(&request),
                     }
                 }
                 Err(e) => {
@@ -4426,6 +4914,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                             "Full Computer components not installed or not ready: {}",
                             e
                         ),
+                        health: None,
                     }
                 }
             };
@@ -4435,6 +4924,28 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
         match tun::start_tun_elevated(&config) {
             Ok(_) => {
                 vpn_log("sing-box TUN started OK");
+                let proxy_action = match apply_compat_proxy_after_tun(&request) {
+                    Ok(action) => action,
+                    Err(e) => {
+                        vpn_log(&format!(
+                            "FATAL: protected compatibility proxy failed: {}",
+                            e
+                        ));
+                        let _ = tun::stop_tun();
+                        return ConnectResult {
+                            success: false,
+                            message: format!(
+                                "Protected mode started but system proxy compatibility failed: {}",
+                                e
+                            ),
+                            health: None,
+                        };
+                    }
+                };
+                vpn_log(&format!(
+                    "protected system proxy mode applied: {}",
+                    proxy_action
+                ));
                 let mut state = CONNECTION_STATE.lock().unwrap();
                 *state = true;
                 let mut engine = ACTIVE_ENGINE.lock().unwrap();
@@ -4443,6 +4954,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                 ConnectResult {
                     success: true,
                     message: "Whole computer connected".into(),
+                    health: connect_result_health_for_request(&request),
                 }
             }
             Err(e) => {
@@ -4450,6 +4962,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                 ConnectResult {
                     success: false,
                     message: format!("Whole computer mode failed: {}", e),
+                    health: None,
                 }
             }
         }
@@ -4469,6 +4982,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                     return ConnectResult {
                         success: false,
                         message: format!("sing-box started but local proxy is not ready: {}", e),
+                        health: None,
                     };
                 }
                 if safe_system_proxy_mode(&request.system_proxy_mode) == "set" {
@@ -4481,6 +4995,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                                 "sing-box started but local HTTP proxy is not ready: {}",
                                 e
                             ),
+                            health: None,
                         };
                     }
                 }
@@ -4500,6 +5015,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                                     "sing-box started but failed to apply system proxy mode: {}",
                                     e
                                 ),
+                                health: None,
                             };
                         }
                     };
@@ -4535,21 +5051,13 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                     // 5. Private IPs always go direct
                     tun_rules
                         .push(serde_json::json!({ "ip_is_private": true, "outbound": "direct" }));
+                    tun_rules.push(xray_tun_bridge_udp_rule());
 
                     let tun_bridge = serde_json::json!({
                         "log": { "level": "warn" },
-                        "dns": singbox_dns_config(&request.dns_mode),
+                        "dns": xray_tun_bridge_dns_config(),
                         "inbounds": [tun_inbound_value(&request, None, false)],
-                        "outbounds": [
-                            { "type": "direct", "tag": "direct" },
-                            {
-                                "type": "socks",
-                                "tag": "proxy",
-                                "server": "127.0.0.1",
-                                "server_port": request.socks_port
-                            },
-                            { "type": "block", "tag": "block" }
-                        ],
+                        "outbounds": xray_tun_bridge_outbounds(&request),
                         "route": {
                             "auto_detect_interface": true,
                             "default_domain_resolver": "dns-direct",
@@ -4571,6 +5079,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                                     "Server switched (app routing preserved, {} app rules active)",
                                     total
                                 ),
+                                health: connect_result_health_for_request(&request),
                             };
                         }
                     }
@@ -4589,8 +5098,14 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                                 let total = proxy_exes.len() + direct_exes.len() + block_exes.len();
                                 ConnectResult {
                                     success: true,
-                                    message: format!("Browsers/apps with service app routing ({} rules: {} proxy, {} direct, {} block)",
-                                        total, proxy_exes.len(), direct_exes.len(), block_exes.len()),
+                                    message: format!(
+                                        "Browsers/apps with service app routing ({} rules: {} proxy, {} direct, {} block)",
+                                        total,
+                                        proxy_exes.len(),
+                                        direct_exes.len(),
+                                        block_exes.len()
+                                    ),
+                                    health: connect_result_health_for_request(&request),
                                 }
                             }
                             Err(e) => ConnectResult {
@@ -4599,6 +5114,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                                     "Full Computer components not installed or not ready: {}",
                                     e
                                 ),
+                                health: None,
                             },
                         };
                     }
@@ -4611,8 +5127,14 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                             let total = proxy_exes.len() + direct_exes.len() + block_exes.len();
                             return ConnectResult {
                                 success: true,
-                                message: format!("Browsers/apps with app routing ({} rules: {} proxy, {} direct, {} block)",
-                                    total, proxy_exes.len(), direct_exes.len(), block_exes.len()),
+                                message: format!(
+                                    "Browsers/apps with app routing ({} rules: {} proxy, {} direct, {} block)",
+                                    total,
+                                    proxy_exes.len(),
+                                    direct_exes.len(),
+                                    block_exes.len()
+                                ),
+                                health: connect_result_health_for_request(&request),
                             };
                         }
                     }
@@ -4626,11 +5148,13 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                         request.socks_port,
                         request.http_port,
                     ),
+                    health: connect_result_health_for_request(&request),
                 }
             }
             Err(e) => ConnectResult {
                 success: false,
                 message: format!("Failed to start: {}", e),
+                health: None,
             },
         }
     }
@@ -4701,6 +5225,7 @@ async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
         } else {
             "Cleaned up VPN engines".into()
         },
+        health: None,
     }
 }
 
@@ -5742,6 +6267,18 @@ fn wait_for_port_ready(port: u16) -> Result<(), String> {
     Err(format!("127.0.0.1:{} did not open in time", port))
 }
 
+fn apply_compat_proxy_after_tun(request: &ConnectRequest) -> Result<&'static str, String> {
+    if safe_system_proxy_mode(&request.system_proxy_mode) == "set" {
+        wait_for_port_ready(request.http_port).map_err(|e| {
+            format!(
+                "protected mode local HTTP proxy is not ready for Windows system proxy: {}",
+                e
+            )
+        })?;
+    }
+    apply_system_proxy_mode(&request.system_proxy_mode, request.http_port)
+}
+
 #[cfg(windows)]
 fn competing_tun_adapters() -> Result<Vec<String>, String> {
     let output = std::process::Command::new("powershell")
@@ -6030,6 +6567,737 @@ fn check_connection_health(socks_port: u16) -> bool {
     use std::net::SocketAddr;
     let addr: SocketAddr = format!("127.0.0.1:{}", socks_port).parse().unwrap();
     TcpStream::connect_timeout(&addr, Duration::from_millis(2000)).is_ok()
+}
+
+#[tauri::command]
+fn get_connection_health(
+    proxy_mode: Option<String>,
+    system_proxy_mode: Option<String>,
+    socks_port: u16,
+    http_port: u16,
+) -> ConnectionHealthReport {
+    build_connection_health(
+        proxy_mode.as_deref().unwrap_or("tun"),
+        system_proxy_mode.as_deref().unwrap_or("set"),
+        socks_port,
+        http_port,
+    )
+}
+
+#[tauri::command]
+fn repair_windows_runtime() -> Result<String, String> {
+    let mut actions = Vec::new();
+    repair_stale_system_proxy_only();
+    actions.push("checked stale DoodleRay WinINet proxy ownership".to_string());
+
+    #[cfg(windows)]
+    {
+        let app_dir = std::env::current_exe()
+            .map_err(|e| e.to_string())?
+            .parent()
+            .ok_or("Cannot resolve app directory")?
+            .to_path_buf();
+
+        for (label, path) in windows_required_runtime_files(&app_dir) {
+            if path.exists() {
+                actions.push(format!("{}: present", label));
+            } else {
+                actions.push(format!("{}: missing at {}", label, path.display()));
+            }
+        }
+
+        let connected = CONNECTION_STATE.lock().map(|state| *state).unwrap_or(false);
+        if !connected {
+            let _ = tunnel_service_stop("repair_windows_runtime");
+            let _ = tun::stop_tun();
+            actions.push("cleaned stale non-active tunnel/service state".to_string());
+        }
+
+        match ipc::tunnel_service_status() {
+            Ok(_) => actions.push("Tunnel Service IPC: ready".to_string()),
+            Err(error) => {
+                actions.push(format!(
+                    "Tunnel Service IPC failed before repair: {}",
+                    error
+                ));
+                match install_tunnel_service() {
+                    Ok(message) => actions.push(message),
+                    Err(install_error) => actions.push(format!(
+                        "Tunnel Service install repair failed: {}",
+                        install_error
+                    )),
+                }
+            }
+        }
+
+        actions.push("WebView2: app is running; installer carries offline runtime".to_string());
+    }
+
+    #[cfg(not(windows))]
+    {
+        actions.push("Windows runtime repair is only active on Windows".to_string());
+    }
+
+    Ok(actions.join("\n"))
+}
+
+#[tauri::command]
+fn export_support_bundle(
+    proxy_mode: Option<String>,
+    system_proxy_mode: Option<String>,
+    socks_port: u16,
+    http_port: u16,
+) -> Result<String, String> {
+    let dir = std::env::temp_dir().join("DoodleRay");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("doodleray-support-{}.txt", unix_ms()));
+
+    let health = get_connection_health(proxy_mode, system_proxy_mode, socks_port, http_port);
+    let mut sections = Vec::new();
+    sections.push("# DoodleRay Support Bundle".to_string());
+    sections.push(format!("generated_at_ms={}", unix_ms()));
+    sections.push(format!("app_version={}", env!("CARGO_PKG_VERSION")));
+
+    sections.push("\n## Connection Health".to_string());
+    sections.push(redact_support_text(
+        &serde_json::to_string_pretty(&health)
+            .unwrap_or_else(|_| "<health serialization failed>".into()),
+    ));
+
+    sections.push("\n## App Log Tail".to_string());
+    let app_log_tail = CONNECT_LOG
+        .lock()
+        .map(|logs| {
+            logs.iter()
+                .rev()
+                .take(120)
+                .cloned()
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_else(|_| "<app log unavailable>".into());
+    sections.push(redact_support_text(&app_log_tail));
+
+    #[cfg(windows)]
+    {
+        sections.push("\n## Runtime Files".to_string());
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(app_dir) = exe.parent() {
+                for (label, file) in windows_required_runtime_files(app_dir) {
+                    sections.push(format!(
+                        "{}={}",
+                        label,
+                        if file.exists() { "present" } else { "missing" }
+                    ));
+                }
+            }
+        }
+
+        sections.push("\n## Tunnel Service".to_string());
+        match ipc::send_tunnel_command(&tunnel_service::TunnelCommand::GetDiagnostics) {
+            Ok(response) => sections.push(redact_support_text(
+                &serde_json::to_string_pretty(&response)
+                    .unwrap_or_else(|_| "<diagnostics serialization failed>".into()),
+            )),
+            Err(error) => sections.push(redact_support_line(&format!(
+                "Tunnel service diagnostics failed: {}",
+                error
+            ))),
+        }
+
+        sections.push("\n## Windows Network Summary".to_string());
+        for (label, script) in windows_support_scripts() {
+            sections.push(format!("\n### {}", label));
+            match windows_powershell_output(script) {
+                Ok(output) if !output.trim().is_empty() => {
+                    sections.push(redact_support_text(&output));
+                }
+                Ok(_) => sections.push("<empty>".into()),
+                Err(error) => sections.push(redact_support_line(&format!("failed: {}", error))),
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        sections.push("\n## Platform".to_string());
+        sections.push("Windows support bundle sections are unavailable on this platform.".into());
+    }
+
+    std::fs::write(&path, sections.join("\n")).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+fn connection_health_for_request(request: &ConnectRequest) -> ConnectionHealthReport {
+    build_connection_health(
+        &request.proxy_mode,
+        &request.system_proxy_mode,
+        request.socks_port,
+        request.http_port,
+    )
+}
+
+fn connect_result_health_for_request(request: &ConnectRequest) -> Option<ConnectionHealthReport> {
+    if request.proxy_mode == "tun" {
+        Some(build_fast_tun_connection_health(
+            &request.system_proxy_mode,
+            request.socks_port,
+            request.http_port,
+        ))
+    } else {
+        Some(connection_health_for_request(request))
+    }
+}
+
+fn build_fast_tun_connection_health(
+    system_proxy_mode: &str,
+    socks_port: u16,
+    http_port: u16,
+) -> ConnectionHealthReport {
+    let mut checks = Vec::new();
+    checks.push(loopback_listener_health(
+        "socks_listener",
+        "SOCKS listener",
+        socks_port,
+    ));
+    checks.push(loopback_listener_health(
+        "http_listener",
+        "HTTP listener",
+        http_port,
+    ));
+
+    #[cfg(windows)]
+    {
+        checks.push(tunnel_service_health_check());
+        checks.push(health_check(
+            "tun_route_readiness",
+            "ok",
+            "TUN routes",
+            "Tunnel Service verified adapter and route readiness before returning success.",
+        ));
+        checks.push(health_check(
+            "tun_dns",
+            "ok",
+            "TUN DNS",
+            "Protected mode uses sing-box DNS hijack; deep DNS probes run in background diagnostics.",
+        ));
+        if system_proxy_mode == "set" {
+            checks.push(windows_wininet_proxy_health_check(http_port));
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        checks.push(health_check(
+            "platform_tun_health",
+            "info",
+            "Platform tunnel health",
+            "Detailed protected-mode health quorum is implemented for Windows first.",
+        ));
+    }
+
+    let has_error = checks.iter().any(|check| check.severity == "error");
+    let has_warning = checks.iter().any(|check| check.severity == "warning");
+    let verdict = if has_error {
+        "failed"
+    } else if has_warning {
+        "partial"
+    } else {
+        "protected"
+    };
+
+    ConnectionHealthReport {
+        verdict: verdict.into(),
+        mode: "protected".into(),
+        generated_at_ms: unix_ms(),
+        checks,
+    }
+}
+
+fn build_connection_health(
+    proxy_mode: &str,
+    system_proxy_mode: &str,
+    socks_port: u16,
+    http_port: u16,
+) -> ConnectionHealthReport {
+    let mut checks = Vec::new();
+    let mode = if proxy_mode == "tun" {
+        "protected"
+    } else if system_proxy_mode == "set" {
+        "compatibility"
+    } else {
+        "manual"
+    };
+
+    checks.push(loopback_listener_health(
+        "socks_listener",
+        "SOCKS listener",
+        socks_port,
+    ));
+    if system_proxy_mode == "set" || proxy_mode == "tun" {
+        checks.push(loopback_listener_health(
+            "http_listener",
+            "HTTP listener",
+            http_port,
+        ));
+    }
+
+    #[cfg(windows)]
+    {
+        if proxy_mode == "tun" {
+            checks.push(tunnel_service_health_check());
+            checks.push(windows_tun_adapter_health_check());
+            checks.push(windows_tun_route_health_check());
+            checks.push(windows_tun_dns_health_check());
+        }
+        if system_proxy_mode == "set" {
+            checks.push(windows_wininet_proxy_health_check(http_port));
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        if proxy_mode == "tun" {
+            checks.push(health_check(
+                "platform_tun_health",
+                "info",
+                "Platform tunnel health",
+                "Detailed protected-mode health quorum is implemented for Windows first.",
+            ));
+        }
+    }
+
+    let has_error = checks.iter().any(|check| check.severity == "error");
+    let has_warning = checks.iter().any(|check| check.severity == "warning");
+    let verdict = if has_error {
+        "failed"
+    } else if has_warning {
+        "partial"
+    } else {
+        "protected"
+    };
+
+    ConnectionHealthReport {
+        verdict: verdict.into(),
+        mode: mode.into(),
+        generated_at_ms: unix_ms(),
+        checks,
+    }
+}
+
+fn loopback_listener_health(code: &str, title: &str, port: u16) -> ConnectionHealthCheck {
+    let addr: SocketAddr = format!("127.0.0.1:{}", port).parse().unwrap();
+    if TcpStream::connect_timeout(&addr, Duration::from_millis(600)).is_ok() {
+        health_check(
+            code,
+            "ok",
+            title,
+            format!("127.0.0.1:{} accepts connections", port),
+        )
+    } else {
+        health_check(
+            code,
+            "error",
+            title,
+            format!("127.0.0.1:{} is not accepting connections", port),
+        )
+    }
+}
+
+fn health_check(
+    code: &str,
+    severity: &str,
+    title: &str,
+    detail: impl Into<String>,
+) -> ConnectionHealthCheck {
+    ConnectionHealthCheck {
+        code: code.into(),
+        severity: severity.into(),
+        title: title.into(),
+        detail: detail.into(),
+    }
+}
+
+fn unix_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0)
+}
+
+#[cfg(windows)]
+fn windows_required_runtime_files(app_dir: &Path) -> Vec<(&'static str, PathBuf)> {
+    vec![
+        ("DoodleRayService.exe", app_dir.join("DoodleRayService.exe")),
+        ("sing-box.exe", app_dir.join("sing-box.exe")),
+        ("wintun.dll", app_dir.join("wintun.dll")),
+        ("xray.exe", app_dir.join("xray-core").join("xray.exe")),
+    ]
+}
+
+fn redact_support_text(text: &str) -> String {
+    text.lines()
+        .map(redact_support_line)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn redact_support_line(line: &str) -> String {
+    let lower = line.to_ascii_lowercase();
+    let sensitive_line = [
+        "subscription",
+        "private_key",
+        "privatekey",
+        "pre_shared_key",
+        "presharedkey",
+        "short_id",
+        "server_name",
+        "servername",
+        "password",
+        "uuid",
+        "raw_xray_config",
+        "raw config",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle));
+    if sensitive_line {
+        return "[redacted-sensitive-line]".into();
+    }
+
+    line.split_whitespace()
+        .map(redact_support_token)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn redact_support_token(token: &str) -> String {
+    if token.contains("://") {
+        return "[redacted-url]".into();
+    }
+    let trimmed = token.trim_matches(|ch: char| {
+        !(ch.is_ascii_alphanumeric() || matches!(ch, '.' | ':' | '-' | '_' | '[' | ']'))
+    });
+    if trimmed.is_empty() {
+        return token.to_string();
+    }
+    let normalized = trimmed.trim_matches(|ch| matches!(ch, '[' | ']'));
+    let comparable = normalized
+        .rsplit_once('=')
+        .map(|(_, value)| value)
+        .unwrap_or(normalized);
+    if looks_like_uuid(comparable) {
+        return token.replace(comparable, "[redacted-uuid]");
+    }
+    if looks_like_secret_token(comparable) {
+        return token.replace(comparable, "[redacted-token]");
+    }
+    if should_redact_ip_token(comparable) {
+        return token.replace(comparable, "[redacted-ip]");
+    }
+    token.to_string()
+}
+
+fn looks_like_uuid(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() != 36 {
+        return false;
+    }
+    for (idx, byte) in bytes.iter().enumerate() {
+        let is_dash = matches!(idx, 8 | 13 | 18 | 23);
+        if is_dash {
+            if *byte != b'-' {
+                return false;
+            }
+        } else if !byte.is_ascii_hexdigit() {
+            return false;
+        }
+    }
+    true
+}
+
+fn looks_like_secret_token(value: &str) -> bool {
+    value.len() >= 48
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '+' | '/' | '='))
+}
+
+fn should_redact_ip_token(value: &str) -> bool {
+    let candidate = value
+        .rsplit_once(':')
+        .and_then(|(host, port)| port.parse::<u16>().ok().map(|_| host))
+        .unwrap_or(value);
+    match candidate.parse::<IpAddr>() {
+        Ok(ip) => !ip.is_loopback(),
+        Err(_) => false,
+    }
+}
+
+#[cfg(windows)]
+fn windows_support_scripts() -> Vec<(&'static str, &'static str)> {
+    vec![
+        (
+            "Adapters",
+            r#"
+Get-NetAdapter |
+  Where-Object { $_.Name -like '*DoodleRay*' -or $_.InterfaceDescription -like '*Wintun*' -or $_.InterfaceDescription -like '*sing*' } |
+  Select-Object Name,Status,InterfaceDescription |
+  Format-Table -AutoSize | Out-String
+"#,
+        ),
+        (
+            "Routes",
+            r#"
+$adapter = Get-NetAdapter -Name 'DoodleRay Tunnel' -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($adapter) {
+  $routes = Get-NetRoute -InterfaceIndex $adapter.ifIndex -ErrorAction SilentlyContinue
+  "route_count=" + @($routes).Count
+  "ipv4_count=" + @($routes | Where-Object { $_.AddressFamily -eq 'IPv4' }).Count
+  "ipv6_count=" + @($routes | Where-Object { $_.AddressFamily -eq 'IPv6' }).Count
+  "has_ipv4_default=" + [bool]($routes | Where-Object { $_.DestinationPrefix -eq '0.0.0.0/0' } | Select-Object -First 1)
+  "has_ipv4_split=" + ([bool]($routes | Where-Object { $_.DestinationPrefix -eq '0.0.0.0/1' } | Select-Object -First 1) -and [bool]($routes | Where-Object { $_.DestinationPrefix -eq '128.0.0.0/1' } | Select-Object -First 1))
+} else {
+  "DoodleRay Tunnel adapter not found"
+}
+"#,
+        ),
+        (
+            "DNS",
+            r#"
+Get-DnsClientServerAddress |
+  Select-Object InterfaceAlias,AddressFamily,@{Name='ServerCount';Expression={ @($_.ServerAddresses).Count }} |
+  Format-Table -AutoSize | Out-String
+"#,
+        ),
+        (
+            "Windows Connectivity Indicator",
+            r#"
+"Profiles:"
+Get-NetConnectionProfile |
+  Select-Object Name,InterfaceAlias,IPv4Connectivity,IPv6Connectivity,NetworkCategory |
+  Format-Table -AutoSize | Out-String
+"IP interface metrics:"
+Get-NetIPInterface |
+  Select-Object InterfaceAlias,AddressFamily,InterfaceMetric,AutomaticMetric,ConnectionState,NlMtu |
+  Sort-Object InterfaceMetric |
+  Format-Table -AutoSize | Out-String
+"NCSI active probe settings:"
+$ncsi = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\NlaSvc\Parameters\Internet' -ErrorAction SilentlyContinue
+if ($ncsi) {
+  "EnableActiveProbing=$($ncsi.EnableActiveProbing)"
+  "ActiveWebProbeHost=$($ncsi.ActiveWebProbeHost)"
+  "ActiveWebProbePath=$($ncsi.ActiveWebProbePath)"
+  "ActiveDnsProbeHost=$($ncsi.ActiveDnsProbeHost)"
+} else {
+  "NCSI registry settings unavailable"
+}
+"#,
+        ),
+        (
+            "WinINet Proxy",
+            r#"
+$settings = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
+"ProxyEnable=$($settings.ProxyEnable)"
+"ProxyServerStatus=$(if ($settings.ProxyServer -match '127\.0\.0\.1') { 'loopback' } elseif ($settings.ProxyServer) { 'redacted-non-loopback' } else { 'empty' })"
+"AutoConfigURLStatus=$(if ($settings.AutoConfigURL) { 'present-redacted' } else { 'empty' })"
+"ProxyOverrideStatus=$(if ($settings.ProxyOverride) { 'present-redacted' } else { 'empty' })"
+"#,
+        ),
+        ("WinHTTP Proxy", "netsh winhttp show proxy"),
+        (
+            "Signature Status",
+            r#"
+$dir = Split-Path -Parent (Get-Process -Id $PID).Path
+$files = @('DoodleRay.exe','DoodleRayService.exe','sing-box.exe','wintun.dll','xray-core\xray.exe')
+foreach ($file in $files) {
+  $path = Join-Path $dir $file
+  if (Test-Path $path) {
+    $sig = Get-AuthenticodeSignature $path
+    "$file status=$($sig.Status)"
+  } else {
+    "$file missing"
+  }
+}
+"#,
+        ),
+    ]
+}
+
+#[cfg(windows)]
+fn tunnel_service_health_check() -> ConnectionHealthCheck {
+    match ipc::tunnel_service_status() {
+        Ok(tunnel_service::TunnelResponse::Status(status)) => {
+            let ok = matches!(status.state, tunnel_service::TunnelState::Connected);
+            health_check(
+                "tunnel_service",
+                if ok { "ok" } else { "error" },
+                "Tunnel service",
+                format!("state={:?}, phase={:?}", status.state, status.phase),
+            )
+        }
+        Ok(_) => health_check(
+            "tunnel_service",
+            "error",
+            "Tunnel service",
+            "Unexpected tunnel service response",
+        ),
+        Err(error) => health_check(
+            "tunnel_service",
+            "error",
+            "Tunnel service",
+            format!("IPC failed: {}", error),
+        ),
+    }
+}
+
+#[cfg(windows)]
+fn windows_powershell_output(script: &str) -> Result<String, String> {
+    let mut child = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", script])
+        .creation_flags(0x08000000)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+            break status;
+        }
+        if started.elapsed() >= Duration::from_secs(5) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("PowerShell health probe timed out after 5s".into());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let mut text = String::new();
+    if let Some(mut stdout) = child.stdout.take() {
+        let _ = stdout.read_to_string(&mut text);
+    }
+    if let Some(mut stderr) = child.stderr.take() {
+        let mut err = String::new();
+        let _ = stderr.read_to_string(&mut err);
+        text.push_str(&err);
+    }
+    if status.success() {
+        Ok(text.trim().to_string())
+    } else {
+        Err(text.trim().to_string())
+    }
+}
+
+#[cfg(windows)]
+fn windows_tun_adapter_health_check() -> ConnectionHealthCheck {
+    match windows_powershell_output(
+        "Get-NetAdapter -Name 'DoodleRay Tunnel' -ErrorAction Stop | Select-Object -First 1 -ExpandProperty Status",
+    ) {
+        Ok(status) if status.eq_ignore_ascii_case("up") => health_check(
+            "tun_adapter",
+            "ok",
+            "TUN adapter",
+            "DoodleRay Tunnel is Up",
+        ),
+        Ok(status) => health_check(
+            "tun_adapter",
+            "error",
+            "TUN adapter",
+            format!("DoodleRay Tunnel status={}", status),
+        ),
+        Err(error) => health_check(
+            "tun_adapter",
+            "error",
+            "TUN adapter",
+            format!("DoodleRay Tunnel not found: {}", error),
+        ),
+    }
+}
+
+#[cfg(windows)]
+fn windows_tun_route_health_check() -> ConnectionHealthCheck {
+    let script = r#"
+$adapter = Get-NetAdapter -Name 'DoodleRay Tunnel' -ErrorAction Stop | Select-Object -First 1
+$routes = Get-NetRoute -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
+$hasDefault = [bool]($routes | Where-Object { $_.DestinationPrefix -eq '0.0.0.0/0' } | Select-Object -First 1)
+$hasSplit = [bool]($routes | Where-Object { $_.DestinationPrefix -eq '0.0.0.0/1' } | Select-Object -First 1) -and [bool]($routes | Where-Object { $_.DestinationPrefix -eq '128.0.0.0/1' } | Select-Object -First 1)
+$customCount = @($routes | Where-Object {
+  $_.DestinationPrefix -notin @('172.30.255.0/30','255.255.255.255/32') -and
+  $_.DestinationPrefix -notlike '224.*'
+}).Count
+if ($hasDefault -or $hasSplit -or $customCount -ge 4) {
+  "ok default=$hasDefault split=$hasSplit custom=$customCount"
+} else {
+  Write-Error "missing protected route coverage: default=$hasDefault split=$hasSplit custom=$customCount"
+}
+"#;
+    match windows_powershell_output(script) {
+        Ok(detail) => health_check("tun_routes", "ok", "TUN routes", detail),
+        Err(error) => health_check("tun_routes", "error", "TUN routes", error),
+    }
+}
+
+#[cfg(windows)]
+fn windows_tun_dns_health_check() -> ConnectionHealthCheck {
+    let script = r#"
+$servers = Get-DnsClientServerAddress -InterfaceAlias 'DoodleRay Tunnel' -ErrorAction Stop |
+  ForEach-Object { $_.ServerAddresses } |
+  Where-Object { $_ }
+if (@($servers).Count -gt 0) {
+  "servers=" + (@($servers) -join ',')
+} else {
+  "no adapter DNS servers; protected mode uses sing-box DNS hijack"
+}
+"#;
+    match windows_powershell_output(script) {
+        Ok(detail) => health_check("tun_dns", "ok", "TUN DNS", detail),
+        Err(error) => health_check("tun_dns", "error", "TUN DNS", error),
+    }
+}
+
+#[cfg(windows)]
+fn windows_wininet_proxy_health_check(http_port: u16) -> ConnectionHealthCheck {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+
+    let settings = match RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")
+    {
+        Ok(settings) => settings,
+        Err(error) => {
+            return health_check(
+                "wininet_proxy",
+                "error",
+                "Windows proxy",
+                format!("Cannot open Internet Settings: {}", error),
+            )
+        }
+    };
+    let enabled: u32 = settings.get_value("ProxyEnable").unwrap_or(0);
+    let server: String = settings.get_value("ProxyServer").unwrap_or_default();
+    let expected = format!("127.0.0.1:{}", http_port);
+    if enabled == 1 && server.contains(&expected) {
+        health_check(
+            "wininet_proxy",
+            "ok",
+            "Windows proxy",
+            format!("WinINet proxy points to {}", expected),
+        )
+    } else {
+        let server_status = if server.is_empty() {
+            "empty"
+        } else {
+            "not expected loopback"
+        };
+        health_check(
+            "wininet_proxy",
+            "error",
+            "Windows proxy",
+            format!("ProxyEnable={}, ProxyServer={}", enabled, server_status),
+        )
+    }
 }
 
 #[tauri::command]
@@ -6403,6 +7671,7 @@ pub fn run() {
             vpn_disconnect,
             vpn_status,
             ping_server,
+            ping_server_profile,
             fetch_url,
             fetch_subscription_url,
             get_proxy_logs,
@@ -6417,6 +7686,9 @@ pub fn run() {
             restart_as_admin,
             scan_installed_apps,
             check_connection_health,
+            get_connection_health,
+            repair_windows_runtime,
+            export_support_bundle,
             detect_stale_doodleray_proxy,
             repair_stale_doodleray_proxy_only,
             add_defender_exclusion,

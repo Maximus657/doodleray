@@ -28,7 +28,7 @@ interface Props {
   t: (key: any) => string;
 }
 
-type ProductModeKey = 'browser-apps' | 'whole-computer' | 'manual-proxy';
+type ProductModeKey = 'protected' | 'browser-compatibility' | 'manual-proxy';
 
 export default function DashboardControlsDrawer({
   status,
@@ -50,21 +50,22 @@ export default function DashboardControlsDrawer({
   const isConnecting = status === 'connecting';
   const isBusy = isConnecting || status === 'disconnecting';
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [openHelpMode, setOpenHelpMode] = useState<ProductModeKey | null>(null);
+  const [activeHelpKey, setActiveHelpKey] = useState<ProductModeKey | null>(null);
 
   const selectedModeKey: ProductModeKey = proxyMode === 'tun'
-    ? 'whole-computer'
+    ? 'protected'
     : systemProxyMode === 'set'
-      ? 'browser-apps'
+      ? 'browser-compatibility'
       : 'manual-proxy';
   const activeModeLabel =
-    selectedModeKey === 'whole-computer'
+    selectedModeKey === 'protected'
       ? t('fullDeviceMode')
-      : selectedModeKey === 'browser-apps'
-        ? t('browserAppsModeTitle')
+      : selectedModeKey === 'browser-compatibility'
+        ? t('browserCompatibilityModeTitle')
         : t('manualProxyModeTitle');
 
   const switchMode = (mode: ProxyMode, nextSystemProxyMode: SystemProxyMode) => {
+    setActiveHelpKey(null);
     onModeSwitch(mode, nextSystemProxyMode);
   };
 
@@ -78,22 +79,22 @@ export default function DashboardControlsDrawer({
     body: string;
   }> = [
     {
-      key: 'browser-apps',
+      key: 'protected',
+      proxyMode: 'tun',
+      systemProxyMode: 'set',
+      icon: Network,
+      title: t('protectedModeTitle'),
+      badge: t('recommended'),
+      body: t('protectedModeBody'),
+    },
+    {
+      key: 'browser-compatibility',
       proxyMode: 'system-proxy',
       systemProxyMode: 'set',
       icon: Globe,
-      title: t('browserAppsModeTitle'),
-      badge: t('recommended'),
-      body: t('browserAppsModeBody'),
-    },
-    {
-      key: 'whole-computer',
-      proxyMode: 'tun',
-      systemProxyMode: 'unchanged',
-      icon: Network,
-      title: t('tunAdvancedTitle'),
-      badge: t('fullDeviceMode'),
-      body: t('modeHelpTunBody'),
+      title: t('browserCompatibilityModeTitle'),
+      badge: t('compatibilityModeBadge'),
+      body: t('browserCompatibilityModeBody'),
     },
     {
       key: 'manual-proxy',
@@ -120,15 +121,12 @@ export default function DashboardControlsDrawer({
               {modeCards.map((item) => {
                 const Icon = item.icon;
                 const selected = selectedModeKey === item.key;
+                const helpOpen = activeHelpKey === item.key;
                 return (
                   <div
                     key={item.key}
-                    onMouseLeave={() => {
-                      if (openHelpMode === item.key) setOpenHelpMode(null);
-                    }}
-                    className={`relative overflow-visible rounded-xl border-[3px] p-2.5 transition-all duration-300 ${
-                      openHelpMode === item.key ? 'z-[90]' : 'hover:z-[70] focus-within:z-[70]'
-                    } ${
+                    onMouseLeave={() => setActiveHelpKey((key) => key === item.key ? null : key)}
+                    className={`relative overflow-visible rounded-xl border-[3px] p-2.5 transition-all duration-300 hover:z-[90] focus-within:z-[90] ${
                       selected
                         ? 'border-black bg-white shadow-[4px_4px_0_#000]'
                         : 'border-black/45 bg-white/60 hover:border-black hover:bg-white'
@@ -147,8 +145,8 @@ export default function DashboardControlsDrawer({
                           <Icon className="h-4 w-4 stroke-[3px]" />
                         </span>
                         <span className="min-w-0">
-                          <span className="flex items-center gap-1.5">
-                            <span className="truncate text-[11px] font-black uppercase tracking-widest text-black">{item.title}</span>
+                          <span className="flex items-center gap-1.5 pr-1">
+                            <span className="truncate text-[12px] font-black uppercase tracking-widest text-black">{item.title}</span>
                             {selected && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500 stroke-[3px]" />}
                           </span>
                           <span className={`mt-1 inline-flex rounded-md border-[2px] border-black px-1.5 py-0.5 text-[8px] font-black uppercase tracking-widest ${
@@ -158,36 +156,31 @@ export default function DashboardControlsDrawer({
                           </span>
                         </span>
                       </button>
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setOpenHelpMode((mode) => (mode === item.key ? null : item.key));
-                        }}
-                        onMouseEnter={() => setOpenHelpMode(item.key)}
-                        onFocus={() => setOpenHelpMode(item.key)}
-                        onBlur={() => setOpenHelpMode(null)}
-                        aria-label={item.title}
-                        aria-expanded={openHelpMode === item.key}
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-[2px] border-black bg-white text-black transition-all hover:-translate-y-0.5 hover:bg-black hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2"
-                      >
-                        <CircleHelp className="h-3.5 w-3.5 stroke-[3px]" />
-                      </button>
+                      <span className="group/help relative shrink-0">
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setActiveHelpKey((key) => key === item.key ? null : item.key);
+                          }}
+                          onMouseEnter={() => setActiveHelpKey(item.key)}
+                          onFocus={() => setActiveHelpKey(item.key)}
+                          onBlur={() => setActiveHelpKey((key) => key === item.key ? null : key)}
+                          aria-label={item.title}
+                          aria-expanded={helpOpen}
+                          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-[2px] border-black transition-all hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 ${
+                            helpOpen ? 'bg-black text-white' : 'bg-white text-black hover:bg-black hover:text-white'
+                          }`}
+                        >
+                          <CircleHelp className="h-3.5 w-3.5 stroke-[3px]" />
+                        </button>
+                      </span>
                     </div>
-                    {openHelpMode === item.key && (
-                      <div className="mt-2 w-full rounded-xl border-[2px] border-black bg-white px-3 py-2.5 text-left text-black shadow-[3px_3px_0_rgba(0,0,0,0.18)]">
-                        <p className="text-[10px] font-black uppercase tracking-widest">
-                          {item.title}
-                        </p>
-                        <p className="mt-1 text-[10px] font-bold leading-relaxed text-black/65">
-                          {item.body}
-                        </p>
+                    {helpOpen && (
+                      <div className="mt-2 rounded-lg border-[2px] border-black bg-white px-2.5 py-2 text-left text-black shadow-[2px_2px_0_rgba(0,0,0,0.22)]">
+                        <p className="text-[10px] font-black uppercase tracking-widest">{item.title}</p>
+                        <p className="mt-1 text-[10px] font-bold leading-relaxed text-black/65">{item.body}</p>
                       </div>
-                    )}
-                    {item.key === 'whole-computer' && selected && (
-                      <p className="mt-2 rounded-lg border-[2px] border-amber-500 bg-amber-200 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-black">
-                        {t('adminPermissionHint')}
-                      </p>
                     )}
                     {item.key === 'manual-proxy' && selected && (
                       <p className="mt-2 rounded-lg border-[2px] border-black bg-bg-primary px-2 py-1 text-[9px] font-black uppercase tracking-widest text-black">
@@ -225,7 +218,9 @@ export default function DashboardControlsDrawer({
       <button
         type="button"
         onClick={() => setDetailsOpen((open) => {
-          return !open;
+          const nextOpen = !open;
+          if (!nextOpen) setActiveHelpKey(null);
+          return nextOpen;
         })}
         aria-expanded={detailsOpen}
         className="flex w-full items-center justify-between gap-3 rounded-xl border-[2px] border-black/35 bg-white/72 px-3.5 py-2.5 text-black shadow-[0_2px_0_rgba(0,0,0,0.18)] backdrop-blur transition-all hover:border-black/65 hover:bg-white active:translate-y-0.5 active:shadow-none"

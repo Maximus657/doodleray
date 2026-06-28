@@ -11,6 +11,14 @@
   ${EndIf}
 !macroend
 
+!macro DoodleRayRequireFile RELATIVE_PATH LABEL
+  ${If} ${FileExists} "$INSTDIR\${RELATIVE_PATH}"
+    DetailPrint "${LABEL}: found"
+  ${Else}
+    Abort "${LABEL} is missing. Please reinstall DoodleRay from the official installer."
+  ${EndIf}
+!macroend
+
 !macro NSIS_HOOK_PREINSTALL
   DetailPrint "Preparing DoodleRay Tunnel Service for update..."
   ; Do not call the previously installed DoodleRayService.exe here: older
@@ -25,6 +33,10 @@
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
+  !insertmacro DoodleRayRequireFile "DoodleRayService.exe" "DoodleRay Tunnel Service"
+  !insertmacro DoodleRayRequireFile "sing-box.exe" "sing-box runtime"
+  !insertmacro DoodleRayRequireFile "wintun.dll" "Wintun driver runtime"
+  !insertmacro DoodleRayRequireFile "xray-core\xray.exe" "xray-core runtime"
   !insertmacro DoodleRayExecBestEffort '"$INSTDIR\DoodleRayService.exe" install' "Installing DoodleRay Tunnel Service" 30000
 !macroend
 

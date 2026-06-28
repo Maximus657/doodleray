@@ -7,6 +7,12 @@ import { parseProxyLink } from '../lib/parser';
 import { useTranslation } from '../locales';
 import { reportConnectionError } from '../lib/workshop-api';
 import { buildConnectRequestFromState, getActiveRoutingRules } from '../lib/connect-helpers';
+import {
+  isHealthAcceptable,
+  summarizeHealthFailures,
+  waitForConnectionHealth,
+  type ConnectionHealthReport,
+} from '../lib/connection-health';
 import { buildServerSelectionIndex, findMatchingServer, findMatchingServerInIndex, resolveConnectServer } from '../lib/server-selection';
 import { getSubscriptionById, getSubscriptionTrafficStatus } from '../lib/subscription-status';
 import { pingServersWithLimit } from '../lib/ping-runner';
@@ -162,6 +168,74 @@ export default function Dashboard() {
       return false;
     }
   }, []);
+
+  const markConnectedIfHealthy = useCallback(async (
+    result: any,
+    invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>,
+    mode: 'system-proxy' | 'tun',
+    nextSystemProxyMode: typeof systemProxyMode,
+    fallbackSocksPort: number,
+    fallbackHttpPort: number,
+  ) => {
+    const actualPorts = extractLocalProxyPorts(result.message || '');
+    let effectiveSocksPort = actualPorts?.socksPort ?? fallbackSocksPort;
+    let effectiveHttpPort = actualPorts?.httpPort ?? fallbackHttpPort;
+    if (actualPorts && mode !== 'tun') {
+      setSocksPort(actualPorts.socksPort);
+      setHttpPort(actualPorts.httpPort);
+    }
+
+    let { health, socksPort: waitedSocksPort, httpPort: waitedHttpPort } = await waitForConnectionHealth(
+      invoke,
+      mode,
+      nextSystemProxyMode,
+      effectiveSocksPort,
+      effectiveHttpPort,
+      (result.health ?? null) as ConnectionHealthReport | null,
+    );
+    effectiveSocksPort = waitedSocksPort;
+    effectiveHttpPort = waitedHttpPort;
+
+    if (!isHealthAcceptable(mode, health) && mode === 'tun') {
+      addLog('warning', `Protected mode health is ${health?.verdict ?? 'missing'}; running automatic repair once...`);
+      try {
+        const repairMessage = await invoke('repair_windows_runtime') as string;
+        addLog('info', repairMessage.split('\n').slice(0, 3).join(' | '));
+      } catch (repairErr: any) {
+        addLog('warning', `Automatic repair did not complete: ${repairErr?.message || repairErr}`);
+      }
+      const repaired = await waitForConnectionHealth(
+        invoke,
+        mode,
+        nextSystemProxyMode,
+        effectiveSocksPort,
+        effectiveHttpPort,
+        health,
+        4,
+        1500,
+      );
+      health = repaired.health;
+      effectiveSocksPort = repaired.socksPort;
+      effectiveHttpPort = repaired.httpPort;
+    }
+
+    if (!isHealthAcceptable(mode, health)) {
+      addLog('error', `Connection started but health quorum failed: ${summarizeHealthFailures(health)}`);
+      try { await invoke('vpn_disconnect'); } catch { /* best effort cleanup */ }
+      setStatus('disconnected');
+      setConnectionStep(null);
+      setConnectedAt(null);
+      return false;
+    }
+
+    addLog('success', result.message);
+    addLog('success', t('connectionActive'));
+    setConnectionStep(t('connectionReady'));
+    setStatus('connected');
+    setConnectedAt(Date.now());
+    return true;
+  }, [addLog, setConnectedAt, setConnectionStep, setHttpPort, setSocksPort, setStatus, t]);
+
   const connectionOpRef = useRef(0);
   const [testingSubId, setTestingSubId] = useState<string | null>(null);
   const [refreshingSubId, setRefreshingSubId] = useState<string | null>(null);
@@ -239,8 +313,19 @@ export default function Dashboard() {
         const { invoke } = await import('@tauri-apps/api/core');
         const running: boolean = await invoke('vpn_status');
         if (running && status !== 'connected') {
-          setStatus('connected');
-          addLog('info', 'VPN is still active (reconnected after UI reload)');
+          const health = await invoke('get_connection_health', {
+            proxyMode,
+            systemProxyMode,
+            socksPort,
+            httpPort,
+          }) as ConnectionHealthReport;
+          if (isHealthAcceptable(proxyMode, health)) {
+            setStatus('connected');
+            addLog('info', 'VPN is still active (reconnected after UI reload)');
+          } else {
+            setStatus('disconnected');
+            addLog('warning', `Backend reported VPN active, but health is not acceptable: ${summarizeHealthFailures(health)}`);
+          }
         }
       } catch { /* not in tauri env */ }
     })();
@@ -253,15 +338,19 @@ export default function Dashboard() {
     const healthCheck = setInterval(async () => {
       try {
         const { invoke } = await import('@tauri-apps/api/core');
-        const healthy: boolean = proxyMode === 'tun'
-          ? await invoke('tunnel_service_health').then(() => true).catch(() => false)
-          : await invoke('check_connection_health', { socksPort });
+        const health = await invoke('get_connection_health', {
+          proxyMode,
+          systemProxyMode,
+          socksPort,
+          httpPort,
+        }) as ConnectionHealthReport;
+        const healthy = isHealthAcceptable(proxyMode, health);
         if (healthy) { healthFailRef.current = 0; }
         else {
           healthFailRef.current++;
           if (healthFailRef.current >= 3) {
             const healthMessage = proxyMode === 'tun'
-              ? 'Tunnel health check is unstable; keeping the tunnel up and monitoring...'
+              ? 'Protected-mode health quorum is unstable; keeping the tunnel up and monitoring...'
               : 'Proxy health check is unstable; keeping the connection up and monitoring...';
             addLog('warning', healthMessage);
             const toastStoreModule = await import('../stores/toast-store');
@@ -272,8 +361,8 @@ export default function Dashboard() {
               serverAddress: activeHealthServer?.address, serverPort: activeHealthServer?.port,
               protocol: activeHealthServer?.protocol,
               errorMessage: proxyMode === 'tun'
-                ? 'Tunnel service health check unstable (3 consecutive health-check failures)'
-                : 'SOCKS port not responding (3 consecutive health-check failures)',
+                ? `Protected health quorum unstable: ${summarizeHealthFailures(health)}`
+                : `Proxy health unstable: ${summarizeHealthFailures(health)}`,
             });
             healthFailRef.current = 0;
             return;
@@ -282,7 +371,7 @@ export default function Dashboard() {
       } catch { /* not in tauri env */ }
     }, 30000);
     return () => clearInterval(healthCheck);
-  }, [status, socksPort, proxyMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [status, socksPort, httpPort, proxyMode, systemProxyMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-scroll logs
   useEffect(() => {
@@ -477,15 +566,15 @@ export default function Dashboard() {
         if (opId !== connectionOpRef.current) return;
 
         if (result.success) {
-          const actualPorts = extractLocalProxyPorts(result.message || '');
-          if (actualPorts && proxyMode !== 'tun') {
-            setSocksPort(actualPorts.socksPort);
-            setHttpPort(actualPorts.httpPort);
-          }
-          addLog('success', result.message);
-          addLog('success', t('connectionActive'));
-          setConnectionStep(t('connectionReady'));
-          setStatus('connected'); setConnectedAt(Date.now());
+          await markConnectedIfHealthy(
+            result,
+            invoke,
+            proxyMode,
+            request.system_proxy_mode,
+            request.socks_port,
+            request.http_port,
+          );
+          return;
         } else {
           // Port-busy retry
           if (result.message.includes('bind') || result.message.includes('10808') || result.message.includes('port')) {
@@ -499,12 +588,15 @@ export default function Dashboard() {
                 const retry: any = await invoke('vpn_connect', { request: retryReq });
                 if (opId !== connectionOpRef.current) return;
                 if (retry.success) {
-                  const actualPorts = extractLocalProxyPorts(retry.message || '');
-                  if (actualPorts && proxyMode !== 'tun') {
-                    setSocksPort(actualPorts.socksPort);
-                    setHttpPort(actualPorts.httpPort);
-                  }
-                  addLog('success', retry.message); setConnectionStep(t('connectionReady')); setStatus('connected'); setConnectedAt(Date.now()); return;
+                  await markConnectedIfHealthy(
+                    retry,
+                    invoke,
+                    proxyMode,
+                    retryReq.system_proxy_mode,
+                    retryReq.socks_port,
+                    retryReq.http_port,
+                  );
+                  return;
                 }
               } else if (portInfo.busy) {
                 addLog('warning', `${portInfo.message}. Change local proxy ports in Settings, for example SOCKS5 20808 and HTTP 20809.`);
@@ -572,10 +664,10 @@ export default function Dashboard() {
       } catch { addLog('info', '[SIM] Disconnected'); }
       setStatus('disconnected'); setConnectionStep(null); setConnectedAt(null); setCurrentSpeed(0, 0); resetTraffic();
     }
-  }, [status, setStatus, setCurrentSpeed, resetTraffic, activeServer, servers, setActiveServer, addLog, proxyMode, socksPort, httpPort, autoSelectFastest, setConnectedAt, t, setProxyMode, refreshTunnelServiceHealth, setSocksPort, setHttpPort]);
+  }, [status, setStatus, setCurrentSpeed, resetTraffic, activeServer, servers, setActiveServer, addLog, proxyMode, socksPort, httpPort, autoSelectFastest, setConnectedAt, t, setProxyMode, refreshTunnelServiceHealth, setSocksPort, setHttpPort, markConnectedIfHealthy]);
 
   const handleModeSwitch = useCallback(async (mode: 'system-proxy' | 'tun', nextSystemProxyMode = systemProxyMode) => {
-    const normalizedSystemProxyMode = mode === 'tun' || nextSystemProxyMode === 'clear'
+    const normalizedSystemProxyMode = nextSystemProxyMode === 'clear'
       ? 'unchanged'
       : nextSystemProxyMode;
     const modeChanged = proxyMode !== mode;
@@ -601,18 +693,20 @@ export default function Dashboard() {
           const request = await buildConnectRequestFromState(srv, mode, normalizedSystemProxyMode);
           const result: any = await invoke('vpn_connect', { request });
           if (result.success) {
-            const actualPorts = extractLocalProxyPorts(result.message || '');
-            if (actualPorts && mode !== 'tun') {
-              setSocksPort(actualPorts.socksPort);
-              setHttpPort(actualPorts.httpPort);
-            }
-            addLog('success', result.message); setConnectionStep(t('connectionReady')); setStatus('connected'); setConnectedAt(Date.now());
+            await markConnectedIfHealthy(
+              result,
+              invoke,
+              mode,
+              request.system_proxy_mode,
+              request.socks_port,
+              request.http_port,
+            );
           }
           else { addLog('error', result.message); setStatus('disconnected'); setConnectionStep(null); }
         } else { setStatus('disconnected'); setConnectionStep(null); }
       } catch (err: any) { addLog('error', `Reconnect failed: ${err.message || err}`); setStatus('disconnected'); setConnectionStep(null); }
     }
-  }, [proxyMode, systemProxyMode, setProxyMode, setSystemProxyMode, status, setStatus, addLog, activeServer, socksPort, httpPort, setConnectedAt, t, refreshTunnelServiceHealth, setSocksPort, setHttpPort]);
+  }, [proxyMode, systemProxyMode, setProxyMode, setSystemProxyMode, status, setStatus, addLog, activeServer, socksPort, httpPort, setConnectedAt, t, refreshTunnelServiceHealth, setSocksPort, setHttpPort, markConnectedIfHealthy]);
 
   const handleServerSelect = useCallback(async (server: typeof activeServer) => {
     if (!server) return;
@@ -629,17 +723,19 @@ export default function Dashboard() {
         const request = await buildConnectRequestFromState(server);
         const result: any = await invoke('vpn_connect', { request });
         if (result.success) {
-          const actualPorts = extractLocalProxyPorts(result.message || '');
-          if (actualPorts && proxyMode !== 'tun') {
-            setSocksPort(actualPorts.socksPort);
-            setHttpPort(actualPorts.httpPort);
-          }
-          addLog('success', result.message); setConnectionStep(t('connectionReady')); setStatus('connected'); setConnectedAt(Date.now());
+          await markConnectedIfHealthy(
+            result,
+            invoke,
+            proxyMode,
+            request.system_proxy_mode,
+            request.socks_port,
+            request.http_port,
+          );
         }
         else { addLog('error', result.message); setStatus('disconnected'); setConnectionStep(null); }
       } catch (err: any) { addLog('error', `Server switch failed: ${err.message || err}`); setStatus('disconnected'); setConnectionStep(null); }
     }
-  }, [status, setStatus, activeServer, setActiveServer, addLog, proxyMode, socksPort, httpPort, setConnectedAt, t, setSocksPort, setHttpPort]);
+  }, [status, setStatus, activeServer, setActiveServer, addLog, proxyMode, socksPort, httpPort, setConnectedAt, t, setSocksPort, setHttpPort, markConnectedIfHealthy]);
 
   const handleQuickAdd = useCallback(async () => {
     const trimmed = quickInput.trim();

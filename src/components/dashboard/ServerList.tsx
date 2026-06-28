@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { useMemo, type ReactNode } from 'react';
 import type { ConnectionStatus, ServerConfig, Subscription } from '../../stores/app-store';
-import { formatBytes, protocolLabel } from '../../lib/utils';
+import { formatBytes, formatPing, protocolLabel } from '../../lib/utils';
 import { buildServerDisplayGroups, serverMatchesGroupQuery, type ServerDisplayGroup } from '../../lib/server-groups';
 import { buildServerSelectionIndex, findMatchingServerInIndex } from '../../lib/server-selection';
 import { getSubscriptionTrafficStatus } from '../../lib/subscription-status';
@@ -151,7 +151,7 @@ export default function ServerList({
     ? null
     : visibleActiveServer.ping < 0
       ? t('errorLabel')
-      : `tcp ${visibleActiveServer.ping}ms`;
+      : formatPing(visibleActiveServer.ping);
 
   const renderServerGroup = (group: ServerDisplayGroup) => {
     const activeGroupServer = visibleActiveServer && group.servers.some((server) => server.id === visibleActiveServer.id)
@@ -164,7 +164,7 @@ export default function ServerList({
       ? null
       : group.ping < 0
         ? t('errorLabel')
-        : `tcp ${group.ping}ms`;
+        : formatPing(group.ping);
 
     return (
       <button key={group.id} onClick={() => onServerSelect(selectedServer)}
@@ -423,7 +423,7 @@ export default function ServerList({
                             <Loader2 className={`w-4 h-4 animate-spin shrink-0 ${isActive ? 'text-white/80' : 'text-black/40'}`} />
                           ) : server.ping !== undefined && (
                             <span className={`text-[10px] whitespace-nowrap font-black uppercase tracking-widest pl-1 shrink-0 ${isActive ? 'text-white/80' : pingColor}`}>
-                              {server.ping === -1 ? t('errorLabel') : `tcp ${server.ping}ms`}
+                              {server.ping === -1 ? t('errorLabel') : formatPing(server.ping)}
                             </span>
                           )}
                         </div>

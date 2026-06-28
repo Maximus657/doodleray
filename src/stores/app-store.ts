@@ -5,6 +5,7 @@ import {
   buildServerSelectionIndex,
   findMatchingServerInIndex,
   findServerBySelectionKeyInIndex,
+  getServerIdentityKey,
   getServerSelectionKey,
 } from '../lib/server-selection';
 // Trigger HMR
@@ -14,6 +15,7 @@ import {
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'disconnecting';
 export type AppUpdatePhase = 'idle' | 'checking' | 'available' | 'downloading' | 'installing' | 'error';
 
+export type ProductMode = 'protected' | 'compatibility' | 'manual';
 export type ProxyMode = 'system-proxy' | 'tun';
 export type SystemProxyMode = 'set' | 'clear' | 'unchanged';
 export type SupportedLanguage = 'ru' | 'en' | 'zh';
@@ -97,6 +99,7 @@ export interface AppState {
   status: ConnectionStatus;
   activeServer: ServerConfig | null;
   lastSelectedServerKey: string | null;
+  productMode: ProductMode;
   proxyMode: ProxyMode;
   systemProxyMode: SystemProxyMode;
 
@@ -131,6 +134,7 @@ export interface AppState {
 
   setStatus: (status: ConnectionStatus) => void;
   setActiveServer: (server: ServerConfig | null) => void;
+  setProductMode: (mode: ProductMode) => void;
   setProxyMode: (mode: ProxyMode) => void;
   setSystemProxyMode: (mode: SystemProxyMode) => void;
 
@@ -308,9 +312,45 @@ function activeServerUpdate(
   };
 }
 
-function normalizeSystemProxyMode(mode: SystemProxyMode | undefined, proxyMode?: ProxyMode): SystemProxyMode {
-  if (proxyMode === 'tun' || mode === 'clear' || !mode) return 'unchanged';
+function getServerDedupKey(server: ServerConfig): string {
+  const scope = server.subscriptionId ? `sub:${server.subscriptionId}` : `manual:${server.id}`;
+  return `${scope}\u0000${getServerIdentityKey(server)}`;
+}
+
+function dedupeServersByScopedIdentity(servers: ServerConfig[]): ServerConfig[] {
+  const seen = new Set<string>();
+  return servers.filter((server) => {
+    const key = getServerDedupKey(server);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function normalizeSystemProxyMode(mode: SystemProxyMode | undefined, _proxyMode?: ProxyMode): SystemProxyMode {
+  if (mode === 'clear' || !mode) return 'unchanged';
   return mode;
+}
+
+function transportForProductMode(mode: ProductMode): {
+  productMode: ProductMode;
+  proxyMode: ProxyMode;
+  systemProxyMode: SystemProxyMode;
+} {
+  switch (mode) {
+    case 'compatibility':
+      return { productMode: mode, proxyMode: 'system-proxy', systemProxyMode: 'set' };
+    case 'manual':
+      return { productMode: mode, proxyMode: 'system-proxy', systemProxyMode: 'unchanged' };
+    case 'protected':
+    default:
+      return { productMode: 'protected', proxyMode: 'tun', systemProxyMode: 'set' };
+  }
+}
+
+function productModeFromTransport(proxyMode: ProxyMode, systemProxyMode: SystemProxyMode): ProductMode {
+  if (proxyMode === 'tun') return 'protected';
+  return systemProxyMode === 'set' ? 'compatibility' : 'manual';
 }
 
 function compactStateForPersist(state: AppState): Partial<AppState> {
@@ -380,7 +420,8 @@ export const useAppStore = create<AppState>()(
       status: 'disconnected',
       activeServer: null,
       lastSelectedServerKey: null,
-      proxyMode: 'system-proxy',
+      productMode: 'protected',
+      proxyMode: 'tun',
       systemProxyMode: 'set',
 
       servers: [],
@@ -417,12 +458,21 @@ export const useAppStore = create<AppState>()(
         activeServer: server,
         lastSelectedServerKey: server ? getServerSelectionKey(server) : null,
       }),
+      setProductMode: (mode) => set(transportForProductMode(mode)),
       setProxyMode: (mode) => set((state) => ({
         proxyMode: mode,
         systemProxyMode: normalizeSystemProxyMode(state.systemProxyMode, mode),
+        productMode: productModeFromTransport(
+          mode,
+          normalizeSystemProxyMode(state.systemProxyMode, mode),
+        ),
       })),
       setSystemProxyMode: (mode) => set((state) => ({
         systemProxyMode: normalizeSystemProxyMode(mode, state.proxyMode),
+        productMode: productModeFromTransport(
+          state.proxyMode,
+          normalizeSystemProxyMode(mode, state.proxyMode),
+        ),
       })),
 
       setNetworkStack: (stack) => set({ networkStack: stack }),
@@ -468,14 +518,7 @@ export const useAppStore = create<AppState>()(
         const newServers = existing
           ? [...s.servers.filter((srv) => srv.subscriptionId !== existing.id), ...sub.servers]
           : [...s.servers, ...sub.servers];
-        // Deduplicate servers by address+port+protocol
-        const seen = new Set<string>();
-        const deduped = newServers.filter((srv) => {
-          const key = `${srv.address}:${srv.port}:${srv.protocol}:${srv.name}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
+        const deduped = dedupeServersByScopedIdentity(newServers);
         return {
           subscriptions: newSubscriptions,
           servers: deduped,
@@ -496,14 +539,7 @@ export const useAppStore = create<AppState>()(
           ...s.servers.filter((srv) => srv.subscriptionId !== id),
           ...newSub.servers,
         ];
-        // Deduplicate
-        const seen = new Set<string>();
-        const deduped = newServers.filter((srv) => {
-          const key = `${srv.address}:${srv.port}:${srv.protocol}:${srv.name}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
+        const deduped = dedupeServersByScopedIdentity(newServers);
         return {
           subscriptions: s.subscriptions.map((sub) => sub.id === id ? compactSubscriptionForStore(newSub) : sub),
           servers: deduped,
@@ -548,6 +584,7 @@ export const useAppStore = create<AppState>()(
           language: persistedState?.language ?? current.language,
         } as AppState;
         merged.systemProxyMode = normalizeSystemProxyMode(merged.systemProxyMode, merged.proxyMode);
+        merged.productMode = merged.productMode ?? productModeFromTransport(merged.proxyMode, merged.systemProxyMode);
         const storedKey =
           merged.lastSelectedServerKey ??
           (merged.activeServer ? getServerSelectionKey(merged.activeServer) : null);

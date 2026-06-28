@@ -21,7 +21,7 @@ export interface ConnectOpts {
 export function buildConnectRequest(server: ServerConfig, opts: ConnectOpts) {
   const requestedSystemProxyMode = opts.systemProxyMode ?? useAppStore.getState().systemProxyMode;
   const systemProxyMode =
-    opts.proxyMode === 'tun' || requestedSystemProxyMode === 'clear'
+    requestedSystemProxyMode === 'clear'
       ? 'unchanged'
       : requestedSystemProxyMode;
 
@@ -71,6 +71,21 @@ export function buildConnectRequest(server: ServerConfig, opts: ConnectOpts) {
     // Full raw xray config (DoodleVPN subscriptions)
     raw_xray_config: server.rawConfig || null,
   };
+}
+
+/** Build an isolated, non-system-changing request for per-profile HTTP ping probes. */
+export function buildPingProbeRequest(server: ServerConfig) {
+  return buildConnectRequest(server, {
+    proxyMode: 'system-proxy',
+    systemProxyMode: 'unchanged',
+    socksPort: 10808,
+    httpPort: 10809,
+    networkStack: 'system',
+    dnsMode: 'realip',
+    strictRoute: false,
+    killSwitch: false,
+    routingRules: [],
+  });
 }
 
 /** Get active routing rules from WorkshopStore (async to avoid circular deps). */

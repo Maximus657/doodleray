@@ -10,7 +10,6 @@ export interface ServerDisplayGroup {
 }
 
 const FLAG_EMOJI_REGEX = /[\u{1F1E6}-\u{1F1FF}]{2}/gu;
-const NUMBERED_SUFFIX_REGEX = /\s*(?:[-–—]|#|№)\s*\d+\s*$/u;
 
 function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
@@ -20,7 +19,6 @@ export function getServerGroupLabel(server: ServerConfig): string {
   const label = normalizeWhitespace(
     server.name
       .replace(FLAG_EMOJI_REGEX, '')
-      .replace(NUMBERED_SUFFIX_REGEX, '')
   );
 
   return label || server.country || server.name;
@@ -61,7 +59,11 @@ export function buildServerDisplayGroups(servers: ServerConfig[]): ServerDisplay
 
   for (const server of servers) {
     const label = getServerGroupLabel(server);
-    const key = label.toLowerCase();
+    const key = [
+      label.toLowerCase(),
+      server.subscriptionId || 'manual',
+      server.id,
+    ].join('|');
     const group = groups.get(key);
     const ping = server.ping;
 

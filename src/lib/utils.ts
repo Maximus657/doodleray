@@ -1,3 +1,6 @@
+import { buildPingProbeRequest } from './connect-helpers';
+import type { ServerConfig } from '../stores/app-store';
+
 // Country code to flag emoji
 export function countryFlag(code: string): string {
   if (!code || code.length !== 2) return '🌐';
@@ -28,7 +31,7 @@ export function pingColor(ping: number | undefined): string {
 export function formatPing(ping: number | undefined): string {
   if (ping === undefined) return '— ms';
   if (ping < 0) return 'timeout';
-  return `tcp ${ping} ms`;
+  return `${ping} ms`;
 }
 
 // Short protocol label
@@ -84,19 +87,30 @@ const isTauriRuntime = () =>
   }).__TAURI_INTERNALS__?.invoke === 'function';
 
 async function pingAddress(
+  server: ServerConfig,
+  invoke: (cmd: string, args: any) => Promise<any>
+): Promise<number> {
+  if (isTauriRuntime()) {
+    const result: any = await invoke('ping_server_profile', {
+      request: buildPingProbeRequest(server),
+      serverId: server.id,
+    });
+    return Number.isFinite(result.ping_ms) ? result.ping_ms : -1;
+  }
+
+  const response = await fetch(`/api/ping?address=${encodeURIComponent(server.address)}&port=${encodeURIComponent(String(server.port))}`);
+  if (!response.ok) return -1;
+  const result = await response.json();
+  return Number.isFinite(result.ping_ms) ? result.ping_ms : -1;
+}
+
+async function legacyPingAddress(
   address: string,
   port: number,
   serverId: string,
   invoke: (cmd: string, args: any) => Promise<any>
 ): Promise<number> {
-  if (isTauriRuntime()) {
-    const result: any = await invoke('ping_server', { address, port, serverId });
-    return result.ping_ms;
-  }
-
-  const response = await fetch(`/api/ping?address=${encodeURIComponent(address)}&port=${encodeURIComponent(String(port))}`);
-  if (!response.ok) return -1;
-  const result = await response.json();
+  const result: any = await invoke('ping_server', { address, port, serverId });
   return Number.isFinite(result.ping_ms) ? result.ping_ms : -1;
 }
 
@@ -136,9 +150,17 @@ export function getRawConfigAddresses(rawConfig: any): { address: string; port: 
 // Smart ping: for servers with rawConfig (multi-outbound), try all backend
 // addresses and return the best ping. Falls back to primary address for simple servers.
 export async function pingServerSmart(
-  server: { address: string; port: number; id: string; rawConfig?: any },
+  server: ServerConfig,
   invoke: (cmd: string, args: any) => Promise<any>
 ): Promise<number> {
+  if (isTauriRuntime()) {
+    try {
+      return await pingAddress(server, invoke);
+    } catch {
+      return -1;
+    }
+  }
+
   // Collect addresses to try: primary first, then all from rawConfig
   const addresses: { address: string; port: number }[] = [
     { address: server.address, port: server.port },
@@ -157,7 +179,7 @@ export async function pingServerSmart(
   let bestPing = -1;
   for (const addr of addresses) {
     try {
-      const pingMs = await pingAddress(addr.address, addr.port, server.id, invoke);
+      const pingMs = await legacyPingAddress(addr.address, addr.port, server.id, invoke);
       if (pingMs > 0 && (bestPing < 0 || pingMs < bestPing)) {
         bestPing = pingMs;
         break; // Got a good ping, no need to try more

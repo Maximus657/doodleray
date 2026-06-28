@@ -74,14 +74,18 @@ function generateInbounds(
   strictRoute: boolean
 ): Record<string, unknown>[] {
   if (mode === 'tun') {
-    return [{
-      type: 'tun',
-      tag: 'tun-in',
-      address: ['172.30.255.1/30', 'fdfe:dcba:9876::1/126'],
-      auto_route: true,
-      strict_route: strictRoute,
-      stack: networkStack,
-    }];
+    return [
+      {
+        type: 'tun',
+        tag: 'tun-in',
+        address: ['172.30.255.1/30', 'fdfe:dcba:9876::1/126'],
+        auto_route: true,
+        strict_route: strictRoute,
+        stack: networkStack,
+      },
+      { type: 'socks', tag: 'socks-in', listen: '127.0.0.1', listen_port: socksPort },
+      { type: 'http', tag: 'http-in', listen: '127.0.0.1', listen_port: httpPort },
+    ];
   }
   return [
     { type: 'socks', tag: 'socks-in', listen: '127.0.0.1', listen_port: socksPort },

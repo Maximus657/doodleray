@@ -800,6 +800,9 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             assign_child_to_job(&child)?;
             state().lock().unwrap().xray = Some(child);
             wait_for_port(request.socks_port, Duration::from_secs(8), generation)?;
+            if request.http_port != request.socks_port {
+                wait_for_port(request.http_port, Duration::from_secs(8), generation)?;
+            }
             set_phase("xray_ready", started, generation)?;
         }
 
@@ -821,6 +824,12 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         set_phase("waiting_adapter", started, generation)?;
         wait_for_adapter("DoodleRay Tunnel", Duration::from_secs(15), generation)?;
         ensure_singbox_alive(&singbox_log_path)?;
+        if matches!(request.engine_kind, TunnelEngineKind::SingboxTun) {
+            wait_for_port(request.socks_port, Duration::from_secs(8), generation)?;
+            if request.http_port != request.socks_port {
+                wait_for_port(request.http_port, Duration::from_secs(8), generation)?;
+            }
+        }
         set_phase("adapter_ready", started, generation)?;
         set_phase("singbox_ready", started, generation)?;
         wait_for_doodleray_ipv4_interface(Duration::from_secs(20), generation)?;
@@ -1108,14 +1117,15 @@ if (-not $tunIface) {
   exit 2
 }
 
-Set-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -AutomaticMetric Disabled -InterfaceMetric 1 -ErrorAction Stop
+$targetMetric = 50
+Set-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -AutomaticMetric Disabled -InterfaceMetric $targetMetric -ErrorAction Stop
 $ipv6Iface = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -ErrorAction SilentlyContinue
 if ($ipv6Iface) {
-  Set-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -AutomaticMetric Disabled -InterfaceMetric 1 -ErrorAction SilentlyContinue
+  Set-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -AutomaticMetric Disabled -InterfaceMetric $targetMetric -ErrorAction SilentlyContinue
 }
 
 $tunIface = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction Stop
-if ([int]$tunIface.InterfaceMetric -ne 1) {
+if ([int]$tunIface.InterfaceMetric -ne $targetMetric) {
   Write-Output ("DoodleRay Tunnel IPv4 metric was not applied: ifIndex={0}, metric={1}" -f $adapter.ifIndex, $tunIface.InterfaceMetric)
   exit 3
 }

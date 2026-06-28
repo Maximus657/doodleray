@@ -12,6 +12,7 @@ import Settings from './pages/Settings';
 import { useAppStore } from './stores/app-store';
 import { useToastStore } from './stores/toast-store';
 import { buildConnectRequestFromState } from './lib/connect-helpers';
+import { isHealthAcceptable, summarizeHealthFailures, waitForConnectionHealth } from './lib/connection-health';
 import { resolveConnectServer } from './lib/server-selection';
 import { checkForAppUpdate, installAppUpdate } from './lib/app-updater';
 import './index.css';
@@ -234,6 +235,19 @@ function App() {
       }
     }
 
+    async function repairRuntimeOnStartup() {
+      if (!isTauriRuntime()) return;
+      try {
+        const message = await invoke('repair_windows_runtime');
+        const firstLine = typeof message === 'string' ? message.split('\n')[0] : null;
+        if (firstLine) {
+          useAppStore.getState().addLog('info', `Startup repair: ${firstLine}`);
+        }
+      } catch (err) {
+        useAppStore.getState().addLog('warning', `Startup repair skipped: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
     async function checkForUpdates(options: { autoInstall?: boolean; silent?: boolean } = {}) {
       try {
         const currentVersion = await import('@tauri-apps/api/app')
@@ -328,8 +342,22 @@ function App() {
         const result: any = await invoke('vpn_connect', { request });
         
         if (result.success) {
-          useAppStore.setState({ status: 'connected', connectedAt: Date.now() });
-          state.addLog('success', `Auto-connected to ${srv.name}`);
+          const { health } = await waitForConnectionHealth(
+            invoke,
+            state.proxyMode,
+            request.system_proxy_mode,
+            request.socks_port,
+            request.http_port,
+            result.health ?? null,
+          );
+          if (isHealthAcceptable(state.proxyMode, health)) {
+            useAppStore.setState({ status: 'connected', connectedAt: Date.now() });
+            state.addLog('success', `Auto-connected to ${srv.name}`);
+          } else {
+            await invoke('vpn_disconnect').catch(() => undefined);
+            useAppStore.setState({ status: 'disconnected' });
+            state.addLog('error', `Auto-connect health check failed: ${summarizeHealthFailures(health)}`);
+          }
         } else {
           useAppStore.setState({ status: 'disconnected' });
           state.addLog('error', `Auto-connect failed: ${result.message}`);
@@ -389,6 +417,7 @@ function App() {
     const runStartupFlow = () => {
       compactHydratedStorage();
       startupFlowTimer = setTimeout(async () => {
+        await repairRuntimeOnStartup();
         updateInProgress = true;
         const installingUpdate = await checkForUpdates({ autoInstall: false, silent: true });
         updateInProgress = false;
