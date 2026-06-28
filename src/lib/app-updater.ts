@@ -25,6 +25,7 @@ const UPDATE_CHECK_TIMEOUT_MS = 15_000;
 const UPDATE_DOWNLOAD_TIMEOUT_MS = 5 * 60_000;
 const UPDATE_INSTALL_TIMEOUT_MS = 4 * 60_000;
 const UPDATE_PREPARE_STEP_TIMEOUT_MS = 8_000;
+const UPDATE_PROGRESS_MIN_INTERVAL_MS = 250;
 
 function timeoutError(label: string, timeoutMs: number) {
   return new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s`);
@@ -107,23 +108,43 @@ async function installAppUpdateOnce({
 
   let downloaded = 0;
   let contentLength = 0;
+  let lastProgress: number | null = null;
+  let lastProgressAt = 0;
+  let progressStatusSent = false;
+
+  const emitProgress = (progress: number, force = false) => {
+    const now = Date.now();
+    if (
+      !force &&
+      progress === lastProgress &&
+      now - lastProgressAt < UPDATE_PROGRESS_MIN_INTERVAL_MS
+    ) {
+      return;
+    }
+    lastProgress = progress;
+    lastProgressAt = now;
+    onProgress(progress);
+    if (!progressStatusSent && progress > 0) {
+      progressStatusSent = true;
+      onStatus('updateDownloadingProgress');
+    }
+  };
 
   await pendingUpdate.download((event) => {
     switch (event.event) {
       case 'Started':
         contentLength = event.data?.contentLength || 0;
-        onProgress(0);
+        emitProgress(0, true);
         break;
       case 'Progress':
         downloaded += event.data?.chunkLength || 0;
         if (contentLength > 0) {
           const percent = Math.min(100, Math.round((downloaded / contentLength) * 100));
-          onProgress(percent);
-          onStatus('updateDownloadingProgress');
+          emitProgress(percent);
         }
         break;
       case 'Finished':
-        onProgress(100);
+        emitProgress(100, true);
         onStatus('updatePreparingInstall');
         break;
     }

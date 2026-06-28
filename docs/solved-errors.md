@@ -1,5 +1,12 @@
 # Solved Errors
 
+## 2026-06-29 - App updater - WebView2 V8 out-of-memory on 5.3.1 to 5.4.0 update
+
+- Symptom/command: in-app update from installed `DoodleRay.exe` 5.3.1 showed the WebView2 error page `Out of Memory`; Crashpad dump contained `v8-oom-last-few-messages` with old-space around 2112 MB.
+- Root cause: the generated `latest.json` exposed `windows-x86_64-nsis` as the full Windows setup `.exe` instead of the small NSIS updater zip, and the 5.3.1 UI wrote updater progress state through persisted storage for every download chunk.
+- Fix: release workflow now patches `latest.json` after all platform builds so `windows-x86_64-nsis` points at the NSIS updater zip; app update progress is throttled, and persisted storage writes are skipped when the serialized persisted state did not change.
+- Verification: Crashpad evidence confirmed renderer V8 OOM; local store was only about 68 KB, ruling out user data bloat. `latest.json` patch logic requires `windows-x86_64` to point at `.nsis.zip` before replacing the NSIS target.
+
 ## 2026-06-28 - Release 5.4.0 - local updater signing key absent
 
 - Symptom/command: `npm run tauri build` emitted `DoodleRay_5.4.0_x64-setup.exe`, then exited with `A public key has been found, but no private key`.

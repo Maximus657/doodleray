@@ -204,6 +204,8 @@ const safeLocalRemove = (name: string) => {
   }
 };
 
+const persistedValueCache = new Map<string, string>();
+
 export function detectInitialLanguage(): SupportedLanguage {
   if (typeof navigator === 'undefined') return 'en';
 
@@ -232,11 +234,13 @@ const secureStorage: StateStorage<Promise<void> | void> = {
       } catch (err) {
         console.warn('[storage] secure migration failed, keeping local fallback', err);
       }
+      persistedValueCache.set(name, legacyValue);
       return legacyValue;
     }
 
     try {
       const value = await invoke<string | null>('secure_store_get', { key: name });
+      if (value !== null) persistedValueCache.set(name, value);
       return value;
     } catch (err) {
       console.warn('[storage] secure read failed, using local fallback', err);
@@ -244,6 +248,9 @@ const secureStorage: StateStorage<Promise<void> | void> = {
     }
   },
   async setItem(name, value) {
+    if (persistedValueCache.get(name) === value) return;
+    persistedValueCache.set(name, value);
+
     if (!isTauriRuntime()) {
       safeLocalSet(name, value);
       return;
@@ -259,6 +266,7 @@ const secureStorage: StateStorage<Promise<void> | void> = {
     }
   },
   async removeItem(name) {
+    persistedValueCache.delete(name);
     if (!isTauriRuntime()) {
       safeLocalRemove(name);
       return;
