@@ -361,6 +361,10 @@ function productModeFromTransport(proxyMode: ProxyMode, systemProxyMode: SystemP
   return systemProxyMode === 'set' ? 'compatibility' : 'manual';
 }
 
+function normalizeNetworkStack(stack: unknown): AppState['networkStack'] {
+  return stack === 'gvisor' ? 'gvisor' : 'system';
+}
+
 function compactStateForPersist(state: AppState): Partial<AppState> {
   const excluded = new Set([
     'status',
@@ -446,7 +450,7 @@ export const useAppStore = create<AppState>()(
       silentAdminAutostart: false,
       theme: 'dark',
       language: detectInitialLanguage(),
-      networkStack: 'mixed',
+      networkStack: 'system',
       dnsMode: 'fakeip',
       strictRoute: true,
       killSwitch: false,
@@ -483,7 +487,7 @@ export const useAppStore = create<AppState>()(
         ),
       })),
 
-      setNetworkStack: (stack) => set({ networkStack: stack }),
+      setNetworkStack: (stack) => set({ networkStack: normalizeNetworkStack(stack) }),
       setDnsMode: (mode) => set({ dnsMode: mode }),
       setStrictRoute: (strict) => set({ strictRoute: strict }),
       setKillSwitch: (on) => set({ killSwitch: on }),
@@ -592,6 +596,7 @@ export const useAppStore = create<AppState>()(
           language: persistedState?.language ?? current.language,
         } as AppState;
         merged.systemProxyMode = normalizeSystemProxyMode(merged.systemProxyMode, merged.proxyMode);
+        merged.networkStack = normalizeNetworkStack(merged.networkStack);
         merged.productMode = merged.productMode ?? productModeFromTransport(merged.proxyMode, merged.systemProxyMode);
         const storedKey =
           merged.lastSelectedServerKey ??

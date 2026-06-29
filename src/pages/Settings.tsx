@@ -608,7 +608,6 @@ export default function Settings() {
                 <span className="text-sm font-black text-black uppercase tracking-tight">{t('l3Stack')}</span>
                 <select value={networkStack} onChange={(e) => setNetworkStack(e.target.value as any)}
                   className="bg-white border-[3px] border-black shadow-[2px_2px_0_#000] rounded-lg px-3 py-1.5 text-xs text-black font-black uppercase tracking-widest focus:outline-none cursor-pointer">
-                  <option value="mixed">Mixed</option>
                   <option value="system">System</option>
                   <option value="gvisor">gVisor</option>
                 </select>

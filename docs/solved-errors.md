@@ -1,5 +1,12 @@
 # Solved Errors
 
+## 2026-06-29 - Windows protected mode - sing-box mixed stack panic killed local proxy
+
+- Symptom/command: protected mode repeatedly reported unstable health and then failed with `SOCKS listener`/`HTTP listener` not accepting connections, while another VPN client could connect.
+- Root cause: service diagnostics showed bundled `sing-box` crashed inside `sing-tun` mixed stack with `panic: runtime error: slice bounds out of range [:16] with capacity 8` in `Mixed.processIPv6`. The app defaulted Windows TUN to `networkStack: mixed`, and persisted old settings could keep using it after update.
+- Fix: Windows TUN now coerces `mixed` to the stable `system` stack in backend config generation; frontend defaults/migration also normalize stored `mixed` to `system`, and the Settings UI no longer offers `Mixed`. The tunnel service now rechecks xray/sing-box liveness before reporting `Connected` and marks a connected tunnel failed if a managed engine exits.
+- Verification: service diagnostics captured the redacted panic and failed loopback proxy dials; local verification commands for the fix were `npm run build`, `cargo check --manifest-path src-tauri/Cargo.toml --lib`, `cargo check --manifest-path src-tauri/Cargo.toml --bin DoodleRayService`, and `cargo test --manifest-path src-tauri/Cargo.toml --lib`.
+
 ## 2026-06-29 - Windows protected mode - default RU split routing missing
 
 - Symptom/command: in protected/TUN mode, opening `2ip.ru` showed the VPN exit country/IP instead of the user's direct Russian connection.

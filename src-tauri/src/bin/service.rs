@@ -584,7 +584,8 @@ mod windows_service_main {
     }
 
     fn status_snapshot() -> TunnelStatus {
-        let runtime = state().lock().unwrap();
+        let mut runtime = state().lock().unwrap();
+        refresh_connected_process_state(&mut runtime);
         TunnelStatus {
             protocol_version: TUNNEL_PROTOCOL_VERSION,
             service_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -593,6 +594,45 @@ mod windows_service_main {
             active_op_id: runtime.active_op_id.clone(),
             error: runtime.error.clone(),
             timings_ms: runtime.timings_ms.clone(),
+        }
+    }
+
+    fn refresh_connected_process_state(runtime: &mut TunnelRuntime) {
+        if !matches!(runtime.state, TunnelState::Connected) {
+            return;
+        }
+
+        let mut failure = None;
+        if let Some(child) = runtime.xray.as_mut() {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    failure = Some(format!("xray exited unexpectedly with {}", status));
+                }
+                Err(e) => {
+                    failure = Some(format!("xray status check failed: {}", e));
+                }
+                Ok(None) => {}
+            }
+        }
+        if failure.is_none() {
+            if let Some(child) = runtime.singbox.as_mut() {
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        failure = Some(format!("sing-box exited unexpectedly with {}", status));
+                    }
+                    Err(e) => {
+                        failure = Some(format!("sing-box status check failed: {}", e));
+                    }
+                    Ok(None) => {}
+                }
+            }
+        }
+
+        if let Some(message) = failure {
+            runtime.state = TunnelState::Failed;
+            runtime.phase = Some("failed".into());
+            runtime.error = Some(redact(&message));
+            runtime.job.take();
         }
     }
 
@@ -782,7 +822,7 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             .map_err(|e| format!("Failed to create runtime dir: {}", e))?;
 
         let singbox_config = with_tun_interface_name(request.singbox_config.clone());
-        if matches!(request.engine_kind, TunnelEngineKind::XrayTun) {
+        let xray_log_path = if matches!(request.engine_kind, TunnelEngineKind::XrayTun) {
             set_phase("starting_xray", started, generation)?;
             let xray_config = request
                 .xray_config
@@ -804,7 +844,10 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
                 wait_for_port(request.http_port, Duration::from_secs(8), generation)?;
             }
             set_phase("xray_ready", started, generation)?;
-        }
+            Some(xray_log_path)
+        } else {
+            None
+        };
 
         set_phase("starting_tun", started, generation)?;
         let singbox_config_path = runtime_dir.join("singbox_tun_config.json");
@@ -836,6 +879,10 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         set_phase("ipv4_ready", started, generation)?;
         wait_for_doodleray_route_preferred(Duration::from_secs(20), generation)?;
         set_phase("routes_ready", started, generation)?;
+        if let Some(path) = xray_log_path.as_deref() {
+            ensure_xray_alive(path)?;
+        }
+        ensure_singbox_alive(&singbox_log_path)?;
         ensure_current_generation(generation)?;
 
         let mut runtime = state().lock().unwrap();
@@ -1060,6 +1107,19 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         let lower = log.to_lowercase();
         if lower.contains("fatal") || lower.contains("panic") {
             return Err(format!("sing-box failed: {}", redact(&log)));
+        }
+        Ok(())
+    }
+
+    fn ensure_xray_alive(log_path: &Path) -> Result<(), String> {
+        let mut runtime = state().lock().unwrap();
+        if let Some(child) = runtime.xray.as_mut() {
+            if let Ok(Some(status)) = child.try_wait() {
+                let log = std::fs::read_to_string(log_path).unwrap_or_default();
+                return Err(format!("xray exited with {}: {}", status, redact(&log)));
+            }
+        } else {
+            return Err("xray process is not running".to_string());
         }
         Ok(())
     }

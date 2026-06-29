@@ -1304,6 +1304,22 @@ fn safe_network_stack(stack: &str) -> &str {
     }
 }
 
+fn effective_tun_network_stack(stack: &str) -> &str {
+    let safe_stack = safe_network_stack(stack);
+    #[cfg(windows)]
+    {
+        if safe_stack == "mixed" {
+            "system"
+        } else {
+            safe_stack
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        safe_stack
+    }
+}
+
 fn default_system_proxy_mode() -> String {
     "set".into()
 }
@@ -1836,7 +1852,7 @@ fn tun_inbound_value(
     interface_name: Option<&str>,
     strict_route: bool,
 ) -> serde_json::Value {
-    let stack = safe_network_stack(&req.network_stack);
+    let stack = effective_tun_network_stack(&req.network_stack);
     let mut inbound = serde_json::json!({
         "type": "tun",
         "tag": "tun-in",
@@ -3809,13 +3825,38 @@ mod tests {
     }
 
     #[test]
-    fn singbox_tun_mixed_stack_uses_udp_stability_options() {
+    fn singbox_tun_stabilizes_mixed_stack_on_windows() {
         let mut req = sample_request("tun");
         req.network_stack = "mixed".into();
 
         let config = build_singbox_config(&req);
 
         assert_eq!(config["inbounds"][0]["udp_timeout"], json!("10m"));
+        #[cfg(windows)]
+        {
+            assert_eq!(config["inbounds"][0]["stack"], json!("system"));
+            assert!(config["inbounds"][0]
+                .get("endpoint_independent_nat")
+                .is_none());
+        }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(config["inbounds"][0]["stack"], json!("mixed"));
+            assert_eq!(
+                config["inbounds"][0]["endpoint_independent_nat"],
+                json!(true)
+            );
+        }
+    }
+
+    #[test]
+    fn singbox_tun_gvisor_keeps_udp_stability_options() {
+        let mut req = sample_request("tun");
+        req.network_stack = "gvisor".into();
+
+        let config = build_singbox_config(&req);
+
+        assert_eq!(config["inbounds"][0]["stack"], json!("gvisor"));
         assert_eq!(
             config["inbounds"][0]["endpoint_independent_nat"],
             json!(true)
@@ -4529,7 +4570,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
     if is_tun {
         vpn_log(&format!(
             "TUN config: stack={}, dns={}, mtu={}, sniff=true, strict_route={}",
-            safe_network_stack(&request.network_stack),
+            effective_tun_network_stack(&request.network_stack),
             request.dns_mode,
             tun_mtu_value(&request),
             request.strict_route
