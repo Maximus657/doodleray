@@ -1,5 +1,12 @@
 # Solved Errors
 
+## 2026-06-29 - Windows protected mode - duplicate app instances killed tunnel engines
+
+- Symptom/command: after updating to 5.4.3, protected mode still failed with `HTTP listener: 127.0.0.1:<port> is not accepting connections`, while proxy mode worked.
+- Root cause: diagnostics showed service version 5.4.3 but multiple `DoodleRay.exe` and multiple DoodleRay-owned `xray.exe` processes. The app's single-instance guard used a `Global\` mutex that can fail for normal users; on failure it allowed startup. A second app instance could then run startup cleanup or reconnect logic and stop the service/xray that the first protected-mode attempt was using.
+- Fix: single-instance guard now uses a per-session `Local\` mutex and fails closed if it cannot claim it. After a successful claim, startup cleanup terminates only duplicate `DoodleRay.exe` and orphaned DoodleRay-owned `xray.exe`/`sing-box.exe` from the current install directory, leaving other VPN clients alone. The tunnel service also rechecks local SOCKS/HTTP ports after route readiness before reporting `Connected`.
+- Verification: diagnostics confirmed duplicate DoodleRay/xray processes and the failed `127.0.0.1:<port>` bridge dials; local verification commands were `npm run build`, `cargo check --manifest-path src-tauri/Cargo.toml --lib`, `cargo check --manifest-path src-tauri/Cargo.toml --bin DoodleRayService`, and `cargo test --manifest-path src-tauri/Cargo.toml --lib`.
+
 ## 2026-06-29 - Windows protected mode - sing-box mixed stack panic killed local proxy
 
 - Symptom/command: protected mode repeatedly reported unstable health and then failed with `SOCKS listener`/`HTTP listener` not accepting connections, while another VPN client could connect.

@@ -64,12 +64,12 @@ fn claim_single_app_instance() -> bool {
     use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
     use windows_sys::Win32::System::Threading::CreateMutexW;
 
-    let name: Vec<u16> = "Global\\DoodleRay.VPN.AppInstance.v1\0"
+    let local_name: Vec<u16> = "Local\\DoodleRay.VPN.AppInstance.v1\0"
         .encode_utf16()
         .collect();
-    let handle = unsafe { CreateMutexW(std::ptr::null(), 1, name.as_ptr()) };
+    let handle = unsafe { CreateMutexW(std::ptr::null(), 1, local_name.as_ptr()) };
     if handle.is_null() {
-        return true;
+        return false;
     }
     if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
         unsafe {
@@ -77,6 +77,24 @@ fn claim_single_app_instance() -> bool {
         }
         return false;
     }
+
+    let legacy_global_name: Vec<u16> = "Global\\DoodleRay.VPN.AppInstance.v1\0"
+        .encode_utf16()
+        .collect();
+    let legacy_handle = unsafe { CreateMutexW(std::ptr::null(), 0, legacy_global_name.as_ptr()) };
+    if !legacy_handle.is_null() {
+        let legacy_exists = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
+        unsafe {
+            CloseHandle(legacy_handle);
+        }
+        if legacy_exists {
+            unsafe {
+                CloseHandle(handle);
+            }
+            return false;
+        }
+    }
+
     APP_INSTANCE_MUTEX_HANDLE.store(handle as isize, Ordering::SeqCst);
     true
 }
@@ -96,6 +114,50 @@ fn vpn_log(msg: &str) {
             logs.drain(..drain);
         }
     }
+}
+
+#[cfg(windows)]
+fn quote_ps_single(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+#[cfg(windows)]
+fn run_hidden_powershell(script: &str) {
+    let mut cmd = std::process::Command::new("powershell");
+    cmd.args(["-NoProfile", "-Command", script]);
+    cmd.creation_flags(0x08000000);
+    let _ = cmd.output();
+}
+
+#[cfg(windows)]
+fn terminate_other_doodleray_app_instances() {
+    let Ok(exe_path) = std::env::current_exe() else {
+        return;
+    };
+    let exe = quote_ps_single(&exe_path.to_string_lossy());
+    let pid = std::process::id();
+    let script = format!(
+        "Get-CimInstance Win32_Process -Filter \"Name = 'DoodleRay.exe'\" | Where-Object {{ $_.ProcessId -ne {} -and $_.ExecutablePath -eq {} }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}",
+        pid, exe
+    );
+    run_hidden_powershell(&script);
+}
+
+#[cfg(windows)]
+fn terminate_orphaned_doodleray_engine_processes() {
+    let Ok(exe_path) = std::env::current_exe() else {
+        return;
+    };
+    let Some(exe_dir) = exe_path.parent() else {
+        return;
+    };
+    let xray_path = quote_ps_single(&exe_dir.join("xray-core").join("xray.exe").to_string_lossy());
+    let singbox_path = quote_ps_single(&exe_dir.join("sing-box.exe").to_string_lossy());
+    let script = format!(
+        "$owned = @({}, {}); Get-CimInstance Win32_Process | Where-Object {{ $_.ExecutablePath -in $owned }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}",
+        xray_path, singbox_path
+    );
+    run_hidden_powershell(&script);
 }
 
 fn validate_http_url(raw_url: &str) -> Result<Url, String> {
@@ -7963,12 +8025,17 @@ pub fn run() {
         return;
     }
 
+    #[cfg(windows)]
+    terminate_other_doodleray_app_instances();
+
     // ── Startup cleanup ──
     // If previous session crashed, clean up orphaned processes and stale proxy
     // This runs BEFORE the UI loads, so the user never sees broken internet
     #[cfg(windows)]
     let _ = tunnel_service_stop("startup_cleanup");
     let _ = tun::stop_tun(); // Kill any orphaned sing-box.exe
+    #[cfg(windows)]
+    terminate_orphaned_doodleray_engine_processes();
     #[cfg(windows)]
     let _ = sysproxy::recover_orphaned_proxy_on_startup();
     #[cfg(target_os = "macos")]

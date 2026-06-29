@@ -883,6 +883,11 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             ensure_xray_alive(path)?;
         }
         ensure_singbox_alive(&singbox_log_path)?;
+        wait_for_port(request.socks_port, Duration::from_secs(5), generation)?;
+        if request.http_port != request.socks_port {
+            wait_for_port(request.http_port, Duration::from_secs(5), generation)?;
+        }
+        set_phase("local_proxy_ready", started, generation)?;
         ensure_current_generation(generation)?;
 
         let mut runtime = state().lock().unwrap();
