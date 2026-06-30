@@ -68,6 +68,32 @@ pub struct TunnelStatus {
     pub state: TunnelState,
     pub phase: Option<String>,
     pub active_op_id: Option<String>,
+    #[serde(default)]
+    pub service_generation: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_socks_port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_http_port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_api_port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub xray_pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub singbox_pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adapter_alias: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adapter_ifindex: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_ready: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dns_ready: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_compat_state: Option<String>,
+    #[serde(default)]
+    pub fatal_checks: Vec<String>,
+    #[serde(default)]
+    pub degraded_checks: Vec<String>,
     pub error: Option<String>,
     pub timings_ms: Vec<(String, u64)>,
 }

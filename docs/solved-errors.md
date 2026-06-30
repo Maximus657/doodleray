@@ -1,5 +1,26 @@
 # Solved Errors
 
+## 2026-06-30 - Windows xray protected mode - connected state with broken DNS resolution
+
+- Symptom/command: user screenshot showed DoodleRay connected in protected mode while the browser failed to resolve `www.google.com` (`server IP address could not be found` / name resolution failure). Phone keys worked, Happ keys worked, and the issue looked like PC protected-mode DNS rather than subscription failure.
+- Root cause: xray+TUN bridge used sing-box HTTP outbound as the default `proxy` dataplane and SOCKS only for the explicit UDP rule. The bridge DNS server used UDP DNS with `detour=proxy`, which could send DNS over the HTTP outbound instead of the xray SOCKS inbound that supports UDP. Health also marked TUN DNS as OK from adapter/config presence and did not perform a real domain resolution probe.
+- Fix: xray+TUN bridge now uses xray SOCKS inbound for the default `proxy` dataplane; HTTP inbound remains only for WinINet/manual browser compatibility. Windows TUN DNS health now performs an actual `www.google.com` A-record resolution probe with `Resolve-DnsName`/`nslookup` fallback, so broken DNS makes protected health fail instead of showing a clean connected state.
+- Verification: `cargo test --manifest-path src-tauri/Cargo.toml --lib`, `cargo check --manifest-path src-tauri/Cargo.toml --bin DoodleRayService`, `cargo check --manifest-path src-tauri/Cargo.toml --bin DoodleRay`, `npm run build`, and `git diff --check`.
+
+## 2026-06-30 - Windows protected mode - TUN core was treated as failed when only browser compatibility failed
+
+- Symptom/command: protected mode could connect the Tunnel Service core, then report failures such as `HTTP listener: 127.0.0.1:<port> is not accepting connections` or `Windows proxy compatibility failed`, while proxy mode still worked and a reboot could make TUN work again.
+- Root cause: the app treated WinINet/HTTP compatibility as fatal for protected mode and stopped the service-owned tunnel. The UI also relied on message/health text parsing and could keep checking stale local proxy ports after the service had selected runtime ports.
+- Fix: protected-mode compatibility failures now return `success=true` with `health.verdict=protected_degraded`; TUN core stays up. `TunnelStatus` and `ConnectionHealthReport` now carry structured runtime ports/generation/op-id, and the UI stores actual runtime ports for TUN after connect/reload/health monitor. `repair_windows_runtime` also soft-reboots stale DoodleRay-owned service/engine state only when no connection is active.
+- Verification: `cargo test --manifest-path src-tauri/Cargo.toml --lib`, `cargo check --manifest-path src-tauri/Cargo.toml --bin DoodleRayService`, `cargo check --manifest-path src-tauri/Cargo.toml --bin DoodleRay`, `npm run build`, `git diff --check`, and local NSIS RC bundle creation at `src-tauri/target/release/bundle/nsis/DoodleRay_5.4.5_x64-setup.exe`.
+
+## 2026-06-29 - Windows protected mode - transient loopback proxy readiness false negative
+
+- Symptom/command: on installed 5.4.4, protected mode failed with `Protected mode started but Windows proxy compatibility failed: HTTP proxy port 127.0.0.1:4491 is not ready`.
+- Root cause: service diagnostics showed `DoodleRayService.exe` 5.4.4 and xray accepted protected-mode `http-in` traffic during the same 23:07 connection attempt, while sing-box was dialing the same `127.0.0.1:4491` bridge. The failure came from the app-side WinINet proxy apply path, where `apply_doodleray_proxy()` performed a second single-shot 250ms loopback readiness check after the service and app had already waited for the port. Under immediate TUN traffic load this could return a false negative and tear down an otherwise-started protected mode.
+- Fix: loopback readiness in Windows sysproxy now retries for up to 3 seconds before declaring the HTTP compatibility proxy unavailable. xray stats collection also has a bounded timeout so `xray.exe api statsquery` cannot accumulate as stuck helper processes.
+- Verification: read-only diagnostics confirmed installed app/service version 5.4.4 and xray `http-in` traffic at 23:07; local verification commands were `cargo check --manifest-path src-tauri/Cargo.toml --lib`, `cargo test --manifest-path src-tauri/Cargo.toml --lib sysproxy::tests::loopback_port_ready_waits_for_delayed_listener`, `cargo test --manifest-path src-tauri/Cargo.toml --lib`, `cargo check --manifest-path src-tauri/Cargo.toml --bin DoodleRayService`, and `git diff --check`.
+
 ## 2026-06-29 - Windows protected mode - duplicate app instances killed tunnel engines
 
 - Symptom/command: after updating to 5.4.3, protected mode still failed with `HTTP listener: 127.0.0.1:<port> is not accepting connections`, while proxy mode worked.

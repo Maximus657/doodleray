@@ -9,11 +9,13 @@
 use serde::{Deserialize, Serialize};
 use std::ffi::c_void;
 use std::fs;
+#[cfg(test)]
+use std::net::TcpListener;
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 #[cfg(not(test))]
 use std::process::Command;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 use winreg::enums::*;
 use winreg::{RegKey, RegValue};
@@ -842,9 +844,22 @@ fn remove_state_file() {
     let _ = fs::remove_file(state_file_path());
 }
 
-fn loopback_port_ready(port: u16) -> bool {
+fn loopback_port_ready_once(port: u16) -> bool {
     let addr: SocketAddr = ([127, 0, 0, 1], port).into();
     TcpStream::connect_timeout(&addr, Duration::from_millis(250)).is_ok()
+}
+
+fn loopback_port_ready(port: u16) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        if loopback_port_ready_once(port) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 fn process_is_alive(pid: u32) -> bool {
@@ -1064,5 +1079,21 @@ mod tests {
         assert!(bypass.contains("172.31.*"));
         assert!(!bypass.contains("riotgames"));
         assert!(!bypass.contains("pubg"));
+    }
+
+    #[test]
+    fn loopback_port_ready_waits_for_delayed_listener() {
+        let reserve = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = reserve.local_addr().unwrap().port();
+        drop(reserve);
+
+        let listener = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            let listener = TcpListener::bind(("127.0.0.1", port)).unwrap();
+            let _ = listener.accept();
+        });
+
+        assert!(loopback_port_ready(port));
+        let _ = listener.join();
     }
 }

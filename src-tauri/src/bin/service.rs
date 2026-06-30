@@ -62,6 +62,17 @@ mod windows_service_main {
         state: TunnelState,
         phase: Option<String>,
         active_op_id: Option<String>,
+        service_generation: u64,
+        runtime_socks_port: Option<u16>,
+        runtime_http_port: Option<u16>,
+        runtime_api_port: Option<u16>,
+        adapter_alias: Option<String>,
+        adapter_ifindex: Option<u32>,
+        route_ready: Option<bool>,
+        dns_ready: Option<bool>,
+        proxy_compat_state: Option<String>,
+        fatal_checks: Vec<String>,
+        degraded_checks: Vec<String>,
         error: Option<String>,
         timings_ms: Vec<(String, u64)>,
         xray: Option<Child>,
@@ -75,6 +86,17 @@ mod windows_service_main {
                 state: TunnelState::Disconnected,
                 phase: None,
                 active_op_id: None,
+                service_generation: 0,
+                runtime_socks_port: None,
+                runtime_http_port: None,
+                runtime_api_port: None,
+                adapter_alias: None,
+                adapter_ifindex: None,
+                route_ready: None,
+                dns_ready: None,
+                proxy_compat_state: None,
+                fatal_checks: Vec::new(),
+                degraded_checks: Vec::new(),
                 error: None,
                 timings_ms: Vec::new(),
                 xray: None,
@@ -551,6 +573,17 @@ mod windows_service_main {
                     runtime.state = TunnelState::Connecting;
                     runtime.phase = Some("queued".into());
                     runtime.active_op_id = Some(request.op_id.clone());
+                    runtime.service_generation = generation;
+                    runtime.runtime_socks_port = Some(request.socks_port);
+                    runtime.runtime_http_port = Some(request.http_port);
+                    runtime.runtime_api_port = None;
+                    runtime.adapter_alias = None;
+                    runtime.adapter_ifindex = None;
+                    runtime.route_ready = None;
+                    runtime.dns_ready = None;
+                    runtime.proxy_compat_state = Some("pending".into());
+                    runtime.fatal_checks.clear();
+                    runtime.degraded_checks.clear();
                     runtime.error = None;
                     runtime.timings_ms.clear();
                 }
@@ -592,6 +625,19 @@ mod windows_service_main {
             state: runtime.state.clone(),
             phase: runtime.phase.clone(),
             active_op_id: runtime.active_op_id.clone(),
+            service_generation: runtime.service_generation,
+            runtime_socks_port: runtime.runtime_socks_port,
+            runtime_http_port: runtime.runtime_http_port,
+            runtime_api_port: runtime.runtime_api_port,
+            xray_pid: runtime.xray.as_ref().map(|child| child.id()),
+            singbox_pid: runtime.singbox.as_ref().map(|child| child.id()),
+            adapter_alias: runtime.adapter_alias.clone(),
+            adapter_ifindex: runtime.adapter_ifindex,
+            route_ready: runtime.route_ready,
+            dns_ready: runtime.dns_ready,
+            proxy_compat_state: runtime.proxy_compat_state.clone(),
+            fatal_checks: runtime.fatal_checks.clone(),
+            degraded_checks: runtime.degraded_checks.clone(),
             error: runtime.error.clone(),
             timings_ms: runtime.timings_ms.clone(),
         }
@@ -632,6 +678,7 @@ mod windows_service_main {
             runtime.state = TunnelState::Failed;
             runtime.phase = Some("failed".into());
             runtime.error = Some(redact(&message));
+            runtime.fatal_checks.push(redact(&message));
             runtime.job.take();
         }
     }
@@ -804,6 +851,17 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             runtime.state = TunnelState::Connecting;
             runtime.phase = Some("stopping_previous".into());
             runtime.active_op_id = Some(request.op_id.clone());
+            runtime.service_generation = generation;
+            runtime.runtime_socks_port = Some(request.socks_port);
+            runtime.runtime_http_port = Some(request.http_port);
+            runtime.runtime_api_port = None;
+            runtime.adapter_alias = None;
+            runtime.adapter_ifindex = None;
+            runtime.route_ready = None;
+            runtime.dns_ready = None;
+            runtime.proxy_compat_state = Some("pending".into());
+            runtime.fatal_checks.clear();
+            runtime.degraded_checks.clear();
             runtime.error = None;
             runtime.timings_ms.clear();
         }
@@ -815,6 +873,7 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             runtime.state = TunnelState::Connecting;
             runtime.phase = Some("starting_job".into());
             runtime.active_op_id = Some(request.op_id.clone());
+            runtime.service_generation = generation;
         }
 
         let runtime_dir = runtime_root().join(sanitize_id(&request.op_id));
@@ -866,6 +925,7 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
 
         set_phase("waiting_adapter", started, generation)?;
         wait_for_adapter("DoodleRay Tunnel", Duration::from_secs(15), generation)?;
+        mark_adapter_ready();
         ensure_singbox_alive(&singbox_log_path)?;
         if matches!(request.engine_kind, TunnelEngineKind::SingboxTun) {
             wait_for_port(request.socks_port, Duration::from_secs(8), generation)?;
@@ -878,6 +938,7 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         wait_for_doodleray_ipv4_interface(Duration::from_secs(20), generation)?;
         set_phase("ipv4_ready", started, generation)?;
         wait_for_doodleray_route_preferred(Duration::from_secs(20), generation)?;
+        mark_route_ready();
         set_phase("routes_ready", started, generation)?;
         if let Some(path) = xray_log_path.as_deref() {
             ensure_xray_alive(path)?;
@@ -893,6 +954,7 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         let mut runtime = state().lock().unwrap();
         runtime.state = TunnelState::Connected;
         runtime.phase = Some("connected".into());
+        runtime.proxy_compat_state = Some("core_connected".into());
         runtime
             .timings_ms
             .push(("total_connect".into(), elapsed_ms(started)));
@@ -942,6 +1004,16 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         runtime.state = TunnelState::Disconnected;
         runtime.phase = None;
         runtime.active_op_id = None;
+        runtime.runtime_socks_port = None;
+        runtime.runtime_http_port = None;
+        runtime.runtime_api_port = None;
+        runtime.adapter_alias = None;
+        runtime.adapter_ifindex = None;
+        runtime.route_ready = None;
+        runtime.dns_ready = None;
+        runtime.proxy_compat_state = None;
+        runtime.fatal_checks.clear();
+        runtime.degraded_checks.clear();
         runtime.error = None;
         Ok(())
     }
@@ -950,7 +1022,9 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         let mut runtime = state().lock().unwrap();
         runtime.state = TunnelState::Failed;
         runtime.phase = Some("failed".into());
-        runtime.error = Some(redact(message));
+        let redacted = redact(message);
+        runtime.error = Some(redacted.clone());
+        runtime.fatal_checks.push(redacted);
     }
 
     fn clear_timings() {
@@ -1157,6 +1231,46 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             std::thread::sleep(Duration::from_millis(150));
         }
         Err("DoodleRay Tunnel adapter did not become ready".into())
+    }
+
+    fn mark_adapter_ready() {
+        let (alias, ifindex) = doodleray_adapter_snapshot()
+            .unwrap_or_else(|| ("DoodleRay Tunnel".to_string(), None));
+        let mut runtime = state().lock().unwrap();
+        runtime.adapter_alias = Some(alias);
+        runtime.adapter_ifindex = ifindex;
+    }
+
+    fn mark_route_ready() {
+        state().lock().unwrap().route_ready = Some(true);
+    }
+
+    fn doodleray_adapter_snapshot() -> Option<(String, Option<u32>)> {
+        let output = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "Get-NetAdapter -Name 'DoodleRay Tunnel' -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object { \"$($_.Name)|$($_.ifIndex)\" }",
+            ])
+            .creation_flags(0x08000000)
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let line = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())?
+            .to_string();
+        let mut parts = line.splitn(2, '|');
+        let alias = parts.next()?.trim().to_string();
+        let ifindex = parts.next().and_then(|value| value.trim().parse().ok());
+        if alias.is_empty() {
+            None
+        } else {
+            Some((alias, ifindex))
+        }
     }
 
     fn apply_doodleray_interface_metric() -> Result<String, String> {

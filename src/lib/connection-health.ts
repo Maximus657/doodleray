@@ -10,9 +10,14 @@ export type ConnectionHealthCheck = {
 };
 
 export type ConnectionHealthReport = {
-  verdict: 'protected' | 'partial' | 'failed' | string;
+  verdict: 'protected' | 'protected_degraded' | 'partial' | 'failed' | string;
   mode: string;
   generated_at_ms: number;
+  runtime_socks_port?: number;
+  runtime_http_port?: number;
+  runtime_api_port?: number;
+  service_generation?: number;
+  active_op_id?: string;
   checks: ConnectionHealthCheck[];
 };
 
@@ -20,20 +25,30 @@ export type ConnectionHealthPorts = { socksPort?: number; httpPort?: number };
 
 export function extractPortsFromHealth(health: ConnectionHealthReport | null | undefined): ConnectionHealthPorts {
   const ports: ConnectionHealthPorts = {};
+  const runtimeSocksPort = health?.runtime_socks_port;
+  const runtimeHttpPort = health?.runtime_http_port;
+  if (isValidPort(runtimeSocksPort)) ports.socksPort = runtimeSocksPort;
+  if (isValidPort(runtimeHttpPort)) ports.httpPort = runtimeHttpPort;
+  if (ports.socksPort && ports.httpPort) return ports;
+
   for (const check of health?.checks ?? []) {
     const match = check.detail.match(/127\.0\.0\.1:(\d+)/);
     if (!match) continue;
     const port = Number(match[1]);
-    if (!Number.isInteger(port) || port <= 0 || port > 65535) continue;
-    if (check.code === 'socks_listener') ports.socksPort = port;
-    if (check.code === 'http_listener') ports.httpPort = port;
+    if (!isValidPort(port)) continue;
+    if (check.code === 'socks_listener' && !ports.socksPort) ports.socksPort = port;
+    if (check.code === 'http_listener' && !ports.httpPort) ports.httpPort = port;
   }
   return ports;
 }
 
+function isValidPort(port: unknown): port is number {
+  return Number.isInteger(port) && Number(port) > 0 && Number(port) <= 65535;
+}
+
 export function isHealthAcceptable(mode: ProxyMode, health: ConnectionHealthReport | null | undefined): boolean {
   if (!health) return false;
-  if (mode === 'tun') return health.verdict === 'protected';
+  if (mode === 'tun') return health.verdict === 'protected' || health.verdict === 'protected_degraded';
   return health.verdict !== 'failed';
 }
 

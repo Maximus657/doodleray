@@ -1523,10 +1523,10 @@ fn xray_tun_bridge_dns_config() -> serde_json::Value {
 fn xray_tun_bridge_outbounds(req: &ConnectRequest) -> serde_json::Value {
     serde_json::json!([
         {
-            "type": "http",
+            "type": "socks",
             "tag": "proxy",
             "server": "127.0.0.1",
-            "server_port": req.http_port
+            "server_port": req.socks_port
         },
         {
             "type": "socks",
@@ -2334,6 +2334,16 @@ pub struct ConnectionHealthReport {
     pub verdict: String,
     pub mode: String,
     pub generated_at_ms: u128,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_socks_port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_http_port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_api_port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_generation: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_op_id: Option<String>,
     pub checks: Vec<ConnectionHealthCheck>,
 }
 
@@ -3526,6 +3536,30 @@ mod tests {
             .unwrap_or(false)
     }
 
+    #[test]
+    fn protected_compatibility_errors_are_degraded_not_failed() {
+        let check = protected_compatibility_check(health_check(
+            "http_listener",
+            "error",
+            "HTTP compatibility listener",
+            "127.0.0.1:32001 is not accepting connections",
+        ));
+        let report = health_report("protected", vec![check]);
+
+        assert_eq!(report.verdict, "protected_degraded");
+        assert_eq!(report.checks[0].severity, "warning");
+    }
+
+    #[test]
+    fn connection_health_report_carries_structured_runtime_ports() {
+        let mut report = health_report("protected", Vec::new());
+        attach_runtime_ports(&mut report, 32101, 32102, Some(32103));
+
+        assert_eq!(report.runtime_socks_port, Some(32101));
+        assert_eq!(report.runtime_http_port, Some(32102));
+        assert_eq!(report.runtime_api_port, Some(32103));
+    }
+
     #[cfg(windows)]
     struct RuntimeSmokeGuard;
 
@@ -3952,16 +3986,20 @@ mod tests {
     }
 
     #[test]
-    fn xray_tun_bridge_uses_http_for_tcp_and_socks_for_udp() {
+    fn xray_tun_bridge_uses_socks_for_tcp_and_udp() {
         let req = sample_request("tun");
         let outbounds = xray_tun_bridge_outbounds(&req);
 
         assert_eq!(outbounds[0]["tag"], json!("proxy"));
-        assert_eq!(outbounds[0]["type"], json!("http"));
-        assert_eq!(outbounds[0]["server_port"], json!(10809));
+        assert_eq!(outbounds[0]["type"], json!("socks"));
+        assert_eq!(outbounds[0]["server_port"], json!(10808));
         assert_eq!(outbounds[1]["tag"], json!("proxy-udp"));
         assert_eq!(outbounds[1]["type"], json!("socks"));
         assert_eq!(outbounds[1]["server_port"], json!(10808));
+        assert_eq!(
+            xray_tun_bridge_dns_config()["servers"][0]["detour"],
+            json!("proxy")
+        );
         assert_eq!(xray_tun_bridge_udp_rule()["outbound"], json!("proxy-udp"));
     }
 
@@ -4847,37 +4885,22 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                         "Tunnel Service connected: phase={:?}",
                         status.phase
                     ));
-                    let proxy_action = match apply_compat_proxy_after_tun(&request) {
-                        Ok(action) => action,
-                        Err(e) => {
-                            vpn_log(&format!(
-                                "FATAL: protected compatibility proxy failed: {}",
-                                e
-                            ));
-                            let _ = tunnel_service_stop("protected_proxy_failed");
-                            return ConnectResult {
-                                success: false,
-                                message: format!(
-                                    "Protected mode started but Windows proxy compatibility failed: {}",
-                                    e
-                                ),
-                                health: None,
-};
-                        }
-                    };
-                    vpn_log(&format!(
-                        "protected system proxy mode applied: {}",
-                        proxy_action
-                    ));
+                    let compatibility_degraded =
+                        apply_compat_proxy_after_tun_nonfatal(&request);
                     let mut state = CONNECTION_STATE.lock().unwrap();
                     *state = true;
                     let mut engine = ACTIVE_ENGINE.lock().unwrap();
                     *engine = Some("xray+tun-service".into());
                     update_tray_connected(&app, &request.server_address);
+                    let message = protected_connect_message(compatibility_degraded.as_deref());
                     ConnectResult {
                         success: true,
-                        message: "Whole computer connected via DoodleRay Tunnel Service".into(),
-                        health: connect_result_health_for_request(&request),
+                        message,
+                        health: connect_result_health_for_request_with_status(
+                            &request,
+                            Some(&status),
+                            compatibility_degraded.as_deref(),
+                        ),
                     }
                 }
                 Err(e) => {
@@ -4974,29 +4997,8 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
         match tun::start_tun_elevated(&tun_bridge) {
             Ok(_) => {
                 vpn_log("TUN bridge started OK — connection established");
-                let proxy_action = match apply_compat_proxy_after_tun(&request) {
-                    Ok(action) => action,
-                    Err(e) => {
-                        vpn_log(&format!(
-                            "FATAL: protected compatibility proxy failed: {}",
-                            e
-                        ));
-                        let _ = tun::stop_tun();
-                        let _ = xray::stop_xray();
-                        return ConnectResult {
-                            success: false,
-                            message: format!(
-                                "Protected mode started but system proxy compatibility failed: {}",
-                                e
-                            ),
-                            health: None,
-                        };
-                    }
-                };
-                vpn_log(&format!(
-                    "protected system proxy mode applied: {}",
-                    proxy_action
-                ));
+                let compatibility_degraded =
+                    apply_compat_proxy_after_tun_nonfatal(&request);
                 let mut state = CONNECTION_STATE.lock().unwrap();
                 *state = true;
                 let mut engine = ACTIVE_ENGINE.lock().unwrap();
@@ -5004,8 +5006,12 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                 update_tray_connected(&app, &request.server_address);
                 ConnectResult {
                     success: true,
-                    message: "Whole computer connected".into(),
-                    health: connect_result_health_for_request(&request),
+                    message: protected_connect_message(compatibility_degraded.as_deref()),
+                    health: connect_result_health_for_request_with_status(
+                        &request,
+                        None,
+                        compatibility_degraded.as_deref(),
+                    ),
                 }
             }
             Err(e) => {
@@ -5259,37 +5265,22 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                         "Tunnel Service connected: phase={:?}",
                         status.phase
                     ));
-                    let proxy_action = match apply_compat_proxy_after_tun(&request) {
-                        Ok(action) => action,
-                        Err(e) => {
-                            vpn_log(&format!(
-                                "FATAL: protected compatibility proxy failed: {}",
-                                e
-                            ));
-                            let _ = tunnel_service_stop("protected_proxy_failed");
-                            return ConnectResult {
-                                success: false,
-                                message: format!(
-                                    "Protected mode started but Windows proxy compatibility failed: {}",
-                                    e
-                                ),
-                                health: None,
-};
-                        }
-                    };
-                    vpn_log(&format!(
-                        "protected system proxy mode applied: {}",
-                        proxy_action
-                    ));
+                    let compatibility_degraded =
+                        apply_compat_proxy_after_tun_nonfatal(&request);
                     let mut state = CONNECTION_STATE.lock().unwrap();
                     *state = true;
                     let mut engine = ACTIVE_ENGINE.lock().unwrap();
                     *engine = Some("singbox-tun-service".into());
                     update_tray_connected(&app, &request.server_address);
+                    let message = protected_connect_message(compatibility_degraded.as_deref());
                     ConnectResult {
                         success: true,
-                        message: "Whole computer connected via DoodleRay Tunnel Service".into(),
-                        health: connect_result_health_for_request(&request),
+                        message,
+                        health: connect_result_health_for_request_with_status(
+                            &request,
+                            Some(&status),
+                            compatibility_degraded.as_deref(),
+                        ),
                     }
                 }
                 Err(e) => {
@@ -5310,28 +5301,8 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
         match tun::start_tun_elevated(&config) {
             Ok(_) => {
                 vpn_log("sing-box TUN started OK");
-                let proxy_action = match apply_compat_proxy_after_tun(&request) {
-                    Ok(action) => action,
-                    Err(e) => {
-                        vpn_log(&format!(
-                            "FATAL: protected compatibility proxy failed: {}",
-                            e
-                        ));
-                        let _ = tun::stop_tun();
-                        return ConnectResult {
-                            success: false,
-                            message: format!(
-                                "Protected mode started but system proxy compatibility failed: {}",
-                                e
-                            ),
-                            health: None,
-                        };
-                    }
-                };
-                vpn_log(&format!(
-                    "protected system proxy mode applied: {}",
-                    proxy_action
-                ));
+                let compatibility_degraded =
+                    apply_compat_proxy_after_tun_nonfatal(&request);
                 let mut state = CONNECTION_STATE.lock().unwrap();
                 *state = true;
                 let mut engine = ACTIVE_ENGINE.lock().unwrap();
@@ -5339,8 +5310,12 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                 update_tray_connected(&app, &request.server_address);
                 ConnectResult {
                     success: true,
-                    message: "Whole computer connected".into(),
-                    health: connect_result_health_for_request(&request),
+                    message: protected_connect_message(compatibility_degraded.as_deref()),
+                    health: connect_result_health_for_request_with_status(
+                        &request,
+                        None,
+                        compatibility_degraded.as_deref(),
+                    ),
                 }
             }
             Err(e) => {
@@ -6297,6 +6272,42 @@ fn reset_sb_traffic() {
     *SB_SEEN_CONNS.lock().unwrap() = None;
 }
 
+fn run_xray_statsquery(xray_exe: &Path, endpoint: &str) -> Option<String> {
+    let mut cmd = std::process::Command::new(xray_exe);
+    cmd.args(["api", "statsquery", "-s", endpoint, "-reset"]);
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000);
+
+    let mut child = cmd.spawn().ok()?;
+    let deadline = Instant::now() + Duration::from_millis(1200);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_status)) => {
+                let mut stdout = String::new();
+                if let Some(mut pipe) = child.stdout.take() {
+                    let _ = pipe.read_to_string(&mut stdout);
+                }
+                return Some(stdout);
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+}
+
 /// Get real traffic stats — dispatches to xray or sing-box clash API based on active engine
 #[tauri::command]
 async fn get_traffic_stats() -> serde_json::Value {
@@ -6391,12 +6402,7 @@ async fn get_traffic_stats() -> serde_json::Value {
                 .map(|port| *port)
                 .unwrap_or(10813);
             let endpoint = format!("127.0.0.1:{}", api_port);
-            let mut cmd = std::process::Command::new(&xray_exe);
-            cmd.args(["api", "statsquery", "-s", &endpoint, "-reset"]);
-            #[cfg(windows)]
-            cmd.creation_flags(0x08000000);
-            if let Ok(output) = cmd.output() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Some(stdout) = run_xray_statsquery(&xray_exe, &endpoint) {
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
                     if let Some(stats) = json.get("stat").and_then(|s| s.as_array()) {
                         for stat in stats {
@@ -6665,6 +6671,32 @@ fn apply_compat_proxy_after_tun(request: &ConnectRequest) -> Result<&'static str
         })?;
     }
     apply_system_proxy_mode(&request.system_proxy_mode, request.http_port)
+}
+
+fn apply_compat_proxy_after_tun_nonfatal(request: &ConnectRequest) -> Option<String> {
+    match apply_compat_proxy_after_tun(request) {
+        Ok(action) => {
+            vpn_log(&format!("protected system proxy mode applied: {}", action));
+            None
+        }
+        Err(error) => {
+            let message = format!(
+                "Windows proxy compatibility is degraded; retry/repair can continue without stopping TUN: {}",
+                error
+            );
+            vpn_log(&format!("WARN: {}", message));
+            Some(message)
+        }
+    }
+}
+
+fn protected_connect_message(compatibility_degraded: Option<&str>) -> String {
+    if compatibility_degraded.is_some() {
+        "Whole computer connected via DoodleRay Tunnel Service; browser compatibility is recovering"
+            .into()
+    } else {
+        "Whole computer connected via DoodleRay Tunnel Service".into()
+    }
 }
 
 #[cfg(windows)]
@@ -6998,7 +7030,11 @@ fn repair_windows_runtime() -> Result<String, String> {
         if !connected {
             let _ = tunnel_service_stop("repair_windows_runtime");
             let _ = tun::stop_tun();
-            actions.push("cleaned stale non-active tunnel/service state".to_string());
+            terminate_orphaned_doodleray_engine_processes();
+            actions.push(
+                "soft rebooted stale DoodleRay tunnel generation and owned engine processes"
+                    .to_string(),
+            );
         }
 
         match ipc::tunnel_service_status() {
@@ -7120,21 +7156,46 @@ fn export_support_bundle(
 }
 
 fn connection_health_for_request(request: &ConnectRequest) -> ConnectionHealthReport {
-    build_connection_health(
+    let mut health = build_connection_health(
         &request.proxy_mode,
         &request.system_proxy_mode,
         request.socks_port,
         request.http_port,
-    )
+    );
+    if request.proxy_mode == "tun" {
+        if health.runtime_socks_port.is_none() {
+            health.runtime_socks_port = Some(request.socks_port);
+        }
+        if health.runtime_http_port.is_none() {
+            health.runtime_http_port = Some(request.http_port);
+        }
+        health.runtime_api_port = Some(request.api_port);
+    } else {
+        attach_request_runtime_ports(&mut health, request);
+    }
+    health
 }
 
 fn connect_result_health_for_request(request: &ConnectRequest) -> Option<ConnectionHealthReport> {
+    connect_result_health_for_request_with_status(request, None, None)
+}
+
+fn connect_result_health_for_request_with_status(
+    request: &ConnectRequest,
+    tunnel_status: Option<&tunnel_service::TunnelStatus>,
+    compatibility_degraded: Option<&str>,
+) -> Option<ConnectionHealthReport> {
     if request.proxy_mode == "tun" {
-        Some(build_fast_tun_connection_health(
+        let mut health = build_fast_tun_connection_health(
             &request.system_proxy_mode,
             request.socks_port,
             request.http_port,
-        ))
+            tunnel_status,
+            compatibility_degraded,
+        );
+        attach_request_runtime_ports(&mut health, request);
+        attach_tunnel_status_to_health(&mut health, tunnel_status);
+        Some(health)
     } else {
         Some(connection_health_for_request(request))
     }
@@ -7144,25 +7205,44 @@ fn build_fast_tun_connection_health(
     system_proxy_mode: &str,
     socks_port: u16,
     http_port: u16,
+    tunnel_status: Option<&tunnel_service::TunnelStatus>,
+    compatibility_degraded: Option<&str>,
 ) -> ConnectionHealthReport {
     let mut checks = Vec::new();
+    let effective_socks_port = tunnel_status
+        .and_then(|status| status.runtime_socks_port)
+        .unwrap_or(socks_port);
+    let effective_http_port = tunnel_status
+        .and_then(|status| status.runtime_http_port)
+        .unwrap_or(http_port);
     checks.push(loopback_listener_health(
         "socks_listener",
         "SOCKS listener",
-        socks_port,
+        effective_socks_port,
     ));
-    checks.push(loopback_listener_health(
+    checks.push(protected_compatibility_check(loopback_listener_health(
         "http_listener",
-        "HTTP listener",
-        http_port,
-    ));
+        "HTTP compatibility listener",
+        effective_http_port,
+    )));
 
     #[cfg(windows)]
     {
-        checks.push(tunnel_service_health_check());
+        if let Some(status) = tunnel_status {
+            checks.push(tunnel_service_health_check_from_status(status));
+        } else {
+            checks.push(tunnel_service_health_check());
+        }
         checks.push(health_check(
             "tun_route_readiness",
-            "ok",
+            if tunnel_status
+                .and_then(|status| status.route_ready)
+                .unwrap_or(true)
+            {
+                "ok"
+            } else {
+                "error"
+            },
             "TUN routes",
             "Tunnel Service verified adapter and route readiness before returning success.",
         ));
@@ -7172,8 +7252,17 @@ fn build_fast_tun_connection_health(
             "TUN DNS",
             "Protected mode uses sing-box DNS hijack; deep DNS probes run in background diagnostics.",
         ));
-        if system_proxy_mode == "set" {
-            checks.push(windows_wininet_proxy_health_check(http_port));
+        if let Some(reason) = compatibility_degraded {
+            checks.push(health_check(
+                "wininet_proxy",
+                "warning",
+                "Windows proxy compatibility",
+                reason,
+            ));
+        } else if system_proxy_mode == "set" {
+            checks.push(protected_compatibility_check(
+                windows_wininet_proxy_health_check(effective_http_port),
+            ));
         }
     }
 
@@ -7187,22 +7276,7 @@ fn build_fast_tun_connection_health(
         ));
     }
 
-    let has_error = checks.iter().any(|check| check.severity == "error");
-    let has_warning = checks.iter().any(|check| check.severity == "warning");
-    let verdict = if has_error {
-        "failed"
-    } else if has_warning {
-        "partial"
-    } else {
-        "protected"
-    };
-
-    ConnectionHealthReport {
-        verdict: verdict.into(),
-        mode: "protected".into(),
-        generated_at_ms: unix_ms(),
-        checks,
-    }
+    health_report("protected", checks)
 }
 
 fn build_connection_health(
@@ -7219,30 +7293,64 @@ fn build_connection_health(
     } else {
         "manual"
     };
+    #[cfg(windows)]
+    let tunnel_status = if proxy_mode == "tun" {
+        tunnel_service_status_for_health()
+    } else {
+        None
+    };
+    #[cfg(not(windows))]
+    let tunnel_status: Option<tunnel_service::TunnelStatus> = None;
+    let effective_socks_port = tunnel_status
+        .as_ref()
+        .and_then(|status| status.runtime_socks_port)
+        .unwrap_or(socks_port);
+    let effective_http_port = tunnel_status
+        .as_ref()
+        .and_then(|status| status.runtime_http_port)
+        .unwrap_or(http_port);
 
     checks.push(loopback_listener_health(
         "socks_listener",
         "SOCKS listener",
-        socks_port,
+        effective_socks_port,
     ));
     if system_proxy_mode == "set" || proxy_mode == "tun" {
-        checks.push(loopback_listener_health(
+        let http_check = loopback_listener_health(
             "http_listener",
-            "HTTP listener",
-            http_port,
-        ));
+            if proxy_mode == "tun" {
+                "HTTP compatibility listener"
+            } else {
+                "HTTP listener"
+            },
+            effective_http_port,
+        );
+        checks.push(if proxy_mode == "tun" {
+            protected_compatibility_check(http_check)
+        } else {
+            http_check
+        });
     }
 
     #[cfg(windows)]
     {
         if proxy_mode == "tun" {
-            checks.push(tunnel_service_health_check());
+            if let Some(status) = tunnel_status.as_ref() {
+                checks.push(tunnel_service_health_check_from_status(status));
+            } else {
+                checks.push(tunnel_service_health_check());
+            }
             checks.push(windows_tun_adapter_health_check());
             checks.push(windows_tun_route_health_check());
             checks.push(windows_tun_dns_health_check());
         }
         if system_proxy_mode == "set" {
-            checks.push(windows_wininet_proxy_health_check(http_port));
+            let wininet_check = windows_wininet_proxy_health_check(effective_http_port);
+            checks.push(if proxy_mode == "tun" {
+                protected_compatibility_check(wininet_check)
+            } else {
+                wininet_check
+            });
         }
     }
 
@@ -7258,10 +7366,24 @@ fn build_connection_health(
         }
     }
 
+    let mut health = health_report(mode, checks);
+    attach_runtime_ports(
+        &mut health,
+        effective_socks_port,
+        effective_http_port,
+        None,
+    );
+    attach_tunnel_status_to_health(&mut health, tunnel_status.as_ref());
+    health
+}
+
+fn health_report(mode: &str, checks: Vec<ConnectionHealthCheck>) -> ConnectionHealthReport {
     let has_error = checks.iter().any(|check| check.severity == "error");
     let has_warning = checks.iter().any(|check| check.severity == "warning");
     let verdict = if has_error {
         "failed"
+    } else if mode == "protected" && has_warning {
+        "protected_degraded"
     } else if has_warning {
         "partial"
     } else {
@@ -7272,7 +7394,69 @@ fn build_connection_health(
         verdict: verdict.into(),
         mode: mode.into(),
         generated_at_ms: unix_ms(),
+        runtime_socks_port: None,
+        runtime_http_port: None,
+        runtime_api_port: None,
+        service_generation: None,
+        active_op_id: None,
         checks,
+    }
+}
+
+fn protected_compatibility_check(mut check: ConnectionHealthCheck) -> ConnectionHealthCheck {
+    if check.severity == "error" {
+        check.severity = "warning".into();
+    }
+    check
+}
+
+fn attach_request_runtime_ports(health: &mut ConnectionHealthReport, request: &ConnectRequest) {
+    attach_runtime_ports(
+        health,
+        request.socks_port,
+        request.http_port,
+        Some(request.api_port),
+    );
+}
+
+fn attach_runtime_ports(
+    health: &mut ConnectionHealthReport,
+    socks_port: u16,
+    http_port: u16,
+    api_port: Option<u16>,
+) {
+    health.runtime_socks_port = Some(socks_port);
+    health.runtime_http_port = Some(http_port);
+    health.runtime_api_port = api_port;
+}
+
+fn attach_tunnel_status_to_health(
+    health: &mut ConnectionHealthReport,
+    tunnel_status: Option<&tunnel_service::TunnelStatus>,
+) {
+    let Some(status) = tunnel_status else {
+        return;
+    };
+    if let Some(port) = status.runtime_socks_port {
+        health.runtime_socks_port = Some(port);
+    }
+    if let Some(port) = status.runtime_http_port {
+        health.runtime_http_port = Some(port);
+    }
+    if let Some(port) = status.runtime_api_port {
+        health.runtime_api_port = Some(port);
+    }
+    if status.service_generation > 0 {
+        health.service_generation = Some(status.service_generation);
+    }
+    health.active_op_id = status.active_op_id.clone();
+}
+
+#[cfg(windows)]
+fn tunnel_service_status_for_health() -> Option<tunnel_service::TunnelStatus> {
+    match ipc::tunnel_service_status() {
+        Ok(tunnel_service::TunnelResponse::Status(status)) => Some(status),
+        _ => None,
     }
 }
 
@@ -7518,13 +7702,7 @@ foreach ($file in $files) {
 fn tunnel_service_health_check() -> ConnectionHealthCheck {
     match ipc::tunnel_service_status() {
         Ok(tunnel_service::TunnelResponse::Status(status)) => {
-            let ok = matches!(status.state, tunnel_service::TunnelState::Connected);
-            health_check(
-                "tunnel_service",
-                if ok { "ok" } else { "error" },
-                "Tunnel service",
-                format!("state={:?}, phase={:?}", status.state, status.phase),
-            )
+            tunnel_service_health_check_from_status(&status)
         }
         Ok(_) => health_check(
             "tunnel_service",
@@ -7539,6 +7717,32 @@ fn tunnel_service_health_check() -> ConnectionHealthCheck {
             format!("IPC failed: {}", error),
         ),
     }
+}
+
+#[cfg(windows)]
+fn tunnel_service_health_check_from_status(
+    status: &tunnel_service::TunnelStatus,
+) -> ConnectionHealthCheck {
+    let ok = matches!(status.state, tunnel_service::TunnelState::Connected);
+    let mut detail = format!(
+        "state={:?}, phase={:?}, generation={}",
+        status.state, status.phase, status.service_generation
+    );
+    if let Some(port) = status.runtime_socks_port {
+        detail.push_str(&format!(", socks=127.0.0.1:{}", port));
+    }
+    if let Some(port) = status.runtime_http_port {
+        detail.push_str(&format!(", http=127.0.0.1:{}", port));
+    }
+    if let Some(alias) = status.adapter_alias.as_deref() {
+        detail.push_str(&format!(", adapter={}", alias));
+    }
+    health_check(
+        "tunnel_service",
+        if ok { "ok" } else { "error" },
+        "Tunnel service",
+        detail,
+    )
 }
 
 #[cfg(windows)]
@@ -7630,13 +7834,45 @@ if ($hasDefault -or $hasSplit -or $customCount -ge 4) {
 #[cfg(windows)]
 fn windows_tun_dns_health_check() -> ConnectionHealthCheck {
     let script = r#"
-$servers = Get-DnsClientServerAddress -InterfaceAlias 'DoodleRay Tunnel' -ErrorAction Stop |
-  ForEach-Object { $_.ServerAddresses } |
-  Where-Object { $_ }
-if (@($servers).Count -gt 0) {
-  "servers=" + (@($servers) -join ',')
+$ErrorActionPreference = 'Stop'
+$adapterSummary = ''
+try {
+  $servers = Get-DnsClientServerAddress -InterfaceAlias 'DoodleRay Tunnel' -ErrorAction Stop |
+    ForEach-Object { $_.ServerAddresses } |
+    Where-Object { $_ }
+  if (@($servers).Count -gt 0) {
+    $adapterSummary = "adapter_servers=" + (@($servers) -join ',')
+  } else {
+    $adapterSummary = "adapter_servers=none; protected mode uses sing-box DNS hijack"
+  }
+} catch {
+  $adapterSummary = "adapter_dns_snapshot=unavailable"
+}
+
+$target = 'www.google.com'
+$resolved = @()
+if (Get-Command Resolve-DnsName -ErrorAction SilentlyContinue) {
+  try {
+    $resolved = @(Resolve-DnsName -Name $target -Type A -DnsOnly -ErrorAction Stop |
+      Where-Object { $_.IPAddress } |
+      Select-Object -ExpandProperty IPAddress)
+  } catch {
+    $resolved = @()
+  }
+}
+
+if (@($resolved).Count -eq 0) {
+  $nslookup = nslookup $target 2>&1 | Out-String
+  $resolved = @([regex]::Matches($nslookup, '\b(?:\d{1,3}\.){3}\d{1,3}\b') |
+    ForEach-Object { $_.Value } |
+    Where-Object { $_ -ne '0.0.0.0' } |
+    Select-Object -Unique)
+}
+
+if (@($resolved).Count -gt 0) {
+  "resolved $target -> " + (@($resolved | Select-Object -First 3) -join ',') + "; " + $adapterSummary
 } else {
-  "no adapter DNS servers; protected mode uses sing-box DNS hijack"
+  Write-Error ("DNS resolution failed for {0}; {1}" -f $target, $adapterSummary)
 }
 "#;
     match windows_powershell_output(script) {

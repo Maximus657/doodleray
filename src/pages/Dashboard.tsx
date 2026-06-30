@@ -8,6 +8,7 @@ import { useTranslation } from '../locales';
 import { reportConnectionError } from '../lib/workshop-api';
 import { buildConnectRequestFromState, getActiveRoutingRules } from '../lib/connect-helpers';
 import {
+  extractPortsFromHealth,
   isHealthAcceptable,
   summarizeHealthFailures,
   waitForConnectionHealth,
@@ -180,7 +181,7 @@ export default function Dashboard() {
     const actualPorts = extractLocalProxyPorts(result.message || '');
     let effectiveSocksPort = actualPorts?.socksPort ?? fallbackSocksPort;
     let effectiveHttpPort = actualPorts?.httpPort ?? fallbackHttpPort;
-    if (actualPorts && mode !== 'tun') {
+    if (actualPorts) {
       setSocksPort(actualPorts.socksPort);
       setHttpPort(actualPorts.httpPort);
     }
@@ -195,6 +196,8 @@ export default function Dashboard() {
     );
     effectiveSocksPort = waitedSocksPort;
     effectiveHttpPort = waitedHttpPort;
+    setSocksPort(effectiveSocksPort);
+    setHttpPort(effectiveHttpPort);
 
     if (!isHealthAcceptable(mode, health) && mode === 'tun') {
       addLog('warning', `Protected mode health is ${health?.verdict ?? 'missing'}; running automatic repair once...`);
@@ -217,6 +220,8 @@ export default function Dashboard() {
       health = repaired.health;
       effectiveSocksPort = repaired.socksPort;
       effectiveHttpPort = repaired.httpPort;
+      setSocksPort(effectiveSocksPort);
+      setHttpPort(effectiveHttpPort);
     }
 
     if (!isHealthAcceptable(mode, health)) {
@@ -228,6 +233,9 @@ export default function Dashboard() {
       return false;
     }
 
+    if (mode === 'tun' && health?.verdict === 'protected_degraded') {
+      addLog('warning', `Весь компьютер подключен, совместимость браузеров восстанавливается: ${summarizeHealthFailures(health)}`);
+    }
     addLog('success', result.message);
     addLog('success', t('connectionActive'));
     setConnectionStep(t('connectionReady'));
@@ -320,6 +328,9 @@ export default function Dashboard() {
             httpPort,
           }) as ConnectionHealthReport;
           if (isHealthAcceptable(proxyMode, health)) {
+            const healthPorts = extractPortsFromHealth(health);
+            if (healthPorts.socksPort) setSocksPort(healthPorts.socksPort);
+            if (healthPorts.httpPort) setHttpPort(healthPorts.httpPort);
             setStatus('connected');
             addLog('info', 'VPN is still active (reconnected after UI reload)');
           } else {
@@ -344,6 +355,9 @@ export default function Dashboard() {
           socksPort,
           httpPort,
         }) as ConnectionHealthReport;
+        const healthPorts = extractPortsFromHealth(health);
+        if (healthPorts.socksPort) setSocksPort(healthPorts.socksPort);
+        if (healthPorts.httpPort) setHttpPort(healthPorts.httpPort);
         const healthy = isHealthAcceptable(proxyMode, health);
         if (healthy) { healthFailRef.current = 0; }
         else {
