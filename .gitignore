@@ -55,3 +55,11 @@ src-tauri/build_err.txt
 
 # Workshop API (separate repo)
 workshop-api/
+
+# Private operational access inventory
+secrets/
+
+# Local QA sandboxes: large installers, raw logs, screenshots
+qa-sandbox/
+qa-update-sandbox/
+qa-real-subscription-sandbox/

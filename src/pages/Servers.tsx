@@ -22,6 +22,7 @@ import type { ServerConfig } from '../stores/app-store';
 import { useTranslation } from '../locales';
 import { reportConnectionError } from '../lib/workshop-api';
 import { pingServersWithLimit } from '../lib/ping-runner';
+import { describeSubscriptionSource } from '../lib/redaction';
 
 export default function Servers() {
   const {
@@ -98,7 +99,7 @@ export default function Servers() {
     if (type === 'sub') {
       setImporting(true);
       try {
-        addLog('info', `Fetching subscription: ${trimmed}`);
+        addLog('info', `Fetching subscription: ${describeSubscriptionSource(trimmed)}`);
         const sub = await fetchSubscription(trimmed);
         addSubscription(sub);
         setSmartInput('');

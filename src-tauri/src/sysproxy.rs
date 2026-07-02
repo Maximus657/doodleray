@@ -282,6 +282,11 @@ pub fn detect_stale_doodleray_proxy() -> Result<StaleProxyState, String> {
     detect_stale_doodleray_proxy_locked()
 }
 
+pub fn current_manual_http_proxy_for_url(scheme: &str) -> Result<Option<String>, String> {
+    let _guard = SystemProxyMutex::acquire()?;
+    current_manual_http_proxy_for_url_locked(scheme)
+}
+
 pub fn repair_stale_doodleray_proxy_only() -> Result<RepairOutcome, String> {
     let _guard = SystemProxyMutex::acquire()?;
     repair_stale_doodleray_proxy_only_locked()
@@ -431,6 +436,34 @@ fn repair_stale_doodleray_proxy_only_locked() -> Result<RepairOutcome, String> {
     clear_marker_key();
     notify_proxy_change();
     Ok(RepairOutcome::CleanedLegacyValues)
+}
+
+fn current_manual_http_proxy_for_url_locked(scheme: &str) -> Result<Option<String>, String> {
+    let current = read_current_proxy_values()?;
+    if current.proxy_enable.unwrap_or(0) == 0 {
+        return Ok(None);
+    }
+
+    let Some(proxy_server) = current.proxy_server.as_deref() else {
+        return Ok(None);
+    };
+
+    let state = load_state_file()?;
+    match classify_current_proxy(&current, state.as_ref()) {
+        ProxyOwnership::LegacyDoodleRay => return Ok(None),
+        ProxyOwnership::CurrentDoodleRay => {
+            let Some(state) = state.as_ref() else {
+                return Ok(None);
+            };
+            if !loopback_port_ready_once(state.applied.http_port) {
+                return Ok(None);
+            }
+        }
+        ProxyOwnership::NotDoodleRay => {}
+    }
+
+    Ok(manual_proxy_entry_for_scheme(proxy_server, scheme)
+        .and_then(|entry| normalize_http_proxy_url(&entry)))
 }
 
 fn apply_proxy_registry_values(state: &ProxyStateFile) -> Result<(), String> {
@@ -709,6 +742,61 @@ fn has_legacy_game_bypass(proxy_override: &str) -> bool {
         || normalized.contains("*.epicgames.com")
         || normalized.contains("*.battle.net")
         || normalized.contains("*.roblox.com")
+}
+
+fn manual_proxy_entry_for_scheme(proxy_server: &str, scheme: &str) -> Option<String> {
+    let mut simple_entry: Option<String> = None;
+    let mut http_entry: Option<String> = None;
+    let scheme = scheme.to_ascii_lowercase();
+
+    for part in proxy_server.split(';') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+
+        let Some((key, value)) = part.split_once('=') else {
+            simple_entry = Some(part.to_string());
+            continue;
+        };
+
+        let key = key.trim().to_ascii_lowercase();
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+
+        if key == scheme {
+            return Some(value.to_string());
+        }
+        if key == "http" {
+            http_entry = Some(value.to_string());
+        }
+    }
+
+    simple_entry.or_else(|| if scheme == "https" { http_entry } else { None })
+}
+
+fn normalize_http_proxy_url(entry: &str) -> Option<String> {
+    let entry = entry.trim();
+    if entry.is_empty() {
+        return None;
+    }
+
+    let lower = entry.to_ascii_lowercase();
+    if lower.starts_with("socks=")
+        || lower.starts_with("socks4://")
+        || lower.starts_with("socks5://")
+        || lower.starts_with("socks5h://")
+    {
+        return None;
+    }
+
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        return Some(entry.to_string());
+    }
+
+    Some(format!("http://{}", entry.trim_start_matches("//")))
 }
 
 fn local_proxy_bypass() -> String {
@@ -1025,6 +1113,41 @@ pub fn unset_system_proxy() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manual_proxy_parser_accepts_simple_http_proxy_for_https() {
+        assert_eq!(
+            manual_proxy_entry_for_scheme("127.0.0.1:2080", "https"),
+            Some("127.0.0.1:2080".to_string())
+        );
+        assert_eq!(
+            normalize_http_proxy_url("127.0.0.1:2080"),
+            Some("http://127.0.0.1:2080".to_string())
+        );
+    }
+
+    #[test]
+    fn manual_proxy_parser_picks_https_mapping_first() {
+        let server = "http=127.0.0.1:2080;https=127.0.0.1:2081;socks=127.0.0.1:2082";
+        assert_eq!(
+            manual_proxy_entry_for_scheme(server, "https"),
+            Some("127.0.0.1:2081".to_string())
+        );
+    }
+
+    #[test]
+    fn manual_proxy_parser_falls_back_to_http_mapping_for_https() {
+        let server = "http=127.0.0.1:2080;socks=127.0.0.1:2082";
+        assert_eq!(
+            manual_proxy_entry_for_scheme(server, "https"),
+            Some("127.0.0.1:2080".to_string())
+        );
+    }
+
+    #[test]
+    fn manual_proxy_parser_rejects_socks_only_for_http_fallback() {
+        assert_eq!(normalize_http_proxy_url("socks5://127.0.0.1:2082"), None);
+    }
 
     #[test]
     fn simple_loopback_proxy_requires_marker_or_state() {

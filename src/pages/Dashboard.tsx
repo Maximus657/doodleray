@@ -10,6 +10,8 @@ import { buildConnectRequestFromState, getActiveRoutingRules } from '../lib/conn
 import {
   extractPortsFromHealth,
   isHealthAcceptable,
+  isHealthFatal,
+  needsProtectedRuntimeRepair,
   summarizeHealthFailures,
   waitForConnectionHealth,
   type ConnectionHealthReport,
@@ -17,6 +19,7 @@ import {
 import { buildServerSelectionIndex, findMatchingServer, findMatchingServerInIndex, resolveConnectServer } from '../lib/server-selection';
 import { getSubscriptionById, getSubscriptionTrafficStatus } from '../lib/subscription-status';
 import { pingServersWithLimit } from '../lib/ping-runner';
+import { describeSubscriptionSource } from '../lib/redaction';
 
 // Sub-components
 import RetroBackground from '../components/dashboard/RetroBackground';
@@ -30,6 +33,12 @@ const TRAFFIC_LIMIT_EOF_WINDOW_MS = 12_000;
 const TRAFFIC_LIMIT_EOF_THRESHOLD = 4;
 const TRAFFIC_LIMIT_NOTICE_COOLDOWN_MS = 60_000;
 const CONNECT_TIMEOUT_MS = 45_000;
+
+function hasWinInetCompatibilityWarning(health: ConnectionHealthReport | null | undefined): boolean {
+  return (health?.checks ?? []).some(check =>
+    check.code === 'wininet_proxy' && (check.severity === 'warning' || check.severity === 'error')
+  );
+}
 
 function isProxyResponseEofLine(line: string): boolean {
   const lower = line.toLowerCase();
@@ -127,16 +136,6 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
   });
 }
 
-function extractLocalProxyPorts(message: string): { socksPort: number; httpPort: number } | null {
-  const match = message.match(/SOCKS5:\s*127\.0\.0\.1:(\d+),\s*HTTP:\s*127\.0\.0\.1:(\d+)/i);
-  if (!match) return null;
-  const parsedSocks = Number(match[1]);
-  const parsedHttp = Number(match[2]);
-  if (!Number.isInteger(parsedSocks) || !Number.isInteger(parsedHttp)) return null;
-  if (parsedSocks <= 0 || parsedSocks > 65535 || parsedHttp <= 0 || parsedHttp > 65535) return null;
-  return { socksPort: parsedSocks, httpPort: parsedHttp };
-}
-
 export default function Dashboard() {
   const {
     status, setStatus, activeServer, servers, setActiveServer,
@@ -178,13 +177,8 @@ export default function Dashboard() {
     fallbackSocksPort: number,
     fallbackHttpPort: number,
   ) => {
-    const actualPorts = extractLocalProxyPorts(result.message || '');
-    let effectiveSocksPort = actualPorts?.socksPort ?? fallbackSocksPort;
-    let effectiveHttpPort = actualPorts?.httpPort ?? fallbackHttpPort;
-    if (actualPorts) {
-      setSocksPort(actualPorts.socksPort);
-      setHttpPort(actualPorts.httpPort);
-    }
+    let effectiveSocksPort = fallbackSocksPort;
+    let effectiveHttpPort = fallbackHttpPort;
 
     let { health, socksPort: waitedSocksPort, httpPort: waitedHttpPort } = await waitForConnectionHealth(
       invoke,
@@ -225,7 +219,20 @@ export default function Dashboard() {
     }
 
     if (!isHealthAcceptable(mode, health)) {
-      addLog('error', `Connection started but health quorum failed: ${summarizeHealthFailures(health)}`);
+      const failureSummary = summarizeHealthFailures(health);
+      addLog('error', `Connection started but health quorum failed: ${failureSummary}`);
+      try {
+        const bundlePath = await invoke('export_support_bundle', {
+          proxyMode: mode,
+          systemProxyMode: nextSystemProxyMode,
+          socksPort: effectiveSocksPort,
+          httpPort: effectiveHttpPort,
+          failureMarker: `connect_health_failed: ${failureSummary}`,
+        }) as string;
+        addLog('info', `${t('supportBundleExported')}: ${bundlePath}`);
+      } catch (bundleErr: any) {
+        addLog('warning', `${t('supportBundleExportFailed')}: ${bundleErr?.message || bundleErr}`);
+      }
       try { await invoke('vpn_disconnect'); } catch { /* best effort cleanup */ }
       setStatus('disconnected');
       setConnectionStep(null);
@@ -321,7 +328,7 @@ export default function Dashboard() {
         const { invoke } = await import('@tauri-apps/api/core');
         const running: boolean = await invoke('vpn_status');
         if (running && status !== 'connected') {
-          const health = await invoke('get_connection_health', {
+          let health = await invoke('get_connection_health', {
             proxyMode,
             systemProxyMode,
             socksPort,
@@ -329,10 +336,38 @@ export default function Dashboard() {
           }) as ConnectionHealthReport;
           if (isHealthAcceptable(proxyMode, health)) {
             const healthPorts = extractPortsFromHealth(health);
+            const effectiveSocksPort = healthPorts.socksPort ?? socksPort;
+            const effectiveHttpPort = healthPorts.httpPort ?? httpPort;
             if (healthPorts.socksPort) setSocksPort(healthPorts.socksPort);
             if (healthPorts.httpPort) setHttpPort(healthPorts.httpPort);
+
+            if (
+              proxyMode === 'tun' &&
+              systemProxyMode === 'set'
+            ) {
+              try {
+                const repairMessage = await invoke('repair_active_tunnel_compatibility_proxy', {
+                  systemProxyMode,
+                }) as string;
+                addLog('info', `Browser compatibility repaired after UI reload: ${repairMessage}`);
+                health = await invoke('get_connection_health', {
+                  proxyMode,
+                  systemProxyMode,
+                  socksPort: effectiveSocksPort,
+                  httpPort: effectiveHttpPort,
+                }) as ConnectionHealthReport;
+              } catch (repairError) {
+                addLog('warning', `Browser compatibility repair after UI reload failed: ${repairError instanceof Error ? repairError.message : String(repairError)}`);
+              }
+            }
+
             setStatus('connected');
-            addLog('info', 'VPN is still active (reconnected after UI reload)');
+            addLog(
+              hasWinInetCompatibilityWarning(health) ? 'warning' : 'info',
+              hasWinInetCompatibilityWarning(health)
+                ? `VPN is still active after UI reload, but browser compatibility is degraded: ${summarizeHealthFailures(health)}`
+                : 'VPN is still active (reconnected after UI reload)',
+            );
           } else {
             setStatus('disconnected');
             addLog('warning', `Backend reported VPN active, but health is not acceptable: ${summarizeHealthFailures(health)}`);
@@ -344,22 +379,140 @@ export default function Dashboard() {
 
   // Connection health monitor
   const healthFailRef = useRef(0);
+  const healthInFlightRef = useRef(false);
+  const runtimeRepairRef = useRef({ inFlight: false, lastAt: 0 });
+  const compatRepairRef = useRef({ inFlight: false, lastAt: 0 });
   useEffect(() => {
-    if (status !== 'connected') { healthFailRef.current = 0; return; }
+    if (status !== 'connected') {
+      healthFailRef.current = 0;
+      healthInFlightRef.current = false;
+      runtimeRepairRef.current = { inFlight: false, lastAt: 0 };
+      compatRepairRef.current = { inFlight: false, lastAt: 0 };
+      return;
+    }
     const healthCheck = setInterval(async () => {
+      if (healthInFlightRef.current) return;
+      healthInFlightRef.current = true;
       try {
         const { invoke } = await import('@tauri-apps/api/core');
-        const health = await invoke('get_connection_health', {
-          proxyMode,
-          systemProxyMode,
-          socksPort,
-          httpPort,
-        }) as ConnectionHealthReport;
+        let health = await withTimeout(
+          invoke('get_connection_health', {
+            proxyMode,
+            systemProxyMode,
+            socksPort,
+            httpPort,
+          }) as Promise<ConnectionHealthReport>,
+          proxyMode === 'tun' ? 12000 : 6000,
+          'Connection health check timed out',
+        );
         const healthPorts = extractPortsFromHealth(health);
         if (healthPorts.socksPort) setSocksPort(healthPorts.socksPort);
         if (healthPorts.httpPort) setHttpPort(healthPorts.httpPort);
+
+        if (
+          proxyMode === 'tun' &&
+          needsProtectedRuntimeRepair(health) &&
+          !runtimeRepairRef.current.inFlight &&
+          Date.now() - runtimeRepairRef.current.lastAt > 20_000
+        ) {
+          runtimeRepairRef.current.inFlight = true;
+          runtimeRepairRef.current.lastAt = Date.now();
+          try {
+            const repairMessage = await invoke('repair_active_tunnel_runtime', {
+              reason: 'ui_health_monitor',
+            }) as string;
+            addLog('info', repairMessage);
+            if (systemProxyMode === 'set') {
+              try {
+                const compatMessage = await invoke('repair_active_tunnel_compatibility_proxy', {
+                  systemProxyMode,
+                }) as string;
+                addLog('info', compatMessage);
+              } catch (compatErr: any) {
+                addLog('warning', `Browser compatibility repair is still pending: ${compatErr?.message || compatErr}`);
+              }
+            }
+            health = await invoke('get_connection_health', {
+              proxyMode,
+              systemProxyMode,
+              socksPort: healthPorts.socksPort ?? socksPort,
+              httpPort: healthPorts.httpPort ?? httpPort,
+            }) as ConnectionHealthReport;
+            const repairedPorts = extractPortsFromHealth(health);
+            if (repairedPorts.socksPort) setSocksPort(repairedPorts.socksPort);
+            if (repairedPorts.httpPort) setHttpPort(repairedPorts.httpPort);
+          } catch (repairErr: any) {
+            addLog('warning', `Runtime repair did not complete: ${repairErr?.message || repairErr}`);
+          } finally {
+            runtimeRepairRef.current.inFlight = false;
+          }
+        }
+
+        const compatibilityNeedsRepair = proxyMode === 'tun' &&
+          systemProxyMode === 'set' &&
+          (hasWinInetCompatibilityWarning(health) ||
+            (health.service_degraded_checks ?? []).some(check => /Windows proxy compatibility/i.test(check)));
+        if (
+          compatibilityNeedsRepair &&
+          !compatRepairRef.current.inFlight &&
+          Date.now() - compatRepairRef.current.lastAt > 20_000
+        ) {
+          compatRepairRef.current.inFlight = true;
+          compatRepairRef.current.lastAt = Date.now();
+          try {
+            const compatMessage = await invoke('repair_active_tunnel_compatibility_proxy', {
+              systemProxyMode,
+            }) as string;
+            addLog('info', compatMessage);
+            health = await invoke('get_connection_health', {
+              proxyMode,
+              systemProxyMode,
+              socksPort: healthPorts.socksPort ?? socksPort,
+              httpPort: healthPorts.httpPort ?? httpPort,
+            }) as ConnectionHealthReport;
+            const repairedPorts = extractPortsFromHealth(health);
+            if (repairedPorts.socksPort) setSocksPort(repairedPorts.socksPort);
+            if (repairedPorts.httpPort) setHttpPort(repairedPorts.httpPort);
+          } catch (compatErr: any) {
+            addLog('warning', `Browser compatibility repair is still pending: ${compatErr?.message || compatErr}`);
+          } finally {
+            compatRepairRef.current.inFlight = false;
+          }
+        }
+
         const healthy = isHealthAcceptable(proxyMode, health);
         if (healthy) { healthFailRef.current = 0; }
+        else if (isHealthFatal(proxyMode, health)) {
+          const failureSummary = summarizeHealthFailures(health);
+          healthFailRef.current = 0;
+          addLog('error', `Whole computer mode stopped: ${failureSummary}`);
+          try {
+            const bundlePath = await invoke('export_support_bundle', {
+              proxyMode,
+              systemProxyMode,
+              socksPort,
+              httpPort,
+              failureMarker: `health_fatal: ${failureSummary}`,
+            }) as string;
+            addLog('info', `${t('supportBundleExported')}: ${bundlePath}`);
+          } catch (bundleErr: any) {
+            addLog('warning', `${t('supportBundleExportFailed')}: ${bundleErr?.message || bundleErr}`);
+          }
+          try { await invoke('vpn_disconnect'); } catch { /* best effort cleanup */ }
+          setStatus('disconnected');
+          setConnectionStep(null);
+          setConnectedAt(null);
+          const toastStoreModule = await import('../stores/toast-store');
+          toastStoreModule.useToastStore.getState().addToast('Whole computer mode stopped; reconnect to repair it.', 'error');
+          const activeHealthServer = useAppStore.getState().activeServer;
+          reportConnectionError({
+            eventType: 'health_fatal', serverName: activeHealthServer?.name,
+            serverAddress: activeHealthServer?.address, serverPort: activeHealthServer?.port,
+            protocol: activeHealthServer?.protocol,
+            errorMessage: `Protected health fatal: ${failureSummary}`,
+          });
+          return;
+        }
         else {
           healthFailRef.current++;
           if (healthFailRef.current >= 3) {
@@ -382,7 +535,15 @@ export default function Dashboard() {
             return;
           }
         }
-      } catch { /* not in tauri env */ }
+      } catch {
+        healthFailRef.current++;
+        if (healthFailRef.current >= 3) {
+          addLog('warning', 'Connection health check is delayed; keeping the connection up and monitoring...');
+          healthFailRef.current = 0;
+        }
+      } finally {
+        healthInFlightRef.current = false;
+      }
     }, 30000);
     return () => clearInterval(healthCheck);
   }, [status, socksPort, httpPort, proxyMode, systemProxyMode]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -722,6 +883,21 @@ export default function Dashboard() {
     }
   }, [proxyMode, systemProxyMode, setProxyMode, setSystemProxyMode, status, setStatus, addLog, activeServer, socksPort, httpPort, setConnectedAt, t, refreshTunnelServiceHealth, setSocksPort, setHttpPort, markConnectedIfHealthy]);
 
+  const handleExportSupportBundle = useCallback(async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const path = await invoke('export_support_bundle', {
+        proxyMode,
+        systemProxyMode,
+        socksPort,
+        httpPort,
+      }) as string;
+      addLog('success', `${t('supportBundleExported')}: ${path}`);
+    } catch (err: any) {
+      addLog('error', `${t('supportBundleExportFailed')}: ${err?.message || err}`);
+    }
+  }, [addLog, httpPort, proxyMode, socksPort, systemProxyMode, t]);
+
   const handleServerSelect = useCallback(async (server: typeof activeServer) => {
     if (!server) return;
     const isSameServer = findMatchingServer(activeServer, [server]) !== null;
@@ -757,7 +933,7 @@ export default function Dashboard() {
     setQuickImporting(true);
     try {
       if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-        addLog('info', `Fetching subscription: ${trimmed}`);
+        addLog('info', `Fetching subscription: ${describeSubscriptionSource(trimmed)}`);
         const sub = await fetchSubscription(trimmed);
         addSubscription(sub);
         addLog('success', `Loaded ${sub.servers.length} servers from ${sub.name}`);
@@ -1002,6 +1178,7 @@ export default function Dashboard() {
             socksPort={socksPort} httpPort={httpPort}
             speedHistory={speedHistory} showStats={showStats}
             onModeSwitch={handleModeSwitch}
+            onExportSupportBundle={handleExportSupportBundle}
             t={t}
           />
         </div>

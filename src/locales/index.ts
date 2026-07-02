@@ -243,6 +243,9 @@ export const translations = {
     updateLatest: 'You are on the latest version.',
     updateCheckFailed: 'Update check failed',
     support: 'Support',
+    exportSupportBundle: 'Export support bundle',
+    supportBundleExported: 'Support bundle exported',
+    supportBundleExportFailed: 'Support bundle export failed',
   },
   ru: {
     // General
@@ -486,6 +489,9 @@ export const translations = {
     updateLatest: 'У вас последняя версия.',
     updateCheckFailed: 'Проверка обновлений не удалась',
     support: 'Поддержка',
+    exportSupportBundle: 'Экспорт отчета поддержки',
+    supportBundleExported: 'Отчет поддержки создан',
+    supportBundleExportFailed: 'Не удалось создать отчет поддержки',
   },
   zh: {
     // General
@@ -729,6 +735,9 @@ export const translations = {
     updateLatest: '当前已是最新版本。',
     updateCheckFailed: '检查更新失败',
     support: '技术支持',
+    exportSupportBundle: '导出支持包',
+    supportBundleExported: '支持包已导出',
+    supportBundleExportFailed: '支持包导出失败',
   }
 };
 

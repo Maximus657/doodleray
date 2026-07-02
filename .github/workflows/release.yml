@@ -14,6 +14,7 @@ jobs:
     env:
       WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
       WINDOWS_CODESIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PFX_PASSWORD }}
+      WINDOWS_CODESIGN_REQUIRED: "true"
       WINDOWS_CODESIGN_TIMESTAMP_URL: ${{ vars.WINDOWS_CODESIGN_TIMESTAMP_URL || 'http://timestamp.digicert.com' }}
     steps:
       - uses: actions/checkout@v4
@@ -34,6 +35,21 @@ jobs:
       
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Verify release signing secrets
+        env:
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CODESIGN_PFX_BASE64)) {
+            throw "WINDOWS_CODESIGN_PFX_BASE64 is required for Windows releases"
+          }
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CODESIGN_PFX_PASSWORD)) {
+            throw "WINDOWS_CODESIGN_PFX_PASSWORD is required for Windows releases"
+          }
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_PRIVATE_KEY)) {
+            throw "TAURI_SIGNING_PRIVATE_KEY is required for updater artifacts"
+          }
+        shell: pwsh
 
       # Download xray-core for Windows
       - name: Download xray-core
@@ -117,6 +133,23 @@ jobs:
           }
         shell: pwsh
 
+      - name: Verify signed Windows runtime binaries
+        run: |
+          $files = @(
+            "src-tauri/DoodleRayService.exe",
+            "src-tauri/sing-box.exe",
+            "src-tauri/wintun.dll",
+            "src-tauri/xray-core/xray.exe"
+          )
+          foreach ($file in $files) {
+            if (-not (Test-Path $file)) { throw "Required signed file is missing: $file" }
+            $sig = Get-AuthenticodeSignature $file
+            if ($sig.Status -ne 'Valid') {
+              throw "Authenticode signature is not valid for $file: $($sig.Status) $($sig.StatusMessage)"
+            }
+          }
+        shell: pwsh
+
       # Strip trailing whitespace/newlines from signing key
       - name: Clean signing key
         shell: bash
@@ -156,6 +189,24 @@ jobs:
             > **Tip:** If you're not sure which file to pick — on **Windows** grab the `.exe`, on **Mac** grab the `.dmg` matching your chip (Apple Silicon = `aarch64`, Intel = `x64`).
           releaseDraft: false
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'BETA') }}
+
+      - name: Verify signed Windows release artifacts
+        run: |
+          $patterns = @(
+            "src-tauri/target/release/DoodleRay.exe",
+            "src-tauri/target/release/bundle/nsis/*.exe"
+          )
+          $files = foreach ($pattern in $patterns) { Get-ChildItem $pattern -ErrorAction SilentlyContinue }
+          if (-not $files -or $files.Count -eq 0) {
+            throw "No Windows release artifacts found for Authenticode verification"
+          }
+          foreach ($file in $files) {
+            $sig = Get-AuthenticodeSignature $file.FullName
+            if ($sig.Status -ne 'Valid') {
+              throw "Authenticode signature is not valid for $($file.FullName): $($sig.Status) $($sig.StatusMessage)"
+            }
+          }
+        shell: pwsh
 
   build-macos:
     needs: build-windows

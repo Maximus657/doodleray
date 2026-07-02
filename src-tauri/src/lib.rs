@@ -160,6 +160,17 @@ fn terminate_orphaned_doodleray_engine_processes() {
     run_hidden_powershell(&script);
 }
 
+#[cfg(windows)]
+fn tunnel_service_reports_active() -> bool {
+    match ipc::tunnel_service_status() {
+        Ok(tunnel_service::TunnelResponse::Status(status)) => matches!(
+            status.state,
+            tunnel_service::TunnelState::Connected | tunnel_service::TunnelState::Connecting
+        ),
+        _ => false,
+    }
+}
+
 fn validate_http_url(raw_url: &str) -> Result<Url, String> {
     let parsed = Url::parse(raw_url).map_err(|e| format!("Invalid URL: {}", e))?;
     match parsed.scheme() {
@@ -1465,16 +1476,25 @@ fn proxy_mode_success_message(action: &str, socks_port: u16, http_port: u16) -> 
     }
 }
 
+fn remote_doh_dns_server() -> serde_json::Value {
+    serde_json::json!({
+        "tag": "dns-remote",
+        "type": "https",
+        "server": "1.1.1.1",
+        "server_port": 443,
+        "path": "/dns-query",
+        "tls": {
+            "server_name": "cloudflare-dns.com"
+        },
+        "detour": "proxy"
+    })
+}
+
 fn singbox_dns_config(mode: &str) -> serde_json::Value {
     match mode {
         "realip" => serde_json::json!({
             "servers": [
-                {
-                    "tag": "dns-remote",
-                    "type": "udp",
-                    "server": "1.1.1.1",
-                    "detour": "proxy"
-                },
+                remote_doh_dns_server(),
                 {
                     "tag": "dns-direct",
                     "type": "udp",
@@ -1486,12 +1506,7 @@ fn singbox_dns_config(mode: &str) -> serde_json::Value {
         }),
         _ => serde_json::json!({
             "servers": [
-                {
-                    "tag": "dns-remote",
-                    "type": "udp",
-                    "server": "1.1.1.1",
-                    "detour": "proxy"
-                },
+                remote_doh_dns_server(),
                 {
                     "tag": "dns-direct",
                     "type": "udp",
@@ -2335,6 +2350,12 @@ pub struct ConnectionHealthReport {
     pub mode: String,
     pub generated_at_ms: u128,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_effective_state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_health_verdict: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub engine_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub runtime_socks_port: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runtime_http_port: Option<u16>,
@@ -2344,6 +2365,16 @@ pub struct ConnectionHealthReport {
     pub service_generation: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_op_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub service_fatal_checks: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub service_degraded_checks: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub service_warning_checks: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub route_explanations: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub endpoint_bypass_checks: Vec<String>,
     pub checks: Vec<ConnectionHealthCheck>,
 }
 
@@ -2373,32 +2404,7 @@ pub struct SubscriptionFetchResult {
 #[tauri::command]
 async fn fetch_url(url: String) -> Result<String, String> {
     let parsed_url = validate_http_url(&url)?;
-    let client = direct_fetch_client(&parsed_url, Duration::from_secs(30))
-        .await
-        .map_err(|e| format!("HTTP client error: {}", e))?;
-
-    let response = client
-        .get(parsed_url)
-        .header("User-Agent", "DoodleRay/2.0")
-        .send()
-        .await
-        .map_err(|e| {
-            if e.is_timeout() {
-                "Fetch failed: request timed out".to_string()
-            } else if e.is_connect() {
-                format!("Fetch failed: connection error ({})", e)
-            } else {
-                format!("Fetch failed: {}", e)
-            }
-        })?;
-
-    if !response.status().is_success() {
-        return Err(format!(
-            "HTTP {}: {}",
-            response.status().as_u16(),
-            response.status().as_str()
-        ));
-    }
+    let response = fetch_http_response_with_fallback(&parsed_url, Duration::from_secs(30)).await?;
 
     response
         .text()
@@ -2410,32 +2416,7 @@ async fn fetch_url(url: String) -> Result<String, String> {
 #[tauri::command]
 async fn fetch_subscription_url(url: String) -> Result<SubscriptionFetchResult, String> {
     let parsed_url = validate_http_url(&url)?;
-    let client = direct_fetch_client(&parsed_url, Duration::from_secs(30))
-        .await
-        .map_err(|e| format!("HTTP client error: {}", e))?;
-
-    let response = client
-        .get(parsed_url)
-        .header("User-Agent", "DoodleRay/2.0")
-        .send()
-        .await
-        .map_err(|e| {
-            if e.is_timeout() {
-                "Fetch failed: request timed out".to_string()
-            } else if e.is_connect() {
-                format!("Fetch failed: connection error ({})", e)
-            } else {
-                format!("Fetch failed: {}", e)
-            }
-        })?;
-
-    if !response.status().is_success() {
-        return Err(format!(
-            "HTTP {}: {}",
-            response.status().as_u16(),
-            response.status().as_str()
-        ));
-    }
+    let response = fetch_http_response_with_fallback(&parsed_url, Duration::from_secs(30)).await?;
 
     let subscription_userinfo = response
         .headers()
@@ -3551,6 +3532,22 @@ mod tests {
     }
 
     #[test]
+    fn protected_core_dns_errors_are_fatal() {
+        let report = health_report(
+            "protected",
+            vec![health_check(
+                "tun_dns",
+                "error",
+                "TUN DNS",
+                "DNS resolution failed",
+            )],
+        );
+
+        assert_eq!(report.verdict, "failed");
+        assert_eq!(report.checks[0].severity, "error");
+    }
+
+    #[test]
     fn connection_health_report_carries_structured_runtime_ports() {
         let mut report = health_report("protected", Vec::new());
         attach_runtime_ports(&mut report, 32101, 32102, Some(32103));
@@ -3558,6 +3555,69 @@ mod tests {
         assert_eq!(report.runtime_socks_port, Some(32101));
         assert_eq!(report.runtime_http_port, Some(32102));
         assert_eq!(report.runtime_api_port, Some(32103));
+    }
+
+    #[test]
+    fn service_verdict_overrides_app_side_health_verdict() {
+        let mut report = health_report(
+            "protected",
+            vec![health_check(
+                "http_listener",
+                "warning",
+                "HTTP compatibility listener",
+                "compatibility not ready",
+            )],
+        );
+        let status = tunnel_service::TunnelStatus {
+            protocol_version: tunnel_service::TUNNEL_PROTOCOL_VERSION,
+            service_version: "6.0.0".into(),
+            state: tunnel_service::TunnelState::Connected,
+            effective_state: tunnel_service::TunnelEffectiveState::ProtectedDegraded,
+            health_verdict: tunnel_service::TunnelHealthVerdict::ProtectedDegraded,
+            phase: Some("connected".into()),
+            active_op_id: Some("op-test".into()),
+            service_generation: 42,
+            previous_generation: Some(41),
+            engine_kind: Some(tunnel_service::TunnelEngineKind::SingboxTun),
+            runtime_socks_port: Some(32101),
+            runtime_http_port: Some(32102),
+            runtime_api_port: Some(32103),
+            xray_pid: None,
+            singbox_pid: Some(1234),
+            adapter_alias: Some("DoodleRay Tunnel".into()),
+            adapter_ifindex: Some(77),
+            route_ready: Some(true),
+            dns_ready: Some(true),
+            proxy_compat_state: Some("core_connected".into()),
+            fatal_checks: Vec::new(),
+            degraded_checks: vec!["IPv6 degraded_disabled".into()],
+            warning_checks: vec!["NCSI may lag".into()],
+            route_explanations: vec!["default route preferred DoodleRay Tunnel".into()],
+            endpoint_bypass_checks: vec!["endpoint bypass direct".into()],
+            last_repair_action: None,
+            network_event_seq: 1,
+            previous_unclean_shutdown: Some(
+                "previous session ended uncleanly: op_id=op-old generation=40 started_at_ms=1".into(),
+            ),
+            error: None,
+            timings_ms: vec![("connected".into(), 1000)],
+        };
+
+        attach_tunnel_status_to_health(&mut report, Some(&status));
+
+        assert_eq!(report.verdict, "protected_degraded");
+        assert_eq!(report.runtime_socks_port, Some(32101));
+        assert_eq!(report.runtime_http_port, Some(32102));
+        assert_eq!(report.runtime_api_port, Some(32103));
+        assert_eq!(report.service_generation, Some(42));
+        assert_eq!(report.active_op_id.as_deref(), Some("op-test"));
+        assert_eq!(report.engine_kind.as_deref(), Some("SingboxTun"));
+        assert_eq!(report.service_degraded_checks.len(), 1);
+        assert_eq!(report.route_explanations.len(), 1);
+        assert!(report
+            .service_warning_checks
+            .iter()
+            .any(|check| check.starts_with("unclean shutdown marker:")));
     }
 
     #[cfg(windows)]
@@ -3570,6 +3630,71 @@ mod tests {
             let _ = xray::stop_xray();
             let _ = singbox::stop_singbox();
         }
+    }
+
+    #[cfg(windows)]
+    fn start_subscription_fallback_proxy(body: &'static str) -> (u16, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind fallback proxy");
+        let port = listener.local_addr().expect("fallback proxy addr").port();
+        let handle = std::thread::spawn(move || {
+            for _ in 0..5 {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    continue;
+                };
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                let mut buf = [0u8; 2048];
+                let Ok(n) = stream.read(&mut buf) else {
+                    continue;
+                };
+                if n == 0 {
+                    continue;
+                }
+
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes());
+                break;
+            }
+        });
+        (port, handle)
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "temporarily applies HKCU WinINet proxy and verifies subscription fetch fallback"]
+    fn windows_subscription_fetch_uses_system_proxy_fallback() {
+        let _guard = RuntimeSmokeGuard;
+        let (proxy_port, proxy_thread) = start_subscription_fallback_proxy("fallback-ok");
+        sysproxy::apply_doodleray_proxy(proxy_port, "qa-fetch-fallback")
+            .expect("apply fallback proxy");
+
+        let reserve = TcpListener::bind(("127.0.0.1", 0)).expect("reserve direct-fail port");
+        let direct_fail_port = reserve.local_addr().expect("direct-fail addr").port();
+        drop(reserve);
+
+        let parsed = Url::parse(&format!(
+            "http://127.0.0.1:{}/subscription",
+            direct_fail_port
+        ))
+        .expect("test url");
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        let body = runtime
+            .block_on(async {
+                let response =
+                    fetch_http_response_with_fallback(&parsed, Duration::from_secs(5)).await?;
+                response
+                    .text()
+                    .await
+                    .map_err(|e| format!("read fallback body: {}", e))
+            })
+            .expect("subscription fetch should fall back to WinINet proxy");
+
+        assert_eq!(body, "fallback-ok");
+        let _ = sysproxy::restore_previous_proxy_state();
+        let _ = proxy_thread.join();
     }
 
     #[cfg(windows)]
@@ -3966,18 +4091,29 @@ mod tests {
         assert_eq!(dns["strategy"], json!("ipv4_only"));
         assert!(dns["servers"][0].get("strategy").is_none());
         assert!(dns["servers"][1].get("strategy").is_none());
+        assert_eq!(dns["servers"][0]["type"], json!("https"));
+        assert_eq!(dns["servers"][0]["detour"], json!("proxy"));
         assert_eq!(dns["servers"][2]["inet4_range"], json!("198.18.0.0/15"));
         assert!(dns["servers"][2].get("inet6_range").is_none());
         assert_eq!(dns["rules"][0]["query_type"], json!("A"));
     }
 
     #[test]
-    fn xray_tun_bridge_dns_uses_real_ips() {
+    fn xray_tun_bridge_dns_uses_real_ips_over_doh() {
         let dns = xray_tun_bridge_dns_config();
 
         assert_eq!(dns["strategy"], json!("ipv4_only"));
         assert_eq!(dns["final"], json!("dns-remote"));
         assert!(dns["rules"].is_null());
+        assert_eq!(dns["servers"][0]["tag"], json!("dns-remote"));
+        assert_eq!(dns["servers"][0]["type"], json!("https"));
+        assert_eq!(dns["servers"][0]["server_port"], json!(443));
+        assert_eq!(dns["servers"][0]["path"], json!("/dns-query"));
+        assert_eq!(
+            dns["servers"][0]["tls"]["server_name"],
+            json!("cloudflare-dns.com")
+        );
+        assert_eq!(dns["servers"][0]["detour"], json!("proxy"));
         assert!(dns["servers"]
             .as_array()
             .unwrap()
@@ -4885,8 +5021,11 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                         "Tunnel Service connected: phase={:?}",
                         status.phase
                     ));
-                    let compatibility_degraded =
-                        apply_compat_proxy_after_tun_nonfatal(&request);
+                    let compatibility_degraded = apply_compat_proxy_after_tun_nonfatal(&request);
+                    let status = tunnel_service_report_proxy_compatibility(
+                        &status,
+                        compatibility_degraded.as_deref(),
+                    );
                     let mut state = CONNECTION_STATE.lock().unwrap();
                     *state = true;
                     let mut engine = ACTIVE_ENGINE.lock().unwrap();
@@ -4997,8 +5136,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
         match tun::start_tun_elevated(&tun_bridge) {
             Ok(_) => {
                 vpn_log("TUN bridge started OK — connection established");
-                let compatibility_degraded =
-                    apply_compat_proxy_after_tun_nonfatal(&request);
+                let compatibility_degraded = apply_compat_proxy_after_tun_nonfatal(&request);
                 let mut state = CONNECTION_STATE.lock().unwrap();
                 *state = true;
                 let mut engine = ACTIVE_ENGINE.lock().unwrap();
@@ -5088,6 +5226,13 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                         Ok(action) => action,
                         Err(e) => {
                             vpn_log(&format!("FATAL: system proxy failed: {}", e));
+                            let _ = xray::stop_xray();
+                            if let Ok(mut state) = CONNECTION_STATE.lock() {
+                                *state = false;
+                            }
+                            if let Ok(mut engine) = ACTIVE_ENGINE.lock() {
+                                *engine = None;
+                            }
                             return ConnectResult {
                                 success: false,
                                 message: format!(
@@ -5265,8 +5410,11 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                         "Tunnel Service connected: phase={:?}",
                         status.phase
                     ));
-                    let compatibility_degraded =
-                        apply_compat_proxy_after_tun_nonfatal(&request);
+                    let compatibility_degraded = apply_compat_proxy_after_tun_nonfatal(&request);
+                    let status = tunnel_service_report_proxy_compatibility(
+                        &status,
+                        compatibility_degraded.as_deref(),
+                    );
                     let mut state = CONNECTION_STATE.lock().unwrap();
                     *state = true;
                     let mut engine = ACTIVE_ENGINE.lock().unwrap();
@@ -5301,8 +5449,7 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
         match tun::start_tun_elevated(&config) {
             Ok(_) => {
                 vpn_log("sing-box TUN started OK");
-                let compatibility_degraded =
-                    apply_compat_proxy_after_tun_nonfatal(&request);
+                let compatibility_degraded = apply_compat_proxy_after_tun_nonfatal(&request);
                 let mut state = CONNECTION_STATE.lock().unwrap();
                 *state = true;
                 let mut engine = ACTIVE_ENGINE.lock().unwrap();
@@ -5370,6 +5517,13 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
                         Ok(action) => action,
                         Err(e) => {
                             vpn_log(&format!("FATAL: system proxy failed: {}", e));
+                            let _ = singbox::stop_singbox();
+                            if let Ok(mut state) = CONNECTION_STATE.lock() {
+                                *state = false;
+                            }
+                            if let Ok(mut engine) = ACTIVE_ENGINE.lock() {
+                                *engine = None;
+                            }
                             return ConnectResult {
                                 success: false,
                                 message: format!(
@@ -5671,10 +5825,106 @@ async fn direct_fetch_client(
     builder.build()
 }
 
+fn describe_reqwest_fetch_error(error: reqwest::Error) -> String {
+    if error.is_timeout() {
+        "request timed out".to_string()
+    } else if error.is_connect() {
+        format!("connection error ({})", error)
+    } else {
+        error.to_string()
+    }
+}
+
+async fn send_fetch_get(
+    client: reqwest::Client,
+    parsed_url: &Url,
+) -> Result<reqwest::Response, String> {
+    let response = client
+        .get(parsed_url.clone())
+        .header("User-Agent", "DoodleRay/2.0")
+        .send()
+        .await
+        .map_err(|e| format!("Fetch failed: {}", describe_reqwest_fetch_error(e)))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "HTTP {}: {}",
+            response.status().as_u16(),
+            response.status().as_str()
+        ));
+    }
+
+    Ok(response)
+}
+
+fn system_proxy_fetch_client(
+    parsed_url: &Url,
+    timeout: Duration,
+) -> Result<Option<reqwest::Client>, String> {
+    let _ = parsed_url;
+
+    #[cfg(any(windows, target_os = "macos"))]
+    {
+        let Some(proxy_url) = sysproxy::current_manual_http_proxy_for_url(parsed_url.scheme())?
+        else {
+            return Ok(None);
+        };
+        let proxy = reqwest::Proxy::all(&proxy_url)
+            .map_err(|e| format!("system proxy fallback is invalid: {}", e))?;
+        return reqwest::Client::builder()
+            .timeout(timeout)
+            .proxy(proxy)
+            .build()
+            .map(Some)
+            .map_err(|e| format!("system proxy HTTP client error: {}", e));
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        Ok(None)
+    }
+}
+
+async fn fetch_http_response_with_fallback(
+    parsed_url: &Url,
+    timeout: Duration,
+) -> Result<reqwest::Response, String> {
+    let direct_client = direct_fetch_client(parsed_url, timeout)
+        .await
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
+    match send_fetch_get(direct_client, parsed_url).await {
+        Ok(response) => Ok(response),
+        Err(direct_error) => {
+            let Some(proxy_client) = system_proxy_fetch_client(parsed_url, timeout)? else {
+                return Err(direct_error);
+            };
+
+            send_fetch_get(proxy_client, parsed_url)
+                .await
+                .map_err(|proxy_error| {
+                    format!(
+                        "{}; system proxy fallback failed: {}",
+                        direct_error, proxy_error
+                    )
+                })
+        }
+    }
+}
+
 #[tauri::command]
 fn vpn_status() -> bool {
-    let state = CONNECTION_STATE.lock().unwrap();
-    *state
+    #[cfg(windows)]
+    {
+        if tunnel_service_reports_active() {
+            if let Ok(mut state) = CONNECTION_STATE.lock() {
+                *state = true;
+            }
+            return true;
+        }
+    }
+
+    CONNECTION_STATE.lock().map(|state| *state).unwrap_or(false)
 }
 
 /// Check if we're running with Administrator/root privileges
@@ -6324,6 +6574,10 @@ async fn get_traffic_stats() -> serde_json::Value {
         e.clone().unwrap_or_default()
     };
 
+    if engine.is_empty() {
+        return serde_json::json!({ "download": 0, "upload": 0 });
+    }
+
     match engine.as_str() {
         "singbox" | "singbox-tun" => {
             // Query sing-box clash API: GET /connections → { downloadTotal, uploadTotal }
@@ -6377,6 +6631,10 @@ async fn get_traffic_stats() -> serde_json::Value {
             }
             serde_json::json!({ "download": 0, "upload": 0 })
         }
+        "xray+tun-service"
+        | "singbox-tun-service"
+        | "xray+app-proxy-service"
+        | "singbox+app-proxy-service" => serde_json::json!({ "download": 0, "upload": 0 }),
         _ => {
             // xray-core stats API
             let exe_dir = std::env::current_exe()
@@ -6783,6 +7041,7 @@ fn tunnel_service_start(
             singbox_config,
             socks_port: request.socks_port,
             http_port: request.http_port,
+            api_port: Some(request.api_port),
             redacted_label: format!("{}:{}", request.protocol, request.transport),
         },
     ))?;
@@ -6862,6 +7121,45 @@ fn tunnel_service_prepare_update() -> Result<tunnel_service::TunnelStatus, Strin
         tunnel_service::TunnelResponse::Error { message } => Err(message),
         tunnel_service::TunnelResponse::Diagnostics(_) => {
             Err("Tunnel Service returned diagnostics for PrepareForUpdate".into())
+        }
+    }
+}
+
+#[cfg(windows)]
+fn tunnel_service_report_proxy_compatibility(
+    status: &tunnel_service::TunnelStatus,
+    compatibility_degraded: Option<&str>,
+) -> tunnel_service::TunnelStatus {
+    let (ok, detail) = if let Some(reason) = compatibility_degraded {
+        (false, reason.to_string())
+    } else {
+        (
+            true,
+            "Windows proxy compatibility is ready for the active tunnel".to_string(),
+        )
+    };
+    match ipc::send_tunnel_command(&tunnel_service::TunnelCommand::ReportProxyCompatibility(
+        tunnel_service::ProxyCompatibilityReport {
+            op_id: status.active_op_id.clone(),
+            ok,
+            detail,
+        },
+    )) {
+        Ok(tunnel_service::TunnelResponse::Status(status)) => status,
+        Ok(tunnel_service::TunnelResponse::Error { message }) => {
+            vpn_log(&format!(
+                "WARN: Tunnel Service did not accept proxy compatibility report: {}",
+                message
+            ));
+            status.clone()
+        }
+        Ok(tunnel_service::TunnelResponse::Diagnostics(_)) => status.clone(),
+        Err(error) => {
+            vpn_log(&format!(
+                "WARN: failed to report proxy compatibility to Tunnel Service: {}",
+                error
+            ));
+            status.clone()
         }
     }
 }
@@ -7005,13 +7303,52 @@ fn get_connection_health(
 }
 
 #[tauri::command]
+fn get_connection_health_full(
+    proxy_mode: Option<String>,
+    system_proxy_mode: Option<String>,
+    socks_port: u16,
+    http_port: u16,
+) -> ConnectionHealthReport {
+    build_full_connection_health(
+        proxy_mode.as_deref().unwrap_or("tun"),
+        system_proxy_mode.as_deref().unwrap_or("set"),
+        socks_port,
+        http_port,
+    )
+}
+
+#[tauri::command]
 fn repair_windows_runtime() -> Result<String, String> {
     let mut actions = Vec::new();
-    repair_stale_system_proxy_only();
-    actions.push("checked stale DoodleRay WinINet proxy ownership".to_string());
 
     #[cfg(windows)]
     {
+        let active_service_status = match ipc::tunnel_service_status() {
+            Ok(tunnel_service::TunnelResponse::Status(status))
+                if matches!(
+                    status.state,
+                    tunnel_service::TunnelState::Connected
+                        | tunnel_service::TunnelState::Connecting
+                ) =>
+            {
+                Some(status)
+            }
+            _ => None,
+        };
+
+        if let Some(status) = active_service_status.as_ref() {
+            if let Ok(mut state) = CONNECTION_STATE.lock() {
+                *state = true;
+            }
+            actions.push(format!(
+                "preserved active Tunnel Service state: {:?}, generation={}",
+                status.state, status.service_generation
+            ));
+        } else {
+            repair_stale_system_proxy_only();
+            actions.push("checked stale DoodleRay WinINet proxy ownership".to_string());
+        }
+
         let app_dir = std::env::current_exe()
             .map_err(|e| e.to_string())?
             .parent()
@@ -7026,30 +7363,36 @@ fn repair_windows_runtime() -> Result<String, String> {
             }
         }
 
-        let connected = CONNECTION_STATE.lock().map(|state| *state).unwrap_or(false);
+        let connected = active_service_status.is_some()
+            || CONNECTION_STATE.lock().map(|state| *state).unwrap_or(false);
         if !connected {
             let _ = tunnel_service_stop("repair_windows_runtime");
             let _ = tun::stop_tun();
             terminate_orphaned_doodleray_engine_processes();
+            actions.extend(repair_stale_doodleray_network_artifacts());
             actions.push(
                 "soft rebooted stale DoodleRay tunnel generation and owned engine processes"
                     .to_string(),
             );
         }
 
-        match ipc::tunnel_service_status() {
-            Ok(_) => actions.push("Tunnel Service IPC: ready".to_string()),
-            Err(error) => {
-                actions.push(format!(
-                    "Tunnel Service IPC failed before repair: {}",
-                    error
-                ));
-                match install_tunnel_service() {
-                    Ok(message) => actions.push(message),
-                    Err(install_error) => actions.push(format!(
-                        "Tunnel Service install repair failed: {}",
-                        install_error
-                    )),
+        if active_service_status.is_some() {
+            actions.push("Tunnel Service IPC: active".to_string());
+        } else {
+            match ipc::tunnel_service_status() {
+                Ok(_) => actions.push("Tunnel Service IPC: ready".to_string()),
+                Err(error) => {
+                    actions.push(format!(
+                        "Tunnel Service IPC failed before repair: {}",
+                        error
+                    ));
+                    match install_tunnel_service() {
+                        Ok(message) => actions.push(message),
+                        Err(install_error) => actions.push(format!(
+                            "Tunnel Service install repair failed: {}",
+                            install_error
+                        )),
+                    }
                 }
             }
         }
@@ -7065,22 +7408,162 @@ fn repair_windows_runtime() -> Result<String, String> {
     Ok(actions.join("\n"))
 }
 
+#[cfg(windows)]
+fn repair_stale_doodleray_network_artifacts() -> Vec<String> {
+    let script = r#"
+$ErrorActionPreference = 'Continue'
+$summary = New-Object System.Collections.Generic.List[string]
+
+$nrptRemoved = 0
+if (Get-Command Get-DnsClientNrptRule -ErrorAction SilentlyContinue) {
+  $rules = @(Get-DnsClientNrptRule -ErrorAction SilentlyContinue | Where-Object {
+    ($_.DisplayName -match 'DoodleRay') -or
+    ($_.Namespace -match 'DoodleRay') -or
+    ($_.Comment -match 'DoodleRay')
+  })
+  foreach ($rule in $rules) {
+    try {
+      Remove-DnsClientNrptRule -Name $rule.Name -Force -ErrorAction Stop
+      $nrptRemoved += 1
+    } catch {}
+  }
+}
+$summary.Add("stale_nrpt_removed=$nrptRemoved")
+
+$routeRemoved = 0
+$adapter = Get-NetAdapter -Name 'DoodleRay Tunnel' -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($adapter) {
+  $routes = @(Get-NetRoute -InterfaceIndex $adapter.ifIndex -ErrorAction SilentlyContinue | Where-Object {
+    $_.DestinationPrefix -in @('0.0.0.0/0','0.0.0.0/1','128.0.0.0/1','::/0') -or
+    $_.DestinationPrefix -like '198.18.*'
+  })
+  foreach ($route in $routes) {
+    try {
+      Remove-NetRoute -InterfaceIndex $adapter.ifIndex -DestinationPrefix $route.DestinationPrefix -NextHop $route.NextHop -Confirm:$false -ErrorAction Stop
+      $routeRemoved += 1
+    } catch {}
+  }
+  $summary.Add("doodleray_adapter_present_after_stop=true")
+} else {
+  $summary.Add("doodleray_adapter_present_after_stop=false")
+}
+$summary.Add("stale_routes_removed=$routeRemoved")
+
+$summary -join "`n"
+"#;
+
+    match windows_powershell_output(script) {
+        Ok(output) => output
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(|line| format!("network artifact repair: {}", redact_support_line(line)))
+            .collect(),
+        Err(error) => vec![format!("network artifact repair failed: {}", error)],
+    }
+}
+
+#[cfg(windows)]
+#[tauri::command]
+fn repair_active_tunnel_compatibility_proxy(
+    system_proxy_mode: Option<String>,
+) -> Result<String, String> {
+    if safe_system_proxy_mode(system_proxy_mode.as_deref().unwrap_or("set")) != "set" {
+        return Ok("active tunnel WinINet compatibility left unchanged by mode".into());
+    }
+
+    let status = match ipc::tunnel_service_status()? {
+        tunnel_service::TunnelResponse::Status(status) => status,
+        tunnel_service::TunnelResponse::Error { message } => return Err(message),
+        tunnel_service::TunnelResponse::Diagnostics(_) => {
+            return Err("Tunnel Service returned diagnostics for status".into());
+        }
+    };
+
+    if !matches!(status.state, tunnel_service::TunnelState::Connected) {
+        return Err(format!(
+            "Tunnel Service is not connected; state={:?}, phase={:?}",
+            status.state, status.phase
+        ));
+    }
+
+    let http_port = status
+        .runtime_http_port
+        .ok_or("Tunnel Service has no runtime HTTP compatibility port")?;
+    wait_for_port_ready(http_port)?;
+    let action = apply_system_proxy_mode("set", http_port)?;
+    let status = tunnel_service_report_proxy_compatibility(&status, None);
+    Ok(format!(
+        "reasserted active tunnel WinINet compatibility: {} on 127.0.0.1:{}, service verdict={:?}",
+        action, http_port, status.health_verdict
+    ))
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+fn repair_active_tunnel_compatibility_proxy(
+    _system_proxy_mode: Option<String>,
+) -> Result<String, String> {
+    Ok("active tunnel compatibility proxy repair is only active on Windows".into())
+}
+
+#[cfg(windows)]
+#[tauri::command]
+fn repair_active_tunnel_runtime(reason: Option<String>) -> Result<String, String> {
+    let reason = reason.unwrap_or_else(|| "ui_health_monitor".into());
+    let response = ipc::send_tunnel_command(&tunnel_service::TunnelCommand::RepairRuntime(
+        tunnel_service::RepairRuntimeRequest {
+            op_id: None,
+            reason: reason.clone(),
+        },
+    ))?;
+    match response {
+        tunnel_service::TunnelResponse::Status(status) => Ok(format!(
+            "runtime repair requested: reason={}, state={:?}, effective={:?}, verdict={:?}, generation={}",
+            reason,
+            status.state,
+            status.effective_state,
+            status.health_verdict,
+            status.service_generation
+        )),
+        tunnel_service::TunnelResponse::Error { message } => Err(message),
+        tunnel_service::TunnelResponse::Diagnostics(_) => {
+            Err("Tunnel Service returned diagnostics for RepairRuntime".into())
+        }
+    }
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+fn repair_active_tunnel_runtime(_reason: Option<String>) -> Result<String, String> {
+    Ok("active tunnel runtime repair is only active on Windows".into())
+}
+
 #[tauri::command]
 fn export_support_bundle(
     proxy_mode: Option<String>,
     system_proxy_mode: Option<String>,
     socks_port: u16,
     http_port: u16,
+    failure_marker: Option<String>,
 ) -> Result<String, String> {
     let dir = std::env::temp_dir().join("DoodleRay");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join(format!("doodleray-support-{}.txt", unix_ms()));
 
-    let health = get_connection_health(proxy_mode, system_proxy_mode, socks_port, http_port);
+    let health = build_full_connection_health(
+        proxy_mode.as_deref().unwrap_or("tun"),
+        system_proxy_mode.as_deref().unwrap_or("set"),
+        socks_port,
+        http_port,
+    );
     let mut sections = Vec::new();
     sections.push("# DoodleRay Support Bundle".to_string());
     sections.push(format!("generated_at_ms={}", unix_ms()));
     sections.push(format!("app_version={}", env!("CARGO_PKG_VERSION")));
+    if let Some(marker) = failure_marker.as_deref() {
+        sections.push(format!("failure_marker={}", redact_support_line(marker)));
+    }
 
     sections.push("\n## Connection Health".to_string());
     sections.push(redact_support_text(
@@ -7107,17 +7590,18 @@ fn export_support_bundle(
 
     #[cfg(windows)]
     {
+        let app_dir = std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|dir| dir.to_path_buf()))
+            .unwrap_or_else(|| PathBuf::from(r"C:\Program Files\DoodleRay"));
+
         sections.push("\n## Runtime Files".to_string());
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(app_dir) = exe.parent() {
-                for (label, file) in windows_required_runtime_files(app_dir) {
-                    sections.push(format!(
-                        "{}={}",
-                        label,
-                        if file.exists() { "present" } else { "missing" }
-                    ));
-                }
-            }
+        for (label, file) in windows_required_runtime_files(&app_dir) {
+            sections.push(format!(
+                "{}={}",
+                label,
+                if file.exists() { "present" } else { "missing" }
+            ));
         }
 
         sections.push("\n## Tunnel Service".to_string());
@@ -7133,9 +7617,9 @@ fn export_support_bundle(
         }
 
         sections.push("\n## Windows Network Summary".to_string());
-        for (label, script) in windows_support_scripts() {
+        for (label, script) in windows_support_scripts(&app_dir) {
             sections.push(format!("\n### {}", label));
-            match windows_powershell_output(script) {
+            match windows_powershell_output(&script) {
                 Ok(output) if !output.trim().is_empty() => {
                     sections.push(redact_support_text(&output));
                 }
@@ -7230,28 +7714,10 @@ fn build_fast_tun_connection_health(
     {
         if let Some(status) = tunnel_status {
             checks.push(tunnel_service_health_check_from_status(status));
+            checks.extend(tunnel_service_snapshot_checks(status));
         } else {
             checks.push(tunnel_service_health_check());
         }
-        checks.push(health_check(
-            "tun_route_readiness",
-            if tunnel_status
-                .and_then(|status| status.route_ready)
-                .unwrap_or(true)
-            {
-                "ok"
-            } else {
-                "error"
-            },
-            "TUN routes",
-            "Tunnel Service verified adapter and route readiness before returning success.",
-        ));
-        checks.push(health_check(
-            "tun_dns",
-            "ok",
-            "TUN DNS",
-            "Protected mode uses sing-box DNS hijack; deep DNS probes run in background diagnostics.",
-        ));
         if let Some(reason) = compatibility_degraded {
             checks.push(health_check(
                 "wininet_proxy",
@@ -7280,6 +7746,64 @@ fn build_fast_tun_connection_health(
 }
 
 fn build_connection_health(
+    proxy_mode: &str,
+    system_proxy_mode: &str,
+    socks_port: u16,
+    http_port: u16,
+) -> ConnectionHealthReport {
+    if proxy_mode == "tun" {
+        return build_current_tun_connection_health(system_proxy_mode, socks_port, http_port);
+    }
+
+    build_full_connection_health(proxy_mode, system_proxy_mode, socks_port, http_port)
+}
+
+fn build_current_tun_connection_health(
+    system_proxy_mode: &str,
+    socks_port: u16,
+    http_port: u16,
+) -> ConnectionHealthReport {
+    #[cfg(windows)]
+    {
+        let tunnel_status = tunnel_service_status_for_health();
+        let effective_socks_port = tunnel_status
+            .as_ref()
+            .and_then(|status| status.runtime_socks_port)
+            .unwrap_or(socks_port);
+        let effective_http_port = tunnel_status
+            .as_ref()
+            .and_then(|status| status.runtime_http_port)
+            .unwrap_or(http_port);
+        let effective_api_port = tunnel_status
+            .as_ref()
+            .and_then(|status| status.runtime_api_port);
+        let mut health = build_fast_tun_connection_health(
+            system_proxy_mode,
+            socks_port,
+            http_port,
+            tunnel_status.as_ref(),
+            None,
+        );
+        attach_runtime_ports(
+            &mut health,
+            effective_socks_port,
+            effective_http_port,
+            effective_api_port,
+        );
+        attach_tunnel_status_to_health(&mut health, tunnel_status.as_ref());
+        health
+    }
+
+    #[cfg(not(windows))]
+    {
+        let mut health =
+            build_fast_tun_connection_health(system_proxy_mode, socks_port, http_port, None, None);
+        attach_runtime_ports(&mut health, socks_port, http_port, None);
+        health
+    }
+}
+
+fn build_full_connection_health(
     proxy_mode: &str,
     system_proxy_mode: &str,
     socks_port: u16,
@@ -7337,12 +7861,14 @@ fn build_connection_health(
         if proxy_mode == "tun" {
             if let Some(status) = tunnel_status.as_ref() {
                 checks.push(tunnel_service_health_check_from_status(status));
+                checks.extend(tunnel_service_snapshot_checks(status));
             } else {
                 checks.push(tunnel_service_health_check());
             }
             checks.push(windows_tun_adapter_health_check());
             checks.push(windows_tun_route_health_check());
             checks.push(windows_tun_dns_health_check());
+            checks.push(windows_tun_https_canary_health_check());
         }
         if system_proxy_mode == "set" {
             let wininet_check = windows_wininet_proxy_health_check(effective_http_port);
@@ -7367,12 +7893,7 @@ fn build_connection_health(
     }
 
     let mut health = health_report(mode, checks);
-    attach_runtime_ports(
-        &mut health,
-        effective_socks_port,
-        effective_http_port,
-        None,
-    );
+    attach_runtime_ports(&mut health, effective_socks_port, effective_http_port, None);
     attach_tunnel_status_to_health(&mut health, tunnel_status.as_ref());
     health
 }
@@ -7394,11 +7915,19 @@ fn health_report(mode: &str, checks: Vec<ConnectionHealthCheck>) -> ConnectionHe
         verdict: verdict.into(),
         mode: mode.into(),
         generated_at_ms: unix_ms(),
+        service_effective_state: None,
+        service_health_verdict: None,
+        engine_kind: None,
         runtime_socks_port: None,
         runtime_http_port: None,
         runtime_api_port: None,
         service_generation: None,
         active_op_id: None,
+        service_fatal_checks: Vec::new(),
+        service_degraded_checks: Vec::new(),
+        service_warning_checks: Vec::new(),
+        route_explanations: Vec::new(),
+        endpoint_bypass_checks: Vec::new(),
         checks,
     }
 }
@@ -7450,6 +7979,34 @@ fn attach_tunnel_status_to_health(
         health.service_generation = Some(status.service_generation);
     }
     health.active_op_id = status.active_op_id.clone();
+    health.service_effective_state = Some(format!("{:?}", status.effective_state));
+    health.service_health_verdict = Some(format!("{:?}", status.health_verdict));
+    health.engine_kind = status
+        .engine_kind
+        .as_ref()
+        .map(|kind| format!("{:?}", kind));
+    health.service_fatal_checks = status.fatal_checks.clone();
+    health.service_degraded_checks = status.degraded_checks.clone();
+    health.service_warning_checks = status.warning_checks.clone();
+    if let Some(detail) = status.previous_unclean_shutdown.as_deref() {
+        health
+            .service_warning_checks
+            .push(format!("unclean shutdown marker: {}", detail));
+    }
+    health.route_explanations = status.route_explanations.clone();
+    health.endpoint_bypass_checks = status.endpoint_bypass_checks.clone();
+    health.verdict = service_health_verdict_to_report(&status.health_verdict).into();
+}
+
+fn service_health_verdict_to_report(verdict: &tunnel_service::TunnelHealthVerdict) -> &'static str {
+    match verdict {
+        tunnel_service::TunnelHealthVerdict::Protected => "protected",
+        tunnel_service::TunnelHealthVerdict::ProtectedDegraded => "protected_degraded",
+        tunnel_service::TunnelHealthVerdict::Limited => "limited",
+        tunnel_service::TunnelHealthVerdict::Repairing => "repairing",
+        tunnel_service::TunnelHealthVerdict::Failed => "failed",
+        tunnel_service::TunnelHealthVerdict::CleanupPending => "cleanup_pending",
+    }
 }
 
 #[cfg(windows)]
@@ -7609,7 +8166,9 @@ fn should_redact_ip_token(value: &str) -> bool {
 }
 
 #[cfg(windows)]
-fn windows_support_scripts() -> Vec<(&'static str, &'static str)> {
+fn windows_support_scripts(app_dir: &Path) -> Vec<(&'static str, String)> {
+    // PowerShell single-quoted literal: escape embedded quotes by doubling.
+    let app_dir_literal = app_dir.to_string_lossy().replace('\'', "''");
     vec![
         (
             "Adapters",
@@ -7618,7 +8177,8 @@ Get-NetAdapter |
   Where-Object { $_.Name -like '*DoodleRay*' -or $_.InterfaceDescription -like '*Wintun*' -or $_.InterfaceDescription -like '*sing*' } |
   Select-Object Name,Status,InterfaceDescription |
   Format-Table -AutoSize | Out-String
-"#,
+"#
+            .to_string(),
         ),
         (
             "Routes",
@@ -7634,7 +8194,8 @@ if ($adapter) {
 } else {
   "DoodleRay Tunnel adapter not found"
 }
-"#,
+"#
+            .to_string(),
         ),
         (
             "DNS",
@@ -7642,7 +8203,8 @@ if ($adapter) {
 Get-DnsClientServerAddress |
   Select-Object InterfaceAlias,AddressFamily,@{Name='ServerCount';Expression={ @($_.ServerAddresses).Count }} |
   Format-Table -AutoSize | Out-String
-"#,
+"#
+            .to_string(),
         ),
         (
             "Windows Connectivity Indicator",
@@ -7666,7 +8228,8 @@ if ($ncsi) {
 } else {
   "NCSI registry settings unavailable"
 }
-"#,
+"#
+            .to_string(),
         ),
         (
             "WinINet Proxy",
@@ -7676,24 +8239,30 @@ $settings = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\In
 "ProxyServerStatus=$(if ($settings.ProxyServer -match '127\.0\.0\.1') { 'loopback' } elseif ($settings.ProxyServer) { 'redacted-non-loopback' } else { 'empty' })"
 "AutoConfigURLStatus=$(if ($settings.AutoConfigURL) { 'present-redacted' } else { 'empty' })"
 "ProxyOverrideStatus=$(if ($settings.ProxyOverride) { 'present-redacted' } else { 'empty' })"
-"#,
+"#
+            .to_string(),
         ),
-        ("WinHTTP Proxy", "netsh winhttp show proxy"),
+        ("WinHTTP Proxy", "netsh winhttp show proxy".to_string()),
         (
             "Signature Status",
-            r#"
-$dir = Split-Path -Parent (Get-Process -Id $PID).Path
+            format!(
+                r#"
+$dir = '{}'
 $files = @('DoodleRay.exe','DoodleRayService.exe','sing-box.exe','wintun.dll','xray-core\xray.exe')
-foreach ($file in $files) {
+foreach ($file in $files) {{
   $path = Join-Path $dir $file
-  if (Test-Path $path) {
+  if (Test-Path $path) {{
     $sig = Get-AuthenticodeSignature $path
-    "$file status=$($sig.Status)"
-  } else {
+    $subject = if ($sig.SignerCertificate) {{ $sig.SignerCertificate.Subject }} else {{ 'none' }}
+    $thumbprint = if ($sig.SignerCertificate) {{ $sig.SignerCertificate.Thumbprint }} else {{ 'none' }}
+    "$file status=$($sig.Status) signer=$subject thumbprint=$thumbprint"
+  }} else {{
     "$file missing"
-  }
-}
+  }}
+}}
 "#,
+                app_dir_literal
+            ),
         ),
     ]
 }
@@ -7725,8 +8294,12 @@ fn tunnel_service_health_check_from_status(
 ) -> ConnectionHealthCheck {
     let ok = matches!(status.state, tunnel_service::TunnelState::Connected);
     let mut detail = format!(
-        "state={:?}, phase={:?}, generation={}",
-        status.state, status.phase, status.service_generation
+        "state={:?}, effective_state={:?}, health_verdict={:?}, phase={:?}, generation={}",
+        status.state,
+        status.effective_state,
+        status.health_verdict,
+        status.phase,
+        status.service_generation
     );
     if let Some(port) = status.runtime_socks_port {
         detail.push_str(&format!(", socks=127.0.0.1:{}", port));
@@ -7746,6 +8319,94 @@ fn tunnel_service_health_check_from_status(
 }
 
 #[cfg(windows)]
+fn tunnel_service_snapshot_checks(
+    status: &tunnel_service::TunnelStatus,
+) -> Vec<ConnectionHealthCheck> {
+    let mut checks = Vec::new();
+
+    let adapter_ok = status.adapter_alias.is_some() && status.adapter_ifindex.is_some();
+    checks.push(health_check(
+        "tun_adapter_snapshot",
+        if adapter_ok { "ok" } else { "error" },
+        "TUN adapter snapshot",
+        match (
+            status.adapter_alias.as_deref(),
+            status.adapter_ifindex,
+            &status.state,
+        ) {
+            (Some(alias), Some(ifindex), tunnel_service::TunnelState::Connected) => {
+                format!("service reports adapter={} ifIndex={}", alias, ifindex)
+            }
+            (Some(alias), Some(ifindex), _) => {
+                format!(
+                    "service reports adapter={} ifIndex={} while state={:?}",
+                    alias, ifindex, status.state
+                )
+            }
+            _ => "service did not report an active TUN adapter".into(),
+        },
+    ));
+
+    checks.push(health_check(
+        "tun_routes_snapshot",
+        if status.route_ready == Some(true) {
+            "ok"
+        } else {
+            "error"
+        },
+        "TUN routes snapshot",
+        if status.route_ready == Some(true) {
+            "service route readiness passed".into()
+        } else {
+            format!("service route readiness is {:?}", status.route_ready)
+        },
+    ));
+
+    if !status.fatal_checks.is_empty() {
+        checks.push(health_check(
+            "tunnel_service_fatal_checks",
+            "error",
+            "Tunnel service fatal checks",
+            status.fatal_checks.join("; "),
+        ));
+    }
+    if !status.degraded_checks.is_empty() {
+        checks.push(health_check(
+            "tunnel_service_degraded_checks",
+            "warning",
+            "Tunnel service degraded checks",
+            status.degraded_checks.join("; "),
+        ));
+    }
+    if !status.warning_checks.is_empty() {
+        checks.push(health_check(
+            "tunnel_service_warning_checks",
+            "warning",
+            "Tunnel service warnings",
+            status.warning_checks.join("; "),
+        ));
+    }
+    if !status.route_explanations.is_empty() {
+        checks.push(health_check(
+            "tunnel_service_route_explanation",
+            "info",
+            "Route explanation",
+            status.route_explanations.join("; "),
+        ));
+    }
+    if !status.endpoint_bypass_checks.is_empty() {
+        checks.push(health_check(
+            "tunnel_service_endpoint_bypass",
+            "info",
+            "Endpoint bypass explanation",
+            status.endpoint_bypass_checks.join("; "),
+        ));
+    }
+
+    checks
+}
+
+#[cfg(windows)]
 fn windows_powershell_output(script: &str) -> Result<String, String> {
     let mut child = std::process::Command::new("powershell")
         .args(["-NoProfile", "-Command", script])
@@ -7759,10 +8420,10 @@ fn windows_powershell_output(script: &str) -> Result<String, String> {
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
             break status;
         }
-        if started.elapsed() >= Duration::from_secs(5) {
+        if started.elapsed() >= Duration::from_secs(15) {
             let _ = child.kill();
             let _ = child.wait();
-            return Err("PowerShell health probe timed out after 5s".into());
+            return Err("PowerShell health probe timed out after 15s".into());
         }
         std::thread::sleep(Duration::from_millis(50));
     };
@@ -7779,6 +8440,61 @@ fn windows_powershell_output(script: &str) -> Result<String, String> {
         Ok(text.trim().to_string())
     } else {
         Err(text.trim().to_string())
+    }
+}
+
+#[cfg(windows)]
+fn windows_command_output_with_timeout(
+    program: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<String, String> {
+    let mut child = std::process::Command::new(program)
+        .args(args)
+        .creation_flags(0x08000000)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to run {}: {}", program, e))?;
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+            break status;
+        }
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "{} timed out after {}s",
+                program,
+                timeout.as_secs()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let mut text = String::new();
+    if let Some(mut stdout) = child.stdout.take() {
+        let _ = stdout.read_to_string(&mut text);
+    }
+    if let Some(mut stderr) = child.stderr.take() {
+        let mut err = String::new();
+        let _ = stderr.read_to_string(&mut err);
+        if !err.trim().is_empty() {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(&err);
+        }
+    }
+    let text = text.trim().to_string();
+    if status.success() {
+        Ok(text)
+    } else {
+        Err(if text.is_empty() {
+            format!("{} exited with {}", program, status)
+        } else {
+            text
+        })
     }
 }
 
@@ -7819,11 +8535,34 @@ $customCount = @($routes | Where-Object {
   $_.DestinationPrefix -notin @('172.30.255.0/30','255.255.255.255/32') -and
   $_.DestinationPrefix -notlike '224.*'
 }).Count
-if ($hasDefault -or $hasSplit -or $customCount -ge 4) {
-  "ok default=$hasDefault split=$hasSplit custom=$customCount"
-} else {
+if (-not ($hasDefault -or $hasSplit -or $customCount -ge 4)) {
   Write-Error "missing protected route coverage: default=$hasDefault split=$hasSplit custom=$customCount"
+  exit 2
 }
+
+$routeCanaries = @(
+  '104.26.13.205',
+  '142.251.20.113',
+  '162.159.136.232'
+)
+$bypassedCanaries = @()
+foreach ($ip in $routeCanaries) {
+  $matches = @(Find-NetRoute -RemoteIPAddress $ip -ErrorAction SilentlyContinue |
+    Where-Object { [int]$_.InterfaceIndex -eq [int]$adapter.ifIndex })
+  if ($matches.Count -eq 0) {
+    $best = Find-NetRoute -RemoteIPAddress $ip -ErrorAction SilentlyContinue |
+      Select-Object -First 1
+    $via = if ($best) { "$($best.InterfaceAlias):$($best.InterfaceIndex)" } else { 'none' }
+    $bypassedCanaries += "$ip via $via"
+  }
+}
+
+if ($bypassedCanaries.Count -gt 0) {
+  Write-Error ("protected route canaries bypass TUN: {0}" -f ($bypassedCanaries -join '; '))
+  exit 3
+}
+
+"ok default=$hasDefault split=$hasSplit custom=$customCount canaries=ok"
 "#;
     match windows_powershell_output(script) {
         Ok(detail) => health_check("tun_routes", "ok", "TUN routes", detail),
@@ -7836,7 +8575,9 @@ fn windows_tun_dns_health_check() -> ConnectionHealthCheck {
     let script = r#"
 $ErrorActionPreference = 'Stop'
 $adapterSummary = ''
+$adapter = $null
 try {
+  $adapter = Get-NetAdapter -Name 'DoodleRay Tunnel' -ErrorAction Stop | Select-Object -First 1
   $servers = Get-DnsClientServerAddress -InterfaceAlias 'DoodleRay Tunnel' -ErrorAction Stop |
     ForEach-Object { $_.ServerAddresses } |
     Where-Object { $_ }
@@ -7849,11 +8590,29 @@ try {
   $adapterSummary = "adapter_dns_snapshot=unavailable"
 }
 
+if ($adapter) {
+  $dnsRouteBypass = @()
+  foreach ($ip in @('1.1.1.1', '8.8.8.8')) {
+    $matches = @(Find-NetRoute -RemoteIPAddress $ip -ErrorAction SilentlyContinue |
+      Where-Object { [int]$_.InterfaceIndex -eq [int]$adapter.ifIndex })
+    if ($matches.Count -eq 0) {
+      $best = Find-NetRoute -RemoteIPAddress $ip -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+      $via = if ($best) { "$($best.InterfaceAlias):$($best.InterfaceIndex)" } else { 'none' }
+      $dnsRouteBypass += "$ip via $via"
+    }
+  }
+  if ($dnsRouteBypass.Count -gt 0) {
+    Write-Error ("DNS route bypasses TUN: {0}; {1}" -f ($dnsRouteBypass -join '; '), $adapterSummary)
+    exit 3
+  }
+}
+
 $target = 'www.google.com'
 $resolved = @()
 if (Get-Command Resolve-DnsName -ErrorAction SilentlyContinue) {
   try {
-    $resolved = @(Resolve-DnsName -Name $target -Type A -DnsOnly -ErrorAction Stop |
+    $resolved = @(Resolve-DnsName -Name $target -Type A -DnsOnly -QuickTimeout -ErrorAction Stop |
       Where-Object { $_.IPAddress } |
       Select-Object -ExpandProperty IPAddress)
   } catch {
@@ -7862,7 +8621,7 @@ if (Get-Command Resolve-DnsName -ErrorAction SilentlyContinue) {
 }
 
 if (@($resolved).Count -eq 0) {
-  $nslookup = nslookup $target 2>&1 | Out-String
+  $nslookup = nslookup -timeout=5 $target 2>&1 | Out-String
   $resolved = @([regex]::Matches($nslookup, '\b(?:\d{1,3}\.){3}\d{1,3}\b') |
     ForEach-Object { $_.Value } |
     Where-Object { $_ -ne '0.0.0.0' } |
@@ -7878,6 +8637,52 @@ if (@($resolved).Count -gt 0) {
     match windows_powershell_output(script) {
         Ok(detail) => health_check("tun_dns", "ok", "TUN DNS", detail),
         Err(error) => health_check("tun_dns", "error", "TUN DNS", error),
+    }
+}
+
+#[cfg(windows)]
+fn windows_tun_https_canary_health_check() -> ConnectionHealthCheck {
+    match windows_command_output_with_timeout(
+        "curl.exe",
+        &[
+            "--max-time",
+            "15",
+            "--silent",
+            "--show-error",
+            "--output",
+            "NUL",
+            "--write-out",
+            "%{http_code} %{size_download}",
+            PROFILE_PING_URL,
+        ],
+        Duration::from_secs(18),
+    ) {
+        Ok(detail) => {
+            let mut parts = detail.split_whitespace();
+            let status = parts.next().and_then(|value| value.parse::<u16>().ok());
+            let size = parts.next().and_then(|value| value.parse::<u64>().ok());
+            if status == Some(200) && size.unwrap_or(0) > 0 {
+                health_check(
+                    "tun_https_canary",
+                    "ok",
+                    "TUN HTTPS canary",
+                    format!("GET {} returned {}", PROFILE_PING_URL, detail),
+                )
+            } else {
+                health_check(
+                    "tun_https_canary",
+                    "error",
+                    "TUN HTTPS canary",
+                    format!("GET {} returned {}", PROFILE_PING_URL, detail),
+                )
+            }
+        }
+        Err(error) => health_check(
+            "tun_https_canary",
+            "error",
+            "TUN HTTPS canary",
+            format!("GET {} failed: {}", PROFILE_PING_URL, error),
+        ),
     }
 }
 
@@ -8265,15 +9070,25 @@ pub fn run() {
     terminate_other_doodleray_app_instances();
 
     // ── Startup cleanup ──
-    // If previous session crashed, clean up orphaned processes and stale proxy
-    // This runs BEFORE the UI loads, so the user never sees broken internet
+    // If the service still owns an active protected tunnel, preserve it and
+    // let the reloaded UI reconcile from service status. Only stale/non-active
+    // generations should be scrubbed here.
     #[cfg(windows)]
-    let _ = tunnel_service_stop("startup_cleanup");
-    let _ = tun::stop_tun(); // Kill any orphaned sing-box.exe
-    #[cfg(windows)]
-    terminate_orphaned_doodleray_engine_processes();
-    #[cfg(windows)]
-    let _ = sysproxy::recover_orphaned_proxy_on_startup();
+    let preserve_service_tunnel = tunnel_service_reports_active();
+    #[cfg(not(windows))]
+    let preserve_service_tunnel = false;
+
+    if !preserve_service_tunnel {
+        #[cfg(windows)]
+        let _ = tunnel_service_stop("startup_cleanup");
+        let _ = tun::stop_tun(); // Kill any orphaned sing-box.exe
+        #[cfg(windows)]
+        terminate_orphaned_doodleray_engine_processes();
+        #[cfg(windows)]
+        let _ = sysproxy::recover_orphaned_proxy_on_startup();
+    } else {
+        vpn_log("startup cleanup: preserving active tunnel service state");
+    }
     #[cfg(target_os = "macos")]
     let _ = sysproxy::unset_system_proxy(); // Restore stale app proxy on macOS
     if let Ok(mut managed) = SYSTEM_PROXY_MANAGED.lock() {
@@ -8316,7 +9131,10 @@ pub fn run() {
             scan_installed_apps,
             check_connection_health,
             get_connection_health,
+            get_connection_health_full,
             repair_windows_runtime,
+            repair_active_tunnel_compatibility_proxy,
+            repair_active_tunnel_runtime,
             export_support_bundle,
             detect_stale_doodleray_proxy,
             repair_stale_doodleray_proxy_only,

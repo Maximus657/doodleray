@@ -10,14 +10,22 @@ export type ConnectionHealthCheck = {
 };
 
 export type ConnectionHealthReport = {
-  verdict: 'protected' | 'protected_degraded' | 'partial' | 'failed' | string;
+  verdict: 'protected' | 'protected_degraded' | 'limited' | 'repairing' | 'partial' | 'failed' | 'cleanup_pending' | string;
   mode: string;
   generated_at_ms: number;
+  service_effective_state?: string;
+  service_health_verdict?: string;
+  engine_kind?: string;
   runtime_socks_port?: number;
   runtime_http_port?: number;
   runtime_api_port?: number;
   service_generation?: number;
   active_op_id?: string;
+  service_fatal_checks?: string[];
+  service_degraded_checks?: string[];
+  service_warning_checks?: string[];
+  route_explanations?: string[];
+  endpoint_bypass_checks?: string[];
   checks: ConnectionHealthCheck[];
 };
 
@@ -29,16 +37,6 @@ export function extractPortsFromHealth(health: ConnectionHealthReport | null | u
   const runtimeHttpPort = health?.runtime_http_port;
   if (isValidPort(runtimeSocksPort)) ports.socksPort = runtimeSocksPort;
   if (isValidPort(runtimeHttpPort)) ports.httpPort = runtimeHttpPort;
-  if (ports.socksPort && ports.httpPort) return ports;
-
-  for (const check of health?.checks ?? []) {
-    const match = check.detail.match(/127\.0\.0\.1:(\d+)/);
-    if (!match) continue;
-    const port = Number(match[1]);
-    if (!isValidPort(port)) continue;
-    if (check.code === 'socks_listener' && !ports.socksPort) ports.socksPort = port;
-    if (check.code === 'http_listener' && !ports.httpPort) ports.httpPort = port;
-  }
   return ports;
 }
 
@@ -49,7 +47,30 @@ function isValidPort(port: unknown): port is number {
 export function isHealthAcceptable(mode: ProxyMode, health: ConnectionHealthReport | null | undefined): boolean {
   if (!health) return false;
   if (mode === 'tun') return health.verdict === 'protected' || health.verdict === 'protected_degraded';
-  return health.verdict !== 'failed';
+  return health.verdict !== 'failed' && health.verdict !== 'cleanup_pending';
+}
+
+export function isHealthFatal(mode: ProxyMode, health: ConnectionHealthReport | null | undefined): boolean {
+  if (!health || (health.verdict !== 'failed' && health.verdict !== 'cleanup_pending')) return false;
+  if (mode !== 'tun') return false;
+  if ((health.service_fatal_checks ?? []).length > 0) return true;
+
+  return (health.checks ?? []).some(check => {
+    if (check.severity !== 'error') return false;
+    if (check.code === 'tunnel_service_fatal_checks') return true;
+    if (check.code !== 'tunnel_service') return false;
+    return /state=(?:Failed|Disconnected)/.test(check.detail);
+  });
+}
+
+export function needsProtectedRuntimeRepair(health: ConnectionHealthReport | null | undefined): boolean {
+  if (!health) return false;
+  const effective = String(health.service_effective_state ?? '').toLowerCase();
+  if (health.verdict === 'repairing') return true;
+  if (effective === 'suspect' || effective === 'repairing') return true;
+  return (health.service_degraded_checks ?? []).some(check =>
+    /network\/power event|route reassertion|runtime repair/i.test(check)
+  );
 }
 
 export function summarizeHealthFailures(health: ConnectionHealthReport | null | undefined): string {

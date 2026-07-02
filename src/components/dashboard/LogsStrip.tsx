@@ -1,6 +1,7 @@
 import { ScrollText, ChevronDown, ChevronUp } from 'lucide-react';
 import type { LogEntry } from '../../stores/app-store';
 import type { RefObject } from 'react';
+import { sanitizeLogMessage } from '../../lib/redaction';
 
 interface Props {
   logs: LogEntry[];
@@ -101,7 +102,7 @@ export default function LogsStrip({ logs, showLogs, onToggleLogs, onClearLogs, l
                 log.level === 'warning' ? 'text-orange-600' :
                 log.level === 'success' ? 'text-emerald-700' :
                 'text-black'
-              }`}>{log.message}</span>
+              }`}>{sanitizeLogMessage(log.message)}</span>
             </div>
           ))
         )}

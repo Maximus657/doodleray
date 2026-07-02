@@ -8,6 +8,7 @@ import {
   getServerIdentityKey,
   getServerSelectionKey,
 } from '../lib/server-selection';
+import { sanitizeLogMessage } from '../lib/redaction';
 // Trigger HMR
 
 // ========== Types ==========
@@ -575,7 +576,7 @@ export const useAppStore = create<AppState>()(
       setTheme: (theme) => set({ theme }),
       setLanguage: (lang) => set({ language: lang }),
       addLog: (level, message) => set((s) => ({
-        logs: [...s.logs.slice(-99), { id: crypto.randomUUID(), time: new Date().toLocaleTimeString(), level, message }],
+        logs: [...s.logs.slice(-99), { id: crypto.randomUUID(), time: new Date().toLocaleTimeString(), level, message: sanitizeLogMessage(message) }],
       })),
       clearLogs: () => set({ logs: [] }),
       wipeData: () => set({ servers: [], subscriptions: [], activeServer: null, lastSelectedServerKey: null }),

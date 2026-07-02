@@ -25,6 +25,7 @@ interface Props {
   speedHistory: SpeedPoint[];
   showStats: boolean;
   onModeSwitch: (mode: ProxyMode, systemProxyMode?: SystemProxyMode) => void;
+  onExportSupportBundle: () => void;
   t: (key: any) => string;
 }
 
@@ -44,6 +45,7 @@ export default function DashboardControlsDrawer({
   speedHistory,
   showStats,
   onModeSwitch,
+  onExportSupportBundle,
   t,
 }: Props) {
   const isConnected = status === 'connected';
@@ -113,7 +115,7 @@ export default function DashboardControlsDrawer({
         data-open={detailsOpen ? 'true' : 'false'}
         aria-hidden={!detailsOpen}
         inert={!detailsOpen ? true : undefined}
-        className="drawer-collapse"
+        className="drawer-collapse relative z-20"
       >
         <div className="drawer-collapse-inner">
           <div className="flex w-full flex-col gap-3 pb-3">
@@ -211,6 +213,15 @@ export default function DashboardControlsDrawer({
                 />
               </div>
             )}
+
+            <button
+              type="button"
+              onClick={onExportSupportBundle}
+              className="flex w-full items-center justify-center gap-2 rounded-lg border-[2px] border-black bg-white px-3 py-2 text-[9px] font-black uppercase tracking-widest text-black shadow-[2px_2px_0_rgba(0,0,0,0.22)] transition-all hover:-translate-y-0.5 hover:bg-bg-primary active:translate-y-0.5 active:shadow-none"
+            >
+              <Activity className="h-3.5 w-3.5 stroke-[3px]" />
+              {t('exportSupportBundle')}
+            </button>
           </div>
         </div>
       </div>
@@ -223,7 +234,7 @@ export default function DashboardControlsDrawer({
           return nextOpen;
         })}
         aria-expanded={detailsOpen}
-        className="flex w-full items-center justify-between gap-3 rounded-xl border-[2px] border-black/35 bg-white/72 px-3.5 py-2.5 text-black shadow-[0_2px_0_rgba(0,0,0,0.18)] backdrop-blur transition-all hover:border-black/65 hover:bg-white active:translate-y-0.5 active:shadow-none"
+        className="relative z-10 flex w-full items-center justify-between gap-3 rounded-xl border-[2px] border-black/35 bg-white/72 px-3.5 py-2.5 text-black shadow-[0_2px_0_rgba(0,0,0,0.18)] backdrop-blur transition-all hover:border-black/65 hover:bg-white active:translate-y-0.5 active:shadow-none"
       >
         <span className="flex min-w-0 items-center gap-2 text-[10px] font-black uppercase tracking-widest">
           <SlidersHorizontal className="h-4 w-4 shrink-0 stroke-[3px]" />

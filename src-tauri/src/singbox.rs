@@ -94,8 +94,8 @@ pub fn stop_singbox() -> Result<(), String> {
 
 fn start_singbox_process(config_json: &Value) -> Result<(), String> {
     let _ = stop_singbox_process();
-    let singbox_exe = singbox_exe_path()
-        .ok_or_else(|| "sing-box executable is unavailable".to_string())?;
+    let singbox_exe =
+        singbox_exe_path().ok_or_else(|| "sing-box executable is unavailable".to_string())?;
 
     let temp_dir = std::env::temp_dir().join("DoodleRay");
     create_private_dir(&temp_dir)?;
@@ -158,7 +158,12 @@ fn find_singbox_lib_path() -> Option<PathBuf> {
         candidates.insert(0, resources_dir.join(lib_name));
     }
 
-    candidates.push(std::env::current_dir().ok()?.join("singbox-core").join(lib_name));
+    candidates.push(
+        std::env::current_dir()
+            .ok()?
+            .join("singbox-core")
+            .join(lib_name),
+    );
     candidates.into_iter().find(|path| path.exists())
 }
 

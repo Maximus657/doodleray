@@ -15,17 +15,19 @@ mod windows_service_main {
     };
     use std::time::{Duration, Instant};
     use tauri_app_lib::tunnel_service::{
-        runtime_root, StartTunnelRequest, StopTunnelRequest, TunnelCommand, TunnelDiagnostics,
-        TunnelEngineKind, TunnelResponse, TunnelState, TunnelStatus, TUNNEL_PIPE_NAME,
+        runtime_root, session_marker_path, SessionMarker, StartTunnelRequest, StopTunnelRequest,
+        TunnelCommand, TunnelDiagnostics, TunnelEffectiveState, TunnelEngineKind,
+        TunnelHealthVerdict, TunnelResponse, TunnelState, TunnelStatus, TUNNEL_PIPE_NAME,
         TUNNEL_PROTOCOL_VERSION, TUNNEL_SERVICE_DISPLAY_NAME, TUNNEL_SERVICE_NAME,
     };
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::windows::named_pipe::{PipeMode, ServerOptions};
     use windows_service::define_windows_service;
     use windows_service::service::{
-        ServiceAccess, ServiceAction, ServiceActionType, ServiceControl, ServiceControlAccept,
-        ServiceErrorControl, ServiceExitCode, ServiceFailureActions, ServiceFailureResetPeriod,
-        ServiceInfo, ServiceSidType, ServiceStartType, ServiceState, ServiceStatus, ServiceType,
+        PowerEventParam, ServiceAccess, ServiceAction, ServiceActionType, ServiceControl,
+        ServiceControlAccept, ServiceErrorControl, ServiceExitCode, ServiceFailureActions,
+        ServiceFailureResetPeriod, ServiceInfo, ServiceSidType, ServiceStartType, ServiceState,
+        ServiceStatus, ServiceType,
     };
     use windows_service::service_control_handler::{
         self, ServiceControlHandlerResult, ServiceStatusHandle,
@@ -60,9 +62,13 @@ mod windows_service_main {
 
     struct TunnelRuntime {
         state: TunnelState,
+        effective_state: TunnelEffectiveState,
+        health_verdict: TunnelHealthVerdict,
         phase: Option<String>,
         active_op_id: Option<String>,
         service_generation: u64,
+        previous_generation: Option<u64>,
+        engine_kind: Option<TunnelEngineKind>,
         runtime_socks_port: Option<u16>,
         runtime_http_port: Option<u16>,
         runtime_api_port: Option<u16>,
@@ -73,6 +79,12 @@ mod windows_service_main {
         proxy_compat_state: Option<String>,
         fatal_checks: Vec<String>,
         degraded_checks: Vec<String>,
+        warning_checks: Vec<String>,
+        route_explanations: Vec<String>,
+        endpoint_bypass_checks: Vec<String>,
+        last_repair_action: Option<String>,
+        network_event_seq: u64,
+        previous_unclean_shutdown: Option<String>,
         error: Option<String>,
         timings_ms: Vec<(String, u64)>,
         xray: Option<Child>,
@@ -84,9 +96,13 @@ mod windows_service_main {
         fn default() -> Self {
             Self {
                 state: TunnelState::Disconnected,
+                effective_state: TunnelEffectiveState::Idle,
+                health_verdict: TunnelHealthVerdict::Failed,
                 phase: None,
                 active_op_id: None,
                 service_generation: 0,
+                previous_generation: None,
+                engine_kind: None,
                 runtime_socks_port: None,
                 runtime_http_port: None,
                 runtime_api_port: None,
@@ -97,6 +113,12 @@ mod windows_service_main {
                 proxy_compat_state: None,
                 fatal_checks: Vec::new(),
                 degraded_checks: Vec::new(),
+                warning_checks: Vec::new(),
+                route_explanations: Vec::new(),
+                endpoint_bypass_checks: Vec::new(),
+                last_repair_action: None,
+                network_event_seq: 0,
+                previous_unclean_shutdown: None,
                 error: None,
                 timings_ms: Vec::new(),
                 xray: None,
@@ -194,6 +216,32 @@ mod windows_service_main {
                         }
                         ServiceControlHandlerResult::NoError
                     }
+                    ServiceControl::ParamChange
+                    | ServiceControl::NetBindAdd
+                    | ServiceControl::NetBindDisable
+                    | ServiceControl::NetBindEnable
+                    | ServiceControl::NetBindRemove => {
+                        mark_network_event_suspect("windows_network_change");
+                        schedule_runtime_reassert("windows_network_change");
+                        ServiceControlHandlerResult::NoError
+                    }
+                    ServiceControl::PowerEvent(event) => {
+                        let reason = match event {
+                            PowerEventParam::ResumeAutomatic
+                            | PowerEventParam::ResumeSuspend
+                            | PowerEventParam::ResumeCritical => "windows_power_resume",
+                            PowerEventParam::Suspend => "windows_power_suspend",
+                            _ => "windows_power_event",
+                        };
+                        mark_network_event_suspect(reason);
+                        if !matches!(
+                            event,
+                            PowerEventParam::Suspend | PowerEventParam::QuerySuspend
+                        ) {
+                            schedule_runtime_reassert(reason);
+                        }
+                        ServiceControlHandlerResult::NoError
+                    }
                     _ => ServiceControlHandlerResult::NotImplemented,
                 }
             })?;
@@ -207,6 +255,7 @@ mod windows_service_main {
                 STOP_REQUESTED.store(true, Ordering::SeqCst);
                 return;
             }
+            detect_previous_unclean_shutdown();
             let mut workers = Vec::with_capacity(PIPE_WORKERS);
             for _ in 0..PIPE_WORKERS {
                 let worker_stopped = stopped.clone();
@@ -241,12 +290,89 @@ mod windows_service_main {
         handle.set_service_status(ServiceStatus {
             service_type: ServiceType::OWN_PROCESS,
             current_state: state,
-            controls_accepted: ServiceControlAccept::STOP,
+            controls_accepted: ServiceControlAccept::STOP
+                | ServiceControlAccept::POWER_EVENT
+                | ServiceControlAccept::PARAM_CHANGE
+                | ServiceControlAccept::NETBIND_CHANGE,
             exit_code: ServiceExitCode::Win32(0),
             checkpoint,
             wait_hint: Duration::from_secs(2),
             process_id: None,
         })
+    }
+
+    fn mark_network_event_suspect(reason: &str) {
+        if let Ok(mut runtime) = state().lock() {
+            runtime.network_event_seq = runtime.network_event_seq.saturating_add(1);
+            runtime.last_repair_action = Some(reason.into());
+            let check = format!("Windows event observed while service was running: {}", reason);
+            if !runtime.warning_checks.iter().any(|existing| existing == &check) {
+                runtime.warning_checks.push(check);
+            }
+            if matches!(runtime.state, TunnelState::Connected) {
+                runtime.effective_state = TunnelEffectiveState::Suspect;
+                runtime.health_verdict = TunnelHealthVerdict::Repairing;
+                runtime.phase = Some(reason.into());
+            }
+        }
+        log_service_event(&format!("network/power event marked suspect: {}", reason));
+    }
+
+    fn detect_previous_unclean_shutdown() {
+        let marker_path = session_marker_path();
+        let raw = match std::fs::read_to_string(&marker_path) {
+            Ok(raw) => raw,
+            Err(_) => return,
+        };
+        let detail = SessionMarker::parse(&raw)
+            .map(|marker| marker.summary())
+            .unwrap_or_else(|| "previous session ended uncleanly: marker unreadable".into());
+        let _ = std::fs::remove_file(&marker_path);
+        if let Ok(mut runtime) = state().lock() {
+            runtime.previous_unclean_shutdown = Some(detail.clone());
+        }
+        log_service_event(&format!("unclean shutdown marker consumed: {}", detail));
+    }
+
+    fn write_session_marker(op_id: &str, generation: u64) {
+        let marker = SessionMarker {
+            op_id: sanitize_id(op_id),
+            generation,
+            started_at_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis().min(u64::MAX as u128) as u64)
+                .unwrap_or(0),
+        };
+        if let Err(error) = std::fs::write(session_marker_path(), marker.to_line()) {
+            log_service_event(&format!("failed to write session marker: {}", error));
+        }
+    }
+
+    fn clear_session_marker() {
+        let marker_path = session_marker_path();
+        if marker_path.exists() {
+            if let Err(error) = std::fs::remove_file(&marker_path) {
+                log_service_event(&format!("failed to clear session marker: {}", error));
+            }
+        }
+    }
+
+    fn schedule_runtime_reassert(reason: &str) {
+        let reason = reason.to_string();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(1500));
+            match repair_connected_runtime(&reason, None) {
+                Ok(status) => log_service_event(&format!(
+                    "runtime reassert finished reason={} state={:?} effective={:?} verdict={:?}",
+                    reason, status.state, status.effective_state, status.health_verdict
+                )),
+                Err(error) => log_service_event(&format!(
+                    "runtime reassert failed reason={} error={}",
+                    reason,
+                    redact(&error)
+                )),
+            }
+        });
     }
 
     fn pipe_security_attributes() -> Result<PipeSecurityAttributes, String> {
@@ -365,7 +491,14 @@ mod windows_service_main {
             Err(_) => return Ok(()),
         }
         if let Err(message) = validate_pipe_client(pipe.as_raw_handle() as HANDLE) {
-            log_service_event(&format!("pipe client validation warning: {}", message));
+            log_service_event(&format!("pipe client validation rejected: {}", message));
+            let response = TunnelResponse::Error {
+                message: "Tunnel service rejected this client".into(),
+            };
+            let payload =
+                serde_json::to_vec(&response).map_err(|e| format!("encode response: {}", e))?;
+            let _ = write_ipc_frame(&mut pipe, &payload).await;
+            return Err("pipe client validation failed".into());
         }
         let buffer = read_ipc_frame(&mut pipe).await?;
         let response = match std::panic::catch_unwind(|| {
@@ -570,10 +703,14 @@ mod windows_service_main {
                 let generation = OP_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
                 {
                     let mut runtime = state().lock().unwrap();
+                    runtime.previous_generation = Some(runtime.service_generation);
                     runtime.state = TunnelState::Connecting;
+                    runtime.effective_state = TunnelEffectiveState::Preparing;
+                    runtime.health_verdict = TunnelHealthVerdict::Repairing;
                     runtime.phase = Some("queued".into());
                     runtime.active_op_id = Some(request.op_id.clone());
                     runtime.service_generation = generation;
+                    runtime.engine_kind = Some(request.engine_kind.clone());
                     runtime.runtime_socks_port = Some(request.socks_port);
                     runtime.runtime_http_port = Some(request.http_port);
                     runtime.runtime_api_port = None;
@@ -584,6 +721,11 @@ mod windows_service_main {
                     runtime.proxy_compat_state = Some("pending".into());
                     runtime.fatal_checks.clear();
                     runtime.degraded_checks.clear();
+                    runtime.warning_checks.clear();
+                    runtime.route_explanations = vec!["route readiness pending".into()];
+                    runtime.endpoint_bypass_checks =
+                        vec!["endpoint bypass readiness pending".into()];
+                    runtime.last_repair_action = None;
                     runtime.error = None;
                     runtime.timings_ms.clear();
                 }
@@ -601,9 +743,49 @@ mod windows_service_main {
                 Ok(status) => TunnelResponse::Status(status),
                 Err(message) => TunnelResponse::Error { message },
             },
+            TunnelCommand::ReportProxyCompatibility(report) => {
+                let mut runtime = state().lock().unwrap();
+                if let Some(op_id) = report.op_id.as_deref() {
+                    if runtime.active_op_id.as_deref() != Some(op_id) {
+                        drop(runtime);
+                        return TunnelResponse::Status(status_snapshot());
+                    }
+                }
+                let detail = redact(&report.detail);
+                if report.ok {
+                    runtime.proxy_compat_state = Some("ready".into());
+                    runtime
+                        .degraded_checks
+                        .retain(|check| !check.contains("Windows proxy compatibility"));
+                    runtime.route_explanations.push(detail);
+                } else {
+                    runtime.proxy_compat_state = Some("degraded".into());
+                    if !runtime
+                        .degraded_checks
+                        .iter()
+                        .any(|check| check.contains("Windows proxy compatibility"))
+                    {
+                        runtime.degraded_checks.push(detail);
+                    }
+                }
+                drop(runtime);
+                TunnelResponse::Status(status_snapshot())
+            }
+            TunnelCommand::RepairRuntime(request) => {
+                match repair_connected_runtime(&request.reason, request.op_id.as_deref()) {
+                    Ok(status) => TunnelResponse::Status(status),
+                    Err(message) => TunnelResponse::Error { message },
+                }
+            }
             TunnelCommand::PrepareForUpdate => {
                 log_service_event("PrepareForUpdate requested");
                 OP_GENERATION.fetch_add(1, Ordering::SeqCst);
+                {
+                    let mut runtime = state().lock().unwrap();
+                    runtime.effective_state = TunnelEffectiveState::Repairing;
+                    runtime.health_verdict = TunnelHealthVerdict::Repairing;
+                    runtime.last_repair_action = Some("prepare_for_update".into());
+                }
                 match stop_owned_processes("prepare_update") {
                     Ok(_) => {
                         clear_timings();
@@ -619,13 +801,18 @@ mod windows_service_main {
     fn status_snapshot() -> TunnelStatus {
         let mut runtime = state().lock().unwrap();
         refresh_connected_process_state(&mut runtime);
+        refresh_runtime_verdict(&mut runtime);
         TunnelStatus {
             protocol_version: TUNNEL_PROTOCOL_VERSION,
             service_version: env!("CARGO_PKG_VERSION").to_string(),
             state: runtime.state.clone(),
+            effective_state: runtime.effective_state.clone(),
+            health_verdict: runtime.health_verdict.clone(),
             phase: runtime.phase.clone(),
             active_op_id: runtime.active_op_id.clone(),
             service_generation: runtime.service_generation,
+            previous_generation: runtime.previous_generation,
+            engine_kind: runtime.engine_kind.clone(),
             runtime_socks_port: runtime.runtime_socks_port,
             runtime_http_port: runtime.runtime_http_port,
             runtime_api_port: runtime.runtime_api_port,
@@ -638,8 +825,94 @@ mod windows_service_main {
             proxy_compat_state: runtime.proxy_compat_state.clone(),
             fatal_checks: runtime.fatal_checks.clone(),
             degraded_checks: runtime.degraded_checks.clone(),
+            warning_checks: runtime.warning_checks.clone(),
+            route_explanations: runtime.route_explanations.clone(),
+            endpoint_bypass_checks: runtime.endpoint_bypass_checks.clone(),
+            last_repair_action: runtime.last_repair_action.clone(),
+            network_event_seq: runtime.network_event_seq,
+            previous_unclean_shutdown: runtime.previous_unclean_shutdown.clone(),
             error: runtime.error.clone(),
             timings_ms: runtime.timings_ms.clone(),
+        }
+    }
+
+    fn refresh_runtime_verdict(runtime: &mut TunnelRuntime) {
+        match runtime.state {
+            TunnelState::Connected => {
+                if !runtime.fatal_checks.is_empty() {
+                    runtime.effective_state = TunnelEffectiveState::Failed;
+                    runtime.health_verdict = TunnelHealthVerdict::Failed;
+                    return;
+                }
+
+                let missing_core = runtime.runtime_socks_port.is_none()
+                    || runtime.adapter_alias.is_none()
+                    || runtime.adapter_ifindex.is_none()
+                    || runtime.route_ready != Some(true)
+                    || runtime.dns_ready != Some(true);
+                if missing_core {
+                    runtime.effective_state = TunnelEffectiveState::Failed;
+                    runtime.health_verdict = TunnelHealthVerdict::Failed;
+                    if !runtime
+                        .fatal_checks
+                        .iter()
+                        .any(|check| check == "service core readiness incomplete")
+                    {
+                        runtime
+                            .fatal_checks
+                            .push("service core readiness incomplete".into());
+                    }
+                    return;
+                }
+
+                let was_suspect = matches!(
+                    runtime.effective_state,
+                    TunnelEffectiveState::Suspect | TunnelEffectiveState::Repairing
+                );
+                if was_suspect
+                    && !runtime.degraded_checks.iter().any(|check| {
+                        check == "recent Windows network/power event requires route reassertion"
+                    })
+                {
+                    runtime.degraded_checks.push(
+                        "recent Windows network/power event requires route reassertion".into(),
+                    );
+                }
+
+                let degraded = !runtime.degraded_checks.is_empty()
+                    || runtime
+                        .proxy_compat_state
+                        .as_deref()
+                        .is_some_and(|state| matches!(state, "pending" | "failed" | "degraded"));
+                if degraded {
+                    runtime.effective_state = TunnelEffectiveState::ProtectedDegraded;
+                    runtime.health_verdict = TunnelHealthVerdict::ProtectedDegraded;
+                } else {
+                    runtime.effective_state = TunnelEffectiveState::Protected;
+                    runtime.health_verdict = TunnelHealthVerdict::Protected;
+                }
+            }
+            TunnelState::Connecting => {
+                if !matches!(
+                    runtime.effective_state,
+                    TunnelEffectiveState::Preparing | TunnelEffectiveState::Connecting
+                ) {
+                    runtime.effective_state = TunnelEffectiveState::Connecting;
+                }
+                runtime.health_verdict = TunnelHealthVerdict::Repairing;
+            }
+            TunnelState::Disconnecting => {
+                runtime.effective_state = TunnelEffectiveState::Disconnecting;
+                runtime.health_verdict = TunnelHealthVerdict::CleanupPending;
+            }
+            TunnelState::Failed => {
+                runtime.effective_state = TunnelEffectiveState::Failed;
+                runtime.health_verdict = TunnelHealthVerdict::Failed;
+            }
+            TunnelState::Disconnected => {
+                runtime.effective_state = TunnelEffectiveState::Idle;
+                runtime.health_verdict = TunnelHealthVerdict::Failed;
+            }
         }
     }
 
@@ -675,11 +948,43 @@ mod windows_service_main {
         }
 
         if let Some(message) = failure {
-            runtime.state = TunnelState::Failed;
-            runtime.phase = Some("failed".into());
-            runtime.error = Some(redact(&message));
-            runtime.fatal_checks.push(redact(&message));
-            runtime.job.take();
+            mark_runtime_failed(runtime, &message);
+        }
+    }
+
+    fn mark_runtime_failed(runtime: &mut TunnelRuntime, message: &str) {
+        let redacted = redact(message);
+
+        let mut singbox = runtime.singbox.take();
+        let mut xray = runtime.xray.take();
+        let job = runtime.job.take();
+        drop(job);
+
+        if let Some(mut child) = singbox.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        if let Some(mut child) = xray.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+
+        runtime.state = TunnelState::Failed;
+        runtime.effective_state = TunnelEffectiveState::Failed;
+        runtime.health_verdict = TunnelHealthVerdict::Failed;
+        runtime.phase = Some("failed".into());
+        runtime.runtime_socks_port = None;
+        runtime.runtime_http_port = None;
+        runtime.runtime_api_port = None;
+        runtime.adapter_alias = None;
+        runtime.adapter_ifindex = None;
+        runtime.route_ready = None;
+        runtime.dns_ready = None;
+        runtime.proxy_compat_state = Some("failed".into());
+        runtime.last_repair_action = Some("failed_cleanup".into());
+        runtime.error = Some(redacted.clone());
+        if !runtime.fatal_checks.iter().any(|check| check == &redacted) {
+            runtime.fatal_checks.push(redacted);
         }
     }
 
@@ -848,13 +1153,17 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         ensure_current_generation(generation)?;
         {
             let mut runtime = state().lock().unwrap();
+            runtime.previous_generation = Some(runtime.service_generation);
             runtime.state = TunnelState::Connecting;
+            runtime.effective_state = TunnelEffectiveState::Preparing;
+            runtime.health_verdict = TunnelHealthVerdict::Repairing;
             runtime.phase = Some("stopping_previous".into());
             runtime.active_op_id = Some(request.op_id.clone());
             runtime.service_generation = generation;
+            runtime.engine_kind = Some(request.engine_kind.clone());
             runtime.runtime_socks_port = Some(request.socks_port);
             runtime.runtime_http_port = Some(request.http_port);
-            runtime.runtime_api_port = None;
+            runtime.runtime_api_port = request.api_port;
             runtime.adapter_alias = None;
             runtime.adapter_ifindex = None;
             runtime.route_ready = None;
@@ -862,15 +1171,29 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             runtime.proxy_compat_state = Some("pending".into());
             runtime.fatal_checks.clear();
             runtime.degraded_checks.clear();
+            runtime.warning_checks.clear();
+            runtime.route_explanations = vec!["route readiness pending".into()];
+            runtime.endpoint_bypass_checks = vec!["endpoint bypass readiness pending".into()];
+            runtime.last_repair_action = Some("replace_tunnel".into());
             runtime.error = None;
             runtime.timings_ms.clear();
         }
         stop_owned_processes("replace_tunnel")?;
         ensure_current_generation(generation)?;
+        write_session_marker(&request.op_id, generation);
+        {
+            let mut runtime = state().lock().unwrap();
+            runtime.engine_kind = Some(request.engine_kind.clone());
+            runtime.runtime_socks_port = Some(request.socks_port);
+            runtime.runtime_http_port = Some(request.http_port);
+            runtime.runtime_api_port = request.api_port;
+        }
         {
             let mut runtime = state().lock().unwrap();
             runtime.job = Some(create_kill_on_close_job()?);
             runtime.state = TunnelState::Connecting;
+            runtime.effective_state = TunnelEffectiveState::Connecting;
+            runtime.health_verdict = TunnelHealthVerdict::Repairing;
             runtime.phase = Some("starting_job".into());
             runtime.active_op_id = Some(request.op_id.clone());
             runtime.service_generation = generation;
@@ -940,6 +1263,9 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         wait_for_doodleray_route_preferred(Duration::from_secs(20), generation)?;
         mark_route_ready();
         set_phase("routes_ready", started, generation)?;
+        mark_dns_policy_ready();
+        mark_ipv6_policy_status();
+        mark_quic_policy_status();
         if let Some(path) = xray_log_path.as_deref() {
             ensure_xray_alive(path)?;
         }
@@ -953,11 +1279,30 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
 
         let mut runtime = state().lock().unwrap();
         runtime.state = TunnelState::Connected;
+        runtime.effective_state = if runtime.degraded_checks.is_empty() {
+            TunnelEffectiveState::Protected
+        } else {
+            TunnelEffectiveState::ProtectedDegraded
+        };
+        runtime.health_verdict = if runtime.degraded_checks.is_empty() {
+            TunnelHealthVerdict::Protected
+        } else {
+            TunnelHealthVerdict::ProtectedDegraded
+        };
         runtime.phase = Some("connected".into());
         runtime.proxy_compat_state = Some("core_connected".into());
+        runtime.route_explanations.push(
+            "default protected route canaries preferred DoodleRay Tunnel before marking protected"
+                .into(),
+        );
+        runtime.endpoint_bypass_checks.push(
+            "control-plane endpoint bypass must remain direct after connect and network changes"
+                .into(),
+        );
         runtime
             .timings_ms
             .push(("total_connect".into(), elapsed_ms(started)));
+        drop(runtime);
         log_service_event(&format!(
             "tunnel connected generation={} total_connect_ms={}",
             generation,
@@ -978,12 +1323,108 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         Ok(status_snapshot())
     }
 
+    fn repair_connected_runtime(
+        reason: &str,
+        expected_op_id: Option<&str>,
+    ) -> Result<TunnelStatus, String> {
+        let started = Instant::now();
+        let (generation, socks_port, http_port, op_id) = {
+            let mut runtime = state().lock().unwrap();
+            if !matches!(runtime.state, TunnelState::Connected) {
+                return Ok(status_snapshot());
+            }
+            if let Some(expected) = expected_op_id {
+                if runtime.active_op_id.as_deref() != Some(expected) {
+                    return Ok(status_snapshot());
+                }
+            }
+            let socks_port = runtime
+                .runtime_socks_port
+                .ok_or("active runtime has no SOCKS port")?;
+            let http_port = runtime.runtime_http_port.unwrap_or(socks_port);
+            runtime.effective_state = TunnelEffectiveState::Repairing;
+            runtime.health_verdict = TunnelHealthVerdict::Repairing;
+            runtime.phase = Some(format!("repairing:{}", reason));
+            runtime.last_repair_action = Some(reason.into());
+            runtime.route_ready = None;
+            runtime.dns_ready = None;
+            runtime.degraded_checks.retain(|check| {
+                check != "recent Windows network/power event requires route reassertion"
+            });
+            runtime
+                .route_explanations
+                .push(format!("runtime reassert started: {}", reason));
+            (
+                runtime.service_generation,
+                socks_port,
+                http_port,
+                runtime.active_op_id.clone(),
+            )
+        };
+
+        ensure_current_generation(generation)?;
+        refresh_adapter_snapshot_required()?;
+        let metric = apply_doodleray_interface_metric()?;
+        {
+            let mut runtime = state().lock().unwrap();
+            runtime.route_explanations.push(redact(&metric));
+        }
+        wait_for_doodleray_ipv4_interface(Duration::from_secs(8), generation)?;
+        wait_for_doodleray_route_preferred(Duration::from_secs(8), generation)?;
+        mark_route_ready();
+        mark_dns_policy_ready();
+        mark_ipv6_policy_status();
+        mark_quic_policy_status();
+        wait_for_port(socks_port, Duration::from_secs(5), generation)?;
+        if http_port != socks_port {
+            match wait_for_port(http_port, Duration::from_secs(5), generation) {
+                Ok(()) => {
+                    let mut runtime = state().lock().unwrap();
+                    if runtime.proxy_compat_state.as_deref() != Some("degraded") {
+                        runtime.proxy_compat_state = Some("ready".into());
+                    }
+                }
+                Err(error) => {
+                    let mut runtime = state().lock().unwrap();
+                    runtime.proxy_compat_state = Some("degraded".into());
+                    let detail = format!(
+                        "Windows proxy compatibility HTTP listener was not ready during repair: {}",
+                        error
+                    );
+                    if !runtime.degraded_checks.iter().any(|check| check == &detail) {
+                        runtime.degraded_checks.push(detail);
+                    }
+                }
+            }
+        }
+        ensure_current_generation(generation)?;
+
+        {
+            let mut runtime = state().lock().unwrap();
+            if runtime.active_op_id != op_id {
+                return Ok(status_snapshot());
+            }
+            runtime.state = TunnelState::Connected;
+            runtime.phase = Some("connected".into());
+            runtime
+                .timings_ms
+                .push((format!("repair:{}", reason), elapsed_ms(started)));
+            runtime
+                .route_explanations
+                .push(format!("runtime reassert completed: {}", reason));
+        }
+        Ok(status_snapshot())
+    }
+
     fn stop_owned_processes(reason: &str) -> Result<(), String> {
         log_service_event(&format!("stop_owned_processes reason={}", reason));
         let (mut singbox, mut xray, job) = {
             let mut runtime = state().lock().unwrap();
             runtime.state = TunnelState::Disconnecting;
+            runtime.effective_state = TunnelEffectiveState::Disconnecting;
+            runtime.health_verdict = TunnelHealthVerdict::CleanupPending;
             runtime.phase = Some(reason.into());
+            runtime.last_repair_action = Some(reason.into());
             (
                 runtime.singbox.take(),
                 runtime.xray.take(),
@@ -1002,8 +1443,11 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         }
         let mut runtime = state().lock().unwrap();
         runtime.state = TunnelState::Disconnected;
+        runtime.effective_state = TunnelEffectiveState::Idle;
+        runtime.health_verdict = TunnelHealthVerdict::Failed;
         runtime.phase = None;
         runtime.active_op_id = None;
+        runtime.engine_kind = None;
         runtime.runtime_socks_port = None;
         runtime.runtime_http_port = None;
         runtime.runtime_api_port = None;
@@ -1014,17 +1458,18 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         runtime.proxy_compat_state = None;
         runtime.fatal_checks.clear();
         runtime.degraded_checks.clear();
+        runtime.warning_checks.clear();
+        runtime.route_explanations.clear();
+        runtime.endpoint_bypass_checks.clear();
         runtime.error = None;
+        drop(runtime);
+        clear_session_marker();
         Ok(())
     }
 
     fn set_failed(message: &str) {
         let mut runtime = state().lock().unwrap();
-        runtime.state = TunnelState::Failed;
-        runtime.phase = Some("failed".into());
-        let redacted = redact(message);
-        runtime.error = Some(redacted.clone());
-        runtime.fatal_checks.push(redacted);
+        mark_runtime_failed(&mut runtime, message);
     }
 
     fn clear_timings() {
@@ -1234,15 +1679,106 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
     }
 
     fn mark_adapter_ready() {
-        let (alias, ifindex) = doodleray_adapter_snapshot()
-            .unwrap_or_else(|| ("DoodleRay Tunnel".to_string(), None));
+        let (alias, ifindex) =
+            doodleray_adapter_snapshot().unwrap_or_else(|| ("DoodleRay Tunnel".to_string(), None));
         let mut runtime = state().lock().unwrap();
         runtime.adapter_alias = Some(alias);
         runtime.adapter_ifindex = ifindex;
+        runtime
+            .route_explanations
+            .push("DoodleRay Tunnel adapter is visible to Windows".into());
+    }
+
+    fn refresh_adapter_snapshot_required() -> Result<(), String> {
+        let (alias, ifindex) = doodleray_adapter_snapshot()
+            .ok_or("DoodleRay Tunnel adapter is missing during runtime repair")?;
+        if ifindex.is_none() {
+            return Err("DoodleRay Tunnel adapter has no ifIndex during runtime repair".into());
+        }
+        let mut runtime = state().lock().unwrap();
+        runtime.adapter_alias = Some(alias);
+        runtime.adapter_ifindex = ifindex;
+        runtime
+            .route_explanations
+            .push("DoodleRay Tunnel adapter refreshed during runtime repair".into());
+        Ok(())
     }
 
     fn mark_route_ready() {
-        state().lock().unwrap().route_ready = Some(true);
+        let mut runtime = state().lock().unwrap();
+        runtime.route_ready = Some(true);
+        runtime
+            .route_explanations
+            .push("Windows route preference probe selected the DoodleRay Tunnel interface".into());
+        runtime.endpoint_bypass_checks.push(
+            "service verified protected route preference after the engine became ready".into(),
+        );
+    }
+
+    fn mark_dns_policy_ready() {
+        let mut runtime = state().lock().unwrap();
+        runtime.dns_ready = Some(true);
+        runtime.route_explanations.push(
+            "protected DNS policy is owned by sing-box DNS hijack with remote DoH over the proxy detour"
+                .into(),
+        );
+    }
+
+    fn mark_ipv6_policy_status() {
+        let output = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                r#"
+$routes = @(Get-NetRoute -AddressFamily IPv6 -DestinationPrefix '::/0' -ErrorAction SilentlyContinue |
+  Where-Object { $_.State -eq 'Alive' } |
+  Select-Object -First 4 InterfaceAlias,InterfaceIndex,NextHop,RouteMetric)
+if ($routes.Count -eq 0) {
+  Write-Output 'ipv6_default_route=absent'
+  exit 0
+}
+$routes | ForEach-Object {
+  "ipv6_default_route=$($_.InterfaceAlias)|ifIndex=$($_.InterfaceIndex)|nextHop=$($_.NextHop)|metric=$($_.RouteMetric)"
+}
+"#,
+            ])
+            .creation_flags(0x08000000)
+            .output();
+
+        let detail = match output {
+            Ok(output) => String::from_utf8_lossy(&output.stdout).trim().to_string(),
+            Err(error) => format!("ipv6_default_route=unknown: {}", error),
+        };
+
+        let mut runtime = state().lock().unwrap();
+        if detail.contains("ipv6_default_route=absent") {
+            let check = "IPv6 default route is absent; protected verdict covers IPv4 routing";
+            if !runtime.warning_checks.iter().any(|existing| existing == check) {
+                runtime.warning_checks.push(check.into());
+            }
+        } else {
+            let prefix = "IPv6 full-protection leak proof is not collected yet";
+            if !runtime
+                .degraded_checks
+                .iter()
+                .any(|existing| existing.starts_with(prefix))
+            {
+                runtime.degraded_checks.push(format!(
+                    "{}; treating IPv6 as degraded_disabled ({})",
+                    prefix,
+                    redact(&detail)
+                ));
+            }
+        }
+    }
+
+    fn mark_quic_policy_status() {
+        let mut runtime = state().lock().unwrap();
+        let check =
+            "QUIC/HTTP3 is not verified by a controlled probe in this build; no QUIC claim";
+        if !runtime.warning_checks.iter().any(|existing| existing == check) {
+            runtime.warning_checks.push(check.into());
+        }
     }
 
     fn doodleray_adapter_snapshot() -> Option<(String, Option<u32>)> {
@@ -1416,7 +1952,29 @@ if ($routeShape -eq 'default' -and $bestOther -and $tunEffective -ge [int]$bestO
   Write-Output ("DoodleRay Tunnel route is not preferred: tun={0}, other={1}:{2}" -f $tunEffective, $bestOther.Alias, $bestOther.Effective)
   exit 3
 }
-Write-Output ("DoodleRay Tunnel route preferred: shape={0}, tun={1}, best_other={2}" -f $routeShape, $tunEffective, $(if ($bestOther) { "$($bestOther.Alias):$($bestOther.Effective)" } else { 'none' }))
+
+$routeCanaries = @(
+  '104.26.13.205',
+  '142.251.20.113',
+  '162.159.136.232'
+)
+$bypassedCanaries = @()
+foreach ($ip in $routeCanaries) {
+  $matches = @(Find-NetRoute -RemoteIPAddress $ip -ErrorAction SilentlyContinue |
+    Where-Object { [int]$_.InterfaceIndex -eq [int]$adapter.ifIndex })
+  if ($matches.Count -eq 0) {
+    $best = Find-NetRoute -RemoteIPAddress $ip -ErrorAction SilentlyContinue |
+      Select-Object -First 1
+    $via = if ($best) { "$($best.InterfaceAlias):$($best.InterfaceIndex)" } else { 'none' }
+    $bypassedCanaries += "$ip via $via"
+  }
+}
+if ($bypassedCanaries.Count -gt 0) {
+  Write-Output ("DoodleRay Tunnel is not selected for protected route canaries: {0}" -f ($bypassedCanaries -join '; '))
+  exit 3
+}
+
+Write-Output ("DoodleRay Tunnel route preferred: shape={0}, tun={1}, best_other={2}, canaries=ok" -f $routeShape, $tunEffective, $(if ($bestOther) { "$($bestOther.Alias):$($bestOther.Effective)" } else { 'none' }))
 "#;
         match Command::new("powershell")
             .args(["-NoProfile", "-Command", script])
@@ -1587,6 +2145,12 @@ Write-Output ("DoodleRay Tunnel route preferred: shape={0}, tun={1}, best_other=
     }
 
     fn secure_directory_acl(path: &Path) -> Result<(), String> {
+        // Harden the directory object only. `/T` must not be used with
+        // `/inheritance:r` + container-inherit grants: on files it strips the
+        // inherited ACEs while the (OI)(CI) grants carry no effective file
+        // access, leaving an empty DACL that even LocalSystem cannot read
+        // (unreadable service.log/session marker, "Access is denied" install
+        // noise on reused machines).
         let status = Command::new("icacls")
             .arg(path)
             .args([
@@ -1597,18 +2161,37 @@ Write-Output ("DoodleRay Tunnel route preferred: shape={0}, tun={1}, best_other=
                 "/remove:g",
                 "*S-1-5-11",
                 "*S-1-5-32-545",
-                "/T",
                 "/C",
                 "/Q",
             ])
             .creation_flags(0x08000000)
             .status()
             .map_err(|e| format!("Failed to run icacls on {:?}: {}", path, e))?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(format!("icacls failed on {:?} with {}", path, status))
+        if !status.success() {
+            return Err(format!("icacls failed on {:?} with {}", path, status));
         }
+
+        // Re-derive children from the hardened directory so files created
+        // before this fix (or by other principals) become SYSTEM/Admins-only
+        // through inheritance instead of keeping stale or empty DACLs.
+        let has_children = std::fs::read_dir(path)
+            .map(|mut entries| entries.next().is_some())
+            .unwrap_or(false);
+        if has_children {
+            let reset = Command::new("icacls")
+                .arg(path.join("*"))
+                .args(["/reset", "/T", "/C", "/Q"])
+                .creation_flags(0x08000000)
+                .status()
+                .map_err(|e| format!("Failed to run icacls reset on {:?}: {}", path, e))?;
+            if !reset.success() {
+                log_service_event(&format!(
+                    "icacls child ACL reset reported failures on {:?} with {}",
+                    path, reset
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn ensure_vpn_users_group() -> Result<(), String> {

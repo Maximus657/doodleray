@@ -23,6 +23,14 @@ Date: 2026-06-28
   Telegram, browser WebView2 surfaces, DNS, routes, or WinINet are actually
   protected.
 
+## QA Subscription
+
+- All PC transport QA must import and test with the canonical DoodleVPN test
+  subscription from `docs/qa-test-subscription.md`.
+- The raw URL is stored only in the ignored
+  `secrets/doodlevpn-test-subscription-url.txt` file and must not be copied
+  into committed reports, logs, screenshots, or support bundles.
+
 ## Likely user impact
 
 - Users who leave the recommended `browser-apps` card selected can see browsers
