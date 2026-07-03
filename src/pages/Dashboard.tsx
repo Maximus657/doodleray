@@ -21,18 +21,29 @@ import { getSubscriptionById, getSubscriptionTrafficStatus } from '../lib/subscr
 import { pingServersWithLimit } from '../lib/ping-runner';
 import { describeSubscriptionSource } from '../lib/redaction';
 
-// Sub-components
-import RetroBackground from '../components/dashboard/RetroBackground';
-import OnboardingCard from '../components/dashboard/OnboardingCard';
-import ConnectionControls from '../components/dashboard/ConnectionControls';
-import DashboardControlsDrawer from '../components/dashboard/DashboardControlsDrawer';
-import ServerList from '../components/dashboard/ServerList';
-import LogsStrip from '../components/dashboard/LogsStrip';
+// v6 dark-glass UI
+import type { ProductMode } from '../stores/app-store';
+import ConnectOrb from '../components/v6/ConnectOrb';
+import ModeSelector from '../components/v6/ModeCard';
+import LocationList from '../components/v6/LocationList';
+import SubscriptionMeter from '../components/v6/SubscriptionMeter';
+import TrafficStats from '../components/v6/TrafficStats';
+import SplitRoutingToggle from '../components/v6/SplitRoutingToggle';
+import DiagnosticsDrawer from '../components/v6/DiagnosticsDrawer';
+import QuickAddPanel from '../components/v6/QuickAddPanel';
+import { deriveOrbState, ORB_LABEL_KEY } from '../components/v6/status';
 
 const TRAFFIC_LIMIT_EOF_WINDOW_MS = 12_000;
 const TRAFFIC_LIMIT_EOF_THRESHOLD = 4;
 const TRAFFIC_LIMIT_NOTICE_COOLDOWN_MS = 60_000;
 const CONNECT_TIMEOUT_MS = 45_000;
+const TUN_CONNECT_TIMEOUT_MS = 120_000;
+const TUN_LIMITED_FALLBACK_RE =
+  /could not create the Windows tunnel adapter|IPv4 readiness failed|adapter is missing|adapter did not become ready|route is not preferred|route did not become ready|routes are missing|sing-box exited|sing-box process is not running|Tunnel Service failed to start TUN|Tunnel Service stopped before TUN|Tunnel Service did not become ready|timed out while starting VPN engines/i;
+
+function isTunLimitedFallbackCandidate(message?: string | null) {
+  return !!message && TUN_LIMITED_FALLBACK_RE.test(message);
+}
 
 function hasWinInetCompatibilityWarning(health: ConnectionHealthReport | null | undefined): boolean {
   return (health?.checks ?? []).some(check =>
@@ -139,20 +150,18 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
 export default function Dashboard() {
   const {
     status, setStatus, activeServer, servers, setActiveServer,
-    proxyMode, setProxyMode, systemProxyMode, setSystemProxyMode, speedHistory, currentDownload, currentUpload,
+    proxyMode, setProxyMode, systemProxyMode, setSystemProxyMode, productMode, currentDownload, currentUpload,
     totalDown, totalUp, addTraffic, resetTraffic, addSpeedPoint, setCurrentSpeed,
     logs, addLog, clearLogs, socksPort, httpPort, subscriptions,
-    updateSubscription, removeSubscription, autoSelectFastest,
+    updateSubscription, autoSelectFastest,
     subAutoUpdateMinutes, connectedAt, setConnectedAt,
-    addSubscription, addServer, removeServer, removeAllManualServers,
-    updateServerPings, showStats, setSocksPort, setHttpPort,
+    addSubscription, addServer,
+    updateServerPings, setSocksPort, setHttpPort,
   } = useAppStore();
   const { t } = useTranslation();
 
-  const [showLogs, setShowLogs] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
-  const logsEndRef = useRef<HTMLDivElement>(null);
+  const [healthVerdict, setHealthVerdict] = useState<string | null>(null);
   const [quickInput, setQuickInput] = useState('');
   const [quickImporting, setQuickImporting] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -246,13 +255,13 @@ export default function Dashboard() {
     addLog('success', result.message);
     addLog('success', t('connectionActive'));
     setConnectionStep(t('connectionReady'));
+    setHealthVerdict(health?.verdict ?? null);
     setStatus('connected');
     setConnectedAt(Date.now());
     return true;
   }, [addLog, setConnectedAt, setConnectionStep, setHttpPort, setSocksPort, setStatus, t]);
 
   const connectionOpRef = useRef(0);
-  const [testingSubId, setTestingSubId] = useState<string | null>(null);
   const [refreshingSubId, setRefreshingSubId] = useState<string | null>(null);
   const [pingingServerIds, setPingingServerIds] = useState<Set<string>>(() => new Set());
   const serverSelectionIndex = useMemo(() => buildServerSelectionIndex(servers), [servers]);
@@ -262,18 +271,49 @@ export default function Dashboard() {
   const eofBurstRef = useRef({ count: 0, windowStartedAt: 0, lastNoticeAt: 0 });
   const tRef = useRef(t);
 
+  const attemptLimitedBrowsersFallback = useCallback(async (
+    srv: NonNullable<typeof activeServer>,
+    invoke: any,
+    opId: number,
+    reason: string,
+  ) => {
+    if (proxyMode !== 'tun' || !isTunLimitedFallbackCandidate(reason)) return false;
+    addLog('warning', t('limitedFallbackAttempt'));
+    try {
+      // Force the failed protected generation to clean up before starting the
+      // lightweight browser compatibility path. This avoids reusing a failed
+      // service/TUN state as the fallback substrate.
+      await invoke('vpn_disconnect').catch(() => undefined);
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      setProxyMode('system-proxy');
+      setSystemProxyMode('set');
+      const fbReq = await buildConnectRequestFromState(srv, 'system-proxy', 'set');
+      const fb: any = await invoke('vpn_connect', { request: fbReq });
+      if (opId !== connectionOpRef.current) return true;
+      if (fb.success) {
+        await markConnectedIfHealthy(
+          fb,
+          invoke,
+          'system-proxy',
+          fbReq.system_proxy_mode,
+          fbReq.socks_port,
+          fbReq.http_port,
+        );
+        addLog('warning', t('limitedFallbackActive'));
+        const { useToastStore } = await import('../stores/toast-store');
+        useToastStore.getState().addToast(t('limitedFallbackActive'), 'warning');
+        return true;
+      }
+      addLog('error', fb.message);
+    } catch (fbErr: any) {
+      addLog('error', `Browsers fallback failed: ${fbErr?.message || fbErr}`);
+    }
+    return false;
+  }, [addLog, markConnectedIfHealthy, proxyMode, setProxyMode, setSystemProxyMode, t]);
+
   useEffect(() => {
     tRef.current = t;
   }, [t]);
-
-  const [confirmModal, setConfirmModal] = useState<{
-    show: boolean;
-    title: string;
-    message: string;
-    onConfirm: () => void;
-    confirmLabel?: string;
-    danger?: boolean;
-  }>({ show: false, title: '', message: '', onConfirm: () => {} });
 
   // ═══════════════════════════════════════════════════
   //  Effects
@@ -294,9 +334,11 @@ export default function Dashboard() {
         const { invoke } = await import('@tauri-apps/api/core');
         await pingServersWithLimit(unpinged, invoke, {
           isCancelled: () => cancelled,
+          onActiveIdsChange: setPingingServerIds,
           onBatch: (updates) => updateServerPings(updates),
         });
       } catch { /* not in tauri env */ }
+      finally { setPingingServerIds(new Set()); }
     })();
     return () => { cancelled = true; };
   }, [servers, updateServerPings]);
@@ -481,6 +523,7 @@ export default function Dashboard() {
         }
 
         const healthy = isHealthAcceptable(proxyMode, health);
+        setHealthVerdict(health?.verdict ?? null);
         if (healthy) { healthFailRef.current = 0; }
         else if (isHealthFatal(proxyMode, health)) {
           const failureSummary = summarizeHealthFailures(health);
@@ -548,10 +591,10 @@ export default function Dashboard() {
     return () => clearInterval(healthCheck);
   }, [status, socksPort, httpPort, proxyMode, systemProxyMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-scroll logs
+  // Reset the orb health verdict whenever the tunnel is fully down.
   useEffect(() => {
-    if (showLogs) logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [logs.length, showLogs]);
+    if (status === 'disconnected') setHealthVerdict(null);
+  }, [status]);
 
   // Poll xray-core proxy logs
   useEffect(() => {
@@ -732,9 +775,10 @@ export default function Dashboard() {
         setConnectionStep(t('connectionCheckingServer'));
         const request = await buildConnectRequestFromState(srv);
         setConnectionStep(t('connectionSecuringTraffic'));
+        const connectTimeoutMs = proxyMode === 'tun' ? TUN_CONNECT_TIMEOUT_MS : CONNECT_TIMEOUT_MS;
         const result: any = await withTimeout(
           invoke('vpn_connect', { request }),
-          CONNECT_TIMEOUT_MS,
+          connectTimeoutMs,
           'Connection timed out while starting VPN engines'
         );
 
@@ -779,6 +823,14 @@ export default function Dashboard() {
             } catch {}
           }
           addLog('error', result.message);
+          // Honest automatic fallback: a TUN adapter/route bring-up failure
+          // (already past the service-side bounded repair) degrades to
+          // Browsers compatibility with explicit limited-protection messaging.
+          // Manual mode is never entered automatically; WinINet is only
+          // touched by the Browsers connect path itself.
+          if (await attemptLimitedBrowsersFallback(srv!, invoke, opId, result.message)) {
+            return;
+          }
           if (result.message.toLowerCase().includes('full computer components')) {
             const serviceHealthy = await refreshTunnelServiceHealth();
             if (!serviceHealthy) {
@@ -796,6 +848,19 @@ export default function Dashboard() {
           addLog('error', `Connection failed: ${message}`);
           try {
             const { invoke: cleanupInvoke } = await import('@tauri-apps/api/core');
+            let fallbackReason = message;
+            try {
+              const health = await cleanupInvoke('get_connection_health', {
+                proxyMode: 'tun',
+                systemProxyMode,
+                socksPort,
+                httpPort,
+              }) as ConnectionHealthReport;
+              fallbackReason = `${fallbackReason}; ${summarizeHealthFailures(health)}`;
+            } catch { /* best effort */ }
+            if (srv && await attemptLimitedBrowsersFallback(srv, cleanupInvoke, opId, fallbackReason)) {
+              return;
+            }
             await cleanupInvoke('vpn_disconnect');
           } catch { /* best effort cleanup */ }
           reportConnectionError({
@@ -839,7 +904,7 @@ export default function Dashboard() {
       } catch { addLog('info', '[SIM] Disconnected'); }
       setStatus('disconnected'); setConnectionStep(null); setConnectedAt(null); setCurrentSpeed(0, 0); resetTraffic();
     }
-  }, [status, setStatus, setCurrentSpeed, resetTraffic, activeServer, servers, setActiveServer, addLog, proxyMode, socksPort, httpPort, autoSelectFastest, setConnectedAt, t, setProxyMode, refreshTunnelServiceHealth, setSocksPort, setHttpPort, markConnectedIfHealthy]);
+  }, [status, setStatus, setCurrentSpeed, resetTraffic, activeServer, servers, setActiveServer, addLog, proxyMode, socksPort, httpPort, autoSelectFastest, setConnectedAt, t, setProxyMode, setSystemProxyMode, refreshTunnelServiceHealth, setSocksPort, setHttpPort, markConnectedIfHealthy, attemptLimitedBrowsersFallback]);
 
   const handleModeSwitch = useCallback(async (mode: 'system-proxy' | 'tun', nextSystemProxyMode = systemProxyMode) => {
     const normalizedSystemProxyMode = nextSystemProxyMode === 'clear'
@@ -866,7 +931,12 @@ export default function Dashboard() {
         const srv = activeServer;
         if (srv) {
           const request = await buildConnectRequestFromState(srv, mode, normalizedSystemProxyMode);
-          const result: any = await invoke('vpn_connect', { request });
+          const connectTimeoutMs = mode === 'tun' ? TUN_CONNECT_TIMEOUT_MS : CONNECT_TIMEOUT_MS;
+          const result: any = await withTimeout(
+            invoke('vpn_connect', { request }),
+            connectTimeoutMs,
+            'Connection timed out while starting VPN engines',
+          );
           if (result.success) {
             await markConnectedIfHealthy(
               result,
@@ -877,11 +947,31 @@ export default function Dashboard() {
               request.http_port,
             );
           }
-          else { addLog('error', result.message); setStatus('disconnected'); setConnectionStep(null); }
+          else {
+            addLog('error', result.message);
+            if (mode === 'tun' && await attemptLimitedBrowsersFallback(srv, invoke, connectionOpRef.current, result.message)) {
+              return;
+            }
+            setStatus('disconnected');
+            setConnectionStep(null);
+          }
         } else { setStatus('disconnected'); setConnectionStep(null); }
-      } catch (err: any) { addLog('error', `Reconnect failed: ${err.message || err}`); setStatus('disconnected'); setConnectionStep(null); }
+      } catch (err: any) {
+        const message = err.message || String(err);
+        addLog('error', `Reconnect failed: ${message}`);
+        if (mode === 'tun' && activeServer) {
+          try {
+            const { invoke: cleanupInvoke } = await import('@tauri-apps/api/core');
+            if (await attemptLimitedBrowsersFallback(activeServer, cleanupInvoke, connectionOpRef.current, message)) {
+              return;
+            }
+          } catch { /* best effort fallback */ }
+        }
+        setStatus('disconnected');
+        setConnectionStep(null);
+      }
     }
-  }, [proxyMode, systemProxyMode, setProxyMode, setSystemProxyMode, status, setStatus, addLog, activeServer, socksPort, httpPort, setConnectedAt, t, refreshTunnelServiceHealth, setSocksPort, setHttpPort, markConnectedIfHealthy]);
+  }, [proxyMode, systemProxyMode, setProxyMode, setSystemProxyMode, status, setStatus, addLog, activeServer, socksPort, httpPort, setConnectedAt, t, refreshTunnelServiceHealth, setSocksPort, setHttpPort, markConnectedIfHealthy, attemptLimitedBrowsersFallback]);
 
   const handleExportSupportBundle = useCallback(async () => {
     try {
@@ -897,6 +987,111 @@ export default function Dashboard() {
       addLog('error', `${t('supportBundleExportFailed')}: ${err?.message || err}`);
     }
   }, [addLog, httpPort, proxyMode, socksPort, systemProxyMode, t]);
+
+  // QA-only control surface consumer (backend gates it behind
+  // DOODLERAY_QA_CONTROL=1; production launches never enable it). Actions are
+  // executed through the exact same handlers the UI buttons use.
+  const qaControlRef = useRef({ status, handleConnect, handleModeSwitch });
+  useEffect(() => {
+    qaControlRef.current = { status, handleConnect, handleModeSwitch };
+  });
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const enabled = await invoke<boolean>('qa_control_enabled').catch(() => false);
+        if (!enabled || disposed) return;
+        const publishFrontendSnapshot = async () => {
+          const state = useAppStore.getState();
+          await invoke('qa_control_update_frontend_snapshot', {
+            snapshot: {
+              status: state.status,
+              product_mode: state.productMode,
+              proxy_mode: state.proxyMode,
+              system_proxy_mode: state.systemProxyMode,
+              subscriptions_count: state.subscriptions.length,
+              servers_count: state.servers.length,
+              active_server_present: !!state.activeServer,
+              active_server_name: state.activeServer?.name ?? null,
+              active_server_protocol: state.activeServer?.protocol ?? null,
+              socks_port: state.socksPort,
+              http_port: state.httpPort,
+              recent_logs: state.logs.slice(-25).map(log => ({
+                level: log.level,
+                message: log.message,
+              })),
+            },
+          }).catch(() => undefined);
+        };
+        await publishFrontendSnapshot();
+        const snapshotTimer = window.setInterval(publishFrontendSnapshot, 1000);
+        const { listen } = await import('@tauri-apps/api/event');
+        const un = await listen<{ action?: string; query?: string }>('doodleray-qa-control', async (event) => {
+          const current = qaControlRef.current;
+          const action = event.payload?.action;
+          const query = new URLSearchParams(event.payload?.query || '');
+          const loggableQuery = action === 'import-subscription' ? '' : (event.payload?.query || '');
+          addLog('info', `[QA-control] ${action}${loggableQuery ? `?${loggableQuery}` : ''}`);
+          try {
+            if (action === 'connect') {
+              if (current.status !== 'disconnected') {
+                await current.handleConnect();
+                await new Promise(resolve => setTimeout(resolve, 5000));
+              }
+              if (qaControlRef.current.status === 'disconnected') {
+                await qaControlRef.current.handleConnect();
+              }
+            } else if (action === 'disconnect') {
+              if (current.status !== 'disconnected') {
+                await current.handleConnect();
+              }
+            } else if (action === 'switch-mode') {
+              const mode = query.get('mode');
+              if (mode === 'tun') await current.handleModeSwitch('tun', 'set');
+              else if (mode === 'browsers') await current.handleModeSwitch('system-proxy', 'set');
+              else if (mode === 'manual') await current.handleModeSwitch('system-proxy', 'unchanged');
+            } else if (action === 'refresh-subscription') {
+              const { refreshSubscription } = await import('../lib/subscription');
+              const storeModule = await import('../stores/app-store');
+              const state = storeModule.useAppStore.getState();
+              for (const sub of state.subscriptions) {
+                const updated = await refreshSubscription(sub);
+                state.updateSubscription(sub.id, updated);
+              }
+              addLog('success', '[QA-control] subscriptions refreshed');
+            } else if (action === 'import-subscription') {
+              const url = query.get('url');
+              if (url) {
+                const { fetchSubscription } = await import('../lib/subscription');
+                const storeModule = await import('../stores/app-store');
+                const state = storeModule.useAppStore.getState();
+                const existing = state.subscriptions.find((sub) => sub.url === url);
+                if (existing) {
+                  const { refreshSubscription } = await import('../lib/subscription');
+                  state.updateSubscription(existing.id, await refreshSubscription(existing));
+                  addLog('success', '[QA-control] existing subscription refreshed');
+                } else {
+                  state.addSubscription(await fetchSubscription(url));
+                  addLog('success', '[QA-control] subscription imported');
+                }
+              }
+            }
+          } catch (err: any) {
+            addLog('error', `[QA-control] ${action} failed: ${err?.message || err}`);
+          }
+        });
+        if (disposed) {
+          window.clearInterval(snapshotTimer);
+          un();
+        }
+        else unlisten = () => { window.clearInterval(snapshotTimer); un(); };
+      } catch { /* QA surface unavailable */ }
+    })();
+    return () => { disposed = true; unlisten?.(); };
+  }, [addLog]);
 
   const handleServerSelect = useCallback(async (server: typeof activeServer) => {
     if (!server) return;
@@ -959,21 +1154,6 @@ export default function Dashboard() {
     try { const text = await navigator.clipboard.readText(); setQuickInput(text); } catch { /* */ }
   }, []);
 
-  const handleTestSubscription = async (sub: any) => {
-    setTestingSubId(sub.id);
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      const toUpdate = servers.filter(s => s.subscriptionId === sub.id);
-      addLog('warning', `Testing ${toUpdate.length} servers...`);
-      await pingServersWithLimit(toUpdate.filter((s) => s.address), invoke, {
-        onActiveIdsChange: setPingingServerIds,
-        onBatch: (updates) => useAppStore.getState().updateServerPings(updates),
-      });
-      addLog('success', 'Ping test complete');
-    } catch (err: any) { addLog('error', `Ping test failed: ${err?.message || err}`); }
-    finally { setPingingServerIds(new Set()); setTestingSubId(null); }
-  };
-
   const handleUpdateSubscription = async (sub: any) => {
     setRefreshingSubId(sub.id);
     try {
@@ -993,67 +1173,6 @@ export default function Dashboard() {
     finally { setRefreshingSubId(null); }
   };
 
-  const handleTestCustomServers = async () => {
-    setTestingSubId('__custom__');
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      const custom = servers.filter(s => !s.subscriptionId);
-      addLog('warning', `Testing ${custom.length} custom servers...`);
-      await pingServersWithLimit(custom.filter((s) => s.address), invoke, {
-        onActiveIdsChange: setPingingServerIds,
-        onBatch: (updates) => useAppStore.getState().updateServerPings(updates),
-      });
-      addLog('success', 'Custom servers ping test complete');
-    } catch (err: any) { addLog('error', `Custom ping test failed: ${err?.message || err}`); }
-    finally { setPingingServerIds(new Set()); setTestingSubId(null); }
-  };
-
-  const handleRemoveServer = useCallback((serverId: string, serverName: string) => {
-    setConfirmModal({
-      show: true,
-      title: t('deleteServer'),
-      message: `Delete custom server "${serverName}"?`,
-      confirmLabel: t('deleteServer').split(' ')[0],
-      danger: true,
-      onConfirm: () => {
-        if (activeServer?.id === serverId) { handleConnect(); setActiveServer(null); }
-        removeServer(serverId);
-        setConfirmModal(prev => ({ ...prev, show: false }));
-      }
-    });
-  }, [activeServer, handleConnect, setActiveServer, removeServer, t]);
-
-  const handleRemoveAllCustom = useCallback(() => {
-    setConfirmModal({
-      show: true,
-      title: t('deleteAllProfiles'),
-      message: 'Delete all manual profiles?',
-      confirmLabel: t('deleteServer').split(' ')[0],
-      danger: true,
-      onConfirm: () => {
-        removeAllManualServers();
-        addLog('info', 'Removed all custom servers');
-        setConfirmModal(prev => ({ ...prev, show: false }));
-      }
-    });
-  }, [removeAllManualServers, addLog, t]);
-
-  const handleRemoveSubscription = useCallback((subId: string) => {
-    const sub = subscriptions.find(s => s.id === subId);
-    if (!sub) return;
-    setConfirmModal({
-      show: true,
-      title: t('deleteSub'),
-      message: `Delete subscription "${sub.name}" and all its servers?`,
-      confirmLabel: t('deleteServer').split(' ')[0],
-      danger: true,
-      onConfirm: () => {
-        removeSubscription(subId);
-        setConfirmModal(prev => ({ ...prev, show: false }));
-      }
-    });
-  }, [subscriptions, removeSubscription, t]);
-
   const canConnect = !!activeServer || servers.length > 0;
   const hasDashboardContent = servers.length > 0 || status !== 'disconnected';
   const trimmedQuickInput = quickInput.trim();
@@ -1072,151 +1191,156 @@ export default function Dashboard() {
   const connectionStepLabel = status === 'connecting' || status === 'disconnecting' ? connectionStep : null;
 
   // ═══════════════════════════════════════════════════
-  //  Render
+  //  Render (v6 dark-glass)
   // ═══════════════════════════════════════════════════
-  return (
-    <div className="relative flex-1 flex flex-col overflow-hidden animate-fade-in">
-      <RetroBackground />
+  const busy = status === 'connecting' || status === 'disconnecting';
+  const orbState = deriveOrbState(status, productMode, healthVerdict);
+  const orbPrimary = status === 'connected'
+    ? t('disconnect')
+    : busy
+      ? (status === 'connecting' ? t('cancel') : t('disconnecting'))
+      : t('connect');
+  const orbSub = busy
+    ? (connectionStepLabel || t('connectionStarting'))
+    : status === 'connected'
+      ? t(ORB_LABEL_KEY[orbState] as never)
+      : null;
+  const activeSub = getSubscriptionById(subscriptions, activeServer?.subscriptionId) ?? subscriptions[0] ?? null;
 
-      <div className="relative z-10 flex-1 flex flex-col items-center gap-3 px-4 overflow-y-auto py-4">
-        {/* + Add button */}
+  const handleModeSelect = (mode: ProductMode) => {
+    if (mode === 'protected') handleModeSwitch('tun', 'set');
+    else if (mode === 'compatibility') handleModeSwitch('system-proxy', 'set');
+    else handleModeSwitch('system-proxy', 'unchanged');
+  };
+
+  return (
+    <div className="relative flex min-h-0 flex-1 flex-col animate-fade-in">
+      {/* Header */}
+      <div className="flex shrink-0 items-center justify-between px-4 pt-3 pb-1.5">
+        <h1 className="text-[15px] font-semibold tracking-tight text-v6-text">{t('dashboard')}</h1>
         <button
+          type="button"
           onClick={() => setShowAddModal(!showAddModal)}
           disabled={quickImporting}
-          className="absolute top-4 right-4 z-30 w-10 h-10 flex items-center justify-center bg-white border-[3px] border-black rounded-xl shadow-[3px_3px_0_#000] cursor-pointer hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[4px_4px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none transition-all disabled:opacity-50"
           title={t('addSubOrServer')}
+          aria-label={t('addSubOrServer')}
+          className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-[#7c6cff] to-[#5b8cff] px-3 py-1.5 text-[11px] font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50 v6-focus"
         >
-          {quickImporting ? <Loader2 className="w-5 h-5 text-black animate-spin stroke-[3px]" /> : <Plus className="w-5 h-5 text-black stroke-[3px]" />}
+          <Plus className="h-4 w-4" strokeWidth={2.6} /> {t('add')}
         </button>
+      </div>
 
-        {showAddModal && (
-          <>
-            <div
-              className="fixed inset-0 z-30 bg-black/20 backdrop-blur-[1px]"
-              onClick={() => setShowAddModal(false)}
-            />
-            <div className="fixed left-1/2 top-16 z-40 w-[min(360px,calc(100vw-32px))] -translate-x-1/2 bg-white border-[3px] border-black rounded-2xl p-4 shadow-[6px_6px_0_#000] animate-slide-up space-y-3">
-              <div>
-                <p className="text-[11px] font-black text-black uppercase tracking-widest">{t('pasteToAddTitle')}</p>
-                <p className="mt-1 text-[10px] font-bold leading-relaxed text-black/55 uppercase tracking-widest">{t('pasteToAddDesc')}</p>
-              </div>
-              <div className="rounded-xl border-[3px] border-black bg-bg-primary p-2 shadow-inner">
-                <div className="flex gap-2">
-                  <input type="text" value={quickInput} onChange={(e) => setQuickInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' && quickInputKind !== 'unknown') { handleQuickAdd(); setShowAddModal(false); } }}
-                    autoFocus placeholder={t('pasteHint')}
-                    className="flex-1 min-w-0 bg-white border-[2px] border-black rounded-lg px-3 py-2.5 text-xs text-black placeholder:text-black/30 focus:outline-none font-bold tracking-tight" />
-                  <button onClick={handleQuickPaste}
-                    className="w-10 h-10 flex items-center justify-center bg-white border-[2px] border-black rounded-lg cursor-pointer hover:bg-black hover:text-white transition-colors shrink-0">
-                    <ClipboardPaste className="w-4 h-4 stroke-[2.5px]" />
-                  </button>
-                </div>
-                <p className={`mt-2 inline-flex rounded-lg border-[2px] border-black px-2 py-1 text-[9px] font-black uppercase tracking-widest ${
-                  quickInputKind === 'subscription'
-                    ? 'bg-emerald-300 text-black'
-                    : quickInputKind === 'link'
-                      ? 'bg-amber-300 text-black'
-                      : 'bg-white/70 text-black/45'
-                }`}>
-                  {quickInputHint}
-                </p>
-              </div>
-              <button onClick={() => { handleQuickAdd(); setShowAddModal(false); }}
-                disabled={quickImporting || !trimmedQuickInput || quickInputKind === 'unknown'}
-                className="w-full py-2.5 bg-black text-white border-[2px] border-black rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer shadow-[3px_3px_0_#000] hover:-translate-y-0.5 hover:shadow-[4px_4px_0_#000] active:translate-y-1 active:shadow-none transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-                {quickImporting ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> {t('adding')}</> : <><Plus className="w-3.5 h-3.5 stroke-[3px]" /> {t('add')}</>}
+      {showAddModal && (
+        <QuickAddPanel
+          value={quickInput}
+          onChange={setQuickInput}
+          onAdd={() => { handleQuickAdd(); setShowAddModal(false); }}
+          onPaste={handleQuickPaste}
+          onClose={() => setShowAddModal(false)}
+          importing={quickImporting}
+          kind={quickInputKind}
+          hint={quickInputHint}
+          t={t}
+        />
+      )}
+
+      {!hasDashboardContent ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center p-6">
+          <div className="v6-glass w-full max-w-md rounded-2xl p-7 text-center">
+            <div className="mx-auto mb-4 h-12 w-12 rounded-2xl bg-gradient-to-br from-[#7c6cff] to-[#3dd7c8] shadow-[0_0_24px_rgba(124,108,255,0.5)]" />
+            <h2 className="text-[18px] font-semibold text-v6-text">{t('welcome')}</h2>
+            <p className="mx-auto mt-1.5 max-w-xs text-[12px] leading-relaxed text-v6-muted">{t('welcomeHint')}</p>
+            <div className="mt-4 flex gap-2">
+              <input
+                type="text"
+                value={quickInput}
+                onChange={(e) => setQuickInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && quickInputKind !== 'unknown') handleQuickAdd(); }}
+                placeholder={t('pasteHint')}
+                className="v6-glass-inset min-w-0 flex-1 rounded-lg px-3 py-2.5 text-[12px] text-v6-text placeholder:text-v6-muted/70 v6-focus"
+              />
+              <button
+                type="button"
+                onClick={handleQuickPaste}
+                aria-label="Paste"
+                className="grid h-[42px] w-[42px] shrink-0 place-items-center rounded-lg bg-white/[0.06] text-v6-muted hover:bg-white/10 hover:text-v6-text v6-focus"
+              >
+                <ClipboardPaste className="h-4 w-4" strokeWidth={2.2} />
               </button>
             </div>
-          </>
-        )}
-
-        {/* ═══ MAIN CONTENT ═══ */}
-        {!hasDashboardContent ? (
-          <OnboardingCard
-            quickInput={quickInput} setQuickInput={setQuickInput}
-            onQuickAdd={handleQuickAdd} onQuickPaste={handleQuickPaste}
-            importing={quickImporting} t={t}
-          />
-        ) : (
-          <div className="contents">
-            <ConnectionControls
-              status={status} canConnect={canConnect}
-              connectionStepLabel={connectionStepLabel}
-              onConnect={handleConnect}
-              t={t}
-            />
-
-            <ServerList
-              status={status}
-              servers={servers} subscriptions={subscriptions} activeServer={activeServer}
-              searchQuery={searchQuery} onSearchChange={setSearchQuery}
-              collapsedGroups={collapsedGroups}
-              onToggleGroup={(id) => setCollapsedGroups(prev => ({ ...prev, [id]: !prev[id] }))}
-              onServerSelect={handleServerSelect}
-              onTestSubscription={handleTestSubscription}
-              onUpdateSubscription={handleUpdateSubscription}
-              onRemoveSubscription={handleRemoveSubscription}
-              onTestCustomServers={handleTestCustomServers}
-              onRemoveAllCustomServers={handleRemoveAllCustom}
-              onRemoveServer={handleRemoveServer}
-              testingSubId={testingSubId} refreshingSubId={refreshingSubId}
+            <button
+              type="button"
+              onClick={handleQuickAdd}
+              disabled={quickImporting || !trimmedQuickInput || quickInputKind === 'unknown'}
+              className="mt-2.5 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#7c6cff] to-[#5b8cff] py-2.5 text-[12px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 v6-focus"
+            >
+              {quickImporting ? <><Loader2 className="h-4 w-4 v6-orb-spin" /> {t('adding')}</> : <><Plus className="h-4 w-4" strokeWidth={2.6} /> {t('add')}</>}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(190px,236px)_1fr] gap-3 overflow-hidden px-3 pb-1">
+          {/* Locations */}
+          <div className="v6-glass flex min-h-0 flex-col rounded-2xl p-3">
+            <LocationList
+              servers={servers}
+              activeServer={activeServer}
               pingingServerIds={pingingServerIds}
-              subAutoUpdateMinutes={subAutoUpdateMinutes}
+              searchQuery={searchQuery}
+              onSearchChange={setSearchQuery}
+              onSelect={handleServerSelect}
               t={t}
             />
           </div>
-        )}
-      </div>
 
-      {hasDashboardContent && (
-        <div className="relative z-20 flex shrink-0 justify-center px-4 pb-2 pt-2">
-          <DashboardControlsDrawer
-            status={status} proxyMode={proxyMode} systemProxyMode={systemProxyMode}
-            connectTime={connectTime}
-            currentDownload={currentDownload} currentUpload={currentUpload}
-            totalDown={totalDown} totalUp={totalUp}
-            socksPort={socksPort} httpPort={httpPort}
-            speedHistory={speedHistory} showStats={showStats}
-            onModeSwitch={handleModeSwitch}
-            onExportSupportBundle={handleExportSupportBundle}
-            t={t}
-          />
+          {/* Connect + controls */}
+          <div className="flex min-h-0 flex-col gap-3 overflow-y-auto pr-0.5">
+            <div className="flex shrink-0 flex-col items-center pt-3 pb-1">
+              <ConnectOrb
+                state={orbState}
+                primaryLabel={orbPrimary}
+                subLabel={orbSub}
+                serverName={activeServer?.name ?? null}
+                disabled={status === 'disconnected' && !canConnect}
+                onClick={handleConnect}
+              />
+            </div>
+
+            <ModeSelector current={productMode} onSelect={handleModeSelect} disabled={busy} t={t} />
+
+            <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+              <SubscriptionMeter
+                subscription={activeSub}
+                refreshing={!!activeSub && refreshingSubId === activeSub.id}
+                onRefresh={activeSub ? () => handleUpdateSubscription(activeSub) : undefined}
+                t={t}
+              />
+              <TrafficStats
+                connected={status === 'connected'}
+                connectTime={connectTime}
+                currentDownload={currentDownload}
+                currentUpload={currentUpload}
+                totalDown={totalDown}
+                totalUp={totalUp}
+                socksPort={socksPort}
+                httpPort={httpPort}
+                proxyMode={proxyMode}
+                systemProxyMode={systemProxyMode}
+                t={t}
+              />
+            </div>
+
+            <SplitRoutingToggle protectedMode={productMode === 'protected'} t={t} />
+          </div>
         </div>
       )}
 
-      <LogsStrip
-        logs={logs} showLogs={showLogs}
-        onToggleLogs={() => setShowLogs(!showLogs)}
-        onClearLogs={clearLogs} logsEndRef={logsEndRef} t={t}
+      <DiagnosticsDrawer
+        logs={logs}
+        onClear={clearLogs}
+        onExportSupportBundle={handleExportSupportBundle}
+        t={t}
       />
-
-      {/* ── CUSTOM CONFIRM MODAL ── */}
-      {confirmModal.show && (
-        <>
-          <div className="fixed inset-0 z-[60] bg-black/40 backdrop-blur-sm"
-            onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))} />
-          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[70] w-72 bg-white border-[3px] border-black rounded-2xl p-5 shadow-[6px_6px_0_#000] animate-slide-up flex flex-col gap-4">
-            <div>
-              <h3 className="text-xs font-black uppercase tracking-widest leading-tight">{confirmModal.title}</h3>
-              <p className="text-xs text-black/60 font-bold mt-2 leading-relaxed">{confirmModal.message}</p>
-            </div>
-            <div className="flex gap-2 mt-2">
-              <button 
-                onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
-                className="flex-1 py-2 bg-white text-black border-[2px] border-black rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer hover:bg-black/5 hover:-translate-y-0.5 active:translate-y-0 transition-all">
-                {t('cancel')}
-              </button>
-              <button 
-                onClick={confirmModal.onConfirm}
-                className={`flex-1 py-2 border-[2px] border-black rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer shadow-[2px_2px_0_#000] hover:shadow-[3px_3px_0_#000] hover:-translate-y-0.5 active:translate-y-1 active:shadow-none transition-all ${
-                  confirmModal.danger ? 'bg-danger text-white' : 'bg-black text-white'
-                }`}>
-                {confirmModal.confirmLabel || 'OK'}
-              </button>
-            </div>
-          </div>
-        </>
-      )}
     </div>
   );
 }

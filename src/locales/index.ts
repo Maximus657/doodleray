@@ -2,6 +2,24 @@ import { useAppStore } from '../stores/app-store';
 
 export const translations = {
   en: {
+    // v6 UI
+    v6StatusProtected: 'Protected',
+    v6StatusDegraded: 'Degraded',
+    v6StatusLimited: 'Limited',
+    v6StatusFailed: 'Failed',
+    v6ModeProtectedDesc: 'Whole computer via a secure tunnel. Recommended.',
+    v6ModeBrowsersTitle: 'Browsers',
+    v6ModeBrowsersDesc: 'Browsers & proxy-aware apps only. Limited protection.',
+    v6ModeManualTitle: 'Manual proxy',
+    v6ModeManualDesc: 'Local SOCKS/HTTP proxy. Configure apps yourself.',
+    v6BadgeRecommended: 'Recommended',
+    v6BadgeLimited: 'Limited',
+    v6BadgeAdvanced: 'Advanced',
+    v6SplitRoutingHint: 'Split routing & rules',
+    v6ActiveRules: 'active rules',
+    v6NoEvents: 'No events yet',
+    v6NoResults: 'Nothing found',
+    supportBundle: 'Support bundle',
     // General
     dashboard: 'Dashboard',
     servers: 'Servers',
@@ -246,8 +264,28 @@ export const translations = {
     exportSupportBundle: 'Export support bundle',
     supportBundleExported: 'Support bundle exported',
     supportBundleExportFailed: 'Support bundle export failed',
+    limitedFallbackAttempt: 'Whole computer mode is unavailable; trying Browsers compatibility mode...',
+    limitedFallbackActive: 'Connected with LIMITED protection: browsers and proxy-aware apps only. Some apps and UDP traffic may bypass the VPN.',
   },
   ru: {
+    // v6 UI
+    v6StatusProtected: 'Защищено',
+    v6StatusDegraded: 'Частично',
+    v6StatusLimited: 'Ограничено',
+    v6StatusFailed: 'Ошибка',
+    v6ModeProtectedDesc: 'Весь компьютер через защищённый туннель. Рекомендуется.',
+    v6ModeBrowsersTitle: 'Браузеры',
+    v6ModeBrowsersDesc: 'Только браузеры и приложения с прокси. Ограниченная защита.',
+    v6ModeManualTitle: 'Прокси вручную',
+    v6ModeManualDesc: 'Локальный SOCKS/HTTP прокси. Настройте приложения сами.',
+    v6BadgeRecommended: 'Рекомендуем',
+    v6BadgeLimited: 'Ограничено',
+    v6BadgeAdvanced: 'Продвинуто',
+    v6SplitRoutingHint: 'Раздельная маршрутизация и правила',
+    v6ActiveRules: 'активных правил',
+    v6NoEvents: 'Событий пока нет',
+    v6NoResults: 'Ничего не найдено',
+    supportBundle: 'Пакет диагностики',
     // General
     dashboard: 'Главная',
     servers: 'Серверы',
@@ -492,8 +530,28 @@ export const translations = {
     exportSupportBundle: 'Экспорт отчета поддержки',
     supportBundleExported: 'Отчет поддержки создан',
     supportBundleExportFailed: 'Не удалось создать отчет поддержки',
+    limitedFallbackAttempt: 'Режим «Весь компьютер» недоступен; пробуем режим «Браузеры»...',
+    limitedFallbackActive: 'Подключено с ОГРАНИЧЕННОЙ защитой: только браузеры и прокси-приложения. Часть приложений и UDP-трафик могут идти мимо VPN.',
   },
   zh: {
+    // v6 UI
+    v6StatusProtected: '已保护',
+    v6StatusDegraded: '部分降级',
+    v6StatusLimited: '受限',
+    v6StatusFailed: '失败',
+    v6ModeProtectedDesc: '通过安全隧道保护整台电脑。推荐。',
+    v6ModeBrowsersTitle: '浏览器',
+    v6ModeBrowsersDesc: '仅限浏览器和支持代理的应用。保护有限。',
+    v6ModeManualTitle: '手动代理',
+    v6ModeManualDesc: '本地 SOCKS/HTTP 代理，需自行配置应用。',
+    v6BadgeRecommended: '推荐',
+    v6BadgeLimited: '受限',
+    v6BadgeAdvanced: '高级',
+    v6SplitRoutingHint: '分流与规则',
+    v6ActiveRules: '条活跃规则',
+    v6NoEvents: '暂无事件',
+    v6NoResults: '未找到结果',
+    supportBundle: '支持包',
     // General
     dashboard: '主页',
     servers: '服务器',
@@ -738,6 +796,8 @@ export const translations = {
     exportSupportBundle: '导出支持包',
     supportBundleExported: '支持包已导出',
     supportBundleExportFailed: '支持包导出失败',
+    limitedFallbackAttempt: '全设备模式不可用；正在尝试浏览器兼容模式...',
+    limitedFallbackActive: '已连接（受限保护）：仅浏览器和代理感知应用。部分应用和 UDP 流量可能绕过 VPN。',
   }
 };
 

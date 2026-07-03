@@ -1,9 +1,9 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import { useEffect } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Download, Loader2 } from 'lucide-react';
 import { useTranslation } from './locales';
-import { Sidebar } from './components/layout/Sidebar';
+import AppShell from './components/v6/AppShell';
 import Dashboard from './pages/Dashboard';
 import Servers from './pages/Servers';
 import Workshop from './pages/Workshop';
@@ -188,9 +188,22 @@ function UpdateBanner() {
 
 function NotificationStack() {
   return (
-    <div className="fixed right-4 top-4 z-[9999] flex w-[min(320px,calc(100vw-6.5rem))] flex-col gap-2 pointer-events-none">
+    <div className="fixed right-4 top-12 z-[9999] flex w-[min(320px,calc(100vw-6.5rem))] flex-col gap-2 pointer-events-none">
       <UpdateBanner />
       <ToastContainer />
+    </div>
+  );
+}
+
+/**
+ * Readable surface for pages that still use the retro (light-on-orange) design
+ * inside the v6 dark-glass shell. Keeps them fully functional and legible until
+ * they get their own v6 reskin.
+ */
+function LegacySurface({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl bg-bg-primary text-text-on-orange">
+      {children}
     </div>
   );
 }
@@ -473,18 +486,15 @@ function App() {
 
   return (
     <Router>
-      <div className="flex h-screen bg-bg-primary">
-        <Sidebar />
-        <div className="flex-1 flex flex-col relative overflow-hidden">
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/servers" element={<Servers />} />
-            <Route path="/workshop" element={<Workshop />} />
-            <Route path="/settings" element={<Settings />} />
-          </Routes>
-        </div>
-        <NotificationStack />
-      </div>
+      <AppShell>
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/servers" element={<LegacySurface><Servers /></LegacySurface>} />
+          <Route path="/workshop" element={<LegacySurface><Workshop /></LegacySurface>} />
+          <Route path="/settings" element={<LegacySurface><Settings /></LegacySurface>} />
+        </Routes>
+      </AppShell>
+      <NotificationStack />
     </Router>
   );
 }
