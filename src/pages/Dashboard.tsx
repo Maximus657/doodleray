@@ -24,6 +24,7 @@ import { describeSubscriptionSource } from '../lib/redaction';
 // v6 DoodleVPN design UI
 import type { ProductMode } from '../stores/app-store';
 import ConnectOrb from '../components/v6/ConnectOrb';
+import { displayServerName } from '../components/v6/ServerRow';
 import ModeSelector from '../components/v6/ModeCard';
 import LocationList from '../components/v6/LocationList';
 import TrafficStats from '../components/v6/TrafficStats';
@@ -1345,7 +1346,7 @@ export default function Dashboard() {
               primaryLabel={orbPrimary}
               subLabel={orbSub}
               statusLabel={orbStatusLabel}
-              serverName={activeServer?.name ?? null}
+              serverName={activeServer ? displayServerName(activeServer) : null}
               serverCountryCode={activeServer?.countryCode ?? null}
               disabled={status === 'disconnected' && !canConnect}
               onClick={handleConnect}

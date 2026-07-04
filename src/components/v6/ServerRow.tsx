@@ -42,19 +42,25 @@ interface Props {
   onSelect: (server: ServerConfig) => void;
 }
 
-/** Strip a leading ISO prefix ("NL Нидерланды" → "Нидерланды") — the flag image already shows the country. */
-function displayName(server: ServerConfig): string {
+/**
+ * Clean a server name for display next to the flag image: subscription names
+ * often embed an emoji flag (🇳🇱) — Windows renders regional indicators as
+ * bare letters ("NL") — plus sometimes an ASCII ISO prefix. Strip both.
+ */
+const FLAG_EMOJI_RE = /[\u{1F1E6}-\u{1F1FF}]{2}/gu;
+
+export function displayServerName(server: Pick<ServerConfig, 'name' | 'countryCode'>): string {
+  let name = server.name.replace(FLAG_EMOJI_RE, '').trim();
   const cc = server.countryCode?.trim().toUpperCase();
-  if (!cc) return server.name;
-  const stripped = server.name.replace(new RegExp(`^\\s*${cc}[\\s·|-]+`, 'i'), '').trim();
-  return stripped || server.name;
+  if (cc) name = name.replace(new RegExp(`^${cc}[\\s·|-]+`, 'i'), '').trim();
+  return name || server.name;
 }
 
 /** Design location row: flag, name + protocol line, ping dot + ms. */
 export default function ServerRow({ server, active, pinging, onSelect }: Props) {
   const pc = pingColor(server.ping);
   const hasPing = server.ping !== undefined && server.ping > 0;
-  const name = displayName(server);
+  const name = displayServerName(server);
 
   return (
     <button
