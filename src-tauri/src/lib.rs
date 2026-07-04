@@ -46,6 +46,12 @@ static SB_SEEN_CONNS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 
 // Connection debug log buffer — shown in UI via get_proxy_logs
 static CONNECT_LOG: Mutex<Vec<String>> = Mutex::new(Vec::new());
+#[cfg(windows)]
+static QA_FRONTEND_SNAPSHOT: Mutex<Option<serde_json::Value>> = Mutex::new(None);
+
+lazy_static::lazy_static! {
+    static ref RUNTIME_OP_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
+}
 
 const WORKSHOP_API_HOSTS: &[&str] = &[
     "doodleraydb-doodleray-ic3y6k-c7350f-94-241-172-101.traefik.me",
@@ -3597,7 +3603,8 @@ mod tests {
             last_repair_action: None,
             network_event_seq: 1,
             previous_unclean_shutdown: Some(
-                "previous session ended uncleanly: op_id=op-old generation=40 started_at_ms=1".into(),
+                "previous session ended uncleanly: op_id=op-old generation=40 started_at_ms=1"
+                    .into(),
             ),
             error: None,
             timings_ms: vec![("connected".into(), 1000)],
@@ -4748,6 +4755,8 @@ fn build_xray_config(req: &ConnectRequest) -> serde_json::Value {
 #[tauri::command]
 #[cfg_attr(windows, allow(unreachable_code))]
 async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> ConnectResult {
+    let _runtime_guard = RUNTIME_OP_LOCK.lock().await;
+
     // Clear previous connect logs
     if let Ok(mut logs) = CONNECT_LOG.lock() {
         logs.clear();
@@ -5679,6 +5688,8 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
 
 #[tauri::command]
 async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
+    let _runtime_guard = RUNTIME_OP_LOCK.lock().await;
+
     let is_connected = {
         let state = CONNECTION_STATE.lock().unwrap();
         *state
@@ -5710,9 +5721,10 @@ async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
             | None
     );
 
+    #[cfg(windows)]
+    let _ = tunnel_service_stop("disconnect");
+
     if had_tun {
-        #[cfg(windows)]
-        let _ = tunnel_service_stop("disconnect");
         let _ = tun::stop_tun();
         #[cfg(not(windows))]
         for _ in 0..8 {
@@ -5727,6 +5739,9 @@ async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
             std::thread::sleep(std::time::Duration::from_millis(500));
         }
     }
+
+    #[cfg(windows)]
+    terminate_orphaned_doodleray_engine_processes();
 
     restore_system_proxy_if_owned(false);
 
@@ -7032,6 +7047,23 @@ fn tunnel_service_start(
     xray_config: Option<serde_json::Value>,
     singbox_config: serde_json::Value,
 ) -> Result<tunnel_service::TunnelStatus, String> {
+    // Preflight: fail with an actionable reinstall message before asking the
+    // service to bring up TUN when a required runtime file is missing.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(app_dir) = exe.parent() {
+            let missing: Vec<&str> = windows_required_runtime_files(app_dir)
+                .into_iter()
+                .filter(|(_, path)| !path.exists())
+                .map(|(label, _)| label)
+                .collect();
+            if !missing.is_empty() {
+                return Err(format!(
+                    "required DoodleRay runtime files are missing: {}. Reinstall DoodleRay from the official installer.",
+                    missing.join(", ")
+                ));
+            }
+        }
+    }
     let _ = ipc::tunnel_service_hello(env!("CARGO_PKG_VERSION"))?;
     let response = ipc::send_tunnel_command(&tunnel_service::TunnelCommand::StartTunnel(
         tunnel_service::StartTunnelRequest {
@@ -7054,7 +7086,9 @@ fn tunnel_service_start(
     };
 
     let started = Instant::now();
-    let timeout = Duration::from_secs(35);
+    // Long enough to cover one failed bring-up attempt plus the service's
+    // bounded DoodleRay-owned TUN adapter repair retry.
+    let timeout = Duration::from_secs(90);
     let mut last_phase = status.phase.clone();
     loop {
         match status.state {
@@ -7064,6 +7098,15 @@ fn tunnel_service_start(
                     .error
                     .unwrap_or_else(|| "Tunnel Service failed to start TUN".into()))
             }
+            // Tunnel start briefly passes through Disconnected while the
+            // service stops the previous owned children (replace_tunnel), and
+            // the bounded bring-up retry does the same for tun_adapter_repair.
+            // Keep waiting instead of aborting the connect in that transient.
+            tunnel_service::TunnelState::Disconnected
+                if matches!(
+                    status.last_repair_action.as_deref(),
+                    Some("replace_tunnel") | Some("tun_adapter_repair")
+                ) => {}
             tunnel_service::TunnelState::Disconnected => {
                 return Err(status
                     .error
@@ -7266,7 +7309,9 @@ fn tunnel_service_health() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn prepare_for_app_update() -> Result<String, String> {
+async fn prepare_for_app_update() -> Result<String, String> {
+    let _runtime_guard = RUNTIME_OP_LOCK.lock().await;
+
     #[cfg(windows)]
     {
         let _ = tunnel_service_prepare_update();
@@ -7318,7 +7363,9 @@ fn get_connection_health_full(
 }
 
 #[tauri::command]
-fn repair_windows_runtime() -> Result<String, String> {
+async fn repair_windows_runtime() -> Result<String, String> {
+    let _runtime_guard = RUNTIME_OP_LOCK.lock().await;
+
     let mut actions = Vec::new();
 
     #[cfg(windows)]
@@ -9049,6 +9096,8 @@ fn full_cleanup() {
     let _ = singbox::stop_singbox();
     let _ = xray::stop_xray();
     let _ = tun::stop_tun();
+    #[cfg(windows)]
+    terminate_orphaned_doodleray_engine_processes();
     restore_system_proxy_if_owned(false);
 
     // Reset connection state
@@ -9061,6 +9110,163 @@ fn full_cleanup() {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// True only when the QA control surface env flag is set at app launch.
+/// Production installs never set it, so the surface stays off by default.
+#[tauri::command]
+fn qa_control_enabled() -> bool {
+    std::env::var("DOODLERAY_QA_CONTROL")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+#[tauri::command]
+fn qa_control_update_frontend_snapshot(snapshot: serde_json::Value) -> bool {
+    if !qa_control_enabled() {
+        return false;
+    }
+    if let Ok(mut guard) = QA_FRONTEND_SNAPSHOT.lock() {
+        *guard = Some(snapshot);
+        return true;
+    }
+    false
+}
+
+/// QA-only local control surface (loopback HTTP on 127.0.0.1:48765), enabled
+/// exclusively by DOODLERAY_QA_CONTROL=1 in the app environment. It replaces
+/// fragile CDP DOM automation for connect/disconnect/mode/refresh actions by
+/// emitting events the frontend executes through the exact same handlers a
+/// user clicks; status/bundle are answered backend-side. Never reachable off
+/// the machine (loopback bind) and never enabled in production launches.
+#[cfg(windows)]
+fn spawn_qa_control_server(app: tauri::AppHandle) {
+    if !qa_control_enabled() {
+        return;
+    }
+    std::thread::spawn(move || {
+        let listener = match std::net::TcpListener::bind(("127.0.0.1", 48765)) {
+            Ok(listener) => listener,
+            Err(error) => {
+                vpn_log(&format!("QA control surface bind failed: {}", error));
+                return;
+            }
+        };
+        vpn_log("QA control surface listening on 127.0.0.1:48765 (DOODLERAY_QA_CONTROL=1)");
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let _ = handle_qa_control_connection(&mut stream, &app);
+        }
+    });
+}
+
+#[cfg(windows)]
+fn handle_qa_control_connection(
+    stream: &mut std::net::TcpStream,
+    app: &tauri::AppHandle,
+) -> std::io::Result<()> {
+    use std::io::{Read, Write};
+    let mut buffer = [0u8; 4096];
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    let read = stream.read(&mut buffer)?;
+    let request = String::from_utf8_lossy(&buffer[..read]);
+    let path = request
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .unwrap_or("/");
+    let (code, body) = qa_control_dispatch(app, path);
+    let response = format!(
+        "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        code,
+        body.len(),
+        body
+    );
+    stream.write_all(response.as_bytes())
+}
+
+#[cfg(windows)]
+fn qa_query_param(query: &str, key: &str) -> Option<String> {
+    query.split('&').find_map(|part| {
+        let (name, value) = part.split_once('=')?;
+        if name == key {
+            Some(value.replace('+', " "))
+        } else {
+            None
+        }
+    })
+}
+
+#[cfg(windows)]
+fn qa_control_dispatch(app: &tauri::AppHandle, path: &str) -> (&'static str, String) {
+    use tauri::Emitter;
+    let (route, query) = path.split_once('?').unwrap_or((path, ""));
+    match route {
+        "/status" => {
+            let service = match ipc::tunnel_service_status() {
+                Ok(tunnel_service::TunnelResponse::Status(status)) => {
+                    serde_json::to_value(status).ok()
+                }
+                _ => None,
+            };
+            let connected = CONNECTION_STATE.lock().map(|state| *state).unwrap_or(false);
+            let frontend = QA_FRONTEND_SNAPSHOT
+                .lock()
+                .ok()
+                .and_then(|snapshot| snapshot.clone());
+            (
+                "200 OK",
+                serde_json::json!({
+                    "app_version": env!("CARGO_PKG_VERSION"),
+                    "app_connected": connected,
+                    "service": service,
+                    "frontend": frontend,
+                })
+                .to_string(),
+            )
+        }
+        "/export-bundle" => match export_support_bundle(
+            Some("tun".into()),
+            Some("set".into()),
+            1080,
+            1081,
+            Some(qa_query_param(query, "failure_marker").unwrap_or_else(|| "qa-control".into())),
+        ) {
+            Ok(bundle_path) => (
+                "200 OK",
+                serde_json::json!({ "ok": true, "path": bundle_path }).to_string(),
+            ),
+            Err(error) => (
+                "500 Internal Server Error",
+                serde_json::json!({ "ok": false, "error": error }).to_string(),
+            ),
+        },
+        "/connect"
+        | "/disconnect"
+        | "/switch-mode"
+        | "/refresh-subscription"
+        | "/import-subscription" => {
+            let payload = serde_json::json!({
+                "action": route.trim_start_matches('/'),
+                "query": query,
+            });
+            match app.emit("doodleray-qa-control", payload) {
+                Ok(()) => (
+                    "202 Accepted",
+                    serde_json::json!({ "ok": true, "accepted": route }).to_string(),
+                ),
+                Err(error) => (
+                    "500 Internal Server Error",
+                    serde_json::json!({ "ok": false, "error": error.to_string() }).to_string(),
+                ),
+            }
+        }
+        _ => (
+            "404 Not Found",
+            serde_json::json!({ "ok": false, "error": "unknown route" }).to_string(),
+        ),
+    }
+}
+
 pub fn run() {
     if !claim_single_app_instance() {
         return;
@@ -9150,8 +9356,12 @@ pub fn run() {
             secure_store_get,
             secure_store_set,
             secure_store_delete,
+            qa_control_enabled,
+            qa_control_update_frontend_snapshot,
         ])
         .setup(|app| {
+            #[cfg(windows)]
+            spawn_qa_control_server(app.handle().clone());
             // ── System Tray ──
             let show_item = MenuItemBuilder::with_id("show", "Show DoodleRay").build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;

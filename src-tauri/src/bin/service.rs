@@ -85,6 +85,8 @@ mod windows_service_main {
         last_repair_action: Option<String>,
         network_event_seq: u64,
         previous_unclean_shutdown: Option<String>,
+        last_start_request: Option<StartTunnelRequest>,
+        last_rotation_seq: u64,
         error: Option<String>,
         timings_ms: Vec<(String, u64)>,
         xray: Option<Child>,
@@ -119,6 +121,8 @@ mod windows_service_main {
                 last_repair_action: None,
                 network_event_seq: 0,
                 previous_unclean_shutdown: None,
+                last_start_request: None,
+                last_rotation_seq: 0,
                 error: None,
                 timings_ms: Vec::new(),
                 xray: None,
@@ -305,8 +309,15 @@ mod windows_service_main {
         if let Ok(mut runtime) = state().lock() {
             runtime.network_event_seq = runtime.network_event_seq.saturating_add(1);
             runtime.last_repair_action = Some(reason.into());
-            let check = format!("Windows event observed while service was running: {}", reason);
-            if !runtime.warning_checks.iter().any(|existing| existing == &check) {
+            let check = format!(
+                "Windows event observed while service was running: {}",
+                reason
+            );
+            if !runtime
+                .warning_checks
+                .iter()
+                .any(|existing| existing == &check)
+            {
                 runtime.warning_checks.push(check);
             }
             if matches!(runtime.state, TunnelState::Connected) {
@@ -366,13 +377,65 @@ mod windows_service_main {
                     "runtime reassert finished reason={} state={:?} effective={:?} verdict={:?}",
                     reason, status.state, status.effective_state, status.health_verdict
                 )),
-                Err(error) => log_service_event(&format!(
-                    "runtime reassert failed reason={} error={}",
-                    reason,
-                    redact(&error)
-                )),
+                Err(error) => {
+                    log_service_event(&format!(
+                        "runtime reassert failed reason={} error={}",
+                        reason,
+                        redact(&error)
+                    ));
+                    rotate_children_after_failed_reassert(&reason);
+                }
             }
         });
+    }
+
+    /// In-place reassert could not fix the connected runtime (typically the
+    /// children are bound to a dead interface after sleep/wake). Rotate the
+    /// service-owned child generation once per network event burst using the
+    /// stored start request, instead of leaving the user to reboot.
+    fn rotate_children_after_failed_reassert(reason: &str) {
+        let (request, generation) = {
+            let mut runtime = state().lock().unwrap();
+            if !matches!(runtime.state, TunnelState::Connected) {
+                return;
+            }
+            if runtime.last_rotation_seq >= runtime.network_event_seq {
+                return;
+            }
+            let Some(request) = runtime.last_start_request.clone() else {
+                return;
+            };
+            runtime.last_rotation_seq = runtime.network_event_seq;
+            (request, OP_GENERATION.load(Ordering::SeqCst))
+        };
+        log_service_event(&format!(
+            "rotating child generation after failed reassert: {}",
+            reason
+        ));
+        let rotated_note = format!(
+            "child generation rotated after Windows network/power event: {}",
+            reason
+        );
+        match start_tunnel(request, generation) {
+            Ok(()) => {
+                if let Ok(mut runtime) = state().lock() {
+                    runtime.warning_checks.push(rotated_note);
+                }
+                log_service_event("child generation rotation succeeded");
+            }
+            Err(message) => {
+                if is_current_generation(generation) {
+                    let _ = stop_owned_processes("failed_cleanup");
+                    if is_current_generation(generation) {
+                        set_failed(&message);
+                    } else {
+                        log_service_event(
+                            "ignored stale rotate failure after newer tunnel operation",
+                        );
+                    }
+                }
+            }
+        }
     }
 
     fn pipe_security_attributes() -> Result<PipeSecurityAttributes, String> {
@@ -728,12 +791,21 @@ mod windows_service_main {
                     runtime.last_repair_action = None;
                     runtime.error = None;
                     runtime.timings_ms.clear();
+                    // Kept for child-generation rotation after a failed
+                    // network/power reassert; configs are service-local only.
+                    runtime.last_start_request = Some(request.clone());
                 }
                 std::thread::spawn(move || {
                     if let Err(message) = start_tunnel(request, generation) {
                         if is_current_generation(generation) {
                             let _ = stop_owned_processes("failed_cleanup");
-                            set_failed(&message);
+                            if is_current_generation(generation) {
+                                set_failed(&message);
+                            } else {
+                                log_service_event(
+                                    "ignored stale start failure after newer tunnel operation",
+                                );
+                            }
                         }
                     }
                 });
@@ -911,7 +983,11 @@ mod windows_service_main {
             }
             TunnelState::Disconnected => {
                 runtime.effective_state = TunnelEffectiveState::Idle;
-                runtime.health_verdict = TunnelHealthVerdict::Failed;
+                // cleanup_pending set by stop verification stays visible until
+                // the next start clears runtime checks.
+                if !matches!(runtime.health_verdict, TunnelHealthVerdict::CleanupPending) {
+                    runtime.health_verdict = TunnelHealthVerdict::Failed;
+                }
             }
         }
     }
@@ -1181,6 +1257,118 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         stop_owned_processes("replace_tunnel")?;
         ensure_current_generation(generation)?;
         write_session_marker(&request.op_id, generation);
+
+        let runtime_dir = runtime_root().join(sanitize_id(&request.op_id));
+        std::fs::create_dir_all(&runtime_dir)
+            .map_err(|e| format!("Failed to create runtime dir: {}", e))?;
+        let singbox_config = with_tun_interface_name(request.singbox_config.clone());
+
+        // Bounded bring-up: one normal attempt, and on a repairable adapter/
+        // IPv4/engine startup failure exactly one DoodleRay-owned repair retry
+        // (stop only our children, recreate the service-owned TUN). The user
+        // only sees an error after the second attempt, and it is actionable.
+        let mut attempt: u32 = 1;
+        loop {
+            match bring_up_tun_runtime(&request, &runtime_dir, &singbox_config, started, generation)
+            {
+                Ok(()) => break,
+                Err(error)
+                    if attempt == 1
+                        && tauri_app_lib::tunnel_service::is_repairable_tun_bringup_error(
+                            &error,
+                        ) =>
+                {
+                    log_service_event(&format!(
+                        "tun bring-up attempt 1 failed; running DoodleRay-owned repair retry: {}",
+                        redact(&error)
+                    ));
+                    {
+                        let mut runtime = state().lock().unwrap();
+                        runtime.effective_state = TunnelEffectiveState::Repairing;
+                        runtime.health_verdict = TunnelHealthVerdict::Repairing;
+                        runtime.phase = Some("tun_adapter_repair".into());
+                    }
+                    stop_owned_processes("tun_adapter_repair")?;
+                    ensure_current_generation(generation)?;
+                    write_session_marker(&request.op_id, generation);
+                    {
+                        let mut runtime = state().lock().unwrap();
+                        runtime.state = TunnelState::Connecting;
+                        runtime.effective_state = TunnelEffectiveState::Repairing;
+                        runtime.health_verdict = TunnelHealthVerdict::Repairing;
+                        runtime.phase = Some("tun_adapter_repair_retry".into());
+                        runtime.active_op_id = Some(request.op_id.clone());
+                        runtime.service_generation = generation;
+                        runtime.last_repair_action = Some("tun_adapter_repair".into());
+                        runtime.warning_checks.push(format!(
+                            "TUN adapter repair retry ran after: {}",
+                            redact(&error)
+                        ));
+                    }
+                    attempt = 2;
+                }
+                Err(error) => {
+                    let wintun_present = singbox_exe_path()
+                        .ok()
+                        .and_then(|exe| exe.parent().map(|dir| dir.join("wintun.dll").exists()))
+                        .unwrap_or(false);
+                    let last_phase = state().lock().unwrap().phase.clone();
+                    return Err(tauri_app_lib::tunnel_service::format_tun_bringup_failure(
+                        &error,
+                        wintun_present,
+                        last_phase.as_deref(),
+                        attempt,
+                    ));
+                }
+            }
+        }
+
+        let mut runtime = state().lock().unwrap();
+        runtime.state = TunnelState::Connected;
+        runtime.effective_state = if runtime.degraded_checks.is_empty() {
+            TunnelEffectiveState::Protected
+        } else {
+            TunnelEffectiveState::ProtectedDegraded
+        };
+        runtime.health_verdict = if runtime.degraded_checks.is_empty() {
+            TunnelHealthVerdict::Protected
+        } else {
+            TunnelHealthVerdict::ProtectedDegraded
+        };
+        runtime.phase = Some("connected".into());
+        runtime.proxy_compat_state = Some("core_connected".into());
+        runtime.route_explanations.push(
+            "default protected route canaries preferred DoodleRay Tunnel before marking protected"
+                .into(),
+        );
+        runtime
+            .route_explanations
+            .extend(tauri_app_lib::tunnel_service::summarize_route_policy(
+                &singbox_config,
+            ));
+        runtime.endpoint_bypass_checks.push(
+            "control-plane endpoint bypass must remain direct after connect and network changes"
+                .into(),
+        );
+        runtime
+            .timings_ms
+            .push(("total_connect".into(), elapsed_ms(started)));
+        drop(runtime);
+        log_service_event(&format!(
+            "tunnel connected generation={} total_connect_ms={}",
+            generation,
+            elapsed_ms(started)
+        ));
+        Ok(())
+    }
+
+    fn bring_up_tun_runtime(
+        request: &StartTunnelRequest,
+        runtime_dir: &Path,
+        singbox_config: &Value,
+        started: Instant,
+        generation: u64,
+    ) -> Result<(), String> {
         {
             let mut runtime = state().lock().unwrap();
             runtime.engine_kind = Some(request.engine_kind.clone());
@@ -1199,11 +1387,6 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             runtime.service_generation = generation;
         }
 
-        let runtime_dir = runtime_root().join(sanitize_id(&request.op_id));
-        std::fs::create_dir_all(&runtime_dir)
-            .map_err(|e| format!("Failed to create runtime dir: {}", e))?;
-
-        let singbox_config = with_tun_interface_name(request.singbox_config.clone());
         let xray_log_path = if matches!(request.engine_kind, TunnelEngineKind::XrayTun) {
             set_phase("starting_xray", started, generation)?;
             let xray_config = request
@@ -1221,11 +1404,11 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             )?;
             assign_child_to_job(&child)?;
             state().lock().unwrap().xray = Some(child);
-            wait_for_port(request.socks_port, Duration::from_secs(8), generation)?;
-            if request.http_port != request.socks_port {
-                wait_for_port(request.http_port, Duration::from_secs(8), generation)?;
-            }
-            set_phase("xray_ready", started, generation)?;
+            // Do not serialize xray readiness before Wintun bring-up. The sing-box
+            // bridge can create the TUN adapter while xray is still binding its
+            // loopback ports; we still require xray readiness before declaring the
+            // runtime usable below.
+            set_phase("xray_spawned", started, generation)?;
             Some(xray_log_path)
         } else {
             None
@@ -1247,16 +1430,37 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         state().lock().unwrap().singbox = Some(child);
 
         set_phase("waiting_adapter", started, generation)?;
-        wait_for_adapter("DoodleRay Tunnel", Duration::from_secs(15), generation)?;
-        mark_adapter_ready();
+        let adapter_snapshot =
+            match wait_for_adapter("DoodleRay Tunnel", Duration::from_secs(15), generation) {
+                Ok(snapshot) => snapshot,
+                Err(adapter_error) => {
+                    if let Some(path) = xray_log_path.as_deref() {
+                        if let Err(engine_error) = ensure_xray_alive(path) {
+                            return Err(engine_error);
+                        }
+                    }
+                    if let Err(engine_error) = ensure_singbox_alive(&singbox_log_path) {
+                        return Err(engine_error);
+                    }
+                    return Err(adapter_error);
+                }
+            };
+        mark_adapter_ready(adapter_snapshot);
+        set_phase("adapter_ready", started, generation)?;
         ensure_singbox_alive(&singbox_log_path)?;
-        if matches!(request.engine_kind, TunnelEngineKind::SingboxTun) {
+        if let Some(path) = xray_log_path.as_deref() {
+            ensure_xray_alive(path)?;
+            wait_for_port(request.socks_port, Duration::from_secs(8), generation)?;
+            if request.http_port != request.socks_port {
+                wait_for_port(request.http_port, Duration::from_secs(8), generation)?;
+            }
+            set_phase("xray_ready", started, generation)?;
+        } else if matches!(request.engine_kind, TunnelEngineKind::SingboxTun) {
             wait_for_port(request.socks_port, Duration::from_secs(8), generation)?;
             if request.http_port != request.socks_port {
                 wait_for_port(request.http_port, Duration::from_secs(8), generation)?;
             }
         }
-        set_phase("adapter_ready", started, generation)?;
         set_phase("singbox_ready", started, generation)?;
         wait_for_doodleray_ipv4_interface(Duration::from_secs(20), generation)?;
         set_phase("ipv4_ready", started, generation)?;
@@ -1276,38 +1480,6 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         }
         set_phase("local_proxy_ready", started, generation)?;
         ensure_current_generation(generation)?;
-
-        let mut runtime = state().lock().unwrap();
-        runtime.state = TunnelState::Connected;
-        runtime.effective_state = if runtime.degraded_checks.is_empty() {
-            TunnelEffectiveState::Protected
-        } else {
-            TunnelEffectiveState::ProtectedDegraded
-        };
-        runtime.health_verdict = if runtime.degraded_checks.is_empty() {
-            TunnelHealthVerdict::Protected
-        } else {
-            TunnelHealthVerdict::ProtectedDegraded
-        };
-        runtime.phase = Some("connected".into());
-        runtime.proxy_compat_state = Some("core_connected".into());
-        runtime.route_explanations.push(
-            "default protected route canaries preferred DoodleRay Tunnel before marking protected"
-                .into(),
-        );
-        runtime.endpoint_bypass_checks.push(
-            "control-plane endpoint bypass must remain direct after connect and network changes"
-                .into(),
-        );
-        runtime
-            .timings_ms
-            .push(("total_connect".into(), elapsed_ms(started)));
-        drop(runtime);
-        log_service_event(&format!(
-            "tunnel connected generation={} total_connect_ms={}",
-            generation,
-            elapsed_ms(started)
-        ));
         Ok(())
     }
 
@@ -1464,6 +1636,35 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         runtime.error = None;
         drop(runtime);
         clear_session_marker();
+
+        // Verify DoodleRay-owned cleanup actually finished: the wintun adapter
+        // must disappear with its owning child. If it lingers, report an
+        // honest cleanup_pending instead of a silent idle. We never touch
+        // non-DoodleRay adapters here.
+        let mut adapter_still_present = doodleray_adapter_snapshot().is_some();
+        for _ in 0..6 {
+            if !adapter_still_present {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+            adapter_still_present = doodleray_adapter_snapshot().is_some();
+        }
+        if adapter_still_present {
+            let mut runtime = state().lock().unwrap();
+            runtime.health_verdict = TunnelHealthVerdict::CleanupPending;
+            runtime.warning_checks.push(
+                "DoodleRay Tunnel adapter is still present after owned cleanup; cleanup pending"
+                    .into(),
+            );
+            log_service_event("cleanup pending: DoodleRay Tunnel adapter still present after stop");
+        }
+        for action in repair_stale_wintun_ghost_devices(reason) {
+            log_service_event(&action);
+            if action.contains("removed=") && !action.contains("removed=0") {
+                let mut runtime = state().lock().unwrap();
+                runtime.warning_checks.push(action);
+            }
+        }
         Ok(())
     }
 
@@ -1614,6 +1815,90 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         Err(format!("Local port {} did not become ready", port))
     }
 
+    fn repair_stale_wintun_ghost_devices(reason: &str) -> Vec<String> {
+        let script = r#"
+$ErrorActionPreference = 'Continue'
+$summary = New-Object System.Collections.Generic.List[string]
+$seen = 0
+$removed = 0
+$failed = 0
+$targets = @()
+
+$devices = @(Get-PnpDevice -Class Net -ErrorAction SilentlyContinue | Where-Object {
+  $id = [string]$_.InstanceId
+  $friendly = [string]$_.FriendlyName
+  $isWintun = $id -like 'SWD\WINTUN\*'
+  $isKnownSingTun = $friendly -in @('DoodleRay Tunnel', 'sing-tun Tunnel')
+  $isStale = ($_.Status -ne 'OK') -or ([int]$_.Problem -eq 45)
+  $hasVisibleNetAdapter = [bool](Get-NetAdapter -IncludeHidden -ErrorAction SilentlyContinue | Where-Object {
+    $_.Name -eq $friendly -or $_.InterfaceDescription -eq $friendly
+  } | Select-Object -First 1)
+  $isWintun -and $isStale -and ($isKnownSingTun -or -not $hasVisibleNetAdapter)
+})
+
+foreach ($device in $devices) {
+  $seen += 1
+  $targets += ("{0}|{1}|problem={2}|status={3}" -f $device.FriendlyName, $device.InstanceId, $device.Problem, $device.Status)
+  $id = [string]$device.InstanceId
+  try {
+    $pnputil = Join-Path $env:WINDIR 'System32\pnputil.exe'
+    $help = (& $pnputil /? 2>&1 | Out-String)
+    if ($help -match '/remove-device') {
+      $out = (& $pnputil /remove-device "$id" 2>&1 | Out-String)
+      if ($LASTEXITCODE -eq 0 -or $out -match 'removed|success|успеш') {
+        $removed += 1
+      } else {
+        $failed += 1
+        $summary.Add(("remove_failed={0}: {1}" -f $device.FriendlyName, ($out -replace '\s+', ' ').Trim()))
+      }
+    } elseif (Get-Command Disable-PnpDevice -ErrorAction SilentlyContinue) {
+      Disable-PnpDevice -InstanceId $id -Confirm:$false -ErrorAction Stop
+      $removed += 1
+    } else {
+      $failed += 1
+      $summary.Add(("remove_unavailable={0}" -f $device.FriendlyName))
+    }
+  } catch {
+    $failed += 1
+    $summary.Add(("remove_exception={0}: {1}" -f $device.FriendlyName, $_.Exception.Message))
+  }
+}
+
+if ($removed -gt 0) {
+  try {
+    & (Join-Path $env:WINDIR 'System32\pnputil.exe') /scan-devices /async | Out-Null
+  } catch {}
+  Start-Sleep -Milliseconds 750
+}
+
+$summary.Insert(0, ("stale_wintun_ghosts_seen={0} removed={1} failed={2} targets={3}" -f $seen, $removed, $failed, ($targets -join '; ')))
+$summary -join "`n"
+"#;
+
+        let output = Command::new("powershell")
+            .args(["-NoProfile", "-Command", script])
+            .creation_flags(0x08000000)
+            .output();
+
+        match output {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let combined = format!("{}{}", stdout, stderr);
+                combined
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(|line| format!("stale Wintun ghost repair ({}) {}", reason, redact(line)))
+                    .collect()
+            }
+            Err(error) => vec![format!(
+                "stale Wintun ghost repair ({}) failed to run: {}",
+                reason, error
+            )],
+        }
+    }
+
     fn ensure_singbox_alive(log_path: &Path) -> Result<(), String> {
         {
             let mut runtime = state().lock().unwrap();
@@ -1652,7 +1937,7 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         adapter_name: &str,
         timeout: Duration,
         generation: u64,
-    ) -> Result<(), String> {
+    ) -> Result<(String, Option<u32>), String> {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
             ensure_current_generation(generation)?;
@@ -1661,7 +1946,7 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
                     "-NoProfile",
                     "-Command",
                     &format!(
-                        "Get-NetAdapter -Name '{}' -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Name",
+                        "Get-NetAdapter -Name '{}' -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object {{ \"$($_.Name)|$($_.ifIndex)\" }}",
                         adapter_name.replace('\'', "''")
                     ),
                 ])
@@ -1669,8 +1954,8 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
                 .output();
             if let Ok(output) = output {
                 let text = String::from_utf8_lossy(&output.stdout);
-                if text.contains(adapter_name) {
-                    return Ok(());
+                if let Some(snapshot) = parse_adapter_snapshot_line(&text) {
+                    return Ok(snapshot);
                 }
             }
             std::thread::sleep(Duration::from_millis(150));
@@ -1678,9 +1963,20 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         Err("DoodleRay Tunnel adapter did not become ready".into())
     }
 
-    fn mark_adapter_ready() {
-        let (alias, ifindex) =
-            doodleray_adapter_snapshot().unwrap_or_else(|| ("DoodleRay Tunnel".to_string(), None));
+    fn parse_adapter_snapshot_line(text: &str) -> Option<(String, Option<u32>)> {
+        let line = text.lines().map(str::trim).find(|line| !line.is_empty())?;
+        let mut parts = line.splitn(2, '|');
+        let alias = parts.next()?.trim().to_string();
+        let ifindex = parts.next().and_then(|value| value.trim().parse().ok());
+        if alias.is_empty() {
+            None
+        } else {
+            Some((alias, ifindex))
+        }
+    }
+
+    fn mark_adapter_ready(snapshot: (String, Option<u32>)) {
+        let (alias, ifindex) = snapshot;
         let mut runtime = state().lock().unwrap();
         runtime.adapter_alias = Some(alias);
         runtime.adapter_ifindex = ifindex;
@@ -1753,7 +2049,11 @@ $routes | ForEach-Object {
         let mut runtime = state().lock().unwrap();
         if detail.contains("ipv6_default_route=absent") {
             let check = "IPv6 default route is absent; protected verdict covers IPv4 routing";
-            if !runtime.warning_checks.iter().any(|existing| existing == check) {
+            if !runtime
+                .warning_checks
+                .iter()
+                .any(|existing| existing == check)
+            {
                 runtime.warning_checks.push(check.into());
             }
         } else {
@@ -1774,9 +2074,12 @@ $routes | ForEach-Object {
 
     fn mark_quic_policy_status() {
         let mut runtime = state().lock().unwrap();
-        let check =
-            "QUIC/HTTP3 is not verified by a controlled probe in this build; no QUIC claim";
-        if !runtime.warning_checks.iter().any(|existing| existing == check) {
+        let check = "QUIC/HTTP3 is not verified by a controlled probe in this build; no QUIC claim";
+        if !runtime
+            .warning_checks
+            .iter()
+            .any(|existing| existing == check)
+        {
             runtime.warning_checks.push(check.into());
         }
     }
@@ -2084,8 +2387,46 @@ Write-Output ("DoodleRay Tunnel route preferred: shape={0}, tun={1}, best_other=
             None::<&str>,
             ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE,
         )?;
-        repair_existing_service(&manager)?;
         let exe_path = std::env::current_exe().map_err(windows_service::Error::Winapi)?;
+
+        // Idempotent path first: if a registration already exists and points
+        // at this exact binary, adopt it instead of delete+recreate. Deleting
+        // a live registration only marks it delete-pending while any handle
+        // is open (SCM tooling, QA scripts), and the service then silently
+        // vanishes on its next stop. App startup repair may call install on
+        // every transient IPC failure, so this path must never be destructive.
+        if let Ok(service) = manager.open_service(
+            TUNNEL_SERVICE_NAME,
+            ServiceAccess::QUERY_CONFIG
+                | ServiceAccess::CHANGE_CONFIG
+                | ServiceAccess::START
+                | ServiceAccess::QUERY_STATUS,
+        ) {
+            let matches_current_exe = service
+                .query_config()
+                .map(|config| {
+                    config
+                        .executable_path
+                        .to_string_lossy()
+                        .to_ascii_lowercase()
+                        .contains(&exe_path.to_string_lossy().to_ascii_lowercase().as_str())
+                })
+                .unwrap_or(false);
+            if matches_current_exe {
+                let _ = service.set_config_service_sid_info(ServiceSidType::Unrestricted);
+                let _ = service.start(&[] as &[&str]);
+                wait_for_service_state(&service, ServiceState::Running, Duration::from_secs(10))?;
+                secure_runtime_dirs().map_err(|e| {
+                    windows_service::Error::Winapi(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        e,
+                    ))
+                })?;
+                return Ok(());
+            }
+        }
+
+        repair_existing_service(&manager)?;
         let service_info = ServiceInfo {
             name: OsString::from(TUNNEL_SERVICE_NAME),
             display_name: OsString::from(TUNNEL_SERVICE_DISPLAY_NAME),

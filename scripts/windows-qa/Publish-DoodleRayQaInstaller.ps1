@@ -23,6 +23,23 @@ function Get-SecretField {
     return $match.Groups[1].Value
 }
 
+function Get-LocalFileSha256 {
+    param([Parameter(Mandatory = $true)] [string] $Path)
+
+    $stream = [System.IO.File]::OpenRead((Resolve-Path -LiteralPath $Path).Path)
+    try {
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $hashBytes = $sha.ComputeHash($stream)
+            return (($hashBytes | ForEach-Object { $_.ToString("x2") }) -join "").ToUpperInvariant()
+        } finally {
+            $sha.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
+}
+
 if (-not (Test-Path -LiteralPath $LocalInstaller)) {
     throw "Local installer not found: $LocalInstaller"
 }
@@ -61,5 +78,5 @@ if ($LASTEXITCODE -ne 0) {
 [pscustomobject]@{
     uploaded = $true
     remotePath = $RemotePath
-    sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $LocalInstaller).Hash
+    sha256 = Get-LocalFileSha256 -Path $LocalInstaller
 } | ConvertTo-Json
