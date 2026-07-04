@@ -49,7 +49,7 @@ const BUILTIN_PRESETS: RoutingPreset[] = [
   {
     id: 'builtin-gaming-min-ping',
     title: '🎮 Геймерский — минимальный пинг',
-    description: 'Игры, лаунчеры, PUBG и античит идут напрямую. Discord, Twitch и YouTube остаются через VPN.',
+    description: 'Игры, лаунчеры, PUBG и античит идут напрямую — всё остальное через VPN как обычно.',
     author: 'DoodleRay',
     rules: [
       { id: 'builtin-gaming-steam-domain', type: 'domain', value: 'steampowered.com', action: 'direct', enabled: true, comment: 'Steam' },
@@ -75,12 +75,8 @@ const BUILTIN_PRESETS: RoutingPreset[] = [
       { id: 'builtin-gaming-pubg-be', type: 'exe', value: 'TslGame_BE.exe', action: 'direct', enabled: true, comment: 'PUBG BattlEye launcher' },
       { id: 'builtin-gaming-pubg-exec', type: 'exe', value: 'ExecPubg.exe', action: 'direct', enabled: true, comment: 'PUBG Steam launcher' },
       { id: 'builtin-gaming-battleye', type: 'exe', value: 'BEService.exe', action: 'direct', enabled: true, comment: 'BattlEye service' },
-      { id: 'builtin-gaming-discord-domain', type: 'domain', value: 'discord.com', action: 'proxy', enabled: true, comment: 'Discord voice' },
-      { id: 'builtin-gaming-discord-cdn', type: 'domain', value: 'discordapp.com', action: 'proxy', enabled: true, comment: 'Discord CDN' },
-      { id: 'builtin-gaming-discord-exe', type: 'exe', value: 'Discord.exe', action: 'proxy', enabled: true, comment: 'Discord клиент' },
-      { id: 'builtin-gaming-twitch', type: 'domain', value: 'twitch.tv', action: 'proxy', enabled: true, comment: 'стримы' },
-      { id: 'builtin-gaming-youtube', type: 'domain', value: 'youtube.com', action: 'proxy', enabled: true, comment: 'гайды/ролики' },
-      { id: 'builtin-gaming-googlevideo', type: 'domain', value: 'googlevideo.com', action: 'proxy', enabled: true, comment: 'YouTube CDN' },
+      // No explicit 'proxy' rules here: in whole-computer mode everything not
+      // listed goes through the VPN anyway, so they only add noise.
     ],
     stars: 5,
     totalRatings: 1,
@@ -91,7 +87,7 @@ const BUILTIN_PRESETS: RoutingPreset[] = [
   },
 ];
 
-function isGamingMinPingPreset(preset: { id?: string; presetId?: string; title: string }) {
+export function isGamingMinPingPreset(preset: { id?: string; presetId?: string; title: string }) {
   const id = preset.id ?? preset.presetId;
   const title = preset.title.toLowerCase();
   return id === 'builtin-gaming-direct' ||
@@ -122,7 +118,7 @@ function mergeBuiltinPresets(apiPresets: RoutingPreset[]): RoutingPreset[] {
     mergedIntoApiGamingPreset = true;
     return {
       ...preset,
-      description: 'Игры, лаунчеры, PUBG и античит идут напрямую. Discord, Twitch и YouTube остаются через VPN.',
+      description: 'Игры, лаунчеры, PUBG и античит идут напрямую — всё остальное через VPN как обычно.',
       rules: mergeRoutingRules(preset.rules, BUILTIN_PRESETS[0].rules),
     };
   });
@@ -148,7 +144,7 @@ function normalizeAppliedPreset(applied: AppliedPreset): AppliedPreset {
     ...applied,
     presetId: 'builtin-gaming-min-ping',
     title: '🎮 Геймерский — минимальный пинг',
-    description: 'Игры, лаунчеры, PUBG и античит идут напрямую. Discord, Twitch и YouTube остаются через VPN.',
+    description: 'Игры, лаунчеры, PUBG и античит идут напрямую — всё остальное через VPN как обычно.',
     rules: mergeRoutingRules(applied.rules, BUILTIN_PRESETS[0].rules),
   };
 }

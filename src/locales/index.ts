@@ -71,6 +71,10 @@ export const translations = {
     v6AvailablePresets: 'Ready-made presets',
     v6Apply: 'Apply',
     v6PingAll: 'Ping all servers',
+    v6PickApp: 'Choose a program',
+    v6PickAppHint: 'Running programs with a window. Pick one — we will add its .exe.',
+    v6RelatedExes: 'Executables from the program folder. Games often need several related .exe routed together — tick the ones you need.',
+    v6Back: 'Back',
     // General
     dashboard: 'Dashboard',
     servers: 'Servers',
@@ -388,6 +392,10 @@ export const translations = {
     v6AvailablePresets: 'Готовые наборы',
     v6Apply: 'Применить',
     v6PingAll: 'Пингануть все серверы',
+    v6PickApp: 'Выбрать программу',
+    v6PickAppHint: 'Запущенные программы с окном. Выберите одну — добавим её .exe.',
+    v6RelatedExes: 'Файлы .exe из папки программы. Играм часто нужно несколько связанных .exe — отметьте нужные.',
+    v6Back: 'Назад',
     // General
     dashboard: 'Главная',
     servers: 'Серверы',
@@ -705,6 +713,10 @@ export const translations = {
     v6AvailablePresets: '现成规则集',
     v6Apply: '应用',
     v6PingAll: '测试所有服务器延迟',
+    v6PickApp: '选择程序',
+    v6PickAppHint: '有窗口的正在运行的程序。选择一个即可添加其 .exe。',
+    v6RelatedExes: '程序文件夹中的 .exe。游戏通常需要多个相关 .exe 一起分流——勾选需要的。',
+    v6Back: '返回',
     // General
     dashboard: '主页',
     servers: '服务器',
