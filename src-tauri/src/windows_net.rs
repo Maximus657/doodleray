@@ -256,8 +256,7 @@ fn best_route_for_ipv4(ip: Ipv4Addr) -> Result<RouteProbe, String> {
 fn enumerate_adapters() -> Result<Vec<AdapterSnapshot>, NetProbeError> {
     let mut size = RECOMMENDED_ADAPTER_BUFFER_BYTES;
     for _ in 0..3 {
-        let word_count =
-            (size as usize + std::mem::size_of::<usize>() - 1) / std::mem::size_of::<usize>();
+        let word_count = (size as usize).div_ceil(std::mem::size_of::<usize>());
         let mut buffer = vec![0usize; word_count.max(1)];
         let mut actual_size = (buffer.len() * std::mem::size_of::<usize>()) as u32;
         let error = unsafe {

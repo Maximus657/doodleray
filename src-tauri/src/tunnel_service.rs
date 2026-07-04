@@ -80,9 +80,10 @@ pub enum TunnelState {
     Failed,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TunnelEffectiveState {
+    #[default]
     Idle,
     Preparing,
     Connecting,
@@ -96,27 +97,16 @@ pub enum TunnelEffectiveState {
     CleanupPending,
 }
 
-impl Default for TunnelEffectiveState {
-    fn default() -> Self {
-        Self::Idle
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TunnelHealthVerdict {
     Protected,
     ProtectedDegraded,
     Limited,
     Repairing,
+    #[default]
     Failed,
     CleanupPending,
-}
-
-impl Default for TunnelHealthVerdict {
-    fn default() -> Self {
-        Self::Failed
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

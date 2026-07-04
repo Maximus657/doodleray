@@ -140,6 +140,7 @@ pub enum StaleProxyState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 enum ProxyOwnership {
     NotDoodleRay,
     CurrentDoodleRay,
@@ -889,7 +890,7 @@ fn delete_value_if_present(key: &RegKey, name: &str) {
 fn state_file_path() -> PathBuf {
     let base = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir());
+        .unwrap_or_else(std::env::temp_dir);
     base.join("DoodleRay")
         .join("system-proxy")
         .join("state.json")

@@ -340,7 +340,7 @@ fn list_running_apps() -> Vec<RunningApp> {
                 Some(RunningApp { name, path })
             })
             .collect();
-        apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        apps.sort_by_key(|app| app.name.to_lowercase());
         apps.dedup_by(|a, b| a.path.eq_ignore_ascii_case(&b.path));
         apps.truncate(60);
         apps
@@ -830,6 +830,7 @@ fn diagnostics_summary(checks: &[serde_json::Value]) -> &'static str {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn run_network_diagnostics(
     subscription_url: Option<String>,
     socks_port: u16,
@@ -1387,7 +1388,7 @@ fn clear_app_cache(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     } else {
         Err(format!(
             "Some cache folders could not be removed: {}",
-            serde_json::Value::Array(failed).to_string()
+            serde_json::Value::Array(failed)
         ))
     }
 }
@@ -2823,11 +2824,7 @@ fn start_isolated_profile_ping_runtime(
     .map_err(|e| format!("write profile ping config failed: {}", e))?;
 
     let mut cmd = std::process::Command::new(&exe);
-    if use_xray {
-        cmd.arg("run").arg("-c").arg(&config_path);
-    } else {
-        cmd.arg("run").arg("-c").arg(&config_path);
-    }
+    cmd.arg("run").arg("-c").arg(&config_path);
     if let Some(dir) = exe.parent() {
         cmd.current_dir(dir);
     }
@@ -6139,12 +6136,12 @@ fn system_proxy_fetch_client(
         };
         let proxy = reqwest::Proxy::all(&proxy_url)
             .map_err(|e| format!("system proxy fallback is invalid: {}", e))?;
-        return reqwest::Client::builder()
+        reqwest::Client::builder()
             .timeout(timeout)
             .proxy(proxy)
             .build()
             .map(Some)
-            .map_err(|e| format!("system proxy HTTP client error: {}", e));
+            .map_err(|e| format!("system proxy HTTP client error: {}", e))
     }
 
     #[cfg(not(any(windows, target_os = "macos")))]
@@ -6549,7 +6546,7 @@ fn scan_installed_apps() -> Result<Vec<serde_json::Value>, String> {
             let scan_dirs: Vec<std::path::PathBuf> = {
                 let mut dirs = Vec::new();
                 // Direct subdirs of LOCALAPPDATA (Squirrel-style)
-                if let Ok(entries) = std::fs::read_dir(&local_dir) {
+                if let Ok(entries) = std::fs::read_dir(local_dir) {
                     for entry in entries.filter_map(|e| e.ok()) {
                         let p = entry.path();
                         if p.is_dir() {
@@ -6971,7 +6968,7 @@ async fn check_port(port: u16) -> serde_json::Value {
     #[cfg(windows)]
     {
         let mut cmd = std::process::Command::new("netstat");
-        cmd.args(&["-ano"]);
+        cmd.args(["-ano"]);
         cmd.creation_flags(0x08000000);
         if let Ok(output) = cmd.output() {
             let text = String::from_utf8_lossy(&output.stdout);
@@ -6986,13 +6983,7 @@ async fn check_port(port: u16) -> serde_json::Value {
                             #[cfg(not(windows))]
                             let doodleray_owned = false;
                             let mut info_cmd = std::process::Command::new("tasklist");
-                            info_cmd.args(&[
-                                "/FI",
-                                &format!("PID eq {}", pid),
-                                "/FO",
-                                "CSV",
-                                "/NH",
-                            ]);
+                            info_cmd.args(["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/NH"]);
                             info_cmd.creation_flags(0x08000000);
                             if let Ok(info) = info_cmd.output() {
                                 let info_text = String::from_utf8_lossy(&info.stdout);
@@ -7041,7 +7032,7 @@ async fn force_free_managed_port(port: u16) -> String {
     #[cfg(windows)]
     {
         let mut cmd = std::process::Command::new("netstat");
-        cmd.args(&["-ano"]);
+        cmd.args(["-ano"]);
         cmd.creation_flags(0x08000000);
         if let Ok(output) = cmd.output() {
             let text = String::from_utf8_lossy(&output.stdout);
@@ -8503,18 +8494,17 @@ fn classify_diagnosis_cause(
         return ("core_process_dead".into(), true);
     }
     // 4. Tunnel service unreachable/dead.
-    if health
+    if (health
         .checks
         .iter()
         .any(|c| c.code == "tunnel_service" && c.severity == "error")
         || hay.contains("state=failed")
         || hay.contains("state=disconnected")
         || hay.contains("did not respond")
-        || hay.contains("service is not installed")
+        || hay.contains("service is not installed"))
+        && (verdict == "failed" || verdict == "cleanup_pending" || proxy_mode == "tun")
     {
-        if verdict == "failed" || verdict == "cleanup_pending" || proxy_mode == "tun" {
-            return ("service_unavailable".into(), false);
-        }
+        return ("service_unavailable".into(), false);
     }
     // 5. Stale WinINet proxy left behind.
     if failed_check("wininet_proxy")
@@ -9429,7 +9419,7 @@ fn detect_stale_doodleray_proxy() -> Result<String, String> {
         let state = sysproxy::detect_stale_doodleray_proxy()?;
         let value = serde_json::to_value(state)
             .map_err(|err| format!("Failed to serialize proxy state: {}", err))?;
-        return Ok(value.as_str().unwrap_or("unknown").to_string());
+        Ok(value.as_str().unwrap_or("unknown").to_string())
     }
 
     #[cfg(not(windows))]
@@ -9445,7 +9435,7 @@ fn repair_stale_doodleray_proxy_only() -> Result<String, String> {
         let outcome = sysproxy::repair_stale_doodleray_proxy_only()?;
         let value = serde_json::to_value(outcome)
             .map_err(|err| format!("Failed to serialize proxy repair outcome: {}", err))?;
-        return Ok(value.as_str().unwrap_or("unknown").to_string());
+        Ok(value.as_str().unwrap_or("unknown").to_string())
     }
 
     #[cfg(not(windows))]
@@ -9472,7 +9462,7 @@ fn add_defender_exclusion() -> Result<String, String> {
             let mut cmd = std::process::Command::new("powershell");
             cmd.creation_flags(0x08000000);
             let status = cmd
-                .args(&[
+                .args([
                     "-NoProfile",
                     "-WindowStyle",
                     "Hidden",
@@ -9504,7 +9494,7 @@ fn add_defender_exclusion() -> Result<String, String> {
             let mut cmd = std::process::Command::new("powershell");
             cmd.creation_flags(0x08000000);
             let status = cmd
-                .args(&["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
+                .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
                 .status()
                 .map_err(|e| format!("Failed to run powershell: {}", e))?;
 
@@ -9550,11 +9540,9 @@ fn check_defender_exclusion_inner() -> bool {
     if let Ok(key) = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
         .open_subkey("SOFTWARE\\Microsoft\\Windows Defender\\Exclusions\\Paths")
     {
-        for value_result in key.enum_values() {
-            if let Ok((name, _)) = value_result {
-                if name.to_lowercase() == dir_lower {
-                    return true;
-                }
+        for (name, _) in key.enum_values().flatten() {
+            if name.to_lowercase() == dir_lower {
+                return true;
             }
         }
     }
@@ -9563,7 +9551,7 @@ fn check_defender_exclusion_inner() -> bool {
     let mut cmd = std::process::Command::new("powershell");
     cmd.creation_flags(0x08000000);
     let output = cmd
-        .args(&[
+        .args([
             "-NoProfile",
             "-WindowStyle",
             "Hidden",
@@ -9613,7 +9601,7 @@ async fn toggle_silent_autostart(_enable: bool) -> Result<String, String> {
                 let mut cmd = std::process::Command::new("schtasks");
                 cmd.creation_flags(0x08000000);
                 let status = cmd
-                    .args(&[
+                    .args([
                         "/Create",
                         "/TN",
                         "DoodleRay_SilentStart",
@@ -9653,7 +9641,7 @@ async fn toggle_silent_autostart(_enable: bool) -> Result<String, String> {
                 let mut cmd = std::process::Command::new("powershell");
                 cmd.creation_flags(0x08000000);
                 let _ = cmd
-                    .args(&["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
+                    .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
                     .status();
 
                 let _ = std::fs::remove_file(&ps1_path);
@@ -9672,7 +9660,7 @@ async fn toggle_silent_autostart(_enable: bool) -> Result<String, String> {
                 let mut cmd = std::process::Command::new("schtasks");
                 cmd.creation_flags(0x08000000);
                 let _ = cmd
-                    .args(&["/Delete", "/TN", "DoodleRay_SilentStart", "/F"])
+                    .args(["/Delete", "/TN", "DoodleRay_SilentStart", "/F"])
                     .status();
             } else {
                 // Write temp .ps1 script for clean deletion
@@ -9688,7 +9676,7 @@ async fn toggle_silent_autostart(_enable: bool) -> Result<String, String> {
                 let mut cmd = std::process::Command::new("powershell");
                 cmd.creation_flags(0x08000000);
                 let _ = cmd
-                    .args(&["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
+                    .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
                     .status();
 
                 let _ = std::fs::remove_file(&ps1_path);
@@ -9713,7 +9701,7 @@ async fn toggle_silent_autostart(_enable: bool) -> Result<String, String> {
 #[cfg(windows)]
 fn check_silent_autostart_inner() -> bool {
     let mut cmd = std::process::Command::new("schtasks");
-    cmd.args(&["/Query", "/TN", "DoodleRay_SilentStart"]);
+    cmd.args(["/Query", "/TN", "DoodleRay_SilentStart"]);
     cmd.creation_flags(0x08000000);
     if let Ok(out) = cmd.output() {
         out.status.success()

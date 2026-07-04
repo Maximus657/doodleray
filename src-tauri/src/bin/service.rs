@@ -1511,13 +1511,13 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
 
         set_phase("starting_tun", started, generation)?;
         let singbox_config_path = runtime_dir.join("singbox_tun_config.json");
-        write_json_file(&singbox_config_path, &singbox_config)?;
+        write_json_file(&singbox_config_path, singbox_config)?;
         let singbox_log_path = runtime_dir.join("singbox_tun.log");
         let singbox_exe = singbox_exe_path()?;
         check_singbox_config(
             &singbox_exe,
             &singbox_config_path,
-            &runtime_dir,
+            runtime_dir,
             singbox_config,
         )?;
         let child = spawn_engine(
@@ -1535,13 +1535,9 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
                 Ok(snapshot) => snapshot,
                 Err(adapter_error) => {
                     if let Some(path) = xray_log_path.as_deref() {
-                        if let Err(engine_error) = ensure_xray_alive(path) {
-                            return Err(engine_error);
-                        }
+                        ensure_xray_alive(path)?;
                     }
-                    if let Err(engine_error) = ensure_singbox_alive(&singbox_log_path) {
-                        return Err(engine_error);
-                    }
+                    ensure_singbox_alive(&singbox_log_path)?;
                     return Err(adapter_error);
                 }
             };
@@ -2695,9 +2691,8 @@ Write-Output ("DoodleRay Tunnel route preferred: shape={0}, tun={1}, best_other=
     }
 
     fn install_service() -> windows_service::Result<()> {
-        ensure_vpn_users_group().map_err(|e| {
-            windows_service::Error::Winapi(std::io::Error::new(std::io::ErrorKind::Other, e))
-        })?;
+        ensure_vpn_users_group()
+            .map_err(|e| windows_service::Error::Winapi(std::io::Error::other(e)))?;
         let manager = ServiceManager::local_computer(
             None::<&str>,
             ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE,
@@ -2724,19 +2719,15 @@ Write-Output ("DoodleRay Tunnel route preferred: shape={0}, tun={1}, best_other=
                         .executable_path
                         .to_string_lossy()
                         .to_ascii_lowercase()
-                        .contains(&exe_path.to_string_lossy().to_ascii_lowercase().as_str())
+                        .contains(exe_path.to_string_lossy().to_ascii_lowercase().as_str())
                 })
                 .unwrap_or(false);
             if matches_current_exe {
                 let _ = service.set_config_service_sid_info(ServiceSidType::Unrestricted);
                 let _ = service.start(&[] as &[&str]);
                 wait_for_service_state(&service, ServiceState::Running, Duration::from_secs(10))?;
-                secure_runtime_dirs().map_err(|e| {
-                    windows_service::Error::Winapi(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        e,
-                    ))
-                })?;
+                secure_runtime_dirs()
+                    .map_err(|e| windows_service::Error::Winapi(std::io::Error::other(e)))?;
                 return Ok(());
             }
         }
@@ -2781,9 +2772,8 @@ Write-Output ("DoodleRay Tunnel route preferred: shape={0}, tun={1}, best_other=
         service.set_failure_actions_on_non_crash_failures(true)?;
         let _ = service.start(&[] as &[&str]);
         wait_for_service_state(&service, ServiceState::Running, Duration::from_secs(10))?;
-        secure_runtime_dirs().map_err(|e| {
-            windows_service::Error::Winapi(std::io::Error::new(std::io::ErrorKind::Other, e))
-        })?;
+        secure_runtime_dirs()
+            .map_err(|e| windows_service::Error::Winapi(std::io::Error::other(e)))?;
         Ok(())
     }
 

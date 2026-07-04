@@ -328,7 +328,7 @@ pub fn is_singbox_running() -> bool {
     #[cfg(windows)]
     {
         if let Ok(output) = Command::new("tasklist")
-            .args(&["/FI", "IMAGENAME eq sing-box.exe", "/NH"])
+            .args(["/FI", "IMAGENAME eq sing-box.exe", "/NH"])
             .creation_flags(0x08000000)
             .output()
         {
