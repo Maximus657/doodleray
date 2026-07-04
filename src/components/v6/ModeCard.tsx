@@ -47,9 +47,9 @@ export default function ModeSelector({ current, onSelect, disabled, t }: Props) 
               boxShadow: sel ? '0 8px 26px rgba(255,90,31,0.2)' : 'none',
             }}
           >
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-1">
               <span
-                className="flex h-[38px] w-[38px] items-center justify-center rounded-xl"
+                className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-xl"
                 style={{
                   color: sel ? '#FF9A56' : 'rgba(255,255,255,0.7)',
                   background: sel ? 'rgba(255,107,44,0.18)' : 'rgba(255,255,255,0.06)',
@@ -58,19 +58,23 @@ export default function ModeSelector({ current, onSelect, disabled, t }: Props) 
               >
                 <Icon className="h-[19px] w-[19px]" strokeWidth={1.9} />
               </span>
-              <span className="rounded-[20px] bg-white/[0.07] px-2 py-[3px] text-[10px] font-semibold tracking-[0.08em] text-white/50">
-                {m.badge}
+              <span className="flex min-w-0 items-center gap-1">
+                {m.mode === 'protected' && (
+                  <span className="truncate rounded-[20px] px-2 py-[3px] text-[9px] font-semibold uppercase tracking-[0.06em]" style={{ background: 'rgba(255,107,44,0.18)', color: '#FF9A56' }}>
+                    {t('v6BadgeRecommended' as never)}
+                  </span>
+                )}
+                <span className="rounded-[20px] bg-white/[0.07] px-2 py-[3px] text-[10px] font-semibold tracking-[0.08em] text-white/50">
+                  {m.badge}
+                </span>
               </span>
             </div>
-            <div className="text-[14.5px] font-semibold leading-tight text-white">
+            <div className="truncate text-[14.5px] font-semibold leading-tight text-white" title={t(m.titleKey as never)}>
               {t(m.titleKey as never)}
-              {m.mode === 'protected' && (
-                <span className="ml-1.5 align-middle text-[9px] font-semibold uppercase tracking-wider text-[#FF9A56]">
-                  {t('v6BadgeRecommended' as never)}
-                </span>
-              )}
             </div>
-            <div className="line-clamp-2 text-[11.5px] leading-[1.45] text-white/50">{t(m.descKey as never)}</div>
+            <div className="line-clamp-2 text-[11.5px] leading-[1.45] text-white/50" title={t(m.descKey as never)}>
+              {t(m.descKey as never)}
+            </div>
           </button>
         );
       })}

@@ -1,6 +1,5 @@
 import { useMemo } from 'react';
-import { Search, Plus, FolderCog } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Search, Plus } from 'lucide-react';
 import type { ServerConfig, Subscription } from '../../stores/app-store';
 import { buildServerDisplayGroups, serverMatchesGroupQuery } from '../../lib/server-groups';
 import ServerRow from './ServerRow';
@@ -51,7 +50,6 @@ export default function LocationList({
   onAdd,
   t,
 }: Props) {
-  const navigate = useNavigate();
   const groups = useMemo(() => {
     const filtered = searchQuery.trim()
       ? servers.filter((s) => serverMatchesGroupQuery(s, searchQuery))
@@ -81,15 +79,6 @@ export default function LocationList({
             className="v6-hover-bright flex h-6 w-6 items-center justify-center rounded-lg border border-white/[0.12] bg-white/[0.07] text-white/70 v6-focus"
           >
             <Plus className="h-3.5 w-3.5" strokeWidth={2.4} />
-          </button>
-          <button
-            type="button"
-            onClick={() => navigate('/servers')}
-            title={t('servers' as never)}
-            aria-label={t('servers' as never)}
-            className="v6-hover-bright flex h-6 w-6 items-center justify-center rounded-lg border border-white/[0.12] bg-white/[0.07] text-white/70 v6-focus"
-          >
-            <FolderCog className="h-3.5 w-3.5" strokeWidth={2.2} />
           </button>
         </span>
       </div>

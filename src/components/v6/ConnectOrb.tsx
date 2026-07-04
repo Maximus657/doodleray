@@ -1,5 +1,6 @@
 import { ShieldCheck, ShieldAlert, ShieldX } from 'lucide-react';
 import type { OrbState } from './status';
+import { FlagIcon } from './ServerRow';
 
 interface Props {
   state: OrbState;
@@ -9,7 +10,7 @@ interface Props {
   /** honest status text for the pill under the button (Protected/Degraded/Limited/Failed) */
   statusLabel?: string | null;
   serverName?: string | null;
-  serverFlag?: string | null;
+  serverCountryCode?: string | null;
   disabled?: boolean;
   onClick: () => void;
 }
@@ -26,7 +27,7 @@ export default function ConnectOrb({
   subLabel,
   statusLabel,
   serverName,
-  serverFlag,
+  serverCountryCode,
   disabled,
   onClick,
 }: Props) {
@@ -116,10 +117,16 @@ export default function ConnectOrb({
             className="v6-fadein flex items-center gap-[9px] rounded-[30px] border px-[17px] py-2"
             style={{ background: pill.bg, borderColor: pill.border }}
           >
-            <pill.Icon className="h-[15px] w-[15px]" style={{ color: pill.color }} strokeWidth={2.4} />
-            <span className="max-w-[300px] truncate text-[13px] font-medium" style={{ color: pill.text }}>
+            <pill.Icon className="h-[15px] w-[15px] shrink-0" style={{ color: pill.color }} strokeWidth={2.4} />
+            <span className="flex max-w-[320px] items-center gap-1.5 truncate text-[13px] font-medium" style={{ color: pill.text }}>
               {statusLabel}
-              {serverName ? ` · ${serverFlag ? `${serverFlag} ` : ''}${serverName}` : ''}
+              {serverName && (
+                <>
+                  <span className="opacity-60">·</span>
+                  {serverCountryCode && <FlagIcon countryCode={serverCountryCode} size={18} />}
+                  <span className="truncate">{serverName}</span>
+                </>
+              )}
             </span>
           </div>
         )}

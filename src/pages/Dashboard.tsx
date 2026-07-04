@@ -23,7 +23,6 @@ import { describeSubscriptionSource } from '../lib/redaction';
 
 // v6 DoodleVPN design UI
 import type { ProductMode } from '../stores/app-store';
-import { countryFlag } from '../lib/utils';
 import ConnectOrb from '../components/v6/ConnectOrb';
 import ModeSelector from '../components/v6/ModeCard';
 import LocationList from '../components/v6/LocationList';
@@ -982,8 +981,12 @@ export default function Dashboard() {
         httpPort,
       }) as string;
       addLog('success', `${t('supportBundleExported')}: ${path}`);
+      const { useToastStore } = await import('../stores/toast-store');
+      useToastStore.getState().addToast(`${t('supportBundleExported')}: ${path}`, 'success');
     } catch (err: any) {
       addLog('error', `${t('supportBundleExportFailed')}: ${err?.message || err}`);
+      const { useToastStore } = await import('../stores/toast-store');
+      useToastStore.getState().addToast(`${t('supportBundleExportFailed')}: ${err?.message || err}`, 'error');
     }
   }, [addLog, httpPort, proxyMode, socksPort, systemProxyMode, t]);
 
@@ -1279,7 +1282,7 @@ export default function Dashboard() {
               subLabel={orbSub}
               statusLabel={orbStatusLabel}
               serverName={activeServer?.name ?? null}
-              serverFlag={activeServer?.countryCode ? countryFlag(activeServer.countryCode) : null}
+              serverCountryCode={activeServer?.countryCode ?? null}
               disabled={status === 'disconnected' && !canConnect}
               onClick={handleConnect}
             />

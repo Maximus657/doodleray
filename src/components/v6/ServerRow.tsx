@@ -1,12 +1,38 @@
-import { Loader2 } from 'lucide-react';
+import { useState } from 'react';
+import { Loader2, Globe } from 'lucide-react';
 import type { ServerConfig } from '../../stores/app-store';
-import { countryFlag, protocolLabel } from '../../lib/utils';
+import { protocolLabel } from '../../lib/utils';
 
 function pingColor(p?: number): string {
   if (p === undefined || p <= 0) return 'rgba(255,255,255,0.35)';
   if (p < 80) return '#3ddc84';
   if (p < 160) return '#ffb02e';
   return '#ff6b5a';
+}
+
+/**
+ * Country flag as an image (flagcdn, already allowed by the CSP img-src).
+ * Windows has no emoji flags — regional indicators render as bare letters —
+ * so images are the only way to match the design. Falls back to a globe.
+ */
+export function FlagIcon({ countryCode, size = 26 }: { countryCode?: string; size?: number }) {
+  const [failed, setFailed] = useState(false);
+  const cc = countryCode?.trim().toLowerCase();
+  if (!cc || !/^[a-z]{2}$/.test(cc) || failed) {
+    return <Globe className="text-white/55" style={{ width: size * 0.77, height: size * 0.77 }} strokeWidth={1.8} />;
+  }
+  return (
+    <img
+      src={`https://flagcdn.com/w40/${cc}.png`}
+      alt={cc.toUpperCase()}
+      width={size}
+      height={Math.round(size * 0.75)}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className="rounded-[4px] object-cover"
+      style={{ width: size, height: Math.round(size * 0.75), filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.35))' }}
+    />
+  );
 }
 
 interface Props {
@@ -18,7 +44,6 @@ interface Props {
 
 /** Design location row: flag, name + protocol line, ping dot + ms. */
 export default function ServerRow({ server, active, pinging, onSelect }: Props) {
-  const flag = server.countryCode ? countryFlag(server.countryCode) : '🌐';
   const pc = pingColor(server.ping);
   const hasPing = server.ping !== undefined && server.ping > 0;
 
@@ -35,11 +60,11 @@ export default function ServerRow({ server, active, pinging, onSelect }: Props) 
         boxShadow: active ? '0 6px 20px rgba(255,90,31,0.18)' : 'none',
       }}
     >
-      <span className="w-9 text-center text-[26px] leading-none" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))' }}>
-        {flag}
+      <span className="flex w-9 shrink-0 items-center justify-center">
+        <FlagIcon countryCode={server.countryCode} />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[14.5px] font-medium text-white">{server.name}</span>
+        <span className="block truncate text-[14.5px] font-medium text-white" title={server.name}>{server.name}</span>
         <span className="mt-0.5 block truncate text-[12px] text-white/45">{protocolLabel(server.protocol, server.transport)}</span>
       </span>
       <span className="flex items-center gap-[7px]">

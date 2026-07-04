@@ -52,9 +52,14 @@
     overflow: hidden;
   }
 
+  /* Transparent chain for the undecorated transparent window: only the
+     rounded v6 panel paints pixels; corners show the desktop through. */
+  html, body, #root {
+    background: transparent;
+  }
+
   body {
     font-family: var(--font-family-sans);
-    background: var(--color-bg-primary);
     color: var(--color-text-on-orange);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -323,25 +328,31 @@
 }
 
 @layer utilities {
-  /* Root surface: warm plum radial (design bg) */
+  /* Root: fully transparent — the rounded panel is the visible window */
   .v6-app {
     color: var(--color-v6-text);
-    background: radial-gradient(120% 120% at 20% 10%, #2a1118 0%, #160b11 55%, #0d070a 100%);
+    background: transparent;
   }
 
-  /* Main glass panel (design: radius 34, blur 34, saturate 1.5) */
+  /* Main glass panel = window body: glass gradient layered over the warm
+     plum radial (design bg); wallpaper blobs float inside, clipped by the
+     rounded corners. */
   .v6-panel {
-    background: linear-gradient(150deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.04));
+    background:
+      linear-gradient(150deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.04)),
+      radial-gradient(120% 120% at 20% 10%, #2a1118 0%, #160b11 55%, #0d070a 100%);
     border: 1px solid rgba(255, 255, 255, 0.16);
-    box-shadow: 0 40px 120px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.22);
-    -webkit-backdrop-filter: blur(34px) saturate(1.5);
-    backdrop-filter: blur(34px) saturate(1.5);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
   }
 
-  /* Section cards (design: white 0.05 / border 0.09) */
+  /* Section cards (design: white 0.05 / border 0.09) — true glass: the
+     wallpaper blobs and layers behind blur through each surface. Kept to a
+     handful of large surfaces so WebView2 stays smooth. */
   .v6-glass {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.09);
+    -webkit-backdrop-filter: blur(16px) saturate(1.2);
+    backdrop-filter: blur(16px) saturate(1.2);
   }
   .v6-glass-soft {
     background: rgba(255, 255, 255, 0.02);
@@ -350,12 +361,16 @@
   .v6-glass-inset {
     background: rgba(0, 0, 0, 0.22);
     border: 1px solid rgba(255, 255, 255, 0.1);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
   }
   /* Modal surface (design overlays) */
   .v6-modal {
-    background: linear-gradient(150deg, rgba(46, 30, 38, 0.92), rgba(28, 17, 22, 0.92));
+    background: linear-gradient(150deg, rgba(46, 30, 38, 0.78), rgba(28, 17, 22, 0.82));
     border: 1px solid rgba(255, 255, 255, 0.16);
     box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+    -webkit-backdrop-filter: blur(28px) saturate(1.3);
+    backdrop-filter: blur(28px) saturate(1.3);
   }
   /* Orange icon tile (design: 0.16 bg / 0.3 border, #FF8A4C icon) */
   .v6-tile-accent {

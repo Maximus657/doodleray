@@ -68,31 +68,29 @@ export default function AppShell({ children }: { children: ReactNode }) {
   );
 
   return (
-    <div className="v6-app relative flex h-screen w-screen flex-col overflow-hidden p-3">
-      {/* Sunset wallpaper blobs (design) */}
-      {blob('#FF6B2C', 640, { left: -160, top: -200 }, 'v6-blob-a', 0.9)}
-      {blob('#FF3D7F', 560, { right: -140, bottom: -180 }, 'v6-blob-b', 0.85)}
-      {blob('#FFB02E', 480, { right: '18%', top: -120 }, 'v6-blob-c', 0.7)}
-
+    <div className="v6-app relative flex h-screen w-screen flex-col overflow-hidden">
       <div className="v6-panel relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[34px] p-[18px]">
-        {/* HEADER (drag region) */}
-        <div data-tauri-drag-region className="flex shrink-0 select-none items-center justify-between px-2.5 pb-4 pt-1.5">
-          <div data-tauri-drag-region className="flex items-center gap-3.5">
-            <div data-tauri-drag-region className="mr-1.5 flex gap-2">
-              <span className="h-3 w-3 rounded-full bg-white/[0.22]" />
-              <span className="h-3 w-3 rounded-full bg-white/[0.18]" />
-              <span className="h-3 w-3 rounded-full bg-white/[0.14]" />
-            </div>
-            <div data-tauri-drag-region className="flex items-center gap-[11px] pl-2">
-              <div
-                className="flex h-[34px] w-[34px] items-center justify-center rounded-[11px]"
-                style={{ background: 'linear-gradient(140deg, #FF8A4C, #FF5A1F)', boxShadow: '0 6px 18px rgba(255,90,31,0.45)' }}
-              >
-                <span className="h-[13px] w-[13px] rounded-full border-[2.5px] border-white" />
-              </div>
-              <div data-tauri-drag-region className="text-[19px] font-semibold tracking-[-0.01em] text-white">
-                Doodle<span className="font-light text-white/70">Ray</span>
-              </div>
+        {/* Sunset wallpaper blobs (design), clipped by the rounded panel */}
+        {blob('#FF6B2C', 640, { left: -160, top: -200 }, 'v6-blob-a', 0.9)}
+        {blob('#FF3D7F', 560, { right: -140, bottom: -180 }, 'v6-blob-b', 0.85)}
+        {blob('#FFB02E', 480, { right: '18%', top: -120 }, 'v6-blob-c', 0.7)}
+
+        {/* Top drag strip: covers the whole header band (incl. panel padding)
+            so the window drags from anywhere up top except the buttons. */}
+        <div data-tauri-drag-region className="absolute inset-x-0 top-0 z-[5] h-[68px]" />
+
+        {/* HEADER */}
+        <div data-tauri-drag-region className="relative z-10 flex shrink-0 select-none items-center justify-between px-2.5 pb-4 pt-1.5">
+          <div data-tauri-drag-region className="pointer-events-none flex items-center gap-[11px]">
+            <img
+              src="/assets/mascot.png"
+              alt=""
+              draggable={false}
+              className="h-[34px] w-[34px] rounded-[11px]"
+              style={{ boxShadow: '0 6px 18px rgba(255,90,31,0.45)' }}
+            />
+            <div className="text-[19px] font-semibold tracking-[-0.01em] text-white">
+              Doodle<span className="font-light text-white/70">Ray</span>
             </div>
           </div>
 
@@ -116,7 +114,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         </div>
 
         {/* CONTENT */}
-        <main className="relative flex min-h-0 flex-1 flex-col">{children}</main>
+        <main className="relative z-10 flex min-h-0 flex-1 flex-col">{children}</main>
 
         {/* OVERLAYS */}
         {supportOpen && (
