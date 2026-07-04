@@ -16,6 +16,7 @@ const LEVEL_META: Record<LogEntry['level'], { color: string; icon: typeof Info }
   success: { color: '#3ddc84', icon: CheckCircle2 },
   warning: { color: '#ffb02e', icon: AlertTriangle },
   error: { color: '#ff6b5a', icon: AlertCircle },
+  debug: { color: 'rgba(255,255,255,0.35)', icon: Info },
 };
 
 /**
@@ -38,8 +39,11 @@ export default function DiagnosticsDrawer({ logs, onClear, onExportSupportBundle
     }
   };
 
-  const issues = logs.filter((l) => l.level === 'error' || l.level === 'warning').length;
-  const latest = logs[logs.length - 1];
+  // Service/diagnostic chatter stays out of the user-facing list; it is still
+  // kept in the store for QA snapshots and support bundles.
+  const visibleLogs = logs.filter((l) => l.level !== 'debug');
+  const issues = visibleLogs.filter((l) => l.level === 'error' || l.level === 'warning').length;
+  const latest = visibleLogs[visibleLogs.length - 1];
 
   // Scroll only the log list itself — scrollIntoView would also scroll every
   // scrollable ancestor and visually shift the whole dashboard.
@@ -56,7 +60,7 @@ export default function DiagnosticsDrawer({ logs, onClear, onExportSupportBundle
           <div className="v6-modal v6-fadein absolute inset-x-0 bottom-[calc(100%+10px)] z-30 overflow-hidden rounded-[20px]">
             <div className="flex items-center justify-between px-4 py-2.5">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-white/50">
-                {t('events' as never)} <span className="ml-1 tabular-nums text-white/35">{logs.length}</span>
+                {t('events' as never)} <span className="ml-1 tabular-nums text-white/35">{visibleLogs.length}</span>
               </span>
               <button
                 type="button"
@@ -67,10 +71,10 @@ export default function DiagnosticsDrawer({ logs, onClear, onExportSupportBundle
               </button>
             </div>
             <div ref={listRef} className="max-h-[300px] space-y-0.5 overflow-y-auto border-t border-white/[0.07] px-3 py-2 font-mono">
-              {logs.length === 0 ? (
+              {visibleLogs.length === 0 ? (
                 <div className="py-6 text-center text-[11px] text-white/40">{t('v6NoEvents' as never)}</div>
               ) : (
-                logs.map((log) => {
+                visibleLogs.map((log) => {
                   const meta = LEVEL_META[log.level];
                   const Icon = meta.icon;
                   return (

@@ -258,7 +258,7 @@ function App() {
         const enabled = await isEnabled();
         if (!enabled) {
           await enable();
-          useAppStore.getState().addLog('success', 'App autostart enabled');
+          useAppStore.getState().addLog('debug', 'App autostart enabled');
         }
         useAppStore.setState({ autoStart: true });
       } catch (err) {
@@ -273,10 +273,10 @@ function App() {
         const message = await invoke('repair_windows_runtime');
         const firstLine = typeof message === 'string' ? message.split('\n')[0] : null;
         if (firstLine) {
-          useAppStore.getState().addLog('info', `Startup repair: ${firstLine}`);
+          useAppStore.getState().addLog('debug', `Startup repair: ${firstLine}`);
         }
       } catch (err) {
-        useAppStore.getState().addLog('warning', `Startup repair skipped: ${err instanceof Error ? err.message : String(err)}`);
+        useAppStore.getState().addLog('debug', `Startup repair skipped: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 

@@ -28,6 +28,7 @@ import ModeSelector from '../components/v6/ModeCard';
 import LocationList from '../components/v6/LocationList';
 import TrafficStats from '../components/v6/TrafficStats';
 import SplitRoutingToggle from '../components/v6/SplitRoutingToggle';
+import SplitRoutingModal from '../components/v6/SplitRoutingModal';
 import DiagnosticsDrawer from '../components/v6/DiagnosticsDrawer';
 import QuickAddPanel from '../components/v6/QuickAddPanel';
 import { deriveOrbState, ORB_LABEL_KEY } from '../components/v6/status';
@@ -164,6 +165,7 @@ export default function Dashboard() {
   const [quickInput, setQuickInput] = useState('');
   const [quickImporting, setQuickImporting] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showSplitModal, setShowSplitModal] = useState(false);
   const [connectionStep, setConnectionStep] = useState<string | null>(null);
 
   const refreshTunnelServiceHealth = useCallback(async () => {
@@ -389,7 +391,7 @@ export default function Dashboard() {
                 const repairMessage = await invoke('repair_active_tunnel_compatibility_proxy', {
                   systemProxyMode,
                 }) as string;
-                addLog('info', `Browser compatibility repaired after UI reload: ${repairMessage}`);
+                addLog('debug', `Browser compatibility repaired after UI reload: ${repairMessage}`);
                 health = await invoke('get_connection_health', {
                   proxyMode,
                   systemProxyMode,
@@ -403,14 +405,14 @@ export default function Dashboard() {
 
             setStatus('connected');
             addLog(
-              hasWinInetCompatibilityWarning(health) ? 'warning' : 'info',
+              'debug',
               hasWinInetCompatibilityWarning(health)
                 ? `VPN is still active after UI reload, but browser compatibility is degraded: ${summarizeHealthFailures(health)}`
                 : 'VPN is still active (reconnected after UI reload)',
             );
           } else {
             setStatus('disconnected');
-            addLog('warning', `Backend reported VPN active, but health is not acceptable: ${summarizeHealthFailures(health)}`);
+            addLog('debug', `Backend reported VPN active, but health is not acceptable: ${summarizeHealthFailures(health)}`);
           }
         }
       } catch { /* not in tauri env */ }
@@ -422,12 +424,14 @@ export default function Dashboard() {
   const healthInFlightRef = useRef(false);
   const runtimeRepairRef = useRef({ inFlight: false, lastAt: 0 });
   const compatRepairRef = useRef({ inFlight: false, lastAt: 0 });
+  const fatalWatchdogRef = useRef(false);
   useEffect(() => {
     if (status !== 'connected') {
       healthFailRef.current = 0;
       healthInFlightRef.current = false;
       runtimeRepairRef.current = { inFlight: false, lastAt: 0 };
       compatRepairRef.current = { inFlight: false, lastAt: 0 };
+      fatalWatchdogRef.current = false;
       return;
     }
     const healthCheck = setInterval(async () => {
@@ -588,6 +592,52 @@ export default function Dashboard() {
     }, 30000);
     return () => clearInterval(healthCheck);
   }, [status, socksPort, httpPort, proxyMode, systemProxyMode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fast protected-mode fatal watchdog. The normal health monitor is broader
+  // and intentionally gentle; this one only consumes service-owned runtime
+  // truth so a crashed TUN core cannot leave the UI green for a full monitor
+  // interval.
+  useEffect(() => {
+    if (status !== 'connected' || proxyMode !== 'tun') return;
+    let disposed = false;
+    const checkFatal = async () => {
+      if (disposed || fatalWatchdogRef.current) return;
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const health = await withTimeout(
+          invoke('get_connection_health', {
+            proxyMode,
+            systemProxyMode,
+            socksPort,
+            httpPort,
+          }) as Promise<ConnectionHealthReport>,
+          6000,
+          'Protected watchdog timed out',
+        );
+        setHealthVerdict(health?.verdict ?? null);
+        if (!isHealthFatal('tun', health)) return;
+
+        fatalWatchdogRef.current = true;
+        const failureSummary = summarizeHealthFailures(health);
+        addLog('error', `Whole computer mode stopped: ${failureSummary}`);
+        try { await invoke('vpn_disconnect'); } catch { /* best effort cleanup */ }
+        setStatus('disconnected');
+        setConnectionStep(null);
+        setConnectedAt(null);
+        const toastStoreModule = await import('../stores/toast-store');
+        toastStoreModule.useToastStore.getState().addToast('Whole computer mode stopped; reconnect to repair it.', 'error');
+      } catch {
+        // The slower monitor handles repeated timeouts. Avoid noisy duplicate logs here.
+      }
+    };
+    const first = window.setTimeout(checkFatal, 1500);
+    const timer = window.setInterval(checkFatal, 4000);
+    return () => {
+      disposed = true;
+      window.clearTimeout(first);
+      window.clearInterval(timer);
+    };
+  }, [status, proxyMode, systemProxyMode, socksPort, httpPort, addLog, setStatus, setConnectionStep, setConnectedAt]);
 
   // Reset the orb health verdict whenever the tunnel is fully down.
   useEffect(() => {
@@ -761,7 +811,7 @@ export default function Dashboard() {
       setConnectionStep(t('connectionStarting'));
 
       if (proxyMode === 'tun') {
-        addLog('info', 'Режим «Весь компьютер»: DoodleRay управляет сетевым адаптером через свой сервис.');
+        addLog('debug', 'Режим «Весь компьютер»: DoodleRay управляет сетевым адаптером через свой сервис.');
         void refreshTunnelServiceHealth();
       }
 
@@ -912,12 +962,12 @@ export default function Dashboard() {
     const systemProxyChanged = systemProxyMode !== normalizedSystemProxyMode;
     if (!modeChanged && !systemProxyChanged) return;
     if (mode === 'tun') {
-      addLog('info', 'Режим «Весь компьютер» будет использовать сервис DoodleRay для сетевого адаптера.');
+      addLog('debug', 'Режим «Весь компьютер» будет использовать сервис DoodleRay для сетевого адаптера.');
       await refreshTunnelServiceHealth();
     }
     setProxyMode(mode);
     if (systemProxyChanged) setSystemProxyMode(normalizedSystemProxyMode);
-    addLog('info', `Режим подключения: ${mode === 'tun' ? t('fullDeviceMode') : t('systemProxy')}`);
+    addLog('debug', `Режим подключения: ${mode === 'tun' ? t('fullDeviceMode') : t('systemProxy')}`);
     if (status === 'connected') {
       addLog('warning', 'Reconnecting to apply new routing mode...');
       setStatus('connecting');
@@ -1190,7 +1240,7 @@ export default function Dashboard() {
     ? (connectionStepLabel || t('connecting'))
     : connected
       ? fmtTimer(connectTime)
-      : t('v6TapToConnect' as never);
+      : null;
   const orbStatusLabel = orbState === 'protected'
     ? t('v6Encrypted' as never)
     : t(ORB_LABEL_KEY[orbState] as never);
@@ -1288,7 +1338,7 @@ export default function Dashboard() {
             />
 
             <div className="flex shrink-0 gap-3.5">
-              <SplitRoutingToggle protectedMode={productMode === 'protected'} t={t} />
+              <SplitRoutingToggle protectedMode={productMode === 'protected'} onOpen={() => setShowSplitModal(true)} t={t} />
               {showStats && (
                 <TrafficStats
                   connected={connected}
@@ -1307,6 +1357,14 @@ export default function Dashboard() {
             />
           </div>
         </div>
+      )}
+
+      {showSplitModal && (
+        <SplitRoutingModal
+          protectedMode={productMode === 'protected'}
+          onClose={() => setShowSplitModal(false)}
+          t={t}
+        />
       )}
     </div>
   );

@@ -67,7 +67,8 @@ export interface ServerConfig {
 export interface LogEntry {
   id: string;
   time: string;
-  level: 'info' | 'warning' | 'error' | 'success';
+  /** 'debug' entries are kept for QA snapshots/support bundles but hidden from the user-facing events list. */
+  level: 'info' | 'warning' | 'error' | 'success' | 'debug';
   message: string;
 }
 
@@ -575,9 +576,16 @@ export const useAppStore = create<AppState>()(
       setHttpPort: (port) => set({ httpPort: port }),
       setTheme: (theme) => set({ theme }),
       setLanguage: (lang) => set({ language: lang }),
-      addLog: (level, message) => set((s) => ({
-        logs: [...s.logs.slice(-99), { id: crypto.randomUUID(), time: new Date().toLocaleTimeString(), level, message: sanitizeLogMessage(message) }],
-      })),
+      addLog: (level, message) => set((s) => {
+        const sanitized = sanitizeLogMessage(message);
+        // Drop consecutive duplicates — health monitors and mount effects can
+        // emit the same diagnostic twice in a row, which reads as spam.
+        const last = s.logs[s.logs.length - 1];
+        if (last && last.level === level && last.message === sanitized) return {};
+        return {
+          logs: [...s.logs.slice(-99), { id: crypto.randomUUID(), time: new Date().toLocaleTimeString(), level, message: sanitized }],
+        };
+      }),
       clearLogs: () => set({ logs: [] }),
       wipeData: () => set({ servers: [], subscriptions: [], activeServer: null, lastSelectedServerKey: null }),
       setAvailableUpdate: (version) => set({ availableUpdate: version }),
