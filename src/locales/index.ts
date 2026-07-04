@@ -70,6 +70,7 @@ export const translations = {
     v6AppliedPresets: 'Applied presets',
     v6AvailablePresets: 'Ready-made presets',
     v6Apply: 'Apply',
+    v6PingAll: 'Ping all servers',
     // General
     dashboard: 'Dashboard',
     servers: 'Servers',
@@ -386,6 +387,7 @@ export const translations = {
     v6AppliedPresets: 'Применённые наборы',
     v6AvailablePresets: 'Готовые наборы',
     v6Apply: 'Применить',
+    v6PingAll: 'Пингануть все серверы',
     // General
     dashboard: 'Главная',
     servers: 'Серверы',
@@ -702,6 +704,7 @@ export const translations = {
     v6AppliedPresets: '已应用的规则集',
     v6AvailablePresets: '现成规则集',
     v6Apply: '应用',
+    v6PingAll: '测试所有服务器延迟',
     // General
     dashboard: '主页',
     servers: '服务器',

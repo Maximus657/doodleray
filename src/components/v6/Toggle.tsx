@@ -7,8 +7,8 @@ export default function Toggle({ on, label }: { on: boolean; label?: string }) {
       aria-label={label}
       className="relative block h-[27px] w-[46px] shrink-0 cursor-pointer rounded-[30px] transition-colors duration-200"
       style={{
-        background: on ? '#FF6B2C' : 'rgba(255,255,255,0.15)',
-        boxShadow: on ? '0 0 14px rgba(255,107,44,0.5)' : 'none',
+        background: on ? '#F97F16' : 'rgba(255,255,255,0.15)',
+        boxShadow: on ? '0 0 14px rgba(249,127,22,0.5)' : 'none',
       }}
     >
       <span

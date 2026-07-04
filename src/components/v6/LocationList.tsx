@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Search, Plus } from 'lucide-react';
+import { Search, Plus, RefreshCw } from 'lucide-react';
 import type { ServerConfig, Subscription } from '../../stores/app-store';
 import { buildServerDisplayGroups, serverMatchesGroupQuery } from '../../lib/server-groups';
 import ServerRow from './ServerRow';
@@ -10,7 +10,7 @@ type T = (key: never) => string;
 function dayColor(d: number): string {
   if (d <= 0) return '#ff4d4d';
   if (d <= 3) return '#ff5a5f';
-  if (d <= 7) return '#ff7a3d';
+  if (d <= 7) return '#F88B24';
   if (d <= 14) return '#ffb02e';
   if (d <= 30) return '#9fd457';
   return '#3ddc84';
@@ -35,6 +35,7 @@ interface Props {
   onSearchChange: (q: string) => void;
   onSelect: (server: ServerConfig) => void;
   onAdd: () => void;
+  onPingAll: () => void;
   t: T;
 }
 
@@ -48,6 +49,7 @@ export default function LocationList({
   onSearchChange,
   onSelect,
   onAdd,
+  onPingAll,
   t,
 }: Props) {
   const groups = useMemo(() => {
@@ -71,6 +73,16 @@ export default function LocationList({
         <span className="text-[15px] font-semibold text-white">{t('v6Locations' as never)}</span>
         <span className="flex items-center gap-2 text-[12px] text-white/45">
           {servers.length} {t('v6ServersCount' as never)}
+          <button
+            type="button"
+            onClick={onPingAll}
+            disabled={pingingServerIds.size > 0}
+            title={t('v6PingAll' as never)}
+            aria-label={t('v6PingAll' as never)}
+            className="v6-hover-bright flex h-6 w-6 items-center justify-center rounded-lg border border-white/[0.12] bg-white/[0.07] text-white/70 v6-focus disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${pingingServerIds.size > 0 ? 'v6-orb-spin' : ''}`} strokeWidth={2.2} />
+          </button>
           <button
             type="button"
             onClick={onAdd}
@@ -120,7 +132,7 @@ export default function LocationList({
         <div className="mt-3.5 border-t border-white/[0.08] pt-4">
           <div className="mb-[9px] flex items-center justify-between">
             <span className="truncate text-[12px] text-white/50">{activeSub?.name || t('v6Subscription' as never)}</span>
-            <button type="button" onClick={openRenew} className="text-[12px] font-semibold text-[#FF8A4C] v6-focus">
+            <button type="button" onClick={openRenew} className="text-[12px] font-semibold text-[#FF9E38] v6-focus">
               {t('v6Renew' as never)}
             </button>
           </div>

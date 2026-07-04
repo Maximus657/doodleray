@@ -1206,6 +1206,19 @@ export default function Dashboard() {
     try { const text = await navigator.clipboard.readText(); setQuickInput(text); } catch { /* */ }
   }, []);
 
+  const handlePingAll = useCallback(async () => {
+    const toPing = servers.filter((s) => s.address);
+    if (toPing.length === 0) return;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await pingServersWithLimit(toPing, invoke, {
+        onActiveIdsChange: setPingingServerIds,
+        onBatch: (updates) => useAppStore.getState().updateServerPings(updates),
+      });
+    } catch { /* not in tauri env */ }
+    finally { setPingingServerIds(new Set()); }
+  }, [servers]);
+
   const canConnect = !!activeServer || servers.length > 0;
   const hasDashboardContent = servers.length > 0 || status !== 'disconnected';
   const trimmedQuickInput = quickInput.trim();
@@ -1273,7 +1286,7 @@ export default function Dashboard() {
           <div className="v6-glass w-full max-w-md rounded-[26px] p-7 text-center">
             <div
               className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-[15px]"
-              style={{ background: 'linear-gradient(140deg, #FF8A4C, #FF5A1F)', boxShadow: '0 6px 24px rgba(255,90,31,0.45)' }}
+              style={{ background: 'linear-gradient(140deg, #FF9E38, #EA6D06)', boxShadow: '0 6px 24px rgba(234,109,6,0.45)' }}
             >
               <span className="h-[18px] w-[18px] rounded-full border-[3px] border-white" />
             </div>
@@ -1302,7 +1315,7 @@ export default function Dashboard() {
               onClick={handleQuickAdd}
               disabled={quickImporting || !trimmedQuickInput || quickInputKind === 'unknown'}
               className="mt-2.5 flex w-full items-center justify-center gap-2 rounded-[14px] py-2.5 text-[13px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 v6-focus"
-              style={{ background: 'linear-gradient(140deg, #FF8A4C, #FF5A1F)', boxShadow: '0 6px 18px rgba(255,90,31,0.35)' }}
+              style={{ background: 'linear-gradient(140deg, #FF9E38, #EA6D06)', boxShadow: '0 6px 18px rgba(234,109,6,0.35)' }}
             >
               {quickImporting ? <><Loader2 className="h-4 w-4 v6-orb-spin" /> {t('adding')}</> : <><Plus className="h-4 w-4" strokeWidth={2.6} /> {t('add')}</>}
             </button>
@@ -1319,6 +1332,7 @@ export default function Dashboard() {
             onSearchChange={setSearchQuery}
             onSelect={handleServerSelect}
             onAdd={() => setShowAddModal(true)}
+            onPingAll={handlePingAll}
             t={t}
           />
 

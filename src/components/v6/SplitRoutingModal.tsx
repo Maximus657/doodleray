@@ -7,7 +7,7 @@ type T = (key: never) => string;
 
 const ACTION_COLORS: Record<RoutingRule['action'], string> = {
   direct: '#3ddc84',
-  proxy: '#FF8A4C',
+  proxy: '#FF9E38',
   block: '#ff6b5a',
 };
 
@@ -117,7 +117,7 @@ export default function SplitRoutingModal({ protectedMode, onClose, t }: Props) 
             onClick={handleAdd}
             aria-label={t('add' as never)}
             className="grid h-[42px] w-[42px] shrink-0 place-items-center rounded-[13px] text-white transition-opacity hover:opacity-90 v6-focus"
-            style={{ background: 'linear-gradient(140deg, #FF8A4C, #FF5A1F)', boxShadow: '0 5px 14px rgba(255,90,31,0.35)' }}
+            style={{ background: 'linear-gradient(140deg, #FF9E38, #EA6D06)', boxShadow: '0 5px 14px rgba(234,109,6,0.35)' }}
           >
             <Plus className="h-4.5 w-4.5" strokeWidth={2.6} />
           </button>
@@ -195,7 +195,7 @@ export default function SplitRoutingModal({ protectedMode, onClose, t }: Props) 
                     type="button"
                     onClick={() => applyPreset(p.id)}
                     className="shrink-0 rounded-[11px] px-3 py-1.5 text-[12px] font-semibold text-white transition-opacity hover:opacity-90 v6-focus"
-                    style={{ background: 'linear-gradient(140deg, #FF8A4C, #FF5A1F)' }}
+                    style={{ background: 'linear-gradient(140deg, #FF9E38, #EA6D06)' }}
                   >
                     {t('v6Apply' as never)}
                   </button>

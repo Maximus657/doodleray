@@ -262,7 +262,7 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
             sub={t('v6SetRepairSub' as never)}
             onClick={handleRepair}
             right={repairing
-              ? <Loader2 className="h-[18px] w-[18px] shrink-0 v6-orb-spin text-[#FF8A4C]" strokeWidth={2} />
+              ? <Loader2 className="h-[18px] w-[18px] shrink-0 v6-orb-spin text-[#FF9E38]" strokeWidth={2} />
               : <Wrench className="h-[18px] w-[18px] shrink-0 text-white/50" strokeWidth={1.9} />}
           />
           <Row

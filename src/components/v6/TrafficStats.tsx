@@ -17,7 +17,7 @@ interface Props {
 export default function TrafficStats({ connected, currentDownload, currentUpload, t }: Props) {
   const cards = [
     { label: t('download' as never), value: connected ? mbps(currentDownload) : '0.0', color: 'currentColor', Icon: ArrowDown, iconColor: 'rgba(255,255,255,0.5)' },
-    { label: t('upload' as never), value: connected ? mbps(currentUpload) : '0.0', color: 'currentColor', Icon: ArrowUp, iconColor: '#FF8A4C' },
+    { label: t('upload' as never), value: connected ? mbps(currentUpload) : '0.0', color: 'currentColor', Icon: ArrowUp, iconColor: '#FF9E38' },
   ];
   return (
     <div className="flex gap-3.5">

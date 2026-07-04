@@ -39,14 +39,14 @@ export default function ConnectOrb({
   const btnBackground = failed
     ? 'radial-gradient(120% 120% at 50% 22%, #ff8a7a, #e5484d 62%, #b3261e)'
     : tunnelOn
-      ? 'radial-gradient(120% 120% at 50% 22%, #FF9A56, #FF6B2C 62%, #E8500F)'
+      ? 'radial-gradient(120% 120% at 50% 22%, #FFA84E, #F97F16 62%, #C55E04)'
       : busy
-        ? 'radial-gradient(120% 120% at 50% 22%, #FFB07A, #FF7A3D 62%, #E8500F)'
+        ? 'radial-gradient(120% 120% at 50% 22%, #FFC078, #F88B24 62%, #C55E04)'
         : 'radial-gradient(120% 120% at 50% 22%, #84848c, #50505a 60%, #3a3a40)';
   const btnShadow = tunnelOn
-    ? '0 8px 26px rgba(255,90,31,0.32), inset 0 1px 0 rgba(255,255,255,0.28)'
+    ? '0 8px 26px rgba(234,109,6,0.32), inset 0 1px 0 rgba(255,255,255,0.28)'
     : busy
-      ? '0 6px 20px rgba(255,90,31,0.22), inset 0 1px 0 rgba(255,255,255,0.24)'
+      ? '0 6px 20px rgba(234,109,6,0.22), inset 0 1px 0 rgba(255,255,255,0.24)'
       : '0 6px 18px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.14)';
 
   const pill = tunnelOn || failed
@@ -73,10 +73,10 @@ export default function ConnectOrb({
             <span
               aria-hidden
               className="v6-breathe pointer-events-none absolute -inset-[22px] rounded-full"
-              style={{ background: 'radial-gradient(circle, rgba(255,107,44,0.4), transparent 68%)' }}
+              style={{ background: 'radial-gradient(circle, rgba(249,127,22,0.4), transparent 68%)' }}
             />
-            <span aria-hidden className="v6-pulsering absolute inset-0 rounded-full border-[1.5px] border-[#FF8A4C]/[0.55]" />
-            <span aria-hidden className="v6-pulsering absolute inset-0 rounded-full border-[1.5px] border-[#FF8A4C]/[0.45]" style={{ animationDelay: '1.1s' }} />
+            <span aria-hidden className="v6-pulsering absolute inset-0 rounded-full border-[1.5px] border-[#FF9E38]/[0.55]" />
+            <span aria-hidden className="v6-pulsering absolute inset-0 rounded-full border-[1.5px] border-[#FF9E38]/[0.45]" style={{ animationDelay: '1.1s' }} />
           </>
         )}
 

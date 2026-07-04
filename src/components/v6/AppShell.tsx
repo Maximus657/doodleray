@@ -28,7 +28,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const traffic = activeSub ? getSubscriptionTrafficStatus(activeSub) : null;
   const gbLeft = traffic?.hasQuota ? traffic.remaining / 1024 ** 3 : null;
   const pct = traffic?.hasQuota ? traffic.usedPercent / 100 : 0;
-  const chipColor = pct > 0.85 ? '#ff6b5a' : pct > 0.7 ? '#ffb02e' : '#FF6B2C';
+  const chipColor = pct > 0.85 ? '#ff6b5a' : pct > 0.7 ? '#ffb02e' : '#F97F16';
 
   const exportSupportBundle = async () => {
     const s = useAppStore.getState();
@@ -71,7 +71,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
     <div className="v6-app relative flex h-screen w-screen flex-col overflow-hidden">
       <div className="v6-panel relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[34px] p-[18px]">
         {/* Sunset wallpaper blobs (design), clipped by the rounded panel */}
-        {blob('#FF6B2C', 640, { left: -160, top: -200 }, 'v6-blob-a', 0.9)}
+        {blob('#F97F16', 640, { left: -160, top: -200 }, 'v6-blob-a', 0.9)}
         {blob('#FF3D7F', 560, { right: -140, bottom: -180 }, 'v6-blob-b', 0.85)}
         {blob('#FFB02E', 480, { right: '18%', top: -120 }, 'v6-blob-c', 0.7)}
 
@@ -87,7 +87,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               alt=""
               draggable={false}
               className="h-[34px] w-[34px] rounded-[11px]"
-              style={{ boxShadow: '0 6px 18px rgba(255,90,31,0.45)' }}
+              style={{ boxShadow: '0 6px 18px rgba(234,109,6,0.45)' }}
             />
             <div className="text-[19px] font-semibold tracking-[-0.01em] text-white">
               Doodle<span className="font-light text-white/70">Ray</span>

@@ -65,7 +65,7 @@ export default function QuickAddPanel({ value, onChange, onAdd, onPaste, onClose
           onClick={onAdd}
           disabled={!canAdd}
           className="mt-3 flex w-full items-center justify-center gap-2 rounded-[14px] py-2.5 text-[13px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 v6-focus"
-          style={{ background: 'linear-gradient(140deg, #FF8A4C, #FF5A1F)', boxShadow: '0 6px 18px rgba(255,90,31,0.35)' }}
+          style={{ background: 'linear-gradient(140deg, #FF9E38, #EA6D06)', boxShadow: '0 6px 18px rgba(234,109,6,0.35)' }}
         >
           {importing ? <><Loader2 className="h-4 w-4 v6-orb-spin" /> {t('adding' as never)}</> : <><Plus className="h-4 w-4" strokeWidth={2.6} /> {t('add' as never)}</>}
         </button>

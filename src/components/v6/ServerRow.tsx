@@ -24,7 +24,7 @@ export function FlagIcon({ countryCode, size = 26 }: { countryCode?: string; siz
   return (
     <img
       src={`https://flagcdn.com/w40/${cc}.png`}
-      alt={cc.toUpperCase()}
+      alt=""
       width={size}
       height={Math.round(size * 0.75)}
       loading="lazy"
@@ -42,10 +42,19 @@ interface Props {
   onSelect: (server: ServerConfig) => void;
 }
 
+/** Strip a leading ISO prefix ("NL Нидерланды" → "Нидерланды") — the flag image already shows the country. */
+function displayName(server: ServerConfig): string {
+  const cc = server.countryCode?.trim().toUpperCase();
+  if (!cc) return server.name;
+  const stripped = server.name.replace(new RegExp(`^\\s*${cc}[\\s·|-]+`, 'i'), '').trim();
+  return stripped || server.name;
+}
+
 /** Design location row: flag, name + protocol line, ping dot + ms. */
 export default function ServerRow({ server, active, pinging, onSelect }: Props) {
   const pc = pingColor(server.ping);
   const hasPing = server.ping !== undefined && server.ping > 0;
+  const name = displayName(server);
 
   return (
     <button
@@ -55,16 +64,16 @@ export default function ServerRow({ server, active, pinging, onSelect }: Props) 
       onClick={() => onSelect(server)}
       className="flex w-full shrink-0 items-center gap-3 rounded-[15px] px-[13px] py-[11px] text-left transition-[background,border-color] duration-150 v6-focus"
       style={{
-        background: active ? 'linear-gradient(110deg, rgba(255,107,44,0.22), rgba(255,107,44,0.08))' : 'rgba(255,255,255,0.02)',
-        border: active ? '1px solid rgba(255,138,76,0.45)' : '1px solid rgba(255,255,255,0.05)',
-        boxShadow: active ? '0 6px 20px rgba(255,90,31,0.18)' : 'none',
+        background: active ? 'linear-gradient(110deg, rgba(249,127,22,0.22), rgba(249,127,22,0.08))' : 'rgba(255,255,255,0.02)',
+        border: active ? '1px solid rgba(255,158,56,0.45)' : '1px solid rgba(255,255,255,0.05)',
+        boxShadow: active ? '0 6px 20px rgba(234,109,6,0.18)' : 'none',
       }}
     >
       <span className="flex w-9 shrink-0 items-center justify-center">
         <FlagIcon countryCode={server.countryCode} />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[14.5px] font-medium text-white" title={server.name}>{server.name}</span>
+        <span className="block truncate text-[14.5px] font-medium text-white" title={server.name}>{name}</span>
         <span className="mt-0.5 block truncate text-[12px] text-white/45">{protocolLabel(server.protocol, server.transport)}</span>
       </span>
       <span className="flex items-center gap-[7px]">

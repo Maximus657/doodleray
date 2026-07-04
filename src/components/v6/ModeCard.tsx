@@ -42,25 +42,25 @@ export default function ModeSelector({ current, onSelect, disabled, t }: Props) 
             onClick={() => onSelect(m.mode)}
             className="flex flex-1 flex-col gap-[9px] rounded-[19px] p-4 text-left transition-[background,border-color] duration-150 disabled:cursor-not-allowed disabled:opacity-50 v6-focus"
             style={{
-              background: sel ? 'linear-gradient(150deg, rgba(255,107,44,0.2), rgba(255,107,44,0.06))' : 'rgba(255,255,255,0.04)',
-              border: sel ? '1px solid rgba(255,138,76,0.5)' : '1px solid rgba(255,255,255,0.08)',
-              boxShadow: sel ? '0 8px 26px rgba(255,90,31,0.2)' : 'none',
+              background: sel ? 'linear-gradient(150deg, rgba(249,127,22,0.2), rgba(249,127,22,0.06))' : 'rgba(255,255,255,0.04)',
+              border: sel ? '1px solid rgba(255,158,56,0.5)' : '1px solid rgba(255,255,255,0.08)',
+              boxShadow: sel ? '0 8px 26px rgba(234,109,6,0.2)' : 'none',
             }}
           >
             <div className="flex items-center justify-between gap-1">
               <span
                 className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-xl"
                 style={{
-                  color: sel ? '#FF9A56' : 'rgba(255,255,255,0.7)',
-                  background: sel ? 'rgba(255,107,44,0.18)' : 'rgba(255,255,255,0.06)',
-                  border: sel ? '1px solid rgba(255,138,76,0.35)' : '1px solid rgba(255,255,255,0.08)',
+                  color: sel ? '#FFA84E' : 'rgba(255,255,255,0.7)',
+                  background: sel ? 'rgba(249,127,22,0.18)' : 'rgba(255,255,255,0.06)',
+                  border: sel ? '1px solid rgba(255,158,56,0.35)' : '1px solid rgba(255,255,255,0.08)',
                 }}
               >
                 <Icon className="h-[19px] w-[19px]" strokeWidth={1.9} />
               </span>
               <span className="flex min-w-0 items-center gap-1">
                 {m.mode === 'protected' && (
-                  <span className="truncate rounded-[20px] px-2 py-[3px] text-[9px] font-semibold uppercase tracking-[0.06em]" style={{ background: 'rgba(255,107,44,0.18)', color: '#FF9A56' }}>
+                  <span className="truncate rounded-[20px] px-2 py-[3px] text-[9px] font-semibold uppercase tracking-[0.06em]" style={{ background: 'rgba(249,127,22,0.18)', color: '#FFA84E' }}>
                     {t('v6BadgeRecommended' as never)}
                   </span>
                 )}
