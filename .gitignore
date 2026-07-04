@@ -63,3 +63,10 @@ secrets/
 qa-sandbox/
 qa-update-sandbox/
 qa-real-subscription-sandbox/
+
+# Local LAN/dirty-host QA evidence and downloaded admin tools
+friend-*/
+baseline-user-*.json
+lan-baseline-system*.json
+lan-baseline-system*.txt
+tools/sysinternals/

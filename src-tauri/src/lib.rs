@@ -7,6 +7,8 @@ pub mod xray;
 pub mod ipc;
 #[cfg(windows)]
 pub mod sysproxy;
+#[cfg(windows)]
+pub mod windows_net;
 
 #[cfg(target_os = "macos")]
 #[path = "sysproxy_macos.rs"]
@@ -3559,6 +3561,162 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn diag_health(
+        verdict: &str,
+        fatal: Vec<&str>,
+        checks: Vec<ConnectionHealthCheck>,
+    ) -> ConnectionHealthReport {
+        ConnectionHealthReport {
+            verdict: verdict.into(),
+            mode: "tun".into(),
+            generated_at_ms: 0,
+            service_effective_state: Some("Connected".into()),
+            service_health_verdict: None,
+            engine_kind: Some("singbox".into()),
+            runtime_socks_port: None,
+            runtime_http_port: None,
+            runtime_api_port: None,
+            service_generation: Some(7),
+            active_op_id: None,
+            service_fatal_checks: fatal.into_iter().map(String::from).collect(),
+            service_degraded_checks: Vec::new(),
+            service_warning_checks: Vec::new(),
+            route_explanations: Vec::new(),
+            endpoint_bypass_checks: Vec::new(),
+            checks,
+        }
+    }
+
+    #[test]
+    fn diagnosis_maps_wintun_ghost_to_repairable_cause() {
+        let health = diag_health(
+            "failed",
+            vec!["configure tun interface: (create adapter: Cannot create a file when that file already exists. | open existing adapter: Element not found.)"],
+            vec![],
+        );
+        let report = build_network_diagnosis(&health, "tun", None, false);
+        assert_eq!(
+            report.primary_cause_code.as_deref(),
+            Some("wintun_ghost_adapter")
+        );
+        assert!(report.can_auto_repair);
+        assert_eq!(report.overall, "failed");
+        // Exact technical line preserved (redacted) for support.
+        assert!(report.checks.iter().any(|c| c.id == "service_fatal"
+            && c.technical_detail_redacted.contains("Element not found")));
+        // No jargon in the user-facing text.
+        assert!(!report.user_summary.to_lowercase().contains("wintun"));
+        assert!(report.copy_text.contains("cause=wintun_ghost_adapter"));
+    }
+
+    #[test]
+    fn diagnosis_maps_adapter_missing() {
+        let health = diag_health(
+            "failed",
+            vec!["DoodleRay Tunnel IPv4 readiness failed: DoodleRay Tunnel adapter is missing"],
+            vec![],
+        );
+        let report = build_network_diagnosis(&health, "tun", None, true);
+        assert_eq!(
+            report.primary_cause_code.as_deref(),
+            Some("adapter_missing")
+        );
+        assert!(report.can_auto_repair);
+        assert!(report.copy_text.contains("repair_tried=true"));
+    }
+
+    #[test]
+    fn diagnosis_maps_wininet_stale_proxy() {
+        let health = diag_health(
+            "protected_degraded",
+            vec![],
+            vec![health_check(
+                "wininet_proxy",
+                "warning",
+                "Windows proxy",
+                "ProxyEnable=1, ProxyServer=not expected loopback",
+            )],
+        );
+        let report = build_network_diagnosis(&health, "tun", None, false);
+        assert_eq!(
+            report.primary_cause_code.as_deref(),
+            Some("wininet_stale_proxy")
+        );
+        assert!(report.can_auto_repair);
+        assert_eq!(report.overall, "degraded");
+    }
+
+    #[test]
+    fn diagnosis_degraded_without_cause_is_probe_nonclaim() {
+        let health = diag_health("protected_degraded", vec![], vec![]);
+        let report = build_network_diagnosis(&health, "tun", None, false);
+        assert_eq!(
+            report.primary_cause_code.as_deref(),
+            Some("ipv6_quic_unverified")
+        );
+        assert!(!report.can_auto_repair);
+        assert_eq!(report.overall, "degraded");
+    }
+
+    #[test]
+    fn diagnosis_browsers_mode_is_honest_limited() {
+        let mut health = diag_health("partial", vec![], vec![]);
+        health.mode = "system-proxy".into();
+        let report = build_network_diagnosis(&health, "system-proxy", None, false);
+        assert_eq!(
+            report.primary_cause_code.as_deref(),
+            Some("browsers_fallback")
+        );
+        assert_eq!(report.overall, "limited");
+    }
+
+    #[test]
+    fn diagnosis_subscription_error_is_reported_without_breaking_ok() {
+        let health = diag_health("protected", vec![], vec![]);
+        let report = build_network_diagnosis(
+            &health,
+            "tun",
+            Some("fetch https://user:secret@sub.example.com/abc failed: timeout"),
+            false,
+        );
+        assert_eq!(
+            report.primary_cause_code.as_deref(),
+            Some("subscription_fetch_failed")
+        );
+        assert_eq!(report.overall, "ok");
+        // Subscription URL must never leak into the report.
+        assert!(!report.copy_text.contains("sub.example.com"));
+        let sub_check = report
+            .checks
+            .iter()
+            .find(|c| c.id == "subscription_refresh")
+            .unwrap();
+        assert!(!sub_check.technical_detail_redacted.contains("secret"));
+    }
+
+    #[test]
+    fn diagnosis_copy_text_has_no_secrets() {
+        let health = diag_health(
+            "failed",
+            vec!["uuid=123e4567-e89b-12d3-a456-426614174000 endpoint=203.0.113.7 vless://secret@host"],
+            vec![],
+        );
+        let report = build_network_diagnosis(&health, "tun", None, false);
+        assert!(!report.copy_text.contains("123e4567"));
+        assert!(!report.copy_text.contains("203.0.113.7"));
+        assert!(!report.copy_text.contains("vless://secret"));
+        assert!(!report.support_summary.contains("203.0.113.7"));
+    }
+
+    #[test]
+    fn diagnosis_all_ok_when_protected_and_clean() {
+        let health = diag_health("protected", vec![], vec![]);
+        let report = build_network_diagnosis(&health, "tun", None, false);
+        assert_eq!(report.primary_cause_code.as_deref(), Some("all_ok"));
+        assert_eq!(report.overall, "ok");
+        assert!(!report.can_auto_repair);
+    }
+
     fn sample_request(proxy_mode: &str) -> ConnectRequest {
         ConnectRequest {
             server_address: "example.com".into(),
@@ -3696,6 +3854,13 @@ mod tests {
             ),
             error: None,
             timings_ms: vec![("connected".into(), 1000)],
+            powershell_fallback_count: 0,
+            singbox_check_ms: Some(10),
+            xray_spawn_ms: Some(20),
+            adapter_probe_backend: Some("native_iphelper_evented".into()),
+            route_probe_backend: Some("native_getbestroute2".into()),
+            native_probe_ms: vec![("adapter_snapshot".into(), 30)],
+            fallback_probe_ms: Vec::new(),
         };
 
         attach_tunnel_status_to_health(&mut report, Some(&status));
@@ -7369,12 +7534,19 @@ fn tunnel_service_health() -> Result<String, String> {
 fn tunnel_service_diagnostics() -> Result<String, String> {
     match ipc::send_tunnel_command(&tunnel_service::TunnelCommand::GetDiagnostics)? {
         tunnel_service::TunnelResponse::Diagnostics(diagnostics) => Ok(format!(
-            "service_version={}\nstate={:?}\nphase={:?}\nerror={:?}\ntimings_ms={:?}\n\n{}",
+            "service_version={}\nstate={:?}\nphase={:?}\nerror={:?}\ntimings_ms={:?}\npowershell_fallback_count={}\nsingbox_check_ms={:?}\nxray_spawn_ms={:?}\nadapter_probe_backend={:?}\nroute_probe_backend={:?}\nnative_probe_ms={:?}\nfallback_probe_ms={:?}\n\n{}",
             diagnostics.status.service_version,
             diagnostics.status.state,
             diagnostics.status.phase,
             diagnostics.status.error,
             diagnostics.status.timings_ms,
+            diagnostics.status.powershell_fallback_count,
+            diagnostics.status.singbox_check_ms,
+            diagnostics.status.xray_spawn_ms,
+            diagnostics.status.adapter_probe_backend,
+            diagnostics.status.route_probe_backend,
+            diagnostics.status.native_probe_ms,
+            diagnostics.status.fallback_probe_ms,
             diagnostics.log_tail.join("\n")
         )),
         tunnel_service::TunnelResponse::Status(_) => {
@@ -8235,6 +8407,392 @@ fn redact_support_line(line: &str) -> String {
         .map(redact_support_token)
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  v6 network diagnosis: maps the real health report onto a support-grade,
+//  human-readable report. User text stays free of Wintun/WinINet/NRPT
+//  jargon; exact (redacted) technical lines are preserved for support.
+// ═══════════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Serialize)]
+pub struct DiagnosticCheck {
+    pub id: String,
+    pub label: String,
+    pub status: String,
+    pub user_text: String,
+    pub technical_detail_redacted: String,
+    pub source: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NetworkDiagnosisReport {
+    pub overall: String,
+    pub user_title: String,
+    pub user_summary: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_cause_code: Option<String>,
+    pub user_actions: Vec<String>,
+    pub support_summary: String,
+    pub checks: Vec<DiagnosticCheck>,
+    pub copy_text: String,
+    pub can_auto_repair: bool,
+    pub bundle_available: bool,
+}
+
+fn diagnosis_haystack(health: &ConnectionHealthReport) -> String {
+    let mut hay = String::new();
+    for line in health
+        .service_fatal_checks
+        .iter()
+        .chain(health.service_degraded_checks.iter())
+        .chain(health.service_warning_checks.iter())
+    {
+        hay.push_str(&line.to_ascii_lowercase());
+        hay.push('\n');
+    }
+    for check in &health.checks {
+        if check.severity == "error" || check.severity == "warning" {
+            hay.push_str(&check.code.to_ascii_lowercase());
+            hay.push(' ');
+            hay.push_str(&check.detail.to_ascii_lowercase());
+            hay.push('\n');
+        }
+    }
+    hay
+}
+
+/// Priority-ordered classification of the primary cause. Returns
+/// (cause_code, can_auto_repair).
+fn classify_diagnosis_cause(
+    health: &ConnectionHealthReport,
+    proxy_mode: &str,
+    last_subscription_error: Option<&str>,
+) -> (String, bool) {
+    let hay = diagnosis_haystack(health);
+    let verdict = health.verdict.as_str();
+    let failed_check = |code: &str| {
+        health
+            .checks
+            .iter()
+            .any(|c| c.code == code && (c.severity == "error" || c.severity == "warning"))
+    };
+
+    // 1. Stale Wintun PnP ghost (docs/solved-errors.md 2026-07-04).
+    if hay.contains("cannot create a file when that file already exists")
+        || hay.contains("open existing adapter: element not found")
+        || hay.contains("cm_prob_phantom")
+        || hay.contains("swd\\wintun")
+    {
+        return ("wintun_ghost_adapter".into(), true);
+    }
+    // 2. Adapter missing / IPv4 readiness.
+    if hay.contains("adapter is missing")
+        || hay.contains("ipv4 readiness failed")
+        || hay.contains("adapter did not become ready")
+        || (proxy_mode == "tun" && failed_check("tun_adapter"))
+    {
+        return ("adapter_missing".into(), true);
+    }
+    // 3. Service-owned core died (fake-green class).
+    if hay.contains("sing-box exited")
+        || hay.contains("sing-box process is not running")
+        || hay.contains("process is not running")
+        || hay.contains("core exited")
+    {
+        return ("core_process_dead".into(), true);
+    }
+    // 4. Tunnel service unreachable/dead.
+    if health
+        .checks
+        .iter()
+        .any(|c| c.code == "tunnel_service" && c.severity == "error")
+        || hay.contains("state=failed")
+        || hay.contains("state=disconnected")
+        || hay.contains("did not respond")
+        || hay.contains("service is not installed")
+    {
+        if verdict == "failed" || verdict == "cleanup_pending" || proxy_mode == "tun" {
+            return ("service_unavailable".into(), false);
+        }
+    }
+    // 5. Stale WinINet proxy left behind.
+    if failed_check("wininet_proxy")
+        && (hay.contains("not expected loopback") || hay.contains("proxyenable=1"))
+    {
+        return ("wininet_stale_proxy".into(), true);
+    }
+    // 6. Browser-compatibility proxy listener not ready.
+    if failed_check("http_listener") || hay.contains("listener") && hay.contains("not accepting") {
+        return ("compat_proxy_unready".into(), true);
+    }
+    // 7. Connection is otherwise fine in a non-TUN mode: honest limited state.
+    if proxy_mode != "tun" && verdict != "failed" && verdict != "cleanup_pending" {
+        if let Some(_err) = last_subscription_error {
+            return ("subscription_fetch_failed".into(), false);
+        }
+        return ("browsers_fallback".into(), false);
+    }
+    // 8. Degraded protected with no hard cause: extra probes not confirmed.
+    if verdict == "protected_degraded" {
+        return ("ipv6_quic_unverified".into(), false);
+    }
+    if verdict == "repairing" {
+        return ("repair_in_progress".into(), false);
+    }
+    if verdict == "protected" {
+        if let Some(_err) = last_subscription_error {
+            return ("subscription_fetch_failed".into(), false);
+        }
+        return ("all_ok".into(), false);
+    }
+    if verdict == "failed" || verdict == "cleanup_pending" {
+        return ("unknown_failure".into(), true);
+    }
+    ("unknown_degraded".into(), false)
+}
+
+fn diagnosis_user_text(code: &str) -> (&'static str, &'static str, &'static [&'static str]) {
+    match code {
+        "all_ok" => (
+            "Все проверки пройдены",
+            "VPN работает, проблем не найдено.",
+            &[],
+        ),
+        "wintun_ghost_adapter" => (
+            "Windows сохранила сломанный VPN-адаптер",
+            "Старый сетевой адаптер завис в системе и мешает подключению. DoodleRay может пересоздать его автоматически.",
+            &["Нажмите «Починить автоматически»", "Затем подключитесь заново"],
+        ),
+        "adapter_missing" => (
+            "Сетевой адаптер VPN не поднялся",
+            "VPN-адаптер не успел подняться или был удалён Windows. Обычно это чинится автоматически.",
+            &["Нажмите «Починить автоматически»", "Затем подключитесь заново"],
+        ),
+        "core_process_dead" => (
+            "Движок VPN остановился",
+            "Процесс, который шифрует трафик, неожиданно завершился. Переподключение поднимет его заново.",
+            &["Переподключитесь", "Если повторяется — сохраните отчет для поддержки"],
+        ),
+        "service_unavailable" => (
+            "Фоновая служба VPN не отвечает",
+            "Служба, которая управляет защитой всего компьютера, недоступна. Может помочь перезагрузка компьютера или переустановка DoodleRay.",
+            &["Перезагрузите компьютер", "Если не помогло — переустановите DoodleRay", "Сохраните отчет для поддержки"],
+        ),
+        "wininet_stale_proxy" => (
+            "Остались старые настройки прокси",
+            "Windows-прокси остался от прошлого запуска и будет очищен автоматически.",
+            &["Нажмите «Починить автоматически»"],
+        ),
+        "compat_proxy_unready" => (
+            "Совместимость браузеров временно не готова",
+            "VPN работает, но локальный прокси для браузеров ещё не поднялся. Обычно чинится автоматически.",
+            &["Нажмите «Починить автоматически»", "Или просто подождите минуту"],
+        ),
+        "subscription_fetch_failed" => (
+            "Подписка не обновилась",
+            "Нет доступа к серверу подписки. Соединение при этом работает.",
+            &["Проверьте, что подписка не истекла", "Повторите обновление позже"],
+        ),
+        "browsers_fallback" => (
+            "Работает режим браузеров",
+            "VPN работает в режиме браузеров, но весь компьютер пока не защищён.",
+            &["Переключитесь на «Весь компьютер», когда будет удобно"],
+        ),
+        "ipv6_quic_unverified" => (
+            "Подключение активно, часть проверок не подтверждена",
+            "VPN работает, но некоторые дополнительные проверки (например IPv6/QUIC) не подтверждены. На обычную работу это чаще всего не влияет.",
+            &["Можно продолжать пользоваться", "Если что-то не работает — сохраните отчет"],
+        ),
+        "repair_in_progress" => (
+            "Идёт автоматический ремонт",
+            "DoodleRay уже чинит подключение. Подождите несколько секунд.",
+            &["Подождите и проверьте ещё раз"],
+        ),
+        "unknown_failure" => (
+            "Подключение не работает",
+            "Точную причину определить не удалось. Попробуйте автоматический ремонт и переподключение.",
+            &["Нажмите «Починить автоматически»", "Переподключитесь", "Сохраните отчет для поддержки"],
+        ),
+        _ => (
+            "Подключение работает не полностью",
+            "Часть проверок не прошла. Подробности — в блоке для поддержки.",
+            &["Сохраните отчет для поддержки"],
+        ),
+    }
+}
+
+fn diagnosis_check_source(code: &str) -> &'static str {
+    if code.starts_with("tunnel_service") || code == "platform_tun_health" {
+        "service"
+    } else if code.starts_with("wininet") || code.contains("route") || code.contains("dns") {
+        "windows"
+    } else if code.contains("listener") || code.contains("canary") || code.contains("probe") {
+        "probe"
+    } else {
+        "app"
+    }
+}
+
+fn diagnosis_check_user_text(code: &str, severity: &str) -> String {
+    if severity == "ok" || severity == "info" {
+        return "В порядке".into();
+    }
+    match code {
+        "tunnel_service" | "tunnel_service_fatal_checks" => {
+            "Фоновая служба сообщила о проблеме".into()
+        }
+        "tun_adapter" | "tun_adapter_snapshot" => "Сетевой адаптер VPN не в порядке".into(),
+        "tun_routes" | "tun_routes_snapshot" => "Маршруты трафика не подтверждены".into(),
+        "tun_dns" => "Защита DNS не подтверждена".into(),
+        "tun_https_canary" => "Проверка выхода в интернет не прошла".into(),
+        "http_listener" => "Прокси для браузеров не отвечает".into(),
+        "wininet_proxy" => "Настройки системного прокси не совпадают".into(),
+        _ => "Проверка не прошла".into(),
+    }
+}
+
+fn windows_build_short() -> String {
+    let raw = command_stdout("cmd", &["/c", "ver"]);
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        "Windows".into()
+    } else {
+        trimmed.trim_start_matches("Microsoft ").to_string()
+    }
+}
+
+fn build_network_diagnosis(
+    health: &ConnectionHealthReport,
+    proxy_mode: &str,
+    last_subscription_error: Option<&str>,
+    repair_attempted: bool,
+) -> NetworkDiagnosisReport {
+    let (cause, can_auto_repair) =
+        classify_diagnosis_cause(health, proxy_mode, last_subscription_error);
+    let (title, summary, actions) = diagnosis_user_text(&cause);
+
+    let overall = match health.verdict.as_str() {
+        "protected" if cause == "all_ok" || cause == "subscription_fetch_failed" => "ok",
+        "protected" | "protected_degraded" => "degraded",
+        "repairing" => "repairing",
+        "failed" | "cleanup_pending" => "failed",
+        _ if proxy_mode != "tun" => "limited",
+        _ => "degraded",
+    }
+    .to_string();
+
+    let mut checks: Vec<DiagnosticCheck> = health
+        .checks
+        .iter()
+        .map(|c| DiagnosticCheck {
+            id: c.code.clone(),
+            label: c.title.clone(),
+            status: match c.severity.as_str() {
+                "ok" => "ok".into(),
+                "info" => "info".into(),
+                "warning" => "warning".into(),
+                _ => "error".into(),
+            },
+            user_text: diagnosis_check_user_text(&c.code, &c.severity),
+            technical_detail_redacted: redact_support_line(&c.detail),
+            source: diagnosis_check_source(&c.code).into(),
+        })
+        .collect();
+    for fatal in &health.service_fatal_checks {
+        checks.push(DiagnosticCheck {
+            id: "service_fatal".into(),
+            label: "Tunnel Service fatal".into(),
+            status: "error".into(),
+            user_text: "Фоновая служба сообщила о серьёзной ошибке".into(),
+            technical_detail_redacted: redact_support_line(fatal),
+            source: "service".into(),
+        });
+    }
+    if let Some(err) = last_subscription_error {
+        checks.push(DiagnosticCheck {
+            id: "subscription_refresh".into(),
+            label: "Subscription refresh".into(),
+            status: "warning".into(),
+            user_text: "Подписка не обновилась".into(),
+            technical_detail_redacted: redact_support_line(err),
+            source: "app".into(),
+        });
+    }
+
+    let failed_ids: Vec<&str> = checks
+        .iter()
+        .filter(|c| c.status == "error" || c.status == "warning")
+        .map(|c| c.id.as_str())
+        .collect();
+
+    let support_summary = redact_support_text(&format!(
+        "verdict={} mode={} engine={} state={} generation={} fatal=[{}] degraded=[{}]",
+        health.verdict,
+        health.mode,
+        health.engine_kind.as_deref().unwrap_or("-"),
+        health.service_effective_state.as_deref().unwrap_or("-"),
+        health
+            .service_generation
+            .map(|g| g.to_string())
+            .unwrap_or_else(|| "-".into()),
+        health.service_fatal_checks.join(" | "),
+        health.service_degraded_checks.join(" | "),
+    ));
+
+    let copy_text = format!(
+        "DoodleRay v{} | {}\nmode={} verdict={} gen={} cause={} repairable={} repair_tried={}\nfailed_checks: {}\n{}",
+        env!("CARGO_PKG_VERSION"),
+        windows_build_short(),
+        proxy_mode,
+        health.verdict,
+        health
+            .service_generation
+            .map(|g| g.to_string())
+            .unwrap_or_else(|| "-".into()),
+        cause,
+        can_auto_repair,
+        repair_attempted,
+        if failed_ids.is_empty() { "none".into() } else { failed_ids.join(", ") },
+        support_summary.chars().take(600).collect::<String>(),
+    );
+
+    NetworkDiagnosisReport {
+        overall,
+        user_title: title.into(),
+        user_summary: summary.into(),
+        primary_cause_code: Some(cause),
+        user_actions: actions.iter().map(|s| s.to_string()).collect(),
+        support_summary,
+        checks,
+        copy_text,
+        can_auto_repair,
+        bundle_available: true,
+    }
+}
+
+#[tauri::command]
+fn run_network_diagnosis(
+    proxy_mode: Option<String>,
+    system_proxy_mode: Option<String>,
+    socks_port: u16,
+    http_port: u16,
+    last_subscription_error: Option<String>,
+    repair_attempted: Option<bool>,
+) -> NetworkDiagnosisReport {
+    let mode = proxy_mode.unwrap_or_else(|| "tun".into());
+    let health = build_full_connection_health(
+        &mode,
+        system_proxy_mode.as_deref().unwrap_or("set"),
+        socks_port,
+        http_port,
+    );
+    build_network_diagnosis(
+        &health,
+        &mode,
+        last_subscription_error.as_deref(),
+        repair_attempted.unwrap_or(false),
+    )
 }
 
 fn redact_support_token(token: &str) -> String {
@@ -9328,6 +9886,33 @@ fn qa_control_dispatch(app: &tauri::AppHandle, path: &str) -> (&'static str, Str
                 serde_json::json!({ "ok": false, "error": error }).to_string(),
             ),
         },
+        "/repair-runtime" => {
+            let reason = qa_query_param(query, "reason").unwrap_or_else(|| "qa-control".into());
+            match ipc::send_tunnel_command(&tunnel_service::TunnelCommand::RepairRuntime(
+                tunnel_service::RepairRuntimeRequest {
+                    op_id: None,
+                    reason,
+                },
+            )) {
+                Ok(tunnel_service::TunnelResponse::Status(status)) => (
+                    "200 OK",
+                    serde_json::json!({ "ok": true, "service": status }).to_string(),
+                ),
+                Ok(tunnel_service::TunnelResponse::Error { message }) => (
+                    "500 Internal Server Error",
+                    serde_json::json!({ "ok": false, "error": message }).to_string(),
+                ),
+                Ok(tunnel_service::TunnelResponse::Diagnostics(_)) => (
+                    "500 Internal Server Error",
+                    serde_json::json!({ "ok": false, "error": "unexpected diagnostics response" })
+                        .to_string(),
+                ),
+                Err(error) => (
+                    "500 Internal Server Error",
+                    serde_json::json!({ "ok": false, "error": error }).to_string(),
+                ),
+            }
+        }
         "/connect"
         | "/disconnect"
         | "/switch-mode"
@@ -9430,6 +10015,7 @@ pub fn run() {
             repair_active_tunnel_compatibility_proxy,
             repair_active_tunnel_runtime,
             export_support_bundle,
+            run_network_diagnosis,
             list_running_apps,
             list_dir_exes,
             detect_stale_doodleray_proxy,

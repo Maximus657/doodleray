@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Activity, ChevronUp, Trash2, LifeBuoy, AlertCircle, Info, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react';
+import { Activity, ChevronUp, Trash2, Stethoscope, AlertCircle, Info, CheckCircle2, AlertTriangle } from 'lucide-react';
 import type { LogEntry } from '../../stores/app-store';
 
 type T = (key: never) => string;
@@ -7,7 +7,7 @@ type T = (key: never) => string;
 interface Props {
   logs: LogEntry[];
   onClear: () => void;
-  onExportSupportBundle: () => void | Promise<void>;
+  onOpenDiagnostics: () => void;
   t: T;
 }
 
@@ -24,20 +24,9 @@ const LEVEL_META: Record<LogEntry['level'], { color: string; icon: typeof Info }
  * The expanded log view opens as an overlay popover ABOVE the bar (absolute,
  * out of flow) so expanding never shifts or breaks the dashboard layout.
  */
-export default function DiagnosticsDrawer({ logs, onClear, onExportSupportBundle, t }: Props) {
+export default function DiagnosticsDrawer({ logs, onClear, onOpenDiagnostics, t }: Props) {
   const [open, setOpen] = useState(false);
-  const [exporting, setExporting] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
-
-  const handleExport = async () => {
-    if (exporting) return;
-    setExporting(true);
-    try {
-      await onExportSupportBundle();
-    } finally {
-      setExporting(false);
-    }
-  };
 
   // Service/diagnostic chatter stays out of the user-facing list; it is still
   // kept in the store for QA snapshots and support bundles.
@@ -118,15 +107,12 @@ export default function DiagnosticsDrawer({ logs, onClear, onExportSupportBundle
 
         <button
           type="button"
-          onClick={handleExport}
-          disabled={exporting}
-          title={t('supportBundle' as never)}
-          className="v6-hover-bright flex shrink-0 items-center gap-1.5 rounded-xl border border-white/[0.1] bg-white/[0.06] px-2.5 py-1.5 text-[11px] font-medium text-white v6-focus disabled:opacity-60"
+          onClick={onOpenDiagnostics}
+          title={t('v6Diag' as never)}
+          className="v6-hover-bright flex shrink-0 items-center gap-1.5 rounded-xl border border-white/[0.1] bg-white/[0.06] px-2.5 py-1.5 text-[11px] font-medium text-white v6-focus"
         >
-          {exporting
-            ? <Loader2 className="h-3.5 w-3.5 v6-orb-spin" strokeWidth={2.2} />
-            : <LifeBuoy className="h-3.5 w-3.5" strokeWidth={2.2} />}
-          <span className="hidden lg:inline">{t('supportBundle' as never)}</span>
+          <Stethoscope className="h-3.5 w-3.5" strokeWidth={2.2} />
+          <span className="hidden lg:inline">{t('v6Diag' as never)}</span>
         </button>
       </div>
     </div>

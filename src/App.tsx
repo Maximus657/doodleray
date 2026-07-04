@@ -72,17 +72,17 @@ function ToastContainer() {
   const removeToast = useToastStore(s => s.removeToast);
 
   if (toasts.length === 0) return null;
+  const accent = (type: string) =>
+    type === 'success' ? '#3ddc84' : type === 'error' ? '#ff6b5a' : type === 'warning' ? '#ffb02e' : '#F97F16';
   return (
     <div className="flex flex-col gap-2 pointer-events-none">
       {toasts.map((t) => (
-        <div key={t.id}
+        <div
+          key={t.id}
           onClick={() => removeToast(t.id)}
-          className={`pointer-events-auto px-4 py-2.5 rounded-xl border-[3px] border-black shadow-[4px_4px_0_#000] font-black text-xs uppercase tracking-tight cursor-pointer
-            animate-slide-up transition-all hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000]
-            ${t.type === 'success' ? 'bg-emerald-400 text-black' :
-              t.type === 'error' ? 'bg-danger text-white' :
-              t.type === 'warning' ? 'bg-amber-400 text-black' :
-              'bg-white text-black'}`}>
+          className="v6-modal v6-fadein pointer-events-auto cursor-pointer rounded-2xl px-4 py-3 text-[12.5px] font-medium leading-snug text-white/90"
+          style={{ borderLeft: `3px solid ${accent(t.type)}`, wordBreak: 'break-word' }}
+        >
           {t.message}
         </div>
       ))}

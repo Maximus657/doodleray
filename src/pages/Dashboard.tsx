@@ -31,6 +31,7 @@ import TrafficStats from '../components/v6/TrafficStats';
 import SplitRoutingToggle from '../components/v6/SplitRoutingToggle';
 import SplitRoutingModal from '../components/v6/SplitRoutingModal';
 import DiagnosticsDrawer from '../components/v6/DiagnosticsDrawer';
+import DiagnosticPanel from '../components/v6/DiagnosticPanel';
 import QuickAddPanel from '../components/v6/QuickAddPanel';
 import { deriveOrbState, ORB_LABEL_KEY } from '../components/v6/status';
 
@@ -167,6 +168,7 @@ export default function Dashboard() {
   const [quickImporting, setQuickImporting] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showSplitModal, setShowSplitModal] = useState(false);
+  const [showDiagModal, setShowDiagModal] = useState(false);
   const [connectionStep, setConnectionStep] = useState<string | null>(null);
 
   const refreshTunnelServiceHealth = useCallback(async () => {
@@ -1350,6 +1352,8 @@ export default function Dashboard() {
               serverCountryCode={activeServer?.countryCode ?? null}
               disabled={status === 'disconnected' && !canConnect}
               onClick={handleConnect}
+              onDiagnose={() => setShowDiagModal(true)}
+              diagnoseLabel={t('v6DiagIssueCta' as never)}
             />
 
             <div className="flex shrink-0 gap-3.5">
@@ -1367,11 +1371,19 @@ export default function Dashboard() {
             <DiagnosticsDrawer
               logs={logs}
               onClear={clearLogs}
-              onExportSupportBundle={handleExportSupportBundle}
+              onOpenDiagnostics={() => setShowDiagModal(true)}
               t={t}
             />
           </div>
         </div>
+      )}
+
+      {showDiagModal && (
+        <DiagnosticPanel
+          onClose={() => setShowDiagModal(false)}
+          onExportSupportBundle={handleExportSupportBundle}
+          t={t}
+        />
       )}
 
       {showSplitModal && (

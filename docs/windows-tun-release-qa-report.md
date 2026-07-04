@@ -883,3 +883,42 @@ Remaining friend-LAN caveats:
 
 - This is a dirty Windows 10 real-user test, not a clean Win10/Win11 matrix.
   Clean OS evidence and signed CI evidence are still separate release blockers.
+
+## 2026-07-05 - v6 Store Redesign Transport Sync
+
+Branch: `codex/v6-store-redesign`.
+
+Purpose: keep the new v6 design / Microsoft Store work while importing the
+latest 5.9 protected-mode runtime improvements. No production release, tag, or
+push was performed.
+
+Synced from the 5.9 transport branch:
+
+- Native Windows IP Helper readiness module (`windows_net.rs`) with adapter,
+  IPv4 interface, route-canary, and event-counter probes.
+- Service hot path that avoids blocking TUN creation on early xray readiness,
+  records xray spawn / sing-box check timings, caches validated sing-box
+  configs by hash, and runs IPv6 / QUIC policy warnings asynchronously.
+- Safe warm reassert path for identical runtime requests, plus structured
+  probe backend/fallback timings in `TunnelStatus` and support diagnostics.
+- QA control `/repair-runtime` endpoint and `Invoke-DoodleRayConnectPerfQa.ps1`
+  for local / LAN / stand connect-performance measurement.
+- Local `.gitignore` guard for dirty-host evidence folders and downloaded
+  Sysinternals tools so source commits do not absorb QA artifacts.
+
+Local verification on the v6 worktree:
+
+- `cargo fmt --check` passed.
+- `cargo check --bin DoodleRayService` passed.
+- `cargo check --bin DoodleRay` passed.
+- `cargo test --lib` passed: 65 passed, 3 ignored.
+- `npm run build` passed; Vite reported chunk/dynamic-import warnings only.
+- `git diff --check` passed.
+- `Invoke-DoodleRayConnectPerfQa.ps1` parsed successfully.
+
+Not yet claimed:
+
+- No signed CI / Store package was produced in this sync step.
+- No fresh Win10 / Win11 clean-VM run was performed in this sync step.
+- No live protected-mode perf run was performed after the v6 sync because the
+  friend LAN host was released.

@@ -13,6 +13,9 @@ interface Props {
   serverCountryCode?: string | null;
   disabled?: boolean;
   onClick: () => void;
+  /** shown for degraded/limited/failed states: opens the diagnosis panel */
+  onDiagnose?: () => void;
+  diagnoseLabel?: string;
 }
 
 /**
@@ -30,6 +33,8 @@ export default function ConnectOrb({
   serverCountryCode,
   disabled,
   onClick,
+  onDiagnose,
+  diagnoseLabel,
 }: Props) {
   const off = state === 'idle';
   const busy = state === 'connecting' || state === 'disconnecting';
@@ -112,6 +117,15 @@ export default function ConnectOrb({
       </div>
 
       <div className="flex min-h-[40px] flex-col items-center justify-center gap-2">
+        {onDiagnose && diagnoseLabel && (state === 'degraded' || state === 'limited' || state === 'failed') && (
+          <button
+            type="button"
+            onClick={onDiagnose}
+            className="v6-fadein v6-hover-bright rounded-full border border-white/[0.14] bg-white/[0.06] px-3 py-1 text-[11px] font-medium text-white/80 v6-focus"
+          >
+            {diagnoseLabel}
+          </button>
+        )}
         {pill && (
           <div
             className="v6-fadein flex items-center gap-[9px] rounded-[30px] border px-[17px] py-2"
