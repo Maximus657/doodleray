@@ -10,17 +10,7 @@ export type OrbState =
   | 'limited'
   | 'failed';
 
-export const ORB_COLORS: Record<OrbState, string> = {
-  idle: '#6b7488',
-  connecting: '#7c6cff',
-  disconnecting: '#7c6cff',
-  protected: '#34d399',
-  degraded: '#fbbf24',
-  limited: '#f59e0b',
-  failed: '#f87171',
-};
-
-/** i18n key for the short status label shown under the orb / in the titlebar. */
+/** i18n key for the short status label shown in the orb status pill. */
 export const ORB_LABEL_KEY: Record<OrbState, string> = {
   idle: 'notConnected',
   connecting: 'connecting',

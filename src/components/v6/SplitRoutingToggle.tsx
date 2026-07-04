@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Split, ChevronRight, AlertTriangle } from 'lucide-react';
+import { ShieldCheck, ChevronRight, AlertTriangle } from 'lucide-react';
 import { getActiveRoutingRules } from '../../lib/connect-helpers';
 
 type T = (key: never) => string;
 
 /**
- * Compact split-routing summary. Shows how many Workshop rules are active and
- * warns honestly that split routing only applies in protected (TUN) mode.
+ * Design "Local & popular sites direct" card, wired honestly: split routing is
+ * driven by real Workshop rules (no fake switch — the card opens Workshop and
+ * shows the live rule count). Warns when rules exist but the mode is not TUN.
  */
 export default function SplitRoutingToggle({ protectedMode, t }: { protectedMode: boolean; t: T }) {
   const navigate = useNavigate();
@@ -28,24 +29,27 @@ export default function SplitRoutingToggle({ protectedMode, t }: { protectedMode
     <button
       type="button"
       onClick={() => navigate('/workshop')}
-      className="v6-hover-lift v6-glass flex w-full items-center gap-2.5 rounded-xl p-3 text-left v6-focus"
+      className="v6-hover-bright flex min-w-0 flex-1 items-center gap-[13px] rounded-[20px] border border-white/[0.09] bg-white/[0.05] px-[18px] py-3.5 text-left v6-focus"
     >
-      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[#7c6cff1f] text-[#a99bff]">
-        <Split className="h-[18px] w-[18px]" strokeWidth={2.1} />
+      <span className="v6-tile-accent flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-xl">
+        <ShieldCheck className="h-[19px] w-[19px]" strokeWidth={1.9} />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[12.5px] font-semibold text-v6-text">{t('workshop' as never)}</span>
-        <span className="flex items-center gap-1 truncate text-[10.5px] text-v6-muted">
+        <span className="block truncate text-[14px] font-medium text-white">{t('v6SplitTitle' as never)}</span>
+        <span className="mt-0.5 flex items-center gap-1 truncate text-[11.5px] text-white/45">
           {warn ? (
-            <><AlertTriangle className="h-3 w-3 shrink-0 text-[#fbbf24]" strokeWidth={2.2} /> {t('splitTunnelingNeedsTun' as never)}</>
+            <>
+              <AlertTriangle className="h-3 w-3 shrink-0 text-[#ffb02e]" strokeWidth={2.2} />
+              {t('splitTunnelingNeedsTun' as never)}
+            </>
           ) : active ? (
-            <>{count} {t('v6ActiveRules' as never)}</>
+            `${count} ${t('v6ActiveRules' as never)}`
           ) : (
-            t('v6SplitRoutingHint' as never)
+            t('v6SplitSub' as never)
           )}
         </span>
       </span>
-      <ChevronRight className="h-4 w-4 shrink-0 text-v6-muted" strokeWidth={2.2} />
+      <ChevronRight className="h-4 w-4 shrink-0 text-white/40" strokeWidth={2.2} />
     </button>
   );
 }

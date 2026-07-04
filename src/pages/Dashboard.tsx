@@ -21,12 +21,12 @@ import { getSubscriptionById, getSubscriptionTrafficStatus } from '../lib/subscr
 import { pingServersWithLimit } from '../lib/ping-runner';
 import { describeSubscriptionSource } from '../lib/redaction';
 
-// v6 dark-glass UI
+// v6 DoodleVPN design UI
 import type { ProductMode } from '../stores/app-store';
+import { countryFlag } from '../lib/utils';
 import ConnectOrb from '../components/v6/ConnectOrb';
 import ModeSelector from '../components/v6/ModeCard';
 import LocationList from '../components/v6/LocationList';
-import SubscriptionMeter from '../components/v6/SubscriptionMeter';
 import TrafficStats from '../components/v6/TrafficStats';
 import SplitRoutingToggle from '../components/v6/SplitRoutingToggle';
 import DiagnosticsDrawer from '../components/v6/DiagnosticsDrawer';
@@ -151,12 +151,12 @@ export default function Dashboard() {
   const {
     status, setStatus, activeServer, servers, setActiveServer,
     proxyMode, setProxyMode, systemProxyMode, setSystemProxyMode, productMode, currentDownload, currentUpload,
-    totalDown, totalUp, addTraffic, resetTraffic, addSpeedPoint, setCurrentSpeed,
+    addTraffic, resetTraffic, addSpeedPoint, setCurrentSpeed,
     logs, addLog, clearLogs, socksPort, httpPort, subscriptions,
     updateSubscription, autoSelectFastest,
     subAutoUpdateMinutes, connectedAt, setConnectedAt,
     addSubscription, addServer,
-    updateServerPings, setSocksPort, setHttpPort,
+    updateServerPings, setSocksPort, setHttpPort, showStats,
   } = useAppStore();
   const { t } = useTranslation();
 
@@ -262,7 +262,6 @@ export default function Dashboard() {
   }, [addLog, setConnectedAt, setConnectionStep, setHttpPort, setSocksPort, setStatus, t]);
 
   const connectionOpRef = useRef(0);
-  const [refreshingSubId, setRefreshingSubId] = useState<string | null>(null);
   const [pingingServerIds, setPingingServerIds] = useState<Set<string>>(() => new Set());
   const serverSelectionIndex = useMemo(() => buildServerSelectionIndex(servers), [servers]);
   const autoPingStartedRef = useRef<Set<string>>(new Set());
@@ -1154,25 +1153,6 @@ export default function Dashboard() {
     try { const text = await navigator.clipboard.readText(); setQuickInput(text); } catch { /* */ }
   }, []);
 
-  const handleUpdateSubscription = async (sub: any) => {
-    setRefreshingSubId(sub.id);
-    try {
-      addLog('info', `Updating subscription: ${sub.name}...`);
-      const updated = await refreshSubscription(sub);
-      updateSubscription(sub.id, updated);
-      addLog('success', `Updated ${sub.name}: ${updated.servers.length} servers`);
-    } catch (err: any) {
-      const message = err.message || String(err);
-      addLog('error', `Failed to update ${sub.name}: ${message}`);
-      reportConnectionError({
-        eventType: subscriptionErrorEventType(message),
-        errorMessage: message,
-        details: { action: 'manual_update_subscription', subscription: sub.name },
-      });
-    }
-    finally { setRefreshingSubId(null); }
-  };
-
   const canConnect = !!activeServer || servers.length > 0;
   const hasDashboardContent = servers.length > 0 || status !== 'disconnected';
   const trimmedQuickInput = quickInput.trim();
@@ -1191,20 +1171,26 @@ export default function Dashboard() {
   const connectionStepLabel = status === 'connecting' || status === 'disconnecting' ? connectionStep : null;
 
   // ═══════════════════════════════════════════════════
-  //  Render (v6 dark-glass)
+  //  Render (DoodleVPN design)
   // ═══════════════════════════════════════════════════
   const busy = status === 'connecting' || status === 'disconnecting';
+  const connected = status === 'connected';
   const orbState = deriveOrbState(status, productMode, healthVerdict);
-  const orbPrimary = status === 'connected'
-    ? t('disconnect')
-    : busy
-      ? (status === 'connecting' ? t('cancel') : t('disconnecting'))
-      : t('connect');
+  const fmtTimer = (s: number) => {
+    const h = Math.floor(s / 3600);
+    const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+    const sec = String(s % 60).padStart(2, '0');
+    return h > 0 ? `${h}:${m}:${sec}` : `${m}:${sec}`;
+  };
+  const orbPrimary = connected ? t('disconnect') : busy ? '···' : t('connect');
   const orbSub = busy
-    ? (connectionStepLabel || t('connectionStarting'))
-    : status === 'connected'
-      ? t(ORB_LABEL_KEY[orbState] as never)
-      : null;
+    ? (connectionStepLabel || t('connecting'))
+    : connected
+      ? fmtTimer(connectTime)
+      : t('v6TapToConnect' as never);
+  const orbStatusLabel = orbState === 'protected'
+    ? t('v6Encrypted' as never)
+    : t(ORB_LABEL_KEY[orbState] as never);
   const activeSub = getSubscriptionById(subscriptions, activeServer?.subscriptionId) ?? subscriptions[0] ?? null;
 
   const handleModeSelect = (mode: ProductMode) => {
@@ -1214,22 +1200,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col animate-fade-in">
-      {/* Header */}
-      <div className="flex shrink-0 items-center justify-between px-4 pt-3 pb-1.5">
-        <h1 className="text-[15px] font-semibold tracking-tight text-v6-text">{t('dashboard')}</h1>
-        <button
-          type="button"
-          onClick={() => setShowAddModal(!showAddModal)}
-          disabled={quickImporting}
-          title={t('addSubOrServer')}
-          aria-label={t('addSubOrServer')}
-          className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-[#7c6cff] to-[#5b8cff] px-3 py-1.5 text-[11px] font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50 v6-focus"
-        >
-          <Plus className="h-4 w-4" strokeWidth={2.6} /> {t('add')}
-        </button>
-      </div>
-
+    <div className="relative flex min-h-0 flex-1 flex-col">
       {showAddModal && (
         <QuickAddPanel
           value={quickInput}
@@ -1246,10 +1217,15 @@ export default function Dashboard() {
 
       {!hasDashboardContent ? (
         <div className="flex min-h-0 flex-1 items-center justify-center p-6">
-          <div className="v6-glass w-full max-w-md rounded-2xl p-7 text-center">
-            <div className="mx-auto mb-4 h-12 w-12 rounded-2xl bg-gradient-to-br from-[#7c6cff] to-[#3dd7c8] shadow-[0_0_24px_rgba(124,108,255,0.5)]" />
-            <h2 className="text-[18px] font-semibold text-v6-text">{t('welcome')}</h2>
-            <p className="mx-auto mt-1.5 max-w-xs text-[12px] leading-relaxed text-v6-muted">{t('welcomeHint')}</p>
+          <div className="v6-glass w-full max-w-md rounded-[26px] p-7 text-center">
+            <div
+              className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-[15px]"
+              style={{ background: 'linear-gradient(140deg, #FF8A4C, #FF5A1F)', boxShadow: '0 6px 24px rgba(255,90,31,0.45)' }}
+            >
+              <span className="h-[18px] w-[18px] rounded-full border-[3px] border-white" />
+            </div>
+            <h2 className="text-[18px] font-semibold text-white">{t('welcome')}</h2>
+            <p className="mx-auto mt-1.5 max-w-xs text-[12.5px] leading-relaxed text-white/50">{t('welcomeHint')}</p>
             <div className="mt-4 flex gap-2">
               <input
                 type="text"
@@ -1257,13 +1233,13 @@ export default function Dashboard() {
                 onChange={(e) => setQuickInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter' && quickInputKind !== 'unknown') handleQuickAdd(); }}
                 placeholder={t('pasteHint')}
-                className="v6-glass-inset min-w-0 flex-1 rounded-lg px-3 py-2.5 text-[12px] text-v6-text placeholder:text-v6-muted/70 v6-focus"
+                className="v6-glass-inset min-w-0 flex-1 rounded-[14px] px-3.5 py-2.5 text-[13px] text-white outline-none placeholder:text-white/40 v6-focus"
               />
               <button
                 type="button"
                 onClick={handleQuickPaste}
                 aria-label="Paste"
-                className="grid h-[42px] w-[42px] shrink-0 place-items-center rounded-lg bg-white/[0.06] text-v6-muted hover:bg-white/10 hover:text-v6-text v6-focus"
+                className="v6-hover-bright grid h-[42px] w-[42px] shrink-0 place-items-center rounded-[13px] border border-white/[0.12] bg-white/[0.07] text-white/70 v6-focus"
               >
                 <ClipboardPaste className="h-4 w-4" strokeWidth={2.2} />
               </button>
@@ -1272,75 +1248,63 @@ export default function Dashboard() {
               type="button"
               onClick={handleQuickAdd}
               disabled={quickImporting || !trimmedQuickInput || quickInputKind === 'unknown'}
-              className="mt-2.5 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#7c6cff] to-[#5b8cff] py-2.5 text-[12px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 v6-focus"
+              className="mt-2.5 flex w-full items-center justify-center gap-2 rounded-[14px] py-2.5 text-[13px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 v6-focus"
+              style={{ background: 'linear-gradient(140deg, #FF8A4C, #FF5A1F)', boxShadow: '0 6px 18px rgba(255,90,31,0.35)' }}
             >
               {quickImporting ? <><Loader2 className="h-4 w-4 v6-orb-spin" /> {t('adding')}</> : <><Plus className="h-4 w-4" strokeWidth={2.6} /> {t('add')}</>}
             </button>
           </div>
         </div>
       ) : (
-        <div className="grid min-h-0 flex-1 grid-cols-[minmax(190px,236px)_1fr] gap-3 overflow-hidden px-3 pb-1">
-          {/* Locations */}
-          <div className="v6-glass flex min-h-0 flex-col rounded-2xl p-3">
-            <LocationList
-              servers={servers}
-              activeServer={activeServer}
-              pingingServerIds={pingingServerIds}
-              searchQuery={searchQuery}
-              onSearchChange={setSearchQuery}
-              onSelect={handleServerSelect}
+        <div className="flex min-h-0 flex-1 gap-[22px]">
+          <LocationList
+            servers={servers}
+            activeServer={activeServer}
+            activeSub={activeSub}
+            pingingServerIds={pingingServerIds}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            onSelect={handleServerSelect}
+            onAdd={() => setShowAddModal(true)}
+            t={t}
+          />
+
+          {/* RIGHT: modes, connect core, bottom row */}
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
+            <ModeSelector current={productMode} onSelect={handleModeSelect} disabled={busy} t={t} />
+
+            <ConnectOrb
+              state={orbState}
+              primaryLabel={orbPrimary}
+              subLabel={orbSub}
+              statusLabel={orbStatusLabel}
+              serverName={activeServer?.name ?? null}
+              serverFlag={activeServer?.countryCode ? countryFlag(activeServer.countryCode) : null}
+              disabled={status === 'disconnected' && !canConnect}
+              onClick={handleConnect}
+            />
+
+            <div className="flex shrink-0 gap-3.5">
+              <SplitRoutingToggle protectedMode={productMode === 'protected'} t={t} />
+              {showStats && (
+                <TrafficStats
+                  connected={connected}
+                  currentDownload={currentDownload}
+                  currentUpload={currentUpload}
+                  t={t}
+                />
+              )}
+            </div>
+
+            <DiagnosticsDrawer
+              logs={logs}
+              onClear={clearLogs}
+              onExportSupportBundle={handleExportSupportBundle}
               t={t}
             />
           </div>
-
-          {/* Connect + controls */}
-          <div className="flex min-h-0 flex-col gap-3 overflow-y-auto pr-0.5">
-            <div className="flex shrink-0 flex-col items-center pt-3 pb-1">
-              <ConnectOrb
-                state={orbState}
-                primaryLabel={orbPrimary}
-                subLabel={orbSub}
-                serverName={activeServer?.name ?? null}
-                disabled={status === 'disconnected' && !canConnect}
-                onClick={handleConnect}
-              />
-            </div>
-
-            <ModeSelector current={productMode} onSelect={handleModeSelect} disabled={busy} t={t} />
-
-            <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-              <SubscriptionMeter
-                subscription={activeSub}
-                refreshing={!!activeSub && refreshingSubId === activeSub.id}
-                onRefresh={activeSub ? () => handleUpdateSubscription(activeSub) : undefined}
-                t={t}
-              />
-              <TrafficStats
-                connected={status === 'connected'}
-                connectTime={connectTime}
-                currentDownload={currentDownload}
-                currentUpload={currentUpload}
-                totalDown={totalDown}
-                totalUp={totalUp}
-                socksPort={socksPort}
-                httpPort={httpPort}
-                proxyMode={proxyMode}
-                systemProxyMode={systemProxyMode}
-                t={t}
-              />
-            </div>
-
-            <SplitRoutingToggle protectedMode={productMode === 'protected'} t={t} />
-          </div>
         </div>
       )}
-
-      <DiagnosticsDrawer
-        logs={logs}
-        onClear={clearLogs}
-        onExportSupportBundle={handleExportSupportBundle}
-        t={t}
-      />
     </div>
   );
 }

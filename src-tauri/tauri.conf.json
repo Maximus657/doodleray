@@ -13,10 +13,10 @@
     "windows": [
       {
         "title": "DoodleRay VPN",
-        "width": 1040,
-        "height": 704,
-        "minWidth": 880,
-        "minHeight": 620,
+        "width": 1204,
+        "height": 764,
+        "minWidth": 940,
+        "minHeight": 660,
         "center": true,
         "decorations": false
       }

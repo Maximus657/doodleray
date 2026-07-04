@@ -1,4 +1,4 @@
-import { MonitorSmartphone, Globe, SlidersHorizontal } from 'lucide-react';
+import { Globe, Monitor, SlidersHorizontal } from 'lucide-react';
 import type { ProductMode } from '../../stores/app-store';
 
 type T = (key: never) => string;
@@ -6,41 +6,16 @@ type T = (key: never) => string;
 interface ModeDef {
   mode: ProductMode;
   icon: typeof Globe;
+  badge: string;
   titleKey: string;
   descKey: string;
-  badgeKey: string;
-  accent: string;
-  tone: 'good' | 'warn' | 'neutral';
 }
 
+/** Design order: PROXY | TUN | MANUAL. Product default stays 'protected' (TUN). */
 const MODES: ModeDef[] = [
-  {
-    mode: 'protected',
-    icon: MonitorSmartphone,
-    titleKey: 'fullDeviceMode',
-    descKey: 'v6ModeProtectedDesc',
-    badgeKey: 'v6BadgeRecommended',
-    accent: '#34d399',
-    tone: 'good',
-  },
-  {
-    mode: 'compatibility',
-    icon: Globe,
-    titleKey: 'v6ModeBrowsersTitle',
-    descKey: 'v6ModeBrowsersDesc',
-    badgeKey: 'v6BadgeLimited',
-    accent: '#f59e0b',
-    tone: 'warn',
-  },
-  {
-    mode: 'manual',
-    icon: SlidersHorizontal,
-    titleKey: 'v6ModeManualTitle',
-    descKey: 'v6ModeManualDesc',
-    badgeKey: 'v6BadgeAdvanced',
-    accent: '#9aa3b4',
-    tone: 'neutral',
-  },
+  { mode: 'compatibility', icon: Globe, badge: 'PROXY', titleKey: 'v6ModeBrowsersTitle', descKey: 'v6ModeBrowsersDesc' },
+  { mode: 'protected', icon: Monitor, badge: 'TUN', titleKey: 'fullDeviceMode', descKey: 'v6ModeProtectedDesc' },
+  { mode: 'manual', icon: SlidersHorizontal, badge: 'MANUAL', titleKey: 'v6ModeManualTitle', descKey: 'v6ModeManualDesc' },
 ];
 
 interface Props {
@@ -50,50 +25,52 @@ interface Props {
   t: T;
 }
 
-/** Row of three product-mode cards. Selecting one reconfigures the transport. */
+/** Row of three design mode cards; selection reconfigures the real transport. */
 export default function ModeSelector({ current, onSelect, disabled, t }: Props) {
   return (
-    <div className="grid grid-cols-3 gap-2.5" role="radiogroup" aria-label={t('connectionControls' as never)}>
+    <div className="flex gap-3" role="radiogroup" aria-label={t('connectionControls' as never)}>
       {MODES.map((m) => {
-        const active = current === m.mode;
+        const sel = current === m.mode;
         const Icon = m.icon;
         return (
           <button
             key={m.mode}
             type="button"
             role="radio"
-            aria-checked={active}
+            aria-checked={sel}
             disabled={disabled}
             onClick={() => onSelect(m.mode)}
-            className={`v6-hover-lift group relative flex flex-col gap-2 rounded-xl p-3 text-left v6-focus disabled:cursor-not-allowed disabled:opacity-50 ${
-              active ? 'v6-glass' : 'v6-glass-soft'
-            }`}
-            style={active ? { borderColor: `${m.accent}66`, boxShadow: `inset 0 0 0 1px ${m.accent}44, 0 8px 24px -16px ${m.accent}` } : undefined}
+            className="flex flex-1 flex-col gap-[9px] rounded-[19px] p-4 text-left transition-[background,border-color] duration-150 disabled:cursor-not-allowed disabled:opacity-50 v6-focus"
+            style={{
+              background: sel ? 'linear-gradient(150deg, rgba(255,107,44,0.2), rgba(255,107,44,0.06))' : 'rgba(255,255,255,0.04)',
+              border: sel ? '1px solid rgba(255,138,76,0.5)' : '1px solid rgba(255,255,255,0.08)',
+              boxShadow: sel ? '0 8px 26px rgba(255,90,31,0.2)' : 'none',
+            }}
           >
             <div className="flex items-center justify-between">
               <span
-                className="flex h-8 w-8 items-center justify-center rounded-lg"
-                style={{ background: `${m.accent}1f`, color: m.accent }}
-              >
-                <Icon className="h-[18px] w-[18px]" strokeWidth={2.1} />
-              </span>
-              <span
-                className="rounded-full px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-wider"
+                className="flex h-[38px] w-[38px] items-center justify-center rounded-xl"
                 style={{
-                  color: m.tone === 'neutral' ? '#9aa3b4' : m.accent,
-                  background: m.tone === 'neutral' ? 'rgba(255,255,255,0.06)' : `${m.accent}18`,
+                  color: sel ? '#FF9A56' : 'rgba(255,255,255,0.7)',
+                  background: sel ? 'rgba(255,107,44,0.18)' : 'rgba(255,255,255,0.06)',
+                  border: sel ? '1px solid rgba(255,138,76,0.35)' : '1px solid rgba(255,255,255,0.08)',
                 }}
               >
-                {t(m.badgeKey as never)}
+                <Icon className="h-[19px] w-[19px]" strokeWidth={1.9} />
+              </span>
+              <span className="rounded-[20px] bg-white/[0.07] px-2 py-[3px] text-[10px] font-semibold tracking-[0.08em] text-white/50">
+                {m.badge}
               </span>
             </div>
-            <div className="min-w-0">
-              <div className="truncate text-[12.5px] font-semibold text-v6-text">{t(m.titleKey as never)}</div>
-              <div className="mt-0.5 line-clamp-2 text-[10.5px] leading-snug text-v6-muted">{t(m.descKey as never)}</div>
+            <div className="text-[14.5px] font-semibold leading-tight text-white">
+              {t(m.titleKey as never)}
+              {m.mode === 'protected' && (
+                <span className="ml-1.5 align-middle text-[9px] font-semibold uppercase tracking-wider text-[#FF9A56]">
+                  {t('v6BadgeRecommended' as never)}
+                </span>
+              )}
             </div>
-            {active && (
-              <span className="absolute right-2.5 top-2.5 h-1.5 w-1.5 rounded-full" style={{ background: m.accent, boxShadow: `0 0 8px ${m.accent}` }} />
-            )}
+            <div className="line-clamp-2 text-[11.5px] leading-[1.45] text-white/50">{t(m.descKey as never)}</div>
           </button>
         );
       })}

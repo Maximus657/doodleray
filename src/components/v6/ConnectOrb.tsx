@@ -1,114 +1,127 @@
-import { Power, Loader2, ShieldCheck, ShieldAlert, ShieldX } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, ShieldX } from 'lucide-react';
 import type { OrbState } from './status';
-import { ORB_COLORS } from './status';
 
 interface Props {
   state: OrbState;
   primaryLabel: string;
-  /** e.g. formatted uptime while connected, or the connection step while connecting */
+  /** timer (mm:ss) while connected, connection step while connecting, hint when idle */
   subLabel?: string | null;
+  /** honest status text for the pill under the button (Protected/Degraded/Limited/Failed) */
+  statusLabel?: string | null;
   serverName?: string | null;
+  serverFlag?: string | null;
   disabled?: boolean;
   onClick: () => void;
-  title?: string;
-}
-
-function orbIcon(state: OrbState) {
-  const cls = 'h-11 w-11';
-  switch (state) {
-    case 'connecting':
-    case 'disconnecting':
-      return <Loader2 className={`${cls} v6-orb-spin`} strokeWidth={2.2} />;
-    case 'protected':
-      return <ShieldCheck className={cls} strokeWidth={2.2} />;
-    case 'degraded':
-    case 'limited':
-      return <ShieldAlert className={cls} strokeWidth={2.2} />;
-    case 'failed':
-      return <ShieldX className={cls} strokeWidth={2.2} />;
-    default:
-      return <Power className={cls} strokeWidth={2.4} />;
-  }
 }
 
 /**
- * Central connect control. Colour + icon reflect the honest runtime state:
- * idle · connecting · protected · degraded · limited · failed. The parent owns
- * the click semantics (connect / cancel / disconnect) and the label text.
+ * Design connect core: 172px radial button (gray when off, orange when on),
+ * pulse rings + breathing glow, status pill below. Honesty rule: the green
+ * "Encrypted" pill appears only for the protected verdict; degraded/limited
+ * get an amber pill, failed gets red — never fake-green.
  */
 export default function ConnectOrb({
   state,
   primaryLabel,
   subLabel,
+  statusLabel,
   serverName,
+  serverFlag,
   disabled,
   onClick,
-  title,
 }: Props) {
-  const color = ORB_COLORS[state];
-  const active = state !== 'idle';
+  const off = state === 'idle';
   const busy = state === 'connecting' || state === 'disconnecting';
+  const tunnelOn = state === 'protected' || state === 'degraded' || state === 'limited';
+  const failed = state === 'failed';
+
+  const btnBackground = failed
+    ? 'radial-gradient(120% 120% at 50% 22%, #ff8a7a, #e5484d 62%, #b3261e)'
+    : tunnelOn
+      ? 'radial-gradient(120% 120% at 50% 22%, #FF9A56, #FF6B2C 62%, #E8500F)'
+      : busy
+        ? 'radial-gradient(120% 120% at 50% 22%, #FFB07A, #FF7A3D 62%, #E8500F)'
+        : 'radial-gradient(120% 120% at 50% 22%, #84848c, #50505a 60%, #3a3a40)';
+  const btnShadow = tunnelOn
+    ? '0 8px 26px rgba(255,90,31,0.32), inset 0 1px 0 rgba(255,255,255,0.28)'
+    : busy
+      ? '0 6px 20px rgba(255,90,31,0.22), inset 0 1px 0 rgba(255,255,255,0.24)'
+      : '0 6px 18px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.14)';
+
+  const pill = tunnelOn || failed
+    ? state === 'protected'
+      ? { color: '#3ddc84', text: '#9af2c2', bg: 'rgba(61,220,132,0.14)', border: 'rgba(61,220,132,0.3)', Icon: ShieldCheck }
+      : failed
+        ? { color: '#ff6b5a', text: '#ffb3a8', bg: 'rgba(255,107,90,0.14)', border: 'rgba(255,107,90,0.35)', Icon: ShieldX }
+        : { color: '#ffb02e', text: '#ffd28a', bg: 'rgba(255,176,46,0.13)', border: 'rgba(255,176,46,0.32)', Icon: ShieldAlert }
+    : null;
 
   return (
-    <div className="relative flex flex-col items-center">
-      {/* Ambient glow */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute left-1/2 top-[92px] h-56 w-56 -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl transition-opacity duration-500"
-        style={{ background: color, opacity: active ? 0.28 : 0.12 }}
-      />
-
-      <button
-        type="button"
-        id="connect-button"
-        onClick={onClick}
-        disabled={disabled}
-        title={title || primaryLabel}
-        aria-label={title || primaryLabel}
-        className="group relative flex h-[184px] w-[184px] flex-col items-center justify-center rounded-full v6-focus transition-transform duration-200 disabled:cursor-not-allowed disabled:opacity-45 hover:scale-[1.015] active:scale-[0.985]"
-      >
-        {/* Outer ring */}
-        <span
-          aria-hidden
-          className="absolute inset-0 rounded-full"
-          style={{
-            border: `1.5px solid ${color}55`,
-            boxShadow: `0 0 0 1px rgba(255,255,255,0.04), inset 0 0 40px ${color}22`,
-          }}
-        />
-        {/* Pulsing ring while busy / connected */}
-        {(busy || state === 'protected' || state === 'degraded' || state === 'limited') && (
-          <span
-            aria-hidden
-            className={`absolute inset-[-6px] rounded-full ${busy ? 'v6-orb-spin' : 'v6-orb-pulse'}`}
-            style={{
-              border: busy ? `2px solid transparent` : `2px solid ${color}`,
-              borderTopColor: busy ? color : undefined,
-            }}
-          />
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 rounded-[26px] border border-white/[0.08] bg-white/[0.03]">
+      <div className="relative flex h-[248px] w-[248px] items-center justify-center">
+        {/* Idle: slow white pulse rings */}
+        {off && (
+          <>
+            <span aria-hidden className="v6-pulsering-slow absolute inset-0 rounded-full border border-white/[0.16]" />
+            <span aria-hidden className="v6-pulsering-slow absolute inset-0 rounded-full border border-white/[0.11]" style={{ animationDelay: '2.3s' }} />
+          </>
         )}
-        {/* Glass core */}
-        <span className="absolute inset-3 rounded-full v6-glass" style={{ background: `radial-gradient(circle at 50% 30%, ${color}22, rgba(255,255,255,0.02))` }} />
-
-        <span className="relative z-10 flex flex-col items-center gap-2" style={{ color }}>
-          {orbIcon(state)}
-        </span>
-        <span className="relative z-10 mt-2 max-w-[150px] px-3 text-center text-[15px] font-semibold leading-tight tracking-tight text-v6-text [overflow-wrap:anywhere]">
-          {primaryLabel}
-        </span>
-      </button>
-
-      <div className="mt-4 flex min-h-[36px] flex-col items-center gap-1 text-center">
-        {serverName && (
-          <span className="max-w-[220px] truncate text-[13px] font-medium text-v6-text/90">{serverName}</span>
+        {/* Active: breathing glow + orange pulse rings */}
+        {tunnelOn && (
+          <>
+            <span
+              aria-hidden
+              className="v6-breathe pointer-events-none absolute -inset-[22px] rounded-full"
+              style={{ background: 'radial-gradient(circle, rgba(255,107,44,0.4), transparent 68%)' }}
+            />
+            <span aria-hidden className="v6-pulsering absolute inset-0 rounded-full border-[1.5px] border-[#FF8A4C]/[0.55]" />
+            <span aria-hidden className="v6-pulsering absolute inset-0 rounded-full border-[1.5px] border-[#FF8A4C]/[0.45]" style={{ animationDelay: '1.1s' }} />
+          </>
         )}
-        {subLabel && (
+
+        <button
+          type="button"
+          id="connect-button"
+          onClick={onClick}
+          disabled={disabled}
+          title={primaryLabel}
+          aria-label={primaryLabel}
+          className="relative flex h-[172px] w-[172px] flex-col items-center justify-center rounded-full border-none transition-[background,box-shadow] duration-500 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 v6-focus"
+          style={{ background: btnBackground, boxShadow: btnShadow, transitionProperty: 'background, box-shadow, transform' }}
+        >
+          {busy ? (
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.6" strokeLinecap="round" className="v6-orb-spin">
+              <path d="M12 3a9 9 0 1 0 9 9" />
+            </svg>
+          ) : (
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round">
+              <line x1="12" y1="3" x2="12" y2="11.5" />
+              <path d="M6.8 6.6a8 8 0 1 0 10.4 0" />
+            </svg>
+          )}
           <span
-            className="rounded-full border px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wider"
-            style={{ borderColor: `${color}44`, color, background: `${color}12` }}
+            className={`mt-2 max-w-[152px] px-1 text-center font-semibold uppercase leading-tight text-white ${
+              primaryLabel.length > 12 ? 'text-[13px] tracking-[0.02em]' : primaryLabel.length > 7 ? 'text-[15px] tracking-[0.03em]' : 'text-[19px] tracking-[0.05em]'
+            }`}
           >
-            {subLabel}
+            {primaryLabel}
           </span>
+          {subLabel && <span className="mt-0.5 text-[12.5px] tabular-nums text-white/90">{subLabel}</span>}
+        </button>
+      </div>
+
+      <div className="flex min-h-[40px] flex-col items-center justify-center gap-2">
+        {pill && (
+          <div
+            className="v6-fadein flex items-center gap-[9px] rounded-[30px] border px-[17px] py-2"
+            style={{ background: pill.bg, borderColor: pill.border }}
+          >
+            <pill.Icon className="h-[15px] w-[15px]" style={{ color: pill.color }} strokeWidth={2.4} />
+            <span className="max-w-[300px] truncate text-[13px] font-medium" style={{ color: pill.text }}>
+              {statusLabel}
+              {serverName ? ` · ${serverFlag ? `${serverFlag} ` : ''}${serverName}` : ''}
+            </span>
+          </div>
         )}
       </div>
     </div>

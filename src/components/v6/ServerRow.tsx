@@ -1,12 +1,12 @@
-import { Loader2, Check } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import type { ServerConfig } from '../../stores/app-store';
 import { countryFlag, protocolLabel } from '../../lib/utils';
 
-function pingTone(ping?: number): { color: string; label: string } {
-  if (ping === undefined || ping <= 0) return { color: '#6b7488', label: '—' };
-  if (ping <= 100) return { color: '#34d399', label: `${ping}` };
-  if (ping <= 220) return { color: '#fbbf24', label: `${ping}` };
-  return { color: '#f87171', label: `${ping}` };
+function pingColor(p?: number): string {
+  if (p === undefined || p <= 0) return 'rgba(255,255,255,0.35)';
+  if (p < 80) return '#3ddc84';
+  if (p < 160) return '#ffb02e';
+  return '#ff6b5a';
 }
 
 interface Props {
@@ -16,11 +16,11 @@ interface Props {
   onSelect: (server: ServerConfig) => void;
 }
 
-/** A single selectable server/location in the v6 list. */
+/** Design location row: flag, name + protocol line, ping dot + ms. */
 export default function ServerRow({ server, active, pinging, onSelect }: Props) {
   const flag = server.countryCode ? countryFlag(server.countryCode) : '🌐';
-  const tone = pingTone(server.ping);
-  const proto = protocolLabel(server.protocol, server.transport);
+  const pc = pingColor(server.ping);
+  const hasPing = server.ping !== undefined && server.ping > 0;
 
   return (
     <button
@@ -28,29 +28,30 @@ export default function ServerRow({ server, active, pinging, onSelect }: Props) 
       role="option"
       aria-selected={active}
       onClick={() => onSelect(server)}
-      className={`v6-hover-lift group flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left v6-focus ${
-        active ? 'v6-glass' : 'v6-glass-soft'
-      }`}
-      style={active ? { borderColor: 'rgba(52,211,153,0.4)' } : undefined}
+      className="flex w-full shrink-0 items-center gap-3 rounded-[15px] px-[13px] py-[11px] text-left transition-[background,border-color] duration-150 v6-focus"
+      style={{
+        background: active ? 'linear-gradient(110deg, rgba(255,107,44,0.22), rgba(255,107,44,0.08))' : 'rgba(255,255,255,0.02)',
+        border: active ? '1px solid rgba(255,138,76,0.45)' : '1px solid rgba(255,255,255,0.05)',
+        boxShadow: active ? '0 6px 20px rgba(255,90,31,0.18)' : 'none',
+      }}
     >
-      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/[0.06] text-[15px]">{flag}</span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-[12.5px] font-medium text-v6-text">{server.name}</span>
-        <span className="block truncate text-[10px] uppercase tracking-wider text-v6-muted">{proto}</span>
+      <span className="w-9 text-center text-[26px] leading-none" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))' }}>
+        {flag}
       </span>
-      <span className="flex shrink-0 items-center gap-1.5">
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[14.5px] font-medium text-white">{server.name}</span>
+        <span className="mt-0.5 block truncate text-[12px] text-white/45">{protocolLabel(server.protocol, server.transport)}</span>
+      </span>
+      <span className="flex items-center gap-[7px]">
         {pinging ? (
-          <Loader2 className="h-3.5 w-3.5 v6-orb-spin text-v6-muted" />
+          <Loader2 className="h-3.5 w-3.5 v6-orb-spin text-white/50" />
         ) : (
-          <span className="text-[11px] font-semibold tabular-nums" style={{ color: tone.color }}>
-            {tone.label}
-            {tone.label !== '—' && <span className="ml-0.5 text-[8px] font-normal text-v6-muted">ms</span>}
-          </span>
-        )}
-        {active && (
-          <span className="grid h-4 w-4 place-items-center rounded-full bg-[#34d399] text-[#0a0d16]">
-            <Check className="h-3 w-3" strokeWidth={3} />
-          </span>
+          <>
+            <span className="h-[7px] w-[7px] rounded-full" style={{ background: pc, boxShadow: hasPing ? `0 0 8px ${pc}` : 'none' }} />
+            <span className="w-[46px] text-right text-[12.5px] tabular-nums text-white/60">
+              {hasPing ? `${server.ping} ms` : '—'}
+            </span>
+          </>
         )}
       </span>
     </button>

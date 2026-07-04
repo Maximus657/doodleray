@@ -1,31 +1,57 @@
 import { useMemo } from 'react';
-import { Search, MapPin } from 'lucide-react';
-import type { ServerConfig } from '../../stores/app-store';
+import { Search, Plus, FolderCog } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import type { ServerConfig, Subscription } from '../../stores/app-store';
 import { buildServerDisplayGroups, serverMatchesGroupQuery } from '../../lib/server-groups';
 import ServerRow from './ServerRow';
 
 type T = (key: never) => string;
 
+/** Design day-count color scale for the subscription block. */
+function dayColor(d: number): string {
+  if (d <= 0) return '#ff4d4d';
+  if (d <= 3) return '#ff5a5f';
+  if (d <= 7) return '#ff7a3d';
+  if (d <= 14) return '#ffb02e';
+  if (d <= 30) return '#9fd457';
+  return '#3ddc84';
+}
+
+async function openRenew() {
+  const url = 'https://t.me/doodlevpn_support';
+  try {
+    const { openUrl } = await import('@tauri-apps/plugin-opener');
+    await openUrl(url);
+  } catch {
+    window.open(url, '_blank');
+  }
+}
+
 interface Props {
   servers: ServerConfig[];
   activeServer: ServerConfig | null;
+  activeSub: Subscription | null;
   pingingServerIds: Set<string>;
   searchQuery: string;
   onSearchChange: (q: string) => void;
   onSelect: (server: ServerConfig) => void;
+  onAdd: () => void;
   t: T;
 }
 
-/** Searchable list of location groups (one row per location, best server picked). */
+/** Design "Locations" panel: search, grouped server rows, subscription days block. */
 export default function LocationList({
   servers,
   activeServer,
+  activeSub,
   pingingServerIds,
   searchQuery,
   onSearchChange,
   onSelect,
+  onAdd,
   t,
 }: Props) {
+  const navigate = useNavigate();
   const groups = useMemo(() => {
     const filtered = searchQuery.trim()
       ? servers.filter((s) => serverMatchesGroupQuery(s, searchQuery))
@@ -36,53 +62,93 @@ export default function LocationList({
   const activeId = activeServer?.id;
   const activeSubId = activeServer?.subscriptionId;
 
+  const expire = activeSub?.traffic?.expire;
+  const days = expire && expire > 0 ? Math.max(0, Math.ceil((expire * 1000 - Date.now()) / 86_400_000)) : null;
+  const dCol = days !== null ? dayColor(days) : null;
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="mb-2 flex items-center justify-between px-0.5">
-        <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-v6-muted">
-          <MapPin className="h-3.5 w-3.5" strokeWidth={2.2} />
-          {t('servers' as never)}
-          <span className="rounded-full bg-white/[0.06] px-1.5 py-0.5 text-[9px] tabular-nums text-v6-muted">
-            {groups.length}
-          </span>
-        </div>
+    <div className="flex min-h-0 w-[clamp(280px,32%,392px)] shrink-0 flex-col rounded-[26px] border border-white/[0.09] bg-white/[0.05] p-5">
+      {/* Header */}
+      <div className="flex items-baseline justify-between px-1 pb-4 pt-0.5">
+        <span className="text-[15px] font-semibold text-white">{t('v6Locations' as never)}</span>
+        <span className="flex items-center gap-2 text-[12px] text-white/45">
+          {servers.length} {t('v6ServersCount' as never)}
+          <button
+            type="button"
+            onClick={onAdd}
+            title={t('addSubOrServer' as never)}
+            aria-label={t('addSubOrServer' as never)}
+            className="v6-hover-bright flex h-6 w-6 items-center justify-center rounded-lg border border-white/[0.12] bg-white/[0.07] text-white/70 v6-focus"
+          >
+            <Plus className="h-3.5 w-3.5" strokeWidth={2.4} />
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/servers')}
+            title={t('servers' as never)}
+            aria-label={t('servers' as never)}
+            className="v6-hover-bright flex h-6 w-6 items-center justify-center rounded-lg border border-white/[0.12] bg-white/[0.07] text-white/70 v6-focus"
+          >
+            <FolderCog className="h-3.5 w-3.5" strokeWidth={2.2} />
+          </button>
+        </span>
       </div>
 
-      <div className="relative mb-2">
-        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-v6-muted" />
+      {/* Search */}
+      <div className="v6-glass-inset mb-3.5 flex h-[46px] items-center gap-2.5 rounded-[15px] px-3.5">
+        <Search className="h-[17px] w-[17px] shrink-0 text-white/50" strokeWidth={2} />
         <input
           type="text"
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
-          placeholder={t('search' as never)}
+          placeholder={t('v6SearchPlaceholder' as never)}
           aria-label={t('search' as never)}
-          className="v6-glass-inset w-full rounded-lg py-2 pl-8 pr-3 text-[12px] text-v6-text placeholder:text-v6-muted/70 v6-focus"
+          className="min-w-0 flex-1 bg-transparent text-[14px] text-white outline-none placeholder:text-white/40"
         />
       </div>
 
-      <div role="listbox" aria-label={t('servers' as never)} className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto pr-0.5">
+      {/* Rows */}
+      <div role="listbox" aria-label={t('servers' as never)} className="-mr-1 flex min-h-0 flex-1 flex-col gap-[7px] overflow-y-auto pr-1">
         {groups.length === 0 ? (
-          <div className="grid flex-1 place-items-center px-4 text-center text-[11px] text-v6-muted">
+          <div className="grid flex-1 place-items-center px-4 text-center text-[12px] text-white/45">
             {searchQuery.trim() ? t('v6NoResults' as never) : t('addSubOrServer' as never)}
           </div>
         ) : (
-          groups.map((g) => {
-            const srv = g.selectedServer;
-            const active =
-              !!activeId &&
-              g.servers.some((s) => s.id === activeId && s.subscriptionId === activeSubId);
-            return (
-              <ServerRow
-                key={g.id}
-                server={srv}
-                active={active}
-                pinging={g.servers.some((s) => pingingServerIds.has(s.id))}
-                onSelect={onSelect}
-              />
-            );
-          })
+          groups.map((g) => (
+            <ServerRow
+              key={g.id}
+              server={g.selectedServer}
+              active={!!activeId && g.servers.some((s) => s.id === activeId && s.subscriptionId === activeSubId)}
+              pinging={g.servers.some((s) => pingingServerIds.has(s.id))}
+              onSelect={onSelect}
+            />
+          ))
         )}
       </div>
+
+      {/* Subscription block (design) */}
+      {days !== null && dCol && (
+        <div className="mt-3.5 border-t border-white/[0.08] pt-4">
+          <div className="mb-[9px] flex items-center justify-between">
+            <span className="truncate text-[12px] text-white/50">{activeSub?.name || t('v6Subscription' as never)}</span>
+            <button type="button" onClick={openRenew} className="text-[12px] font-semibold text-[#FF8A4C] v6-focus">
+              {t('v6Renew' as never)}
+            </button>
+          </div>
+          <div className="mb-[11px] flex items-baseline gap-1.5">
+            <span className="text-[24px] font-semibold leading-none tabular-nums text-white">{days}</span>
+            <span className="text-[12.5px] text-white/45">
+              {days <= 0 ? t('subscriptionExpired' as never) : t('v6DaysLeft' as never)}
+            </span>
+          </div>
+          <div className="h-[7px] overflow-hidden rounded-md bg-white/10">
+            <div
+              className="h-full rounded-md transition-[width] duration-500"
+              style={{ width: `${(Math.min(1, days / 30) * 100).toFixed(1)}%`, background: dCol, boxShadow: `0 0 10px ${dCol}66` }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -17,11 +17,15 @@ interface Props {
 /** Popover for pasting a subscription URL or a single proxy link. */
 export default function QuickAddPanel({ value, onChange, onAdd, onPaste, onClose, importing, kind, hint, t }: Props) {
   const canAdd = !importing && !!value.trim() && kind !== 'unknown';
-  const badge = kind === 'subscription' ? '#34d399' : kind === 'link' ? '#fbbf24' : '#6b7488';
+  const badge = kind === 'subscription' ? '#3ddc84' : kind === 'link' ? '#ffb02e' : 'rgba(255,255,255,0.45)';
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="v6-glass fixed left-1/2 top-16 z-50 w-[min(380px,calc(100vw-32px))] -translate-x-1/2 rounded-2xl p-4 shadow-2xl animate-slide-up">
+      <div
+        className="v6-fadein fixed inset-0 z-40"
+        style={{ background: 'rgba(10,5,8,0.5)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }}
+        onClick={onClose}
+      />
+      <div className="v6-modal fixed left-1/2 top-24 z-50 w-[min(400px,calc(100vw-48px))] -translate-x-1/2 rounded-[28px] p-[26px] v6-fadein">
         <div className="flex items-start justify-between">
           <div>
             <p className="text-[12.5px] font-semibold text-v6-text">{t('pasteToAddTitle' as never)}</p>
@@ -60,7 +64,8 @@ export default function QuickAddPanel({ value, onChange, onAdd, onPaste, onClose
           type="button"
           onClick={onAdd}
           disabled={!canAdd}
-          className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#7c6cff] to-[#5b8cff] py-2.5 text-[12px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 v6-focus"
+          className="mt-3 flex w-full items-center justify-center gap-2 rounded-[14px] py-2.5 text-[13px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 v6-focus"
+          style={{ background: 'linear-gradient(140deg, #FF8A4C, #FF5A1F)', boxShadow: '0 6px 18px rgba(255,90,31,0.35)' }}
         >
           {importing ? <><Loader2 className="h-4 w-4 v6-orb-spin" /> {t('adding' as never)}</> : <><Plus className="h-4 w-4" strokeWidth={2.6} /> {t('add' as never)}</>}
         </button>

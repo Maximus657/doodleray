@@ -1,7 +1,7 @@
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useNavigate } from 'react-router-dom';
 import { useEffect, type ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Download, Loader2 } from 'lucide-react';
+import { Download, Loader2, ArrowLeft } from 'lucide-react';
 import { useTranslation } from './locales';
 import AppShell from './components/v6/AppShell';
 import Dashboard from './pages/Dashboard';
@@ -207,12 +207,21 @@ function NotificationStack() {
 
 /**
  * Readable surface for pages that still use the retro (light-on-orange) design
- * inside the v6 dark-glass shell. Keeps them fully functional and legible until
- * they get their own v6 reskin.
+ * inside the v6 glass shell. Adds a back-to-dashboard chip since the v6 shell
+ * has no nav rail. Keeps pages fully functional until their own v6 reskin.
  */
 function LegacySurface({ children }: { children: ReactNode }) {
+  const navigate = useNavigate();
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl bg-bg-primary text-text-on-orange">
+    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[26px] bg-bg-primary text-text-on-orange">
+      <button
+        type="button"
+        onClick={() => navigate('/')}
+        aria-label="Back"
+        className="absolute left-4 top-4 z-40 flex h-9 items-center gap-1.5 rounded-xl border-[3px] border-black bg-white px-2.5 text-[11px] font-black uppercase tracking-widest text-black shadow-[3px_3px_0_#000] transition-all hover:-translate-y-0.5 hover:shadow-[4px_4px_0_#000] active:translate-y-0.5 active:shadow-none"
+      >
+        <ArrowLeft className="h-4 w-4 stroke-[3px]" />
+      </button>
       {children}
     </div>
   );

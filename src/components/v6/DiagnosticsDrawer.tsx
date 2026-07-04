@@ -12,10 +12,10 @@ interface Props {
 }
 
 const LEVEL_META: Record<LogEntry['level'], { color: string; icon: typeof Info }> = {
-  info: { color: '#9aa3b4', icon: Info },
-  success: { color: '#34d399', icon: CheckCircle2 },
-  warning: { color: '#fbbf24', icon: AlertTriangle },
-  error: { color: '#f87171', icon: AlertCircle },
+  info: { color: 'rgba(255,255,255,0.55)', icon: Info },
+  success: { color: '#3ddc84', icon: CheckCircle2 },
+  warning: { color: '#ffb02e', icon: AlertTriangle },
+  error: { color: '#ff6b5a', icon: AlertCircle },
 };
 
 /**
@@ -35,8 +35,8 @@ export default function DiagnosticsDrawer({ logs, onClear, onExportSupportBundle
   }, [logs.length, open]);
 
   return (
-    <div className="shrink-0 px-3 pb-2">
-      <div className="v6-glass overflow-hidden rounded-xl">
+    <div className="shrink-0 pt-3">
+      <div className="v6-glass overflow-hidden rounded-[20px]">
         <div className="flex items-center gap-2 px-3 py-2">
           <button
             type="button"
@@ -49,7 +49,7 @@ export default function DiagnosticsDrawer({ logs, onClear, onExportSupportBundle
               {t('events' as never)}
             </span>
             {issues > 0 && (
-              <span className="rounded-full bg-[#f8717120] px-1.5 py-0.5 text-[9px] font-semibold text-[#fca5a5]">
+              <span className="rounded-full px-1.5 py-0.5 text-[9px] font-semibold" style={{ background: 'rgba(255,107,90,0.16)', color: '#ffb3a8' }}>
                 {issues} {t('issues' as never)}
               </span>
             )}

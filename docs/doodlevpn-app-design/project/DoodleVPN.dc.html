@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; }
+  body{ font-family:'Outfit',system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
+  ::-webkit-scrollbar{ width:8px; }
+  ::-webkit-scrollbar-thumb{ background:rgba(255,255,255,0.16); border-radius:8px; }
+  ::-webkit-scrollbar-track{ background:transparent; }
+  input::placeholder{ color:rgba(255,255,255,0.4); }
+  select{ -webkit-appearance:none; appearance:none; }
+  select option{ background:#1c1116; color:#fff; }
+  @keyframes floatA{ 0%,100%{ transform:translate(0,0); } 50%{ transform:translate(40px,30px); } }
+  @keyframes floatB{ 0%,100%{ transform:translate(0,0); } 50%{ transform:translate(-50px,-30px); } }
+  @keyframes floatC{ 0%,100%{ transform:translate(0,0); } 50%{ transform:translate(30px,-40px); } }
+  @keyframes pulsering{ 0%{ transform:scale(0.9); opacity:0.6; } 100%{ transform:scale(1.45); opacity:0; } }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+  @keyframes breathe{ 0%,100%{ transform:scale(1); opacity:0.55; } 50%{ transform:scale(1.08); opacity:0.95; } }
+  @keyframes fadein{ from{ opacity:0; transform:translateY(8px); } to{ opacity:1; transform:translateY(0); } }
+</style>
+</helmet>
+
+<div style="min-height:100vh; width:100%; display:flex; align-items:center; justify-content:center; padding:44px; position:relative; overflow:hidden; background:radial-gradient(120% 120% at 20% 10%, #2a1118 0%, #160b11 55%, #0d070a 100%);">
+
+  <div style="{{ blobAStyle }}"></div>
+  <div style="{{ blobBStyle }}"></div>
+  <div style="{{ blobCStyle }}"></div>
+
+  <div style="position:relative; width:100%; max-width:1180px; height:740px; border-radius:34px; padding:22px; display:flex; flex-direction:column; background:linear-gradient(150deg, rgba(255,255,255,0.13), rgba(255,255,255,0.04)); border:1px solid rgba(255,255,255,0.16); box-shadow:0 40px 120px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.22); backdrop-filter:blur(34px) saturate(1.5); -webkit-backdrop-filter:blur(34px) saturate(1.5); overflow:hidden;">
+
+    <!-- HEADER -->
+    <div style="display:flex; align-items:center; justify-content:space-between; padding:6px 10px 20px;">
+      <div style="display:flex; align-items:center; gap:14px;">
+        <div style="display:flex; gap:8px; margin-right:6px;">
+          <div style="width:12px; height:12px; border-radius:50%; background:rgba(255,255,255,0.22);"></div>
+          <div style="width:12px; height:12px; border-radius:50%; background:rgba(255,255,255,0.18);"></div>
+          <div style="width:12px; height:12px; border-radius:50%; background:rgba(255,255,255,0.14);"></div>
+        </div>
+        <div style="display:flex; align-items:center; gap:11px; padding-left:8px;">
+          <div style="width:34px; height:34px; border-radius:11px; background:linear-gradient(140deg, #FF8A4C, #FF5A1F); box-shadow:0 6px 18px rgba(255,90,31,0.45); display:flex; align-items:center; justify-content:center;">
+            <div style="width:13px; height:13px; border-radius:50%; border:2.5px solid #fff;"></div>
+          </div>
+          <div style="font-size:19px; font-weight:600; color:#fff; letter-spacing:-0.01em;">Doodle<span style="font-weight:300; color:rgba(255,255,255,0.7);">VPN</span></div>
+        </div>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <div style="display:flex; align-items:center; gap:9px; padding:8px 16px; border-radius:30px; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.12);">
+          <div style="{{ trafficDotStyle }}"></div>
+          <span style="font-size:13px; font-weight:600; color:rgba(255,255,255,0.9);">{{ trafficLeft }} <span style="font-weight:400; color:rgba(255,255,255,0.5);">GB left</span></span>
+        </div>
+        <div onClick="{{ openSupport }}" style="width:40px; height:40px; border-radius:13px; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.12); display:flex; align-items:center; justify-content:center; color:rgba(255,255,255,0.78); cursor:pointer;" style-hover="background:rgba(255,255,255,0.14);">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.4 9.3a2.6 2.6 0 1 1 3.6 2.4c-.8.4-1 .8-1 1.6"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        </div>
+        <div onClick="{{ openSettings }}" style="width:40px; height:40px; border-radius:13px; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.12); display:flex; align-items:center; justify-content:center; color:rgba(255,255,255,0.78); cursor:pointer;" style-hover="background:rgba(255,255,255,0.14);">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="8" x2="13" y2="8"/><line x1="17" y1="8" x2="20" y2="8"/><circle cx="15" cy="8" r="2.4"/><line x1="4" y1="16" x2="7" y2="16"/><line x1="11" y1="16" x2="20" y2="16"/><circle cx="9" cy="16" r="2.4"/></svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- BODY -->
+    <div style="flex:1; display:flex; gap:22px; min-height:0;">
+
+      <!-- LEFT: COUNTRIES -->
+      <div style="width:392px; flex-shrink:0; display:flex; flex-direction:column; border-radius:26px; padding:20px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.09); min-height:0;">
+        <div style="display:flex; align-items:baseline; justify-content:space-between; padding:2px 4px 16px;">
+          <span style="font-size:15px; font-weight:600; color:#fff;">Locations</span>
+          <span style="font-size:12px; color:rgba(255,255,255,0.45);">{{ countCount }} servers</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:10px; padding:0 14px; height:46px; border-radius:15px; background:rgba(0,0,0,0.22); border:1px solid rgba(255,255,255,0.1); margin-bottom:14px;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
+          <input value="{{ q }}" onChange="{{ onSearch }}" placeholder="Search country or city" style="flex:1; background:transparent; border:none; outline:none; color:#fff; font-family:inherit; font-size:14px;" />
+        </div>
+
+        <div style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:7px; padding-right:4px; margin-right:-4px;">
+          <sc-for list="{{ countries }}" as="c" hint-placeholder-count="8">
+            <div onClick="{{ c.onClick }}" style="{{ c.rowStyle }}">
+              <div style="font-size:26px; line-height:1; width:36px; text-align:center; filter:drop-shadow(0 2px 4px rgba(0,0,0,0.3));">{{ c.flag }}</div>
+              <div style="flex:1; min-width:0;">
+                <div style="font-size:14.5px; font-weight:500; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ c.name }}</div>
+                <div style="font-size:12px; color:rgba(255,255,255,0.45); margin-top:2px;">{{ c.city }}</div>
+              </div>
+              <div style="display:flex; align-items:center; gap:7px;">
+                <div style="{{ c.dotStyle }}"></div>
+                <span style="font-family:'Space Grotesk',monospace; font-size:12.5px; color:rgba(255,255,255,0.6); width:46px; text-align:right;">{{ c.pingText }}</span>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="margin-top:14px; padding-top:16px; border-top:1px solid rgba(255,255,255,0.08);">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:9px;">
+            <span style="font-size:12px; color:rgba(255,255,255,0.5);">Subscription</span>
+            <span onClick="{{ onRenew }}" style="font-size:12px; font-weight:600; color:#FF8A4C; cursor:pointer;">Renew</span>
+          </div>
+          <div style="display:flex; align-items:baseline; gap:6px; margin-bottom:11px;">
+            <span style="font-family:'Space Grotesk',sans-serif; font-size:24px; font-weight:600; color:#fff; line-height:1;">{{ daysNum }}</span>
+            <span style="font-size:12.5px; color:rgba(255,255,255,0.45);">{{ daysLabel }}</span>
+          </div>
+          <div style="height:7px; border-radius:6px; background:rgba(255,255,255,0.1); overflow:hidden;">
+            <div style="{{ subBarStyle }}"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT: CONNECTION -->
+      <div style="flex:1; display:flex; flex-direction:column; min-width:0; gap:16px;">
+
+        <!-- MODE CARDS -->
+        <div style="display:flex; gap:12px;">
+          <div onClick="{{ sm0 }}" style="{{ mc0 }}">
+            <div style="display:flex; align-items:center; justify-content:space-between;">
+              <div style="{{ mi0 }}">
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="3" y="5" width="18" height="14" rx="2.5"/><line x1="3" y1="9.2" x2="21" y2="9.2"/><circle cx="6.2" cy="7.1" r="0.7" fill="currentColor" stroke="none"/></svg>
+              </div>
+              <span style="font-size:10px; font-weight:600; letter-spacing:0.08em; color:rgba(255,255,255,0.5); padding:3px 8px; border-radius:20px; background:rgba(255,255,255,0.07);">PROXY</span>
+            </div>
+            <div style="font-size:14.5px; font-weight:600; color:#fff;">Browser &amp; apps</div>
+            <div style="font-size:11.5px; line-height:1.45; color:rgba(255,255,255,0.5);">Routes your browser and chosen apps only.</div>
+          </div>
+          <div onClick="{{ sm1 }}" style="{{ mc1 }}">
+            <div style="display:flex; align-items:center; justify-content:space-between;">
+              <div style="{{ mi1 }}">
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2.5"/><line x1="8.5" y1="20" x2="15.5" y2="20"/><line x1="12" y1="16" x2="12" y2="20"/></svg>
+              </div>
+              <span style="font-size:10px; font-weight:600; letter-spacing:0.08em; color:rgba(255,255,255,0.5); padding:3px 8px; border-radius:20px; background:rgba(255,255,255,0.07);">TUN</span>
+            </div>
+            <div style="font-size:14.5px; font-weight:600; color:#fff;">Entire computer</div>
+            <div style="font-size:11.5px; line-height:1.45; color:rgba(255,255,255,0.5);">Encrypts every app and system service.</div>
+          </div>
+          <div onClick="{{ sm2 }}" style="{{ mc2 }}">
+            <div style="display:flex; align-items:center; justify-content:space-between;">
+              <div style="{{ mi2 }}">
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><line x1="4" y1="8" x2="13" y2="8"/><line x1="17" y1="8" x2="20" y2="8"/><circle cx="15" cy="8" r="2.3"/><line x1="4" y1="16" x2="7" y2="16"/><line x1="11" y1="16" x2="20" y2="16"/><circle cx="9" cy="16" r="2.3"/></svg>
+              </div>
+              <span style="font-size:10px; font-weight:600; letter-spacing:0.08em; color:rgba(255,255,255,0.5); padding:3px 8px; border-radius:20px; background:rgba(255,255,255,0.07);">MANUAL</span>
+            </div>
+            <div style="font-size:14.5px; font-weight:600; color:#fff;">Manual proxy</div>
+            <div style="font-size:11.5px; line-height:1.45; color:rgba(255,255,255,0.5);">Connect through your own proxy details.</div>
+          </div>
+        </div>
+
+        <!-- CONNECT CORE -->
+        <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; border-radius:26px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); position:relative; min-height:0;">
+
+          <div style="position:relative; width:248px; height:248px; display:flex; align-items:center; justify-content:center;">
+
+            <sc-if value="{{ off }}" hint-placeholder-val="{{ true }}">
+              <div style="position:absolute; inset:0; border-radius:50%; border:1px solid rgba(255,255,255,0.16); animation:pulsering 4.6s ease-out infinite;"></div>
+              <div style="position:absolute; inset:0; border-radius:50%; border:1px solid rgba(255,255,255,0.11); animation:pulsering 4.6s ease-out infinite; animation-delay:2.3s;"></div>
+            </sc-if>
+
+            <sc-if value="{{ active }}" hint-placeholder-val="{{ false }}">
+              <div style="{{ glowStyle }}"></div>
+              <div style="position:absolute; inset:0; border-radius:50%; border:1.5px solid rgba(255,138,76,0.55); animation:pulsering 2.2s ease-out infinite;"></div>
+              <div style="position:absolute; inset:0; border-radius:50%; border:1.5px solid rgba(255,138,76,0.45); animation:pulsering 2.2s ease-out infinite; animation-delay:1.1s;"></div>
+            </sc-if>
+
+            <button onClick="{{ toggle }}" style="{{ btnStyle }}" style-active="transform:scale(0.95);">
+              <sc-if value="{{ connecting }}" hint-placeholder-val="{{ false }}">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" style="animation:spin 0.9s linear infinite;"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
+              </sc-if>
+              <sc-if value="{{ idle }}" hint-placeholder-val="{{ true }}">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="3" x2="12" y2="11.5"/><path d="M6.8 6.6a8 8 0 1 0 10.4 0"/></svg>
+              </sc-if>
+              <div style="font-family:'Space Grotesk',sans-serif; font-size:23px; font-weight:600; color:#fff; letter-spacing:0.05em; margin-top:9px;">{{ btnLabel }}</div>
+              <div style="font-family:'Space Grotesk',monospace; font-size:12.5px; color:rgba(255,255,255,0.9); margin-top:2px;">{{ btnSub }}</div>
+            </button>
+          </div>
+
+          <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; gap:9px; min-height:40px;">
+            <sc-if value="{{ active }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex; align-items:center; gap:9px; padding:8px 17px; border-radius:30px; background:rgba(61,220,132,0.14); border:1px solid rgba(61,220,132,0.3); animation:fadein .4s ease;">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3ddc84" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3.1 7.8-7 9-3.9-1.2-7-4.4-7-9V6z"/><polyline points="9 12 11 14 15 9.5"/></svg>
+                <span style="font-size:13px; font-weight:500; color:#9af2c2;">Encrypted · {{ curFlag }} {{ curName }}</span>
+              </div>
+            </sc-if>
+          </div>
+        </div>
+
+        <!-- LOCAL DIRECT TOGGLE + STATS -->
+        <div style="display:flex; gap:14px;">
+          <div onClick="{{ toggleLocal }}" style="flex:1; display:flex; align-items:center; gap:13px; padding:14px 18px; border-radius:20px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.09); cursor:pointer;">
+            <div style="width:38px; height:38px; border-radius:12px; background:rgba(255,107,44,0.16); border:1px solid rgba(255,138,76,0.3); display:flex; align-items:center; justify-content:center; color:#FF8A4C; flex-shrink:0;">
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg>
+            </div>
+            <div style="flex:1;">
+              <div style="font-size:14px; font-weight:500; color:#fff;">Local &amp; popular sites direct</div>
+              <div style="font-size:11.5px; color:rgba(255,255,255,0.45); margin-top:2px;">Skip the VPN for faster everyday browsing</div>
+            </div>
+            <div style="{{ localTrackStyle }}"><div style="{{ localKnobStyle }}"></div></div>
+          </div>
+
+          <sc-if value="{{ showStats }}" hint-placeholder-val="{{ true }}">
+            <div style="display:flex; gap:14px;">
+              <div style="width:118px; padding:14px 16px; border-radius:20px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.09);">
+                <div style="display:flex; align-items:center; gap:6px; color:rgba(255,255,255,0.5); margin-bottom:7px;">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="4" x2="12" y2="16"/><polyline points="7 11 12 16 17 11"/></svg>
+                  <span style="font-size:11px;">Down</span>
+                </div>
+                <div style="font-family:'Space Grotesk',sans-serif; color:#fff;"><span style="font-size:21px; font-weight:600;">{{ dl }}</span> <span style="font-size:11px; color:rgba(255,255,255,0.5);">Mb/s</span></div>
+              </div>
+              <div style="width:118px; padding:14px 16px; border-radius:20px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.09);">
+                <div style="display:flex; align-items:center; gap:6px; color:rgba(255,255,255,0.5); margin-bottom:7px;">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#FF8A4C" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="20" x2="12" y2="8"/><polyline points="7 13 12 8 17 13"/></svg>
+                  <span style="font-size:11px;">Up</span>
+                </div>
+                <div style="font-family:'Space Grotesk',sans-serif; color:#fff;"><span style="font-size:21px; font-weight:600;">{{ ul }}</span> <span style="font-size:11px; color:rgba(255,255,255,0.5);">Mb/s</span></div>
+              </div>
+            </div>
+          </sc-if>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- SUPPORT OVERLAY -->
+    <sc-if value="{{ supportOpen }}" hint-placeholder-val="{{ false }}">
+      <div onClick="{{ closeSupport }}" style="position:absolute; inset:0; z-index:20; display:flex; align-items:center; justify-content:center; background:rgba(10,5,8,0.5); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); animation:fadein .25s ease;">
+        <div onClick="{{ stop }}" style="width:430px; border-radius:28px; padding:26px; background:linear-gradient(150deg, rgba(46,30,38,0.92), rgba(28,17,22,0.92)); border:1px solid rgba(255,255,255,0.16); box-shadow:0 30px 90px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.18);">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+            <span style="font-size:18px; font-weight:600; color:#fff;">Help &amp; support</span>
+            <div onClick="{{ closeSupport }}" style="width:34px; height:34px; border-radius:11px; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.12); display:flex; align-items:center; justify-content:center; color:rgba(255,255,255,0.7); cursor:pointer;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+            </div>
+          </div>
+          <div style="color:rgba(255,255,255,0.5); font-size:13px; margin-bottom:18px;">Our team usually replies within a few minutes.</div>
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            <div style="display:flex; align-items:center; gap:14px; padding:15px 16px; border-radius:18px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.09); cursor:pointer;" style-hover="background:rgba(255,255,255,0.09);">
+              <div style="width:40px; height:40px; border-radius:12px; background:rgba(255,107,44,0.16); border:1px solid rgba(255,138,76,0.3); display:flex; align-items:center; justify-content:center; color:#FF8A4C; flex-shrink:0;">
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8 8 0 0 1-11.6 7.1L4 20l1.4-5.4A8 8 0 1 1 21 11.5z"/></svg>
+              </div>
+              <div style="flex:1;"><div style="font-size:14.5px; font-weight:500; color:#fff;">Live chat</div><div style="font-size:12px; color:rgba(255,255,255,0.45); margin-top:2px;">Chat with a support agent now</div></div>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
+            </div>
+            <div style="display:flex; align-items:center; gap:14px; padding:15px 16px; border-radius:18px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.09); cursor:pointer;" style-hover="background:rgba(255,255,255,0.09);">
+              <div style="width:40px; height:40px; border-radius:12px; background:rgba(255,107,44,0.16); border:1px solid rgba(255,138,76,0.3); display:flex; align-items:center; justify-content:center; color:#FF8A4C; flex-shrink:0;">
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M4 7l8 6 8-6"/></svg>
+              </div>
+              <div style="flex:1;"><div style="font-size:14.5px; font-weight:500; color:#fff;">Email support</div><div style="font-size:12px; color:rgba(255,255,255,0.45); margin-top:2px;">help@doodlevpn.com</div></div>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
+            </div>
+            <div style="display:flex; align-items:center; gap:14px; padding:15px 16px; border-radius:18px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.09); cursor:pointer;" style-hover="background:rgba(255,255,255,0.09);">
+              <div style="width:40px; height:40px; border-radius:12px; background:rgba(255,107,44,0.16); border:1px solid rgba(255,138,76,0.3); display:flex; align-items:center; justify-content:center; color:#FF8A4C; flex-shrink:0;">
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.4 9.3a2.6 2.6 0 1 1 3.6 2.4c-.8.4-1 .8-1 1.6"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              </div>
+              <div style="flex:1;"><div style="font-size:14.5px; font-weight:500; color:#fff;">Help center</div><div style="font-size:12px; color:rgba(255,255,255,0.45); margin-top:2px;">Guides, FAQ and troubleshooting</div></div>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
+            </div>
+          </div>
+          <div style="text-align:center; font-size:11.5px; color:rgba(255,255,255,0.35); margin-top:18px;">DoodleVPN · version 2.4.1</div>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- SETTINGS OVERLAY -->
+    <sc-if value="{{ settingsOpen }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute; inset:0; z-index:20; display:flex; align-items:center; justify-content:center; background:rgba(10,5,8,0.5); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); animation:fadein .25s ease;">
+        <div onClick="{{ stop }}" style="width:440px; border-radius:28px; padding:26px; background:linear-gradient(150deg, rgba(46,30,38,0.92), rgba(28,17,22,0.92)); border:1px solid rgba(255,255,255,0.16); box-shadow:0 30px 90px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.18);">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:22px;">
+            <span style="font-size:18px; font-weight:600; color:#fff;">Settings</span>
+            <div onClick="{{ closeSettings }}" style="width:34px; height:34px; border-radius:11px; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.12); display:flex; align-items:center; justify-content:center; color:rgba(255,255,255,0.7); cursor:pointer;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+            </div>
+          </div>
+
+          <div style="display:flex; flex-direction:column; gap:4px;">
+            <div onClick="{{ toggleLaunch }}" style="display:flex; align-items:center; padding:14px 4px; cursor:pointer; border-bottom:1px solid rgba(255,255,255,0.07);">
+              <div style="flex:1;"><div style="font-size:14.5px; font-weight:500; color:#fff;">Launch at startup</div><div style="font-size:11.5px; color:rgba(255,255,255,0.45); margin-top:2px;">Open DoodleVPN when your computer starts</div></div>
+              <div style="{{ launchTrackStyle }}"><div style="{{ launchKnobStyle }}"></div></div>
+            </div>
+            <div onClick="{{ toggleAuto }}" style="display:flex; align-items:center; padding:14px 4px; cursor:pointer; border-bottom:1px solid rgba(255,255,255,0.07);">
+              <div style="flex:1;"><div style="font-size:14.5px; font-weight:500; color:#fff;">Auto-connect at startup</div><div style="font-size:11.5px; color:rgba(255,255,255,0.45); margin-top:2px;">Connect to the last server automatically</div></div>
+              <div style="{{ autoTrackStyle }}"><div style="{{ autoKnobStyle }}"></div></div>
+            </div>
+            <div onClick="{{ toggleKill }}" style="display:flex; align-items:center; padding:14px 4px; cursor:pointer; border-bottom:1px solid rgba(255,255,255,0.07);">
+              <div style="flex:1;"><div style="font-size:14.5px; font-weight:500; color:#fff;">Kill Switch</div><div style="font-size:11.5px; color:rgba(255,255,255,0.45); margin-top:2px;">Block all traffic if the VPN drops</div></div>
+              <div style="{{ killTrackStyle }}"><div style="{{ killKnobStyle }}"></div></div>
+            </div>
+            <div onClick="{{ toggleStats }}" style="display:flex; align-items:center; padding:14px 4px; cursor:pointer; border-bottom:1px solid rgba(255,255,255,0.07);">
+              <div style="flex:1;"><div style="font-size:14.5px; font-weight:500; color:#fff;">Show statistics</div><div style="font-size:11.5px; color:rgba(255,255,255,0.45); margin-top:2px;">Display live speed on the main screen</div></div>
+              <div style="{{ statsTrackStyle }}"><div style="{{ statsKnobStyle }}"></div></div>
+            </div>
+            <div style="display:flex; align-items:center; padding:14px 4px;">
+              <div style="flex:1;"><div style="font-size:14.5px; font-weight:500; color:#fff;">Language</div><div style="font-size:11.5px; color:rgba(255,255,255,0.45); margin-top:2px;">Interface language</div></div>
+              <div style="position:relative; display:flex; align-items:center;">
+                <select value="{{ language }}" onChange="{{ onLang }}" style="font-family:inherit; font-size:13.5px; font-weight:500; color:#fff; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.14); border-radius:12px; padding:9px 34px 9px 14px; outline:none; cursor:pointer;">
+                  <option>English</option>
+                  <option>Русский</option>
+                  <option>Español</option>
+                  <option>Deutsch</option>
+                  <option>Français</option>
+                  <option>中文</option>
+                </select>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="position:absolute; right:12px; pointer-events:none;"><polyline points="6 9 12 15 18 9"/></svg>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{
+  &quot;$preview&quot;: { &quot;width&quot;: 1180, &quot;height&quot;: 740 },
+  &quot;subscriptionDays&quot;: { &quot;editor&quot;: &quot;int&quot;, &quot;default&quot;: 23, &quot;min&quot;: 0, &quot;max&quot;: 365, &quot;unit&quot;: &quot;days&quot;, &quot;tsType&quot;: &quot;number&quot;, &quot;section&quot;: &quot;Plan&quot; },
+  &quot;monthlyDataGB&quot;: { &quot;editor&quot;: &quot;int&quot;, &quot;default&quot;: 20, &quot;min&quot;: 5, &quot;max&quot;: 200, &quot;unit&quot;: &quot;GB&quot;, &quot;tsType&quot;: &quot;number&quot;, &quot;section&quot;: &quot;Plan&quot; },
+  &quot;wallpaper&quot;: { &quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;Sunset&quot;,&quot;Ember&quot;,&quot;Violet&quot;], &quot;default&quot;: &quot;Sunset&quot;, &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Appearance&quot; },
+  &quot;defaultMode&quot;: { &quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;Browser &amp; apps&quot;,&quot;Entire computer&quot;,&quot;Manual proxy&quot;], &quot;default&quot;: &quot;Browser &amp; apps&quot;, &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Connection&quot; },
+  &quot;language&quot;: { &quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;English&quot;,&quot;Русский&quot;,&quot;Español&quot;,&quot;Deutsch&quot;,&quot;Français&quot;,&quot;中文&quot;], &quot;default&quot;: &quot;English&quot;, &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;General&quot; }
+}">
+class Component extends DCLogic {
+  state = {
+    phase:'off', sel:0, q:'', mode:null, localDirect:true, secs:0, usedGB:11.4,
+    settingsOpen:false, supportOpen:false, subDays:null,
+    launch:false, auto:false, kill:true, showStats:true, language:null
+  };
+
+  dayColor(d){
+    if(d<=0)  return '#ff4d4d';
+    if(d<=3)  return '#ff5a5f';
+    if(d<=7)  return '#ff7a3d';
+    if(d<=14) return '#ffb02e';
+    if(d<=30) return '#9fd457';
+    return '#3ddc84';
+  }
+
+  countriesRaw = [
+    { flag:'\u{1F1FA}\u{1F1F8}', name:'United States', city:'New York',   ping:24 },
+    { flag:'\u{1F1EC}\u{1F1E7}', name:'United Kingdom', city:'London',    ping:41 },
+    { flag:'\u{1F1E9}\u{1F1EA}', name:'Germany',        city:'Frankfurt', ping:38 },
+    { flag:'\u{1F1F3}\u{1F1F1}', name:'Netherlands',    city:'Amsterdam', ping:36 },
+    { flag:'\u{1F1E8}\u{1F1E6}', name:'Canada',         city:'Toronto',   ping:28 },
+    { flag:'\u{1F1EB}\u{1F1F7}', name:'France',         city:'Paris',     ping:44 },
+    { flag:'\u{1F1E8}\u{1F1ED}', name:'Switzerland',    city:'Zurich',    ping:47 },
+    { flag:'\u{1F1F8}\u{1F1EA}', name:'Sweden',         city:'Stockholm', ping:52 },
+    { flag:'\u{1F1EA}\u{1F1F8}', name:'Spain',          city:'Madrid',    ping:49 },
+    { flag:'\u{1F1EF}\u{1F1F5}', name:'Japan',          city:'Tokyo',     ping:112 },
+    { flag:'\u{1F1F8}\u{1F1EC}', name:'Singapore',      city:'Singapore', ping:98 },
+    { flag:'\u{1F1E6}\u{1F1FA}', name:'Australia',      city:'Sydney',    ping:156 },
+    { flag:'\u{1F1E7}\u{1F1F7}', name:'Brazil',         city:'Sao Paulo', ping:124 },
+    { flag:'\u{1F1EE}\u{1F1F3}', name:'India',          city:'Mumbai',    ping:138 }
+  ];
+
+  componentDidMount(){
+    this.timer = setInterval(()=>{
+      if(this.state.phase==='on'){
+        const total = Number(this.props.monthlyDataGB ?? 20);
+        this.setState(s=>({ secs:s.secs+1, usedGB: Math.min(total, s.usedGB + 0.012) }));
+      }
+    }, 1000);
+  }
+  componentWillUnmount(){ clearInterval(this.timer); clearTimeout(this.connTO); }
+
+  fmt(t){ const m=String(Math.floor(t/60)).padStart(2,'0'); const s=String(t%60).padStart(2,'0'); return m+':'+s; }
+  pingColor(p){ return p<40 ? '#3ddc84' : p<90 ? '#ffb02e' : '#ff6b5a'; }
+
+  toggle(){
+    clearTimeout(this.connTO);
+    if(this.state.phase==='off'){
+      this.setState({ phase:'connecting' });
+      this.connTO = setTimeout(()=>{ this.setState({ phase:'on', secs:0 }); }, 1400);
+    } else {
+      this.setState({ phase:'off' });
+    }
+  }
+
+  wallpapers = {
+    Sunset: ['#FF6B2C','#FF3D7F','#FFB02E'],
+    Ember:  ['#FF5A2C','#E11D48','#8B2FF0'],
+    Violet: ['#FF7A3D','#B23DFF','#FF3D9A']
+  };
+
+  renderVals(){
+    const accent = '#FF6B2C';
+    const mode = this.state.mode === null ? ({ 'Browser & apps':0,'Entire computer':1,'Manual proxy':2 }[this.props.defaultMode] ?? 0) : this.state.mode;
+    const language = this.state.language === null ? (this.props.language || 'English') : this.state.language;
+
+    const wp = this.wallpapers[this.props.wallpaper] || this.wallpapers.Sunset;
+    const [c0,c1,c2] = wp;
+    const vivid = this.state.phase === 'on';
+    const blob = (color,w,pos,anim,op)=>({
+      position:'absolute', width:w+'px', height:w+'px', borderRadius:'50%',
+      background:'radial-gradient(circle, '+color+' 0%, transparent 67%)',
+      filter: vivid ? 'blur(30px) saturate(1.1)' : 'blur(36px) saturate(0.22) brightness(0.7)',
+      opacity: vivid ? op : op*0.4, animation:anim, transition:'opacity .7s ease, filter .7s ease',
+      ...pos, pointerEvents:'none'
+    });
+
+    const q = this.state.q.trim().toLowerCase();
+    const countries = this.countriesRaw
+      .map((c,i)=>({ c, i }))
+      .filter(({c})=> !q || c.name.toLowerCase().includes(q) || c.city.toLowerCase().includes(q))
+      .map(({c,i})=>{
+        const sel = i === this.state.sel;
+        const pc = this.pingColor(c.ping);
+        return {
+          flag:c.flag, name:c.name, city:c.city, pingText:c.ping+' ms',
+          onClick: ()=> this.setState({ sel:i }),
+          rowStyle: {
+            display:'flex', alignItems:'center', gap:'12px', padding:'11px 13px', borderRadius:'15px',
+            cursor:'pointer', transition:'background .15s, border-color .15s', flexShrink:0,
+            background: sel ? 'linear-gradient(110deg, rgba(255,107,44,0.22), rgba(255,107,44,0.08))' : 'rgba(255,255,255,0.02)',
+            border: sel ? '1px solid rgba(255,138,76,0.45)' : '1px solid rgba(255,255,255,0.05)',
+            boxShadow: sel ? '0 6px 20px rgba(255,90,31,0.18)' : 'none'
+          },
+          dotStyle: { width:'7px', height:'7px', borderRadius:'50%', background:pc, boxShadow:'0 0 8px '+pc }
+        };
+      });
+
+    const cur = this.countriesRaw[this.state.sel];
+    const phase = this.state.phase;
+    const active = phase === 'on';
+    const connecting = phase === 'connecting';
+
+    const total = Number(this.props.monthlyDataGB ?? 20);
+    const used = Math.min(total, this.state.usedGB);
+    const left = Math.max(0, total - used);
+    const pct = total ? Math.min(1, used/total) : 0;
+    const barColor = pct>0.85 ? '#ff6b5a' : pct>0.7 ? '#ffb02e' : accent;
+
+    const days = this.state.subDays === null ? Number(this.props.subscriptionDays ?? 23) : this.state.subDays;
+    const expired = days <= 0;
+    const subCol = this.dayColor(days);
+    const subWarn = days <= 7;
+    const subChipBg = expired ? 'rgba(255,77,77,0.16)' : subWarn ? 'rgba(255,138,76,0.14)' : 'rgba(255,255,255,0.08)';
+    const subChipBd = expired ? 'rgba(255,77,77,0.4)' : subWarn ? 'rgba(255,138,76,0.35)' : 'rgba(255,255,255,0.12)';
+
+    const modeCard = (sel)=>({
+      flex:1, display:'flex', flexDirection:'column', gap:'9px', padding:'15px 16px', borderRadius:'19px',
+      cursor:'pointer', transition:'background .15s, border-color .15s',
+      background: sel ? 'linear-gradient(150deg, rgba(255,107,44,0.2), rgba(255,107,44,0.06))' : 'rgba(255,255,255,0.04)',
+      border: sel ? '1px solid rgba(255,138,76,0.5)' : '1px solid rgba(255,255,255,0.08)',
+      boxShadow: sel ? '0 8px 26px rgba(255,90,31,0.2)' : 'none'
+    });
+    const modeIcon = (sel)=>({
+      width:'38px', height:'38px', borderRadius:'12px', display:'flex', alignItems:'center', justifyContent:'center',
+      color: sel ? '#FF9A56' : 'rgba(255,255,255,0.7)',
+      background: sel ? 'rgba(255,107,44,0.18)' : 'rgba(255,255,255,0.06)',
+      border: sel ? '1px solid rgba(255,138,76,0.35)' : '1px solid rgba(255,255,255,0.08)'
+    });
+
+    const track = (on)=>({
+      width:'46px', height:'27px', borderRadius:'30px', flexShrink:0, position:'relative',
+      transition:'background .2s', cursor:'pointer',
+      background: on ? accent : 'rgba(255,255,255,0.15)',
+      boxShadow: on ? '0 0 14px rgba(255,107,44,0.5)' : 'none'
+    });
+    const knob = (on)=>({
+      position:'absolute', top:'3px', left:'3px', width:'21px', height:'21px', borderRadius:'50%',
+      background:'#fff', transition:'transform .2s', transform:on ? 'translateX(19px)' : 'translateX(0)',
+      boxShadow:'0 2px 5px rgba(0,0,0,0.3)'
+    });
+
+    return {
+      blobAStyle: blob(c0, 640, { left:'-160px', top:'-200px' }, 'floatA 19s ease-in-out infinite', 0.9),
+      blobBStyle: blob(c1, 560, { right:'-140px', bottom:'-180px' }, 'floatB 23s ease-in-out infinite', 0.85),
+      blobCStyle: blob(c2, 480, { right:'18%', top:'-120px' }, 'floatC 17s ease-in-out infinite', 0.7),
+
+      countries,
+      countCount: this.countriesRaw.length * 8 + 4,
+      q: this.state.q,
+      onSearch: (e)=> this.setState({ q:e.target.value }),
+
+      // power core
+      active, connecting, idle: !connecting, off: phase === 'off',
+      toggle: ()=> this.toggle(),
+      btnLabel: active ? 'STOP' : connecting ? '\u00B7\u00B7\u00B7' : 'START',
+      btnSub: active ? this.fmt(this.state.secs) : connecting ? 'Connecting' : 'Tap to connect',
+      statusText: active ? 'Protected' : connecting ? 'Connecting\u2026' : 'Not connected',
+      statusDotStyle: {
+        width:'8px', height:'8px', borderRadius:'50%',
+        background: active ? '#3ddc84' : connecting ? '#ffb02e' : 'rgba(255,255,255,0.4)',
+        boxShadow: active ? '0 0 10px #3ddc84' : connecting ? '0 0 10px #ffb02e' : 'none'
+      },
+      curFlag: cur.flag, curName: cur.name,
+
+      subText: expired ? 'Subscription expired' : (days === 1 ? '1 day left' : days + ' days left'),
+      daysNum: expired ? '0' : String(days),
+      daysLabel: expired ? 'Subscription expired' : (days === 1 ? 'day left' : 'days left'),
+      subBarStyle: {
+        width:(Math.min(1, days/30)*100).toFixed(1)+'%', height:'100%', borderRadius:'6px',
+        background:'linear-gradient(90deg, '+subCol+', '+subCol+')',
+        transition:'width .6s ease, background .4s ease', boxShadow:'0 0 10px '+subCol+'66'
+      },
+      trafficDotStyle: { width:'8px', height:'8px', borderRadius:'50%', flexShrink:0, background: barColor, boxShadow:'0 0 8px '+barColor },
+      subWarn,
+      subChipStyle: { display:'flex', alignItems:'center', gap:'9px', padding: subWarn ? '6px 7px 6px 14px' : '8px 15px', borderRadius:'30px', background: subChipBg, border:'1px solid '+subChipBd },
+      subDotStyle: { width:'8px', height:'8px', borderRadius:'50%', flexShrink:0, background: subCol, boxShadow:'0 0 8px '+subCol },
+      onRenew: ()=> this.setState({ subDays:365 }),
+      openSupport: ()=> this.setState({ supportOpen:true }),
+      closeSupport: ()=> this.setState({ supportOpen:false }),
+      supportOpen: this.state.supportOpen,
+
+      trafficLeft: left.toFixed(1),
+      trafficTotal: total,
+      trafficBarStyle: {
+        width:(pct*100).toFixed(1)+'%', height:'100%', borderRadius:'6px',
+        background:'linear-gradient(90deg, #FF8A4C, '+barColor+')',
+        transition:'width .6s ease, background .4s ease', boxShadow:'0 0 10px '+barColor+'66'
+      },
+
+      btnStyle: {
+        position:'relative', width:'172px', height:'172px', borderRadius:'50%', border:'none', cursor:'pointer',
+        display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', fontFamily:'inherit',
+        transition:'background .55s ease, box-shadow .55s ease, transform .12s',
+        background: active ? 'radial-gradient(120% 120% at 50% 22%, #FF9A56, #FF6B2C 62%, #E8500F)'
+                  : connecting ? 'radial-gradient(120% 120% at 50% 22%, #FFB07A, #FF7A3D 62%, #E8500F)'
+                  : 'radial-gradient(120% 120% at 50% 22%, #84848c, #50505a 60%, #3a3a40)',
+        boxShadow: active ? '0 8px 26px rgba(255,90,31,0.32), inset 0 1px 0 rgba(255,255,255,0.28)'
+                 : connecting ? '0 6px 20px rgba(255,90,31,0.22), inset 0 1px 0 rgba(255,255,255,0.24)'
+                 : '0 6px 18px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.14)'
+      },
+      glowStyle: {
+        position:'absolute', inset:'-22px', borderRadius:'50%',
+        background:'radial-gradient(circle, rgba(255,107,44,0.4), transparent 68%)',
+        animation:'breathe 2.6s ease-in-out infinite', pointerEvents:'none'
+      },
+
+      // mode cards
+      sm0: ()=> this.setState({ mode:0 }), sm1: ()=> this.setState({ mode:1 }), sm2: ()=> this.setState({ mode:2 }),
+      mc0: modeCard(mode===0), mc1: modeCard(mode===1), mc2: modeCard(mode===2),
+      mi0: modeIcon(mode===0), mi1: modeIcon(mode===1), mi2: modeIcon(mode===2),
+
+      // local direct
+      toggleLocal: ()=> this.setState(s=>({ localDirect:!s.localDirect })),
+      localTrackStyle: track(this.state.localDirect), localKnobStyle: knob(this.state.localDirect),
+
+      // stats
+      showStats: this.state.showStats,
+      dl: active ? '86.4' : '0.0',
+      ul: active ? '24.1' : '0.0',
+
+      // settings
+      settingsOpen: this.state.settingsOpen,
+      openSettings: ()=> this.setState({ settingsOpen:true }),
+      closeSettings: ()=> this.setState({ settingsOpen:false }),
+      stop: (e)=> e.stopPropagation(),
+      toggleLaunch: ()=> this.setState(s=>({ launch:!s.launch })),
+      toggleAuto: ()=> this.setState(s=>({ auto:!s.auto })),
+      toggleKill: ()=> this.setState(s=>({ kill:!s.kill })),
+      toggleStats: ()=> this.setState(s=>({ showStats:!s.showStats })),
+      launchTrackStyle: track(this.state.launch), launchKnobStyle: knob(this.state.launch),
+      autoTrackStyle: track(this.state.auto), autoKnobStyle: knob(this.state.auto),
+      killTrackStyle: track(this.state.kill), killKnobStyle: knob(this.state.kill),
+      statsTrackStyle: track(this.state.showStats), statsKnobStyle: knob(this.state.showStats),
+      language, onLang: (e)=> this.setState({ language:e.target.value })
+    };
+  }
+}
+</script>
+</body>
+</html>

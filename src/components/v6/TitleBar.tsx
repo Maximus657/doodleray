@@ -18,19 +18,12 @@ async function windowAction(action: 'minimize' | 'toggleMaximize' | 'close') {
   }
 }
 
-interface Props {
-  /** Accent color for the brand status dot (protected/degraded/etc.) */
-  statusColor?: string;
-  statusLabel?: string;
-}
-
 /**
- * Custom window chrome for the v6 dark-glass shell. The window is undecorated
- * (tauri.conf `decorations: false`); Tauri keeps native edge-resize on Windows,
- * so we only own drag + minimize/maximize/close. `data-tauri-drag-region` moves
- * the window; interactive controls opt out via their own handlers.
+ * Windows window controls for the undecorated v6 window, styled as the
+ * design's glass icon buttons. Native edge-resize stays available; the drag
+ * region is owned by the AppShell header.
  */
-export default function TitleBar({ statusColor, statusLabel }: Props) {
+export default function WindowControls() {
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
@@ -50,48 +43,21 @@ export default function TitleBar({ statusColor, statusLabel }: Props) {
   }, []);
 
   return (
-    <div
-      data-tauri-drag-region
-      className="relative z-[200] flex h-9 shrink-0 items-center justify-between pl-3 pr-1 select-none"
-    >
-      <div data-tauri-drag-region className="flex items-center gap-2.5">
-        <span
-          data-tauri-drag-region
-          className="h-4 w-4 rounded-[6px] bg-gradient-to-br from-[#7c6cff] to-[#3dd7c8] shadow-[0_0_12px_rgba(124,108,255,0.6)]"
-          aria-hidden
-        />
-        <span data-tauri-drag-region className="text-[12px] font-semibold tracking-tight text-v6-text/90">
-          DoodleRay
-        </span>
-        {statusColor && (
-          <span data-tauri-drag-region className="ml-1 flex items-center gap-1.5">
-            <span
-              className="h-1.5 w-1.5 rounded-full"
-              style={{ background: statusColor, boxShadow: `0 0 8px ${statusColor}` }}
-            />
-            {statusLabel && (
-              <span className="text-[10px] font-medium uppercase tracking-wider text-v6-muted">{statusLabel}</span>
-            )}
-          </span>
-        )}
-      </div>
-
-      <div className="flex items-center gap-0.5">
-        <TitleButton label="Minimize" onClick={() => windowAction('minimize')}>
-          <Minus className="h-3.5 w-3.5" strokeWidth={2.4} />
-        </TitleButton>
-        <TitleButton label={maximized ? 'Restore' : 'Maximize'} onClick={() => windowAction('toggleMaximize')}>
-          {maximized ? <Copy className="h-3 w-3" strokeWidth={2.4} /> : <Square className="h-3 w-3" strokeWidth={2.4} />}
-        </TitleButton>
-        <TitleButton label="Close" danger onClick={() => windowAction('close')}>
-          <X className="h-4 w-4" strokeWidth={2.4} />
-        </TitleButton>
-      </div>
+    <div className="ml-1 flex items-center gap-1.5 border-l border-white/10 pl-2.5">
+      <ControlButton label="Minimize" onClick={() => windowAction('minimize')}>
+        <Minus className="h-[15px] w-[15px]" strokeWidth={2.2} />
+      </ControlButton>
+      <ControlButton label={maximized ? 'Restore' : 'Maximize'} onClick={() => windowAction('toggleMaximize')}>
+        {maximized ? <Copy className="h-3 w-3" strokeWidth={2.2} /> : <Square className="h-3 w-3" strokeWidth={2.2} />}
+      </ControlButton>
+      <ControlButton label="Close" danger onClick={() => windowAction('close')}>
+        <X className="h-4 w-4" strokeWidth={2.2} />
+      </ControlButton>
     </div>
   );
 }
 
-function TitleButton({
+function ControlButton({
   children,
   onClick,
   label,
@@ -108,8 +74,8 @@ function TitleButton({
       aria-label={label}
       title={label}
       onClick={onClick}
-      className={`flex h-7 w-10 items-center justify-center rounded-md text-v6-muted transition-colors v6-focus hover:text-v6-text ${
-        danger ? 'hover:bg-[#f8717133] hover:text-[#fca5a5]' : 'hover:bg-white/10'
+      className={`flex h-8 w-9 items-center justify-center rounded-[11px] border border-white/[0.10] bg-white/[0.05] text-white/70 transition-colors v6-focus ${
+        danger ? 'hover:border-[#ff6b5a]/50 hover:bg-[#ff6b5a]/25 hover:text-white' : 'hover:bg-white/[0.14]'
       }`}
     >
       {children}

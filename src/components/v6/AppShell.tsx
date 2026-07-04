@@ -1,32 +1,143 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode, type CSSProperties } from 'react';
+import { HelpCircle, SlidersHorizontal } from 'lucide-react';
 import { useAppStore } from '../../stores/app-store';
 import { useTranslation } from '../../locales';
-import TitleBar from './TitleBar';
-import NavRail from './NavRail';
-import { deriveOrbState, ORB_COLORS, ORB_LABEL_KEY } from './status';
+import { getSubscriptionById, getSubscriptionTrafficStatus } from '../../lib/subscription-status';
+import WindowControls from './TitleBar';
+import SupportModal from './SupportModal';
+import SettingsModal from './SettingsModal';
 
 /**
- * v6 shell: custom titlebar + glass nav rail + routed content. Renders the
- * whole app on a dark-glass surface. Reads only the coarse connection status
- * for the titlebar dot; the dashboard owns the detailed health verdict.
+ * v6 shell, ported from the DoodleVPN Claude Design prototype: warm plum
+ * background with floating color blobs (vivid while connected), one large
+ * glass panel, and a design header (logo, traffic chip, support/settings,
+ * Windows window controls on the undecorated window).
  */
 export default function AppShell({ children }: { children: ReactNode }) {
   const status = useAppStore((s) => s.status);
-  const productMode = useAppStore((s) => s.productMode);
+  const subscriptions = useAppStore((s) => s.subscriptions);
+  const activeServer = useAppStore((s) => s.activeServer);
   const { t } = useTranslation();
+  const [supportOpen, setSupportOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
-  const orb = deriveOrbState(status, productMode);
-  const statusLabel = t(ORB_LABEL_KEY[orb] as never);
+  const vivid = status === 'connected';
+
+  // Traffic chip: real quota of the active subscription (design: "X.X GB left").
+  const activeSub = getSubscriptionById(subscriptions, activeServer?.subscriptionId) ?? subscriptions[0] ?? null;
+  const traffic = activeSub ? getSubscriptionTrafficStatus(activeSub) : null;
+  const gbLeft = traffic?.hasQuota ? traffic.remaining / 1024 ** 3 : null;
+  const pct = traffic?.hasQuota ? traffic.usedPercent / 100 : 0;
+  const chipColor = pct > 0.85 ? '#ff6b5a' : pct > 0.7 ? '#ffb02e' : '#FF6B2C';
+
+  const exportSupportBundle = async () => {
+    const s = useAppStore.getState();
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const path = await invoke('export_support_bundle', {
+        proxyMode: s.proxyMode,
+        systemProxyMode: s.systemProxyMode,
+        socksPort: s.socksPort,
+        httpPort: s.httpPort,
+      }) as string;
+      s.addLog('success', `${t('supportBundleExported' as never)}: ${path}`);
+      const { useToastStore } = await import('../../stores/toast-store');
+      useToastStore.getState().addToast(t('supportBundleExported' as never), 'success');
+    } catch (err) {
+      s.addLog('error', `${t('supportBundleExportFailed' as never)}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  const blob = (color: string, size: number, pos: CSSProperties, anim: string, op: number): ReactNode => (
+    <div
+      aria-hidden
+      className={anim}
+      style={{
+        position: 'absolute',
+        width: size,
+        height: size,
+        borderRadius: '50%',
+        background: `radial-gradient(circle, ${color} 0%, transparent 67%)`,
+        filter: vivid ? 'blur(30px) saturate(1.1)' : 'blur(36px) saturate(0.22) brightness(0.7)',
+        opacity: vivid ? op : op * 0.4,
+        transition: 'opacity .7s ease, filter .7s ease',
+        pointerEvents: 'none',
+        ...pos,
+      }}
+    />
+  );
 
   return (
-    <div className="v6-app flex h-screen w-screen flex-col overflow-hidden">
-      <TitleBar statusColor={ORB_COLORS[orb]} statusLabel={statusLabel} />
-      <div className="flex min-h-0 flex-1 px-2 pb-2">
-        <NavRail />
-        <main className="v6-glass relative flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl">
-          {children}
-        </main>
+    <div className="v6-app relative flex h-screen w-screen flex-col overflow-hidden p-3">
+      {/* Sunset wallpaper blobs (design) */}
+      {blob('#FF6B2C', 640, { left: -160, top: -200 }, 'v6-blob-a', 0.9)}
+      {blob('#FF3D7F', 560, { right: -140, bottom: -180 }, 'v6-blob-b', 0.85)}
+      {blob('#FFB02E', 480, { right: '18%', top: -120 }, 'v6-blob-c', 0.7)}
+
+      <div className="v6-panel relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[34px] p-[18px]">
+        {/* HEADER (drag region) */}
+        <div data-tauri-drag-region className="flex shrink-0 select-none items-center justify-between px-2.5 pb-4 pt-1.5">
+          <div data-tauri-drag-region className="flex items-center gap-3.5">
+            <div data-tauri-drag-region className="mr-1.5 flex gap-2">
+              <span className="h-3 w-3 rounded-full bg-white/[0.22]" />
+              <span className="h-3 w-3 rounded-full bg-white/[0.18]" />
+              <span className="h-3 w-3 rounded-full bg-white/[0.14]" />
+            </div>
+            <div data-tauri-drag-region className="flex items-center gap-[11px] pl-2">
+              <div
+                className="flex h-[34px] w-[34px] items-center justify-center rounded-[11px]"
+                style={{ background: 'linear-gradient(140deg, #FF8A4C, #FF5A1F)', boxShadow: '0 6px 18px rgba(255,90,31,0.45)' }}
+              >
+                <span className="h-[13px] w-[13px] rounded-full border-[2.5px] border-white" />
+              </div>
+              <div data-tauri-drag-region className="text-[19px] font-semibold tracking-[-0.01em] text-white">
+                Doodle<span className="font-light text-white/70">Ray</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5">
+            {gbLeft !== null && (
+              <div className="flex items-center gap-[9px] rounded-[30px] border border-white/[0.12] bg-white/[0.08] px-4 py-2">
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: chipColor, boxShadow: `0 0 8px ${chipColor}` }} />
+                <span className="text-[13px] font-semibold text-white/90">
+                  {gbLeft >= 100 ? Math.round(gbLeft) : gbLeft.toFixed(1)} <span className="font-normal text-white/50">{t('v6GbLeft' as never)}</span>
+                </span>
+              </div>
+            )}
+            <HeaderButton label={t('v6SupportTitle' as never)} onClick={() => setSupportOpen(true)}>
+              <HelpCircle className="h-5 w-5" strokeWidth={2} />
+            </HeaderButton>
+            <HeaderButton label={t('settings' as never)} onClick={() => setSettingsOpen(true)}>
+              <SlidersHorizontal className="h-5 w-5" strokeWidth={2} />
+            </HeaderButton>
+            <WindowControls />
+          </div>
+        </div>
+
+        {/* CONTENT */}
+        <main className="relative flex min-h-0 flex-1 flex-col">{children}</main>
+
+        {/* OVERLAYS */}
+        {supportOpen && (
+          <SupportModal onClose={() => setSupportOpen(false)} onExportSupportBundle={exportSupportBundle} t={t} />
+        )}
+        {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} t={t} />}
       </div>
     </div>
+  );
+}
+
+function HeaderButton({ children, onClick, label }: { children: ReactNode; onClick: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      onClick={onClick}
+      className="v6-hover-bright flex h-10 w-10 items-center justify-center rounded-[13px] border border-white/[0.12] bg-white/[0.07] text-white/[0.78] v6-focus"
+    >
+      {children}
+    </button>
   );
 }
