@@ -66,6 +66,22 @@ export function getServerSelectionKey(server: ServerConfig): string {
   ].join('|');
 }
 
+/// Deterministic profile id: subscription id + normalized outbound identity
+/// (+ name as tiebreaker inside getServerIdentityKey). Stable across
+/// refreshes so selection, ping maps, and React keys survive; old persisted
+/// selections with random ids still migrate through the identity index.
+export function stableServerId(subscriptionId: string, server: ServerConfig): string {
+  const key = `${subscriptionId}|${getServerIdentityKey(server)}`;
+  let h1 = 5381;
+  let h2 = 52711;
+  for (let i = 0; i < key.length; i++) {
+    const code = key.charCodeAt(i);
+    h1 = ((h1 * 33) ^ code) >>> 0;
+    h2 = ((h2 * 31) ^ code) >>> 0;
+  }
+  return `sub-${h1.toString(16).padStart(8, '0')}${h2.toString(16).padStart(8, '0')}`;
+}
+
 export function buildServerSelectionIndex(servers: ServerConfig[]): ServerSelectionIndex {
   const index: ServerSelectionIndex = {
     byId: new Map(),

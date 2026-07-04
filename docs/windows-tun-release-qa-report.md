@@ -520,3 +520,366 @@ the stand: `C:\DoodleRayQA\evidence\rc3-ui\rc3-ui-pass-summary.json`,
    runner `Invoke-DoodleRayFullStandQa.ps1`).
 3. Data-plane breadth on consumer networks (sleep/wake on real hardware,
    IPv6 leak proof, QUIC probe still `unverified-no-tooling`).
+
+## 2026-07-03: 5.9.0 RC2 - Bounded TUN Adapter Bring-Up Repair
+
+Production error being closed:
+`Full Computer components not installed or not ready: DoodleRay Tunnel IPv4 readiness failed: DoodleRay Tunnel adapter is missing`.
+Root cause and fix are documented in `docs/solved-errors.md` (2026-07-03).
+
+### Build Under Test
+
+- Version: `5.9.0` (RC2 of the 5.9.0 line, local unsigned, QA-only).
+- NSIS setup SHA-256:
+  `9507B7B32E7483471B306FCB9209BC651BFC71F6D2033DEC3F46D8A063DA436D`.
+- Bundled service SHA-256:
+  `518B9D687C91F2CE5D3475F0682B834D56ABAD01E4792360D71BCF4D6407AB12`.
+- Changes: service-side bounded two-attempt TUN bring-up
+  (`bring_up_tun_runtime` + one DoodleRay-owned repair retry on repairable
+  adapter/IPv4/engine-startup failures, status `repairing` in between),
+  shared `is_repairable_tun_bringup_error`/`format_tun_bringup_failure` with
+  unit tests, app-side wait-loop guard for the transient repair window plus a
+  90s budget, and a runtime-files preflight
+  (`wintun.dll`/`sing-box.exe`/`xray.exe`/`DoodleRayService.exe`) that fails
+  with a reinstall message before TUN is attempted.
+
+### Local Checks Passed
+
+- `npm run build`: passed.
+- `cargo test --manifest-path src-tauri\Cargo.toml --lib`: passed
+  (`52 passed`, `3 ignored`; includes the new repairable-classification and
+  actionable-failure-message tests).
+- `cargo check` for `DoodleRay` and `DoodleRayService`: passed.
+- `git diff --check`: passed.
+
+### Stand Evidence Status
+
+The Play2Go stand was mid-reinstall (back to Windows Server 2022) during this
+pass: TCP 22 accepts but sshd closes the connection after the client banner,
+and the WS-Management endpoints do not answer, so no remote QA could run yet.
+Pending on the restored stand (harness already committed):
+
+1. `Invoke-DoodleRayFullStandQa.ps1 -LocalInstaller <5.9.0 RC2 setup> -AllowUnsignedLocalRc`
+   for the full regression pass.
+2. `Test-DoodleRayTunBringupRepair.ps1` - the targeted proof: kills the
+   service-owned sing-box during the Connecting window (reproduces the
+   adapter-missing path), asserts the connect still ends
+   protected/protected_degraded with the
+   `TUN adapter repair retry ran after: ...` warning in structured health, or
+   - only as fallback - a clean failure carrying the enriched
+   `DoodleRay could not create the Windows tunnel adapter: ...` message, and
+   a clean stand afterwards.
+
+## 2026-07-03: 5.9.0 RC4 - Reliability P0 Pass (Server 2022, fresh stand)
+
+### Build Under Test
+
+- Version `5.9.0` RC3 setup SHA-256
+  `A74A0C6B8B80E485479C2C57F1DBE5203DE98403E9EA93E98BA17A35DF39A1E8`
+  (stand evidence below), superseded by RC4 with the idempotent service
+  install fix (hashes in the final report / build log).
+- Code added in this pass: honest automatic Protected->Browsers fallback with
+  LIMITED messaging (en/ru/zh); child-generation rotation after a failed
+  network/power reassert (stored start request, once per event burst);
+  cleanup verification -> honest `cleanup_pending` when the owned adapter
+  lingers after stop; `summarize_route_policy` config-derived route
+  explanations (unit-tested) published into `route_explanations`;
+  deterministic subscription profile ids + per-subscription dedupe
+  (`stableServerId`, `finalizeSubscriptionServers`); QA-only loopback control
+  surface (`DOODLERAY_QA_CONTROL=1`, 127.0.0.1:48765: status/connect/
+  disconnect/switch-mode/refresh/import/export-bundle) consumed by the same
+  UI handlers users click; idempotent `install_service` (adopt healthy
+  registration, never delete+recreate it).
+
+### Local Checks
+
+`npm run build` passed; `cargo test --lib` 54 passed (route-policy tests
+included); both `cargo check` passed; `git diff --check` clean; all QA
+scripts parse-clean.
+
+### Stand Evidence (fresh Server 2022 VM)
+
+- Install gate with stale WinINet injection: passed on RC3.
+- Canonical subscription imported through the new control surface
+  (secret travelled local->pscp->stand temp file->loopback query only) and
+  verified by a control-driven protected connect probe.
+- **Bring-up crash repair proven twice** (`Test-DoodleRayTunBringupRepair`):
+  service-owned sing-box killed in phase `waiting_adapter` during connect;
+  the service ran the bounded repair and the connect still ended
+  `connected`/`protected_degraded` with the
+  `TUN adapter repair retry ran after: ...` warning
+  (run 1: gen 9; run 2: gen 3, `total_connect_ms=37814`, service.log shows
+  `tun bring-up attempt 1 failed; running DoodleRay-owned repair retry:
+  DoodleRay Tunnel adapter did not become ready`).
+- Stale-state repair (`Test-DoodleRayStaleStateRepair`): all steps passed -
+  injected legacy DoodleRay-shaped WinINet (`127.0.0.1:10809` + game bypass)
+  cleared by startup repair; injected DoodleRay-commented NRPT rule removed;
+  a third-party NRPT control rule **survived** (owned-only repair proven).
+- Service install ACL noise is gone: `DoodleRayService.exe install` on the
+  stand now reports zero failed files (empty-DACL fix holds).
+- Found and fixed on-stand: service registration churn/vanish under repeated
+  repair installs (see `docs/solved-errors.md` 2026-07-03); QA teardown also
+  hardened (`Stop-QaTunnelHard`: confirmed disconnect with service-restart
+  fallback).
+- CDP note: the fresh VM's WebView2 no longer exposes remote debugging via
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`; harnesses now run control-first
+  (CDP is optional visual smoke), which was the point of the control surface.
+- Final stand state after the pass: WinINet `ProxyEnable=0`, no ProxyServer/
+  PAC, zero NRPT rules, zero engine processes, zero statsquery orphans, no
+  DoodleRay adapter, no session marker.
+
+## 2026-07-03: 5.9.0 RC5 - Protected Auto-Fallback E2E Closed
+
+### Build Under Test
+
+- Version `5.9.0`, local unsigned QA-only NSIS setup SHA-256
+  `A75852B1BCB6FB46BA3196AF677231D8F677FD8DE4C0F635F3E65315657977C3`.
+- Added in this pass:
+  - shared frontend fallback path for both `vpn_connect` result failures and
+    thrown/catch failures;
+  - failed protected generation is explicitly disconnected before browser
+    fallback starts;
+  - QA-only frontend snapshot published into `/status` while
+    `DOODLERAY_QA_CONTROL=1` is enabled (`subscriptions_count`,
+    `servers_count`, mode, status, active-server presence, runtime ports; no
+    URLs, UUIDs, keys, or raw configs);
+  - QA teardown now treats app-owned browser proxy as active state even when
+    the tunnel service is already `disconnected`.
+
+### Local Checks Passed
+
+- `npm run build`: passed.
+- `cargo check --manifest-path src-tauri\Cargo.toml --bin DoodleRay`: passed.
+- `cargo check --manifest-path src-tauri\Cargo.toml --bin DoodleRayService`:
+  passed.
+- `Import-DoodleRayQaSubscription.ps1`, `CdpQaHelpers.ps1`, and
+  `Test-DoodleRayAutoFallback.ps1` parse-clean.
+
+### Stand Evidence (Play2Go Server 2022)
+
+- Install gate with stale WinINet injection: passed on the RC5 setup.
+- Canonical subscription import: passed and verified directly through the new
+  sanitized frontend snapshot (`subscriptions_count=1`, `servers_count=5`,
+  active server present).
+- `Test-DoodleRayAutoFallback.ps1`: passed end-to-end.
+  - A real protected start was observed in `service.log`
+    (`StartTunnel accepted`, `start_tunnel generation=21`).
+  - The UI did not claim protected/green after the protected bring-up failure.
+  - The UI automatically degraded to browser compatibility:
+    `appConnected=true`, service `disconnected`, WinINet
+    `127.0.0.1:59351`.
+  - The loopback HTTP proxy fetched
+    `https://captive.apple.com/hotspot-detect.html` with `HTTP_CODE=200`.
+  - No TUN adapter was claimed during limited fallback.
+  - Final cleanup was clean: service `disconnected`, WinINet `0`, engines `0`,
+    session marker `false`, adapter `false`.
+- `Test-DoodleRayStaleStateRepair.ps1`: passed again on this RC. Legacy
+  DoodleRay-shaped WinINet was cleared; DoodleRay NRPT was removed; third-party
+  NRPT survived.
+- Final remote cleanliness check (run through `Invoke-Play2GoPowerShell.ps1`):
+  Server 2022, service `5.9.0` disconnected/idle, WinINet disabled, no
+  `xray`/`sing-box`, no DoodleRay adapter, no active-session marker, no
+  DoodleRay NRPT.
+
+### Superseded Harness Note
+
+`Test-DoodleRayTunBringupRepair.ps1` is no longer a valid standalone pass/fail
+gate after the honest auto-fallback work. The script watches only the service
+for `connected` plus a retry warning; the new product behavior can catch an
+early protected failure in the UI, disconnect the failed protected generation,
+and continue in browser compatibility. In that case the old script reports
+`service=disconnected` even though the user-facing fallback path is correct.
+Keep the service-side repair unit tests and the historical RC4 evidence, and
+replace this harness with a v2 that either disables UI fallback for the service
+repair proof or explicitly asserts the new fallback behavior.
+
+## 2026-07-03: 5.9.0 RC6 - Full Stand QA Complete
+
+### Build Under Test
+
+- Version `5.9.0`, local unsigned QA-only NSIS setup SHA-256
+  `85A8B3A7A6AF5539FCBA68A38EF87C1CF864F568324C022BBF3898DF7DBCBA22`.
+- Tauri build produced the NSIS setup; the final local command still exits on
+  updater signing because `TAURI_SIGNING_PRIVATE_KEY` is intentionally absent
+  outside CI. This remains a production gate, not a runtime QA failure.
+- This RC includes the RC5 protected->browser fallback plus final hardening:
+  TUN UI waits now use a 120s budget (longer than the service's bounded
+  90s repair window), thrown timeout/error paths share the same honest limited
+  fallback lane, Windows disconnect always asks the tunnel service to stop so
+  a failed protected generation cannot remain sticky behind browser fallback,
+  and stale service failure paths re-check generation before publishing
+  `failed` after `failed_cleanup`.
+
+### Full One-Command Stand Run
+
+`Invoke-DoodleRayFullStandQa.ps1 -LocalInstaller <RC6 setup> -AllowUnsignedLocalRc`
+completed on the Play2Go Server 2022 stand and reached
+`=== FULL STAND QA COMPLETE ===`.
+
+Stages passed in order:
+
+1. `bootstrap-stand`
+2. `publish-installer`
+3. `install-gate`
+4. `unclean-shutdown-marker`
+5. `update-path-5.4.3`
+6. `update-path-5.4.4`
+7. `update-path-5.4.5-broken-state`
+8. `import-subscription-before-active-update`
+9. `active-vpn-during-update`
+10. `import-subscription-before-ui-pass`
+11. `rc-ui-cdp-pass`
+12. `stale-state-repair`
+13. `auto-fallback-protected-to-browsers`
+14. `deep-snapshot`
+
+Important evidence from the final pass:
+
+- RC UI pass was control-first and detached from the SSH stream, so TUN route
+  changes cannot falsely break the harness transport. It still exercises the
+  same UI handlers: refresh, protected connect, mode chain
+  Browsers -> Whole -> Browsers -> Manual -> Whole, UI-kill/reattach,
+  service-owned core crash, support bundle export, reconnect, and cleanup.
+- The previously-open `auto-fallback-protected-to-browsers` blocker is closed
+  end-to-end inside the full runner. The harness forced protected bring-up to
+  fail, observed a real `StartTunnel accepted`, verified that the UI did not
+  claim protected, verified browser compatibility was active through WinINet
+  loopback HTTP, fetched Apple's captive endpoint through that proxy with
+  `HTTP_CODE=200`, verified no TUN adapter was claimed during limited fallback,
+  and left the stand clean.
+- Active-VPN-during-update stayed green in the same full run: RC installed over
+  an active protected tunnel, service ended cleanly, startup repair cleared the
+  orphaned WinINet state, reconnect succeeded, and the final state was clean.
+- Update paths from `5.4.3`, `5.4.4`, and broken-state `5.4.5` passed in the
+  same full run; the broken-state path includes stale WinINet/corporate-PAC
+  preservation coverage.
+- Stale-state repair passed: DoodleRay-shaped WinINet and DoodleRay NRPT were
+  removed, third-party NRPT survived.
+- Deep snapshot completed after the full matrix. WebSocket was OK, DNS/HTTPS
+  probes were OK, 2ip/direct split showed the stand IP, and UDP/STUN remained
+  a warning-style external probe failure rather than a protected claim.
+- Separate final cleanliness check after the full run:
+  service process `Running` with tunnel state `disconnected`, WinINet
+  `ProxyEnable=0`, no ProxyServer/PAC, `xray`/`sing-box` count `0`,
+  `statsquery` orphan count `0`, DoodleRay/Wintun adapter count `0`,
+  DoodleRay NRPT count `0`, active-session marker `false`.
+
+### Local Gates After The Full Stand Run
+
+- `npm run build`: passed.
+- `cargo check --manifest-path src-tauri\Cargo.toml --bin DoodleRay`: passed.
+- `cargo check --manifest-path src-tauri\Cargo.toml --bin DoodleRayService`:
+  passed.
+- `cargo test --manifest-path src-tauri\Cargo.toml --lib`: passed
+  (`54 passed`, `3 ignored` live-smoke tests).
+- QA PowerShell parse checks passed for:
+  `Invoke-DoodleRayRc3UiCdpPass.ps1`, `Publish-DoodleRayQaInstaller.ps1`,
+  `Test-DoodleRayAutoFallback.ps1`, `Invoke-DoodleRayFullStandQa.ps1`,
+  `Invoke-DoodleRayActiveUpdateQa.ps1`,
+  `Test-DoodleRayTunBringupRepair.ps1`, and
+  `Test-DoodleRayStaleStateRepair.ps1`.
+- `git diff --check`: exit `0`; only Windows CRLF conversion warnings.
+
+### Remaining Non-Deploy Blockers
+
+These do not invalidate the Server 2022 RC evidence, but they still block any
+honest "works for every Windows device" production claim:
+
+1. Signed CI build with real updater key and Authenticode secrets, then run the
+   same gates without `-AllowUnsignedLocalRc`.
+2. Clean Windows 10 22H2 and Windows 11 24H2 VM evidence.
+3. Real hardware sleep/wake and network-change proof.
+4. IPv6 leak-proof evidence. Until then IPv6 must stay degraded/disabled when
+   not proven.
+5. Controlled QUIC/HTTP3 proof. Until then QUIC stays explicitly unclaimed.
+
+## 2026-07-04 - Friend LAN dirty Windows 10 QA
+
+This pass covered a real home desktop instead of the controlled Play2Go stand.
+The target was Windows 10 Pro build 19045, running an existing public DoodleRay
+5.4.5 install plus a dirty networking environment: Zapret `winws.exe`,
+WinDivert, Outline, Happ, Hiddify, TAP/Wintun drivers, and an inactive stale
+WinINet `ProxyServer=http://127.0.0.1:10809` with `ProxyEnable=0`.
+
+Final artifact tested on that machine:
+`DoodleRay_5.9.0_x64-setup.exe`
+SHA-256 `372E1E27EA7C1BEDC91BDB5EC889C488381BA69E252E3D6401F446C9EE190470`
+(unsigned, QA-only).
+
+Evidence folders kept locally:
+
+- `D:\DoodleRayPC\friend-lan-evidence-20260704-144534`
+- `D:\DoodleRayPC\friend-auto-fallback-local-20260704-151024`
+- `D:\DoodleRayPC\friend-crash-recovery-20260704-151458`
+- `D:\DoodleRayPC\friend-crash-recovery-20260704-153443`
+- `D:\DoodleRayPC\friend-lan-evidence-20260704-155232`
+- `D:\DoodleRayPC\friend-lan-evidence-20260704-162403-ghostfix-final`
+- `D:\DoodleRayPC\friend-crash-recovery-20260704-163555-ghostfix`
+
+Results:
+
+- Upgrade over the old 5.4.5 install succeeded on the dirty Windows 10 desktop.
+- The real subscription imported through the QA control surface and produced
+  the expected server list.
+- A protected attempt connected once as `protected_degraded` and proved real
+  data-plane coverage: Apple captive GET, Google 204, Telegram, Discord,
+  OpenAI, Claude, WebSocket, SSE, UDP/STUN, DNS probes, and 2ip/direct split.
+- On later attempts the same machine reproduced the user's class of problem:
+  protected TUN could fail with `DoodleRay Tunnel IPv4 readiness failed:
+  adapter is missing`. The 5.9 auto-fallback then moved to Browsers
+  compatibility instead of leaving the user dead.
+- Forced double `sing-box` kills during protected bring-up proved the fallback
+  end-to-end: no protected claim, WinINet pointed at the service HTTP loopback,
+  Apple's captive endpoint returned `HTTP_CODE=200`, no TUN adapter was claimed
+  during limited fallback, and teardown was clean.
+- Browser/proxy mode worked on the dirty desktop even when direct Telegram was
+  blocked (`direct=000`, proxy Telegram `302`). This specifically covers the
+  support pattern where proxy mode worked for a user while direct traffic did
+  not.
+- Manual mode did not mutate WinINet. The inactive legacy `ProxyServer` string
+  remained inactive with `ProxyEnable=0`.
+- Final cleanliness after the last pass: service `disconnected/idle`, WinINet
+  `ProxyEnable=0`, no DoodleRay UI, no `xray.exe`/`sing-box.exe`, no
+  `statsquery`, no DoodleRay TUN adapter, no DoodleRay NRPT, and no active
+  session marker.
+- Follow-up ghost-fix pass installed QA artifact
+  `059C0D64F72E0752C889481CBC4B240E10C7450513D4FFC208AF3FE8E5ACA486` on the
+  same dirty Windows 10 desktop. The service found and removed a stale Wintun
+  PnP ghost (`sing-tun Tunnel`, `SWD\WINTUN\{...}`, `CM_PROB_PHANTOM`), then
+  protected TUN connected instead of falling back:
+  `service=connected`, `health_verdict=protected_degraded`,
+  `adapter_alias=DoodleRay Tunnel`, `route_ready=true`, `dns_ready=true`,
+  `proxy_compat_state=ready`, connect time `9044 ms`.
+- The ghost-fix TUN deep snapshot passed real traffic probes: Apple captive
+  `200`, Google `204`, Telegram `302`, Discord gateway `200`, OpenAI `308`,
+  Claude reachable, SSE received bytes, WebSocket OK, UDP/STUN OK, and
+  2ip/direct split stayed on the direct local prefix while tunnel traffic used
+  the VPN exit prefix.
+- After the ghost-fix cleanup, PnP and adapter inspection showed no Wintun
+  ghosts and no DoodleRay adapters left behind.
+- Follow-up crash-recovery pass after the Wintun ghost fix connected protected
+  mode first (`mode=protected`, service `connected`,
+  `health_verdict=protected_degraded`), killed the UI, verified service truth
+  survived, reattached the UI, killed the service-owned core PID, and verified
+  there was no fake-green (`front=disconnected`, `app=False`,
+  service `disconnected`). Final cleanup was clean.
+
+Findings fixed during the friend-LAN pass:
+
+- DoodleRay-owned app-side `xray.exe` processes could survive a UI kill or
+  fallback cleanup because the new UI process no longer had the original child
+  handle. `vpn_disconnect` and `full_cleanup` now also terminate only
+  DoodleRay-owned orphan engines from the install directory.
+- A protected tunnel could stay visually green for the regular monitor window
+  after the service-owned core died. The dashboard now has a fast protected
+  fatal-health watchdog that asks the service for health and disconnects on
+  fatal protected verdicts instead of waiting for the slow monitor loop.
+- Stale Wintun PnP ghosts can block adapter creation while remaining invisible
+  to `Get-NetAdapter`. The tunnel service now removes non-present stale
+  `SWD\WINTUN\*` ghosts matching DoodleRay/sing-tun ownership heuristics during
+  owned cleanup/replace, and it preserves the real `sing-box` fatal in logs.
+
+Remaining friend-LAN caveats:
+
+- This is a dirty Windows 10 real-user test, not a clean Win10/Win11 matrix.
+  Clean OS evidence and signed CI evidence are still separate release blockers.

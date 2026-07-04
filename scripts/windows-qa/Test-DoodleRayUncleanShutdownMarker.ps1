@@ -27,6 +27,50 @@ function Get-StatusJson {
     return `$raw | ConvertFrom-Json
 }
 
+function Wait-ServiceRunning {
+    param([int] `$TimeoutSec = 30)
+    `$deadline = (Get-Date).AddSeconds(`$TimeoutSec)
+    while ((Get-Date) -lt `$deadline) {
+        `$service = Get-Service DoodleRayTunnelService -ErrorAction SilentlyContinue
+        if (`$service -and `$service.Status -eq "Running") { return `$true }
+        Start-Sleep -Seconds 1
+    }
+    return `$false
+}
+
+function Restart-DoodleRayServiceForQa {
+    `$service = Get-Service DoodleRayTunnelService -ErrorAction SilentlyContinue
+    if (`$service -and `$service.Status -eq "Running") {
+        try {
+            Stop-Service DoodleRayTunnelService -ErrorAction Stop
+        } catch {
+            # After a hard-kill/SCM recovery Windows can report StopService
+            # failure while the service is already transitioning. Wait first,
+            # then fall back to killing the service process only for QA.
+        }
+        `$deadline = (Get-Date).AddSeconds(20)
+        while ((Get-Date) -lt `$deadline) {
+            `$service = Get-Service DoodleRayTunnelService -ErrorAction SilentlyContinue
+            if (-not `$service -or `$service.Status -eq "Stopped") { break }
+            Start-Sleep -Seconds 1
+        }
+        `$service = Get-Service DoodleRayTunnelService -ErrorAction SilentlyContinue
+        if (`$service -and `$service.Status -ne "Stopped") {
+            `$pid = Get-CimInstance Win32_Service -Filter "Name = 'DoodleRayTunnelService'" |
+                Select-Object -ExpandProperty ProcessId
+            if (`$pid) {
+                Stop-Process -Id `$pid -Force -ErrorAction SilentlyContinue
+                Start-Sleep -Seconds 3
+            }
+        }
+    }
+    Start-Service DoodleRayTunnelService
+    if (-not (Wait-ServiceRunning 30)) {
+        throw "DoodleRayTunnelService did not restart"
+    }
+    Start-Sleep -Seconds 4
+}
+
 `$markerPath = "C:\ProgramData\DoodleRay\runtime\active-session.marker"
 New-Item -ItemType Directory -Force -Path "C:\ProgramData\DoodleRay\runtime" | Out-Null
 Set-Content -LiteralPath `$markerPath -Value "op_id=qa-synthetic-crash;generation=99;started_at_ms=1751400000000" -Encoding ASCII
@@ -55,8 +99,7 @@ if (-not `$recovered) {
 `$statusAfterCrash = Get-StatusJson
 `$markerStillPresent = Test-Path -LiteralPath `$markerPath
 
-Restart-Service DoodleRayTunnelService -Force
-Start-Sleep -Seconds 4
+Restart-DoodleRayServiceForQa
 `$statusAfterCleanRestart = Get-StatusJson
 
 [pscustomobject]@{

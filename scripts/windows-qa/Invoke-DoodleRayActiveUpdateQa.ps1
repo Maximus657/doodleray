@@ -37,13 +37,17 @@ Add-Step "launch_app_cdp" `$launched "task=DoodleRayCodexCDP"
 
 Switch-Mode 0 "protected" | Out-Null
 Start-Sleep -Seconds 2
-Invoke-CdpEval 'document.querySelector("#connect-button").click()' | Out-Null
+Start-QaConnect | Out-Null
 `$connected = Wait-CdpCondition `$exprConnected 120 3
 `$svcBefore = Get-ServiceStatus
 `$wiBefore = Get-WinInet
+`$qaBefore = Invoke-QaControl "/status" 10
+`$recentBefore = if (`$qaBefore.frontend -and `$qaBefore.frontend.recent_logs) {
+    ((`$qaBefore.frontend.recent_logs | Select-Object -Last 6 | ForEach-Object { "`$(`$_.level): `$(`$_.message)" }) -join " || ")
+} else { "" }
 `$activeOk = `$connected -and `$svcBefore -and ([string]`$svcBefore.state) -eq "connected" -and
     @("protected", "protected_degraded") -contains ([string]`$svcBefore.health_verdict)
-Add-Step "protected_active_before_update" `$activeOk "ui=`$connected state=`$(`$svcBefore.state) verdict=`$(`$svcBefore.health_verdict) gen=`$(`$svcBefore.service_generation) winInet=`$(`$wiBefore.ProxyEnable)"
+Add-Step "protected_active_before_update" `$activeOk "ui=`$connected state=`$(`$svcBefore.state) verdict=`$(`$svcBefore.health_verdict) gen=`$(`$svcBefore.service_generation) winInet=`$(`$wiBefore.ProxyEnable) logs=`$recentBefore"
 `$svcBefore | ConvertTo-Json -Depth 6 | Set-Content (Join-Path `$evidenceDir "service-before-update.json") -Encoding UTF8
 
 # --- Step 2: silent RC install over the ACTIVE install -----------------------
@@ -90,14 +94,18 @@ Add-Step "startup_repair_cleared_stale_wininet" `$repairOk "proxyEnable=`$(`$wiR
 # --- Step 5: reconnect protected on the updated build -------------------------
 Switch-Mode 0 "protected" | Out-Null
 Start-Sleep -Seconds 2
-Invoke-CdpEval 'document.querySelector("#connect-button").click()' | Out-Null
+Start-QaConnect | Out-Null
 `$reconnected = Wait-CdpCondition `$exprConnected 120 3
 `$svcRe = Get-ServiceStatus
+`$qaRe = Invoke-QaControl "/status" 10
+`$recentRe = if (`$qaRe.frontend -and `$qaRe.frontend.recent_logs) {
+    ((`$qaRe.frontend.recent_logs | Select-Object -Last 6 | ForEach-Object { "`$(`$_.level): `$(`$_.message)" }) -join " || ")
+} else { "" }
 `$reOk = `$reconnected -and @("protected", "protected_degraded") -contains ([string]`$svcRe.health_verdict)
-Add-Step "reconnect_after_active_update" `$reOk "ui=`$reconnected verdict=`$(`$svcRe.health_verdict) gen=`$(`$svcRe.service_generation) socks=`$(`$svcRe.runtime_socks_port) http=`$(`$svcRe.runtime_http_port)"
+Add-Step "reconnect_after_active_update" `$reOk "ui=`$reconnected verdict=`$(`$svcRe.health_verdict) gen=`$(`$svcRe.service_generation) socks=`$(`$svcRe.runtime_socks_port) http=`$(`$svcRe.runtime_http_port) logs=`$recentRe"
 
 # --- Step 6: disconnect, quit, final cleanliness ------------------------------
-Invoke-CdpEval 'window.__TAURI_INTERNALS__.invoke("vpn_disconnect")' 60 | Out-Null
+Start-QaDisconnect | Out-Null
 Start-Sleep -Seconds 5
 Invoke-CdpEval 'window.__TAURI_INTERNALS__.invoke("quit_app")' 15 | Out-Null
 Start-Sleep -Seconds 5
@@ -118,6 +126,7 @@ Add-Step "final_cleanup_clean" `$cleanOk "service=`$(`$svcEnd.state) winInet=`$(
 `$result = [pscustomobject]@{ ok = `$allOk; steps = `$steps }
 `$result | ConvertTo-Json -Depth 8 | Set-Content (Join-Path `$evidenceDir "active-update-summary.json") -Encoding UTF8
 `$result | ConvertTo-Json -Depth 8
+if (-not `$allOk) { exit 1 }
 "@
 
 $remoteScript = $helpers + "`n" + $remoteBody

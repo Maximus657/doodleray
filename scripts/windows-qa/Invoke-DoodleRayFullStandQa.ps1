@@ -12,14 +12,18 @@ param(
 # failing stage. Prerequisites on a fresh stand: OpenSSH server reachable with
 # the fields in secrets/doodlevpn-server-access.md, an interactive admin
 # session (autologon or connected RDP session left logged in), and the
-# canonical test subscription imported once through the UI. Everything else
-# (QA dirs, CDP launcher, CDP scheduled task) is bootstrapped here.
+# an interactive admin session (autologon or connected RDP session left logged
+# in). Everything else (QA dirs, CDP launcher, CDP scheduled task, canonical
+# subscription import through ignored secrets) is bootstrapped here.
 
 $ErrorActionPreference = "Stop"
 
 function Invoke-Stage {
     param([string] $Name, [scriptblock] $Action)
     Write-Host "=== STAGE: $Name ==="
+    # A stage that succeeds without running a native command would otherwise
+    # inherit a stale $LASTEXITCODE from a previous stage and false-fail.
+    $global:LASTEXITCODE = 0
     & $Action
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Stage failed: $Name (exit $LASTEXITCODE)"
@@ -27,22 +31,23 @@ function Invoke-Stage {
     }
 }
 
-$unsignedArgs = @()
-if ($AllowUnsignedLocalRc) { $unsignedArgs = @("-AllowUnsignedLocalRc") }
+$unsignedArgs = @{}
+if ($AllowUnsignedLocalRc) { $unsignedArgs.AllowUnsignedLocalRc = $true }
 
 # --- Stage 0: bootstrap stand QA scaffolding --------------------------------
 $bootstrap = @'
 $ErrorActionPreference = "Continue"
 New-Item -ItemType Directory -Force -Path C:\DoodleRayQA\artifacts, C:\DoodleRayQA\evidence | Out-Null
 $cmdPath = "C:\DoodleRayQA\start-doodleray-cdp.cmd"
-if (-not (Test-Path $cmdPath)) {
-    $lines = @(
-        "@echo off",
-        "set WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 --remote-allow-origins=*",
-        "start `"`" /D `"C:\Program Files\DoodleRay`" `"C:\Program Files\DoodleRay\DoodleRay.exe`""
-    )
-    Set-Content -Path $cmdPath -Value $lines -Encoding ASCII
-}
+# Always rewrite: the launcher must enable both CDP (visual smoke) and the
+# QA control surface (primary automation channel) on the stand.
+$lines = @(
+    "@echo off",
+    "set `"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 --remote-allow-origins=*`"",
+    "set `"DOODLERAY_QA_CONTROL=1`"",
+    "start `"`" /D `"C:\Program Files\DoodleRay`" `"C:\Program Files\DoodleRay\DoodleRay.exe`""
+)
+Set-Content -Path $cmdPath -Value $lines -Encoding ASCII
 if (-not (Get-ScheduledTask -TaskName "DoodleRayCodexCDP" -ErrorAction SilentlyContinue)) {
     $action = New-ScheduledTaskAction -Execute $cmdPath
     $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
@@ -88,16 +93,33 @@ if (-not $SkipUpdatePath) {
 }
 
 # --- Stage 5: active-VPN-during-update ---------------------------------------
+Invoke-Stage "import-subscription-before-active-update" {
+    & (Join-Path $PSScriptRoot "Import-DoodleRayQaSubscription.ps1") -SecretPath $SecretPath
+}
+
 Invoke-Stage "active-vpn-during-update" {
     & (Join-Path $PSScriptRoot "Invoke-DoodleRayActiveUpdateQa.ps1") @unsignedArgs -SecretPath $SecretPath
 }
 
 # --- Stage 6: full UI pass over CDP ------------------------------------------
+Invoke-Stage "import-subscription-before-ui-pass" {
+    & (Join-Path $PSScriptRoot "Import-DoodleRayQaSubscription.ps1") -SecretPath $SecretPath
+}
+
 Invoke-Stage "rc-ui-cdp-pass" {
     & (Join-Path $PSScriptRoot "Invoke-DoodleRayRc3UiCdpPass.ps1") -SecretPath $SecretPath
 }
 
-# --- Stage 7: deep snapshot baseline ------------------------------------------
+# --- Stage 7: targeted reliability scenarios ---------------------------------
+Invoke-Stage "stale-state-repair" {
+    & (Join-Path $PSScriptRoot "Test-DoodleRayStaleStateRepair.ps1") -SecretPath $SecretPath
+}
+
+Invoke-Stage "auto-fallback-protected-to-browsers" {
+    & (Join-Path $PSScriptRoot "Test-DoodleRayAutoFallback.ps1") -SecretPath $SecretPath
+}
+
+# --- Stage 8: deep snapshot baseline ------------------------------------------
 Invoke-Stage "deep-snapshot" {
     & (Join-Path $PSScriptRoot "Invoke-Play2GoPowerShell.ps1") -ScriptPath (Join-Path $PSScriptRoot "Get-DoodleRayDeepQaSnapshot.ps1") -SecretPath $SecretPath
 }

@@ -1,5 +1,23 @@
 import type { Subscription, ServerConfig } from '../stores/app-store';
 import { parseMultipleLinks, detectCountry } from './parser';
+import { getServerIdentityKey, stableServerId } from './server-selection';
+
+/// Attach the subscription id, dedupe deterministically by normalized
+/// identity (payload order preserved, first occurrence wins), and replace
+/// random parse-time ids with stable ids so refreshes never reshuffle
+/// selection or ping state.
+function finalizeSubscriptionServers(subscriptionId: string, servers: ServerConfig[]): ServerConfig[] {
+  const seen = new Set<string>();
+  const result: ServerConfig[] = [];
+  for (const server of servers) {
+    const scoped = { ...server, subscriptionId };
+    const identity = getServerIdentityKey(scoped);
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    result.push({ ...scoped, id: stableServerId(subscriptionId, scoped) });
+  }
+  return result;
+}
 
 interface FetchedSubscriptionPayload {
   text: string;
@@ -470,11 +488,9 @@ export async function fetchSubscription(
       if (Array.isArray(parsedJson)) {
         servers = parsedJson
           .map((cfg: XrayJsonConfig) => parseXrayJsonConfig(cfg))
-          .filter((s): s is ServerConfig => s !== null)
-          .map((s) => ({ ...s, subscriptionId: id }));
+          .filter((s): s is ServerConfig => s !== null);
       } else if (parsedJson && typeof parsedJson === 'object') {
-        servers = parseXrayJsonSubscription(parsedJson as XrayJsonConfig, subscriptionName)
-          .map((s) => ({ ...s, subscriptionId: id }));
+        servers = parseXrayJsonSubscription(parsedJson as XrayJsonConfig, subscriptionName);
       }
     } catch {
       // Not JSON — try Base64 then plain text
@@ -486,8 +502,9 @@ export async function fetchSubscription(
       } catch {
         decoded = text;
       }
-      servers = parseMultipleLinks(decoded).map((s) => ({ ...s, subscriptionId: id }));
+      servers = parseMultipleLinks(decoded);
     }
+    servers = finalizeSubscriptionServers(id, servers);
 
     if (servers.length === 0) {
       throw new Error('No supported servers found in subscription');
