@@ -63,6 +63,8 @@ function updateStatusLabel(
       return t('updateClosingProcesses');
     case 'updateInstallingRestarting':
       return t('updateInstallingRestarting');
+    case 'updateOpenStore':
+      return t('updateOpenStore');
     case 'updateLatest':
       return t('updateLatest');
     default:
@@ -369,6 +371,19 @@ export default function Settings() {
         update = await checkForAppUpdate();
       }
       if (update) {
+        // store-win32 policy: show availability, open Store/support page,
+        // never silently download in-app when self-update is disabled.
+        const { isInAppUpdateEnabled, openStoreUpdatePage } = await import('../lib/update-channel');
+        if (!isInAppUpdateEnabled()) {
+          await openStoreUpdatePage();
+          setUpdateState({
+            availableUpdate: update.version,
+            updatePhase: 'available',
+            updateStatus: 'updateOpenStore',
+            updateProgress: null,
+          });
+          return;
+        }
         setUpdateState({
           availableUpdate: update.version,
           updatePhase: 'downloading',

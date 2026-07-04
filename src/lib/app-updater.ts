@@ -95,6 +95,15 @@ async function installAppUpdateOnce({
   onProgress = () => {},
   disconnectVpn = true,
 }: InstallOptions = {}) {
+  // Store-channel policy: never self-install when disabled; send the user to
+  // the Store/support page instead. Callers branch earlier for proper UI
+  // state; this is the defense-in-depth choke point.
+  const { isInAppUpdateEnabled, openStoreUpdatePage } = await import('./update-channel');
+  if (!isInAppUpdateEnabled()) {
+    await openStoreUpdatePage();
+    return false;
+  }
+
   const pendingUpdate = update ?? cachedUpdate ?? await checkForAppUpdate();
 
   if (!pendingUpdate) {

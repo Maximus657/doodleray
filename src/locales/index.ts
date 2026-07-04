@@ -20,6 +20,7 @@ export const translations = {
     v6NoEvents: 'No events yet',
     v6NoResults: 'Nothing found',
     supportBundle: 'Support bundle',
+    updateOpenStore: 'Open update page',
     // General
     dashboard: 'Dashboard',
     servers: 'Servers',
@@ -286,6 +287,7 @@ export const translations = {
     v6NoEvents: 'Событий пока нет',
     v6NoResults: 'Ничего не найдено',
     supportBundle: 'Пакет диагностики',
+    updateOpenStore: 'Открыть страницу обновления',
     // General
     dashboard: 'Главная',
     servers: 'Серверы',
@@ -552,6 +554,7 @@ export const translations = {
     v6NoEvents: '暂无事件',
     v6NoResults: '未找到结果',
     supportBundle: '支持包',
+    updateOpenStore: '打开更新页面',
     // General
     dashboard: '主页',
     servers: '服务器',

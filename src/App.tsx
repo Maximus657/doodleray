@@ -15,6 +15,7 @@ import { buildConnectRequestFromState } from './lib/connect-helpers';
 import { isHealthAcceptable, summarizeHealthFailures, waitForConnectionHealth } from './lib/connection-health';
 import { resolveConnectServer } from './lib/server-selection';
 import { checkForAppUpdate, installAppUpdate } from './lib/app-updater';
+import { isInAppUpdateEnabled, openStoreUpdatePage } from './lib/update-channel';
 import './index.css';
 
 function formatMessage(template: string, values: Record<string, string | number>) {
@@ -57,6 +58,8 @@ function updateStatusLabel(
       return t('updateClosingProcesses');
     case 'updateInstallingRestarting':
       return t('updateInstallingRestarting');
+    case 'updateOpenStore':
+      return t('updateOpenStore');
     case 'updateLatest':
       return t('updateLatest');
     default:
@@ -107,6 +110,13 @@ function UpdateBanner() {
 
   const handleInstall = async () => {
     if (isBusy) return;
+    // store-win32 policy: user-initiated update via Store/support page, no
+    // silent failure and no in-app download when self-update is disabled.
+    if (!isInAppUpdateEnabled()) {
+      await openStoreUpdatePage();
+      setUpdateState({ updatePhase: 'available', updateStatus: 'updateOpenStore', updateProgress: null });
+      return;
+    }
     setUpdateState({
       updatePhase: 'downloading',
       updateStatus: 'updateDownloading',
@@ -179,7 +189,7 @@ function UpdateBanner() {
         {isBusy ? (
           <><Loader2 className="h-3.5 w-3.5 animate-spin" /> {progressLabel ? `${t('updateDownloading')} ${progressLabel}` : t('updating')}</>
         ) : (
-          <><Download className="h-3.5 w-3.5 stroke-[3px]" /> {t('installRestart')}</>
+          <><Download className="h-3.5 w-3.5 stroke-[3px]" /> {isInAppUpdateEnabled() ? t('installRestart') : t('updateOpenStore')}</>
         )}
       </button>
     </div>

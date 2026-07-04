@@ -1,0 +1,15 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "//": "Microsoft Store (Win32 EXE) flavor. Merged over tauri.conf.json via `tauri build --config`. WebView2 stays offlineInstaller (inherited). No GitHub direct-channel updater artifacts: createUpdaterArtifacts is off unless build-store.ps1 -WithUpdaterArtifacts re-enables it for an explicit signed store-win32 channel. Endpoint below is the dedicated store-win32 manifest, NOT the direct latest.json.",
+  "bundle": {
+    "createUpdaterArtifacts": false,
+    "targets": ["nsis"]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/Maximus657/doodleray/releases/latest/download/latest-store-win32.json"
+      ]
+    }
+  }
+}

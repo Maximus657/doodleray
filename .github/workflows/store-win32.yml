@@ -1,0 +1,78 @@
+# Store-flavor (Win32 EXE) build + verification. NEVER publishes anywhere:
+# artifacts are archived to the workflow run only. Manual dispatch only.
+# Fails closed: without signing secrets the job stops before building
+# (unless allow_unsigned=true is explicitly chosen for an RC smoke build).
+name: store-win32
+
+on:
+  workflow_dispatch:
+    inputs:
+      allow_unsigned:
+        description: 'RC-only smoke build without signing (never submittable)'
+        type: boolean
+        default: false
+      enable_self_update:
+        description: 'Bake store-win32 in-app self-update (signed channel)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build-store:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend deps
+        run: npm ci
+
+      # Fail closed: signing secrets are mandatory unless allow_unsigned.
+      - name: Import code-signing certificate
+        if: ${{ !inputs.allow_unsigned }}
+        shell: pwsh
+        env:
+          STORE_CODESIGN_PFX_B64: ${{ secrets.STORE_CODESIGN_PFX_B64 }}
+          STORE_CODESIGN_PFX_PASSWORD: ${{ secrets.STORE_CODESIGN_PFX_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:STORE_CODESIGN_PFX_B64)) {
+            throw 'STORE_CODESIGN_PFX_B64 secret is not configured. Store builds must be signed; rerun with allow_unsigned=true only for an RC smoke build.'
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP 'store-codesign.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:STORE_CODESIGN_PFX_B64))
+          $pfxPassword = ConvertTo-SecureString $env:STORE_CODESIGN_PFX_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $pfxPassword
+          Remove-Item $pfx -Force
+          "WINDOWS_CODESIGN_THUMBPRINT=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Build store flavor
+        shell: pwsh
+        run: |
+          $extra = @()
+          if ('${{ inputs.allow_unsigned }}' -eq 'true') { $extra += '-AllowUnsigned' }
+          if ('${{ inputs.enable_self_update }}' -eq 'true') { $extra += @('-EnableSelfUpdate', '-WithUpdaterArtifacts') }
+          ./scripts/build-store.ps1 @extra
+
+      - name: Verify signatures (gate)
+        if: ${{ !inputs.allow_unsigned }}
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem dist-store -Filter '*.exe' | Select-Object -First 1
+          ./scripts/verify-signatures.ps1 -IncludeBuiltApp -InstallerPath $installer.FullName
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      # Archive to the run only — no release, no publishing.
+      - name: Archive store artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: doodleray-store-win32
+          path: dist-store/
+          retention-days: 14
