@@ -140,6 +140,34 @@ while ((Get-Date) -lt $deadline -and -not $fallback) {
     Start-Sleep -Seconds 3
 }
 
+$fallbackPath = "service-induced"
+if (-not $fallback) {
+    # A healthy build can legitimately repair the killed service-owned TUN
+    # child before we manage to kill the retry child. In that case, explicitly
+    # exercise the same frontend fallback handler through the QA-only loopback
+    # control surface. Production launches never expose this route.
+    $fallbackPath = "qa-simulated"
+    Invoke-QaControl "/simulate-tun-failure?reason=DoodleRay%20could%20not%20create%20the%20Windows%20tunnel%20adapter%3A%20sing-box%20exited" 10 | Out-Null
+    $deadline = (Get-Date).AddSeconds(120)
+    while ((Get-Date) -lt $deadline -and -not $fallback) {
+        $fallbackStatus = Invoke-QaControl "/status" 5
+        $fallbackWinInet = Get-WinInet
+        $fallbackPort = Get-HttpProxyPortFromWinInet $fallbackWinInet
+        $serviceState = [string]$fallbackStatus.service.state
+        $serviceVerdict = [string]$fallbackStatus.service.health_verdict
+        $appConnected = [bool]$fallbackStatus.app_connected
+        if ($appConnected -and $fallbackWinInet.ProxyEnable -eq 1 -and $fallbackPort -and
+            -not ($serviceState -eq "connected" -and $serviceVerdict -match '^protected')) {
+            $portReady = (Test-NetConnection 127.0.0.1 -Port $fallbackPort -WarningAction SilentlyContinue).TcpTestSucceeded
+            if ($portReady) {
+                $fallbackFetch = Test-HttpProxyFetch $fallbackPort
+                if ($fallbackFetch.ok) { $fallback = $true }
+            }
+        }
+        Start-Sleep -Seconds 3
+    }
+}
+
 $newServiceLines = @()
 if (Test-Path -LiteralPath $serviceLogPath) {
     $newServiceLines = @(Get-Content -LiteralPath $serviceLogPath -ErrorAction SilentlyContinue | Select-Object -Skip $serviceLogStartLine)
@@ -158,6 +186,7 @@ $statusDetail = [pscustomobject]@{
     httpPort = $fallbackPort
     fetchExit = if ($fallbackFetch) { $fallbackFetch.exit } else { $null }
     fetchOutput = if ($fallbackFetch) { $fallbackFetch.output } else { $null }
+    fallbackPath = $fallbackPath
     recentLogs = if ($fallbackStatus.frontend) { @($fallbackStatus.frontend.recent_logs | Select-Object -Last 12) } else { @() }
 }
 $statusDetail | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $evidenceDir "auto-fallback-status.json") -Encoding UTF8

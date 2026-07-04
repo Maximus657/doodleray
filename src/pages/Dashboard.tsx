@@ -1043,12 +1043,22 @@ export default function Dashboard() {
     }
   }, [addLog, httpPort, proxyMode, socksPort, systemProxyMode, t]);
 
+  const handleQaSimulatedTunFailure = useCallback(async (reason: string) => {
+    const srv = activeServer || resolveConnectServer(activeServer, servers, false);
+    if (!srv) {
+      addLog('error', '[QA-control] simulate-tun-failure failed: no active server');
+      return;
+    }
+    const { invoke } = await import('@tauri-apps/api/core');
+    await attemptLimitedBrowsersFallback(srv, invoke, connectionOpRef.current, reason);
+  }, [activeServer, addLog, attemptLimitedBrowsersFallback, servers]);
+
   // QA-only control surface consumer (backend gates it behind
   // DOODLERAY_QA_CONTROL=1; production launches never enable it). Actions are
   // executed through the exact same handlers the UI buttons use.
-  const qaControlRef = useRef({ status, handleConnect, handleModeSwitch });
+  const qaControlRef = useRef({ status, handleConnect, handleModeSwitch, handleQaSimulatedTunFailure });
   useEffect(() => {
-    qaControlRef.current = { status, handleConnect, handleModeSwitch };
+    qaControlRef.current = { status, handleConnect, handleModeSwitch, handleQaSimulatedTunFailure };
   });
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -1133,6 +1143,10 @@ export default function Dashboard() {
                   addLog('success', '[QA-control] subscription imported');
                 }
               }
+            } else if (action === 'simulate-tun-failure') {
+              await current.handleQaSimulatedTunFailure(
+                query.get('reason') || 'DoodleRay could not create the Windows tunnel adapter: sing-box exited',
+              );
             }
           } catch (err: any) {
             addLog('error', `[QA-control] ${action} failed: ${err?.message || err}`);

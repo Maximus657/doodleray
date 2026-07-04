@@ -34,7 +34,7 @@ exit `$LASTEXITCODE
         exit $LASTEXITCODE
     }
 
-    & (Join-Path $PSScriptRoot "Invoke-Play2GoPowerShell.ps1") -Command $command -TimeoutSec 3600
+    & (Join-Path $PSScriptRoot "Invoke-Play2GoPowerShell.ps1") -Command $command
     exit $LASTEXITCODE
 }
 
@@ -120,9 +120,30 @@ function Wait-Disconnected {
     return (Invoke-QaControl "/status" 8)
 }
 
+function Wait-FrontendMode {
+    param([string] $Mode, [int] $TimeoutSec = 45)
+    $expected = switch ($Mode) {
+        "tun" { "protected" }
+        "browsers" { "compatibility" }
+        "manual" { "manual" }
+        default { $Mode }
+    }
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    $last = $null
+    while ((Get-Date) -lt $deadline) {
+        $last = Invoke-QaControl "/status" 8
+        if ($last.frontend -and [string]$last.frontend.product_mode -eq $expected) {
+            return $last
+        }
+        Start-Sleep -Seconds 1
+    }
+    return $last
+}
+
 function Get-TimingValue {
     param($Timings, [string] $Name)
     foreach ($entry in @($Timings)) {
+        if ($null -eq $entry) { continue }
         if ($entry -is [array] -and $entry.Count -ge 2 -and [string]$entry[0] -eq $Name) {
             return [int64]$entry[1]
         }
@@ -167,9 +188,20 @@ function Start-DoodleRayQaApp {
     if (-not (Test-Path -LiteralPath $appExe)) { throw "DoodleRay.exe missing: $appExe" }
     Get-Process DoodleRay -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 3
-    $env:DOODLERAY_QA_CONTROL = "1"
-    $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9333 --remote-allow-origins=*"
-    Start-Process -FilePath $appExe -WorkingDirectory (Split-Path -Parent $appExe)
+    $launcherDir = "C:\DoodleRayQA\codex-run"
+    $launcherPath = Join-Path $launcherDir "Start-DoodleRayPerfQaApp.ps1"
+    New-Item -ItemType Directory -Force -Path $launcherDir | Out-Null
+    @"
+`$env:DOODLERAY_QA_CONTROL = "1"
+`$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9333 --remote-allow-origins=*"
+Start-Process -FilePath "$appExe" -WorkingDirectory "$(Split-Path -Parent $appExe)"
+"@ | Set-Content -LiteralPath $launcherPath -Encoding UTF8
+    $taskName = "DoodleRayConnectPerfQa"
+    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$launcherPath`""
+    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
+    Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Force | Out-Null
+    Start-ScheduledTask -TaskName $taskName
     return (Wait-QaControl 90)
 }
 
@@ -207,7 +239,17 @@ function Run-ConnectAttempt {
         Wait-Disconnected 90 | Out-Null
     }
     Invoke-QaControl "/switch-mode?mode=$Mode" 15 | Out-Null
-    Start-Sleep -Milliseconds 700
+    $modeStatus = Wait-FrontendMode $Mode 45
+    $expectedMode = switch ($Mode) {
+        "tun" { "protected" }
+        "browsers" { "compatibility" }
+        "manual" { "manual" }
+        default { $Mode }
+    }
+    $actualMode = if ($modeStatus.frontend) { [string]$modeStatus.frontend.product_mode } else { "" }
+    if ($actualMode -ne $expectedMode) {
+        throw "Mode switch to $Mode did not settle: expected product_mode=$expectedMode actual=$actualMode"
+    }
 
     $wall = [System.Diagnostics.Stopwatch]::StartNew()
     Invoke-QaControl "/connect" 20 | Out-Null

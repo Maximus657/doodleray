@@ -4266,6 +4266,7 @@ mod tests {
             "endpoint=203.0.113.7:443",
             "private_key=super-secret",
             "loopback=127.0.0.1:10809",
+            "wintun=Tunnel|SWD\\\\WINTUN\\\\{B71A9688-FC4C-FB7D-060F-9F1B5D26DA3D}|problem=CM_PROB_PHANTOM",
         ]
         .join("\n");
 
@@ -4273,6 +4274,7 @@ mod tests {
 
         assert!(!redacted.contains("https://"));
         assert!(!redacted.contains("11111111-2222-3333-4444-555555555555"));
+        assert!(!redacted.contains("B71A9688-FC4C-FB7D-060F-9F1B5D26DA3D"));
         assert!(!redacted.contains("203.0.113.7"));
         assert!(!redacted.contains("super-secret"));
         assert!(redacted.contains("[redacted-url]"));
@@ -8789,11 +8791,13 @@ fn redact_support_token(token: &str) -> String {
     if token.contains("://") {
         return "[redacted-url]".into();
     }
-    let trimmed = token.trim_matches(|ch: char| {
+    let uuid_redacted = redact_uuid_substrings(token);
+    let redacted_token = uuid_redacted.as_str();
+    let trimmed = redacted_token.trim_matches(|ch: char| {
         !(ch.is_ascii_alphanumeric() || matches!(ch, '.' | ':' | '-' | '_' | '[' | ']'))
     });
     if trimmed.is_empty() {
-        return token.to_string();
+        return uuid_redacted;
     }
     let normalized = trimmed.trim_matches(|ch| matches!(ch, '[' | ']'));
     let comparable = normalized
@@ -8801,15 +8805,39 @@ fn redact_support_token(token: &str) -> String {
         .map(|(_, value)| value)
         .unwrap_or(normalized);
     if looks_like_uuid(comparable) {
-        return token.replace(comparable, "[redacted-uuid]");
+        return uuid_redacted.replace(comparable, "[redacted-uuid]");
     }
     if looks_like_secret_token(comparable) {
-        return token.replace(comparable, "[redacted-token]");
+        return uuid_redacted.replace(comparable, "[redacted-token]");
     }
     if should_redact_ip_token(comparable) {
-        return token.replace(comparable, "[redacted-ip]");
+        return uuid_redacted.replace(comparable, "[redacted-ip]");
     }
-    token.to_string()
+    uuid_redacted
+}
+
+fn redact_uuid_substrings(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut idx = 0;
+    while idx < value.len() {
+        let end = idx + 36;
+        if end <= value.len()
+            && value.is_char_boundary(idx)
+            && value.is_char_boundary(end)
+            && looks_like_uuid(&value[idx..end])
+        {
+            out.push_str("[redacted-uuid]");
+            idx = end;
+            continue;
+        }
+
+        let Some(ch) = value[idx..].chars().next() else {
+            break;
+        };
+        out.push(ch);
+        idx += ch.len_utf8();
+    }
+    out
 }
 
 fn looks_like_uuid(value: &str) -> bool {
@@ -9905,7 +9933,8 @@ fn qa_control_dispatch(app: &tauri::AppHandle, path: &str) -> (&'static str, Str
         | "/disconnect"
         | "/switch-mode"
         | "/refresh-subscription"
-        | "/import-subscription" => {
+        | "/import-subscription"
+        | "/simulate-tun-failure" => {
             let payload = serde_json::json!({
                 "action": route.trim_start_matches('/'),
                 "query": query,
