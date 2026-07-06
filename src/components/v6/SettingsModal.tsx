@@ -270,7 +270,7 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
             sub={t('v6SetWipeSub' as never)}
             danger
             onClick={() => {
-              if (wipeArmed) { wipeData(); setWipeArmed(false); addLog('warning', 'All servers and subscriptions were removed'); }
+              if (wipeArmed) { wipeData(); setWipeArmed(false); addLog('info', 'All servers and subscriptions were removed'); }
               else { setWipeArmed(true); setTimeout(() => setWipeArmed(false), 4000); }
             }}
             right={<Trash2 className="h-[18px] w-[18px] shrink-0 text-[#ff8a7a]" strokeWidth={1.9} />}

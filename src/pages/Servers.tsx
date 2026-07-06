@@ -23,6 +23,8 @@ import { useTranslation } from '../locales';
 import { reportConnectionError } from '../lib/workshop-api';
 import { pingServersWithLimit } from '../lib/ping-runner';
 import { describeSubscriptionSource } from '../lib/redaction';
+import { isClosedControlPlaneEnabled, isLegacyImportEnabled, legacyImportDisabledMessage } from '../lib/build-policy';
+import { appApiLocations, appApiSessionStatus, syncClosedLocationsToStore } from '../lib/app-control-plane';
 
 export default function Servers() {
   const {
@@ -40,6 +42,8 @@ export default function Servers() {
     removeAllManualServers,
   } = useAppStore();
   const { t } = useTranslation();
+  const legacyImportEnabled = isLegacyImportEnabled();
+  const closedControlPlane = isClosedControlPlaneEnabled();
 
   const [showAdd, setShowAdd] = useState(false);
   const [smartInput, setSmartInput] = useState('');
@@ -59,6 +63,7 @@ export default function Servers() {
 
   // Auto-ping servers after persisted state/subscriptions are loaded.
   useEffect(() => {
+    if (closedControlPlane) return;
     const unpinged = servers.filter(
       s => (s.ping === undefined || (s.ping > 0 && s.ping <= 5)) && !autoPingStartedRef.current.has(s.id)
     );
@@ -78,7 +83,7 @@ export default function Servers() {
       } catch { /* not in tauri env */ }
     })();
     return () => { cancelled = true; };
-  }, [servers, updateServerPings]);
+  }, [servers, updateServerPings, closedControlPlane]);
 
   // Auto-detect input type
   const detectType = (input: string): 'sub' | 'link' | 'unknown' => {
@@ -94,6 +99,10 @@ export default function Servers() {
   const handleSmartAdd = useCallback(async () => {
     const trimmed = smartInput.trim();
     if (!trimmed) return;
+    if (!isLegacyImportEnabled()) {
+      addLog('error', legacyImportDisabledMessage());
+      return;
+    }
     const type = detectType(trimmed);
 
     if (type === 'sub') {
@@ -143,6 +152,15 @@ export default function Servers() {
   const handleTestGroup = useCallback(async (groupId: string, groupServers: ServerConfig[]) => {
     setTestingGroup(groupId);
     try {
+      if (closedControlPlane) {
+        const session = await appApiSessionStatus();
+        if (session.logged_in) {
+          const locations = await appApiLocations();
+          syncClosedLocationsToStore(session, locations.locations);
+          addLog('success', 'DoodleVPN locations refreshed');
+        }
+        return;
+      }
       const { invoke } = await import('@tauri-apps/api/core');
       await pingServersWithLimit(groupServers, invoke, {
         onBatch: (updates) => useAppStore.getState().updateServerPings(updates),
@@ -150,7 +168,7 @@ export default function Servers() {
     } finally {
       setTestingGroup(null);
     }
-  }, []);
+  }, [closedControlPlane, addLog]);
 
   const handleRefreshSub = useCallback(async (subId: string) => {
     const sub = subscriptions.find((s) => s.id === subId);
@@ -158,6 +176,15 @@ export default function Servers() {
     
     setRefreshingSub(subId);
     try {
+      if (closedControlPlane) {
+        const session = await appApiSessionStatus();
+        if (session.logged_in) {
+          const locations = await appApiLocations();
+          syncClosedLocationsToStore(session, locations.locations);
+        }
+        addLog('success', `Refreshed ${sub.name}`);
+        return;
+      }
       addLog('info', `Refreshing subscription: ${sub.name}`);
       const updated = await refreshSubscription(sub);
       updateSubscription(subId, updated);
@@ -175,7 +202,7 @@ export default function Servers() {
     } finally {
       setRefreshingSub(null);
     }
-  }, [subscriptions, updateSubscription, addLog]);
+  }, [subscriptions, updateSubscription, addLog, closedControlPlane]);
 
   const handleRemoveSub = useCallback(async (subId: string, subName: string) => {
     setConfirmModal({
@@ -298,16 +325,18 @@ export default function Servers() {
             <span className="p-3 bg-black text-white rounded-xl shadow-[4px_4px_0_#000] border-[3px] border-black"><FolderTree className="w-6 h-6 stroke-[3px]" /></span>
             {t('servers')}
           </h1>
-          <button
-            onClick={() => setShowAdd(!showAdd)}
-            className="group flex items-center gap-2 px-5 py-3 text-sm bg-white text-black border-[3px] border-black rounded-xl font-black cursor-pointer shadow-[4px_4px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-[2px_2px_0_#000] uppercase tracking-widest transition-all"
-          >
-            <Plus className="w-5 h-5 stroke-[4px] transition-transform duration-300 group-hover:rotate-90 group-hover:scale-110" /> {t('addServer')}
-          </button>
+          {legacyImportEnabled && (
+            <button
+              onClick={() => setShowAdd(!showAdd)}
+              className="group flex items-center gap-2 px-5 py-3 text-sm bg-white text-black border-[3px] border-black rounded-xl font-black cursor-pointer shadow-[4px_4px_0_#000] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-[2px_2px_0_#000] uppercase tracking-widest transition-all"
+            >
+              <Plus className="w-5 h-5 stroke-[4px] transition-transform duration-300 group-hover:rotate-90 group-hover:scale-110" /> {t('addServer')}
+            </button>
+          )}
         </div>
 
         {/* Add panel — smart input */}
-        {showAdd && (
+        {showAdd && legacyImportEnabled && (
           <div className="bg-bg-primary border-[4px] border-black rounded-2xl p-6 shadow-[6px_6px_0_#000] animate-slide-up space-y-4">
             <div className="flex flex-wrap gap-3">
               <div className="flex-1 relative min-w-[200px]">
@@ -353,7 +382,7 @@ export default function Servers() {
             <Signal className="w-12 h-12 text-black mx-auto mb-4 stroke-[3px]" />
             <p className="text-xl font-black text-black uppercase tracking-tight">No servers found</p>
             <p className="text-[10px] text-black/60 font-black uppercase tracking-widest mt-2 max-w-xs mx-auto">
-              Add a subscription link or a manual VPN link to get started.
+              {legacyImportEnabled ? 'Add a subscription link or a manual VPN link to get started.' : 'Sign in to DoodleVPN to load your locations.'}
             </p>
           </div>
         )}

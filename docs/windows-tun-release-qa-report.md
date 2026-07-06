@@ -922,3 +922,68 @@ Not yet claimed:
 - No fresh Win10 / Win11 clean-VM run was performed in this sync step.
 - No live protected-mode perf run was performed after the v6 sync because the
   friend LAN host was released.
+
+## 2026-07-06 - v6 Store RC Local Gate And Preview Smoke
+
+Branch: `codex/v6-store-redesign`.
+
+Artifact:
+
+- `DoodleRay-store-win32-6.0.0-x64-setup.exe`
+- SHA-256 `C4FE94A9D5A012682535B6AF50F0BCFE3C0C37D4C8603D72B02A6BDE1B9CDA2E`
+- Unsigned, QA-only. Not Store-submittable and not production-ready.
+
+Fixes in this pass:
+
+- Diagnosis mapping no longer shows service warning/degraded bookkeeping as a
+  failed user check when the verdict is otherwise `all_ok` or a non-actionable
+  IPv6/QUIC note.
+- App API secure session persistence was tightened: access tokens stay in
+  memory only; the disk/keyring session stores refresh/device/subscription
+  material only and migrates early-RC full-token entries by rewriting them.
+- The v6 connect orb no longer renders decorative pulse/glow rings, removing
+  the large connected-state color blooms and avoiding stuck ring animation on
+  weak WebView2/GPU paths.
+- Normal lifecycle events such as `Starting connection...`,
+  `Connection active`, and `Disconnecting...` are displayed as neutral status
+  events instead of warning/problem styling.
+- Store/closed-control onboarding strings are localized in en/ru/zh and the
+  web-preview fallback no longer exposes raw `invoke`/Tauri runtime errors.
+
+Local verification:
+
+- `cargo fmt --manifest-path src-tauri\Cargo.toml --check` passed.
+- `cargo check --manifest-path src-tauri\Cargo.toml --bin DoodleRay` passed.
+- `cargo check --manifest-path src-tauri\Cargo.toml --bin DoodleRayService`
+  passed.
+- `cargo test --manifest-path src-tauri\Cargo.toml --lib --quiet` passed:
+  79 passed, 3 ignored.
+- `npm run build -- --logLevel warn` passed; Vite reported chunk/dynamic-import
+  warnings only.
+- `scripts\build-store.ps1 -AllowUnsigned -OutDir dist-store-qa` passed and
+  produced the artifact above.
+
+Rendered preview smoke:
+
+- In-app browser opened `http://127.0.0.1:4173/` against the built `dist`.
+- Closed-control onboarding was visible with Russian strings:
+  `Добро пожаловать!`, `Введите код входа DoodleVPN, чтобы загрузить локации.`,
+  `Код DoodleVPN`, `Войти`.
+- Legacy import text/link UI was absent in the store build.
+- No raw `invoke`/Tauri runtime error was visible.
+- Decorative pulse/glow ring nodes were absent (`rings=0`).
+- Browser console returned no warnings/errors for the smoke page.
+
+Blocked external QA:
+
+- Play2Go host `31.77.147.47` was unreachable from this machine during this
+  pass. SSH `:22`, RDP `:3389`, and WinRM `:5985` all timed out, so upload,
+  clean install, real closed-login, protected connect, diagnostics, split
+  routing, DNS/OpenAI, and cleanup QA could not be executed on the stand.
+
+Not yet claimed:
+
+- No signed CI / Authenticode release artifact.
+- No Play2Go install/connect evidence for this exact RC due stand timeout.
+- No fresh clean Win10 / Win11 matrix for this exact RC.
+- No live closed-control backend login/connect proof for this exact RC.

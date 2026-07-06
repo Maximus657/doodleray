@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Loader2, Globe } from 'lucide-react';
+import { getEmoji, getFluentEmojiCDN } from '@lobehub/fluent-emoji';
 import type { ServerConfig } from '../../stores/app-store';
 import { protocolLabel } from '../../lib/utils';
 
@@ -35,6 +36,65 @@ export function FlagIcon({ countryCode, size = 26 }: { countryCode?: string; siz
   );
 }
 
+function isValidCountryCode(countryCode?: string): boolean {
+  return /^[a-z]{2}$/i.test(countryCode?.trim() ?? '');
+}
+
+function splitLeadingEmoji(rawName: string): { emoji: string | null; name: string } {
+  const leftTrimmed = rawName.trimStart();
+  const emoji = getEmoji(leftTrimmed);
+  if (!emoji || !leftTrimmed.startsWith(emoji)) return { emoji: null, name: rawName.trim() };
+
+  const name = leftTrimmed
+    .slice(emoji.length)
+    .replace(/^[\s·|:—–-]+/, '')
+    .trim();
+  return { emoji, name: name || rawName.trim() };
+}
+
+function LeadingEmojiIcon({ emoji, size }: { emoji: string; size: number }) {
+  const [failed, setFailed] = useState(false);
+  const src = failed
+    ? null
+    : getFluentEmojiCDN(emoji, { cdn: 'unpkg', type: '3d' });
+
+  if (!src) {
+    return (
+      <span
+        aria-hidden
+        className="inline-flex items-center justify-center"
+        style={{ width: size, height: size, fontSize: Math.round(size * 0.82), lineHeight: 1 }}
+      >
+        {emoji}
+      </span>
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt=""
+      width={size}
+      height={size}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className="object-contain"
+      style={{ width: size, height: size, filter: 'drop-shadow(0 2px 5px rgba(0,0,0,0.34))' }}
+    />
+  );
+}
+
+export function leadingServerEmoji(server: Pick<ServerConfig, 'name' | 'countryCode'>): string | null {
+  if (isValidCountryCode(server.countryCode)) return null;
+  return splitLeadingEmoji(server.name).emoji;
+}
+
+export function ServerIcon({ server, size = 26 }: { server: Pick<ServerConfig, 'name' | 'countryCode'>; size?: number }) {
+  const emoji = leadingServerEmoji(server);
+  if (emoji) return <LeadingEmojiIcon emoji={emoji} size={size} />;
+  return <FlagIcon countryCode={server.countryCode} size={size} />;
+}
+
 interface Props {
   server: ServerConfig;
   active: boolean;
@@ -53,6 +113,7 @@ export function displayServerName(server: Pick<ServerConfig, 'name' | 'countryCo
   let name = server.name.replace(FLAG_EMOJI_RE, '').trim();
   const cc = server.countryCode?.trim().toUpperCase();
   if (cc) name = name.replace(new RegExp(`^${cc}[\\s·|-]+`, 'i'), '').trim();
+  if (!isValidCountryCode(server.countryCode)) name = splitLeadingEmoji(name).name;
   return name || server.name;
 }
 
@@ -76,20 +137,20 @@ export default function ServerRow({ server, active, pinging, onSelect }: Props) 
       }}
     >
       <span className="flex w-9 shrink-0 items-center justify-center">
-        <FlagIcon countryCode={server.countryCode} />
+        <ServerIcon server={server} />
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[14.5px] font-medium text-white" title={server.name}>{name}</span>
         <span className="mt-0.5 block truncate text-[12px] text-white/45">{protocolLabel(server.protocol, server.transport)}</span>
       </span>
-      <span className="flex items-center gap-[7px]">
+      <span className="flex shrink-0 items-center justify-end gap-[7px]">
         {pinging ? (
           <Loader2 className="h-3.5 w-3.5 v6-orb-spin text-white/50" />
         ) : (
           <>
             <span className="h-[7px] w-[7px] rounded-full" style={{ background: pc, boxShadow: hasPing ? `0 0 8px ${pc}` : 'none' }} />
-            <span className="w-[46px] text-right text-[12.5px] tabular-nums text-white/60">
-              {hasPing ? `${server.ping} ms` : '—'}
+            <span className="w-[74px] whitespace-nowrap text-right text-[12.5px] tabular-nums text-white/60">
+              {hasPing ? `${server.ping}\u00a0ms` : '—'}
             </span>
           </>
         )}

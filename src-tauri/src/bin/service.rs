@@ -852,7 +852,12 @@ mod windows_service_main {
                 }
                 let detail = redact(&report.detail);
                 if report.ok {
-                    runtime.proxy_compat_state = Some("ready".into());
+                    if detail.contains("direct app exclusions") {
+                        runtime.proxy_compat_state =
+                            Some("disabled_for_direct_app_exclusions".into());
+                    } else {
+                        runtime.proxy_compat_state = Some("ready".into());
+                    }
                     runtime
                         .degraded_checks
                         .retain(|check| !check.contains("Windows proxy compatibility"));
@@ -1560,10 +1565,13 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         set_phase("singbox_ready", started, generation)?;
         wait_for_doodleray_ipv4_interface(Duration::from_secs(20), generation)?;
         set_phase("ipv4_ready", started, generation)?;
+        apply_doodleray_dns_client_policy(generation);
         wait_for_doodleray_route_preferred(Duration::from_secs(20), generation)?;
         mark_route_ready();
         set_phase("routes_ready", started, generation)?;
+        wait_for_windows_system_resolver_ready(Duration::from_secs(20), generation)?;
         mark_dns_policy_ready();
+        set_phase("dns_ready", started, generation)?;
         spawn_nonfatal_policy_checks(generation);
         if let Some(path) = xray_log_path.as_deref() {
             ensure_xray_alive(path)?;
@@ -1632,8 +1640,10 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         ensure_current_generation(generation)?;
         refresh_adapter_snapshot_required()?;
         wait_for_doodleray_ipv4_interface(Duration::from_secs(8), generation)?;
+        apply_doodleray_dns_client_policy(generation);
         wait_for_doodleray_route_preferred(Duration::from_secs(8), generation)?;
         mark_route_ready();
+        wait_for_windows_system_resolver_ready(Duration::from_secs(12), generation)?;
         mark_dns_policy_ready();
         spawn_nonfatal_policy_checks(generation);
         wait_for_port(socks_port, Duration::from_secs(5), generation)?;
@@ -1641,7 +1651,10 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             match wait_for_port(http_port, Duration::from_secs(5), generation) {
                 Ok(()) => {
                     let mut runtime = state().lock().unwrap();
-                    if runtime.proxy_compat_state.as_deref() != Some("degraded") {
+                    if !matches!(
+                        runtime.proxy_compat_state.as_deref(),
+                        Some("degraded") | Some("disabled_for_direct_app_exclusions")
+                    ) {
                         runtime.proxy_compat_state = Some("ready".into());
                     }
                 }
@@ -2253,6 +2266,102 @@ $summary -join "`n"
         );
     }
 
+    fn apply_doodleray_dns_client_policy(generation: u64) {
+        if !is_current_generation(generation) {
+            return;
+        }
+        let output = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                r#"
+$ErrorActionPreference = 'Stop'
+$adapter = Get-NetAdapter -Name 'DoodleRay Tunnel' -ErrorAction Stop | Select-Object -First 1
+$wanted = @('1.1.1.1','8.8.8.8')
+$metricChanged = $false
+try {
+  $ipInterface = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction Stop
+  if ([int]$ipInterface.InterfaceMetric -gt 5) {
+    Set-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -InterfaceMetric 1 -ErrorAction Stop
+    $metricChanged = $true
+  }
+} catch {
+  Write-Output ("metric_warning=" + $_.Exception.Message)
+}
+$current = @(Get-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+  ForEach-Object { $_.ServerAddresses } |
+  Where-Object { $_ })
+$needsSet = $current.Count -ne $wanted.Count
+if (-not $needsSet) {
+  for ($i = 0; $i -lt $wanted.Count; $i++) {
+    if ($current[$i] -ne $wanted[$i]) { $needsSet = $true; break }
+  }
+}
+if ($needsSet) {
+  Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ServerAddresses $wanted -ErrorAction Stop
+  Clear-DnsClientCache -ErrorAction SilentlyContinue
+}
+Set-DnsClient -InterfaceIndex $adapter.ifIndex -RegisterThisConnectionsAddress $false -ErrorAction SilentlyContinue
+$after = @(Get-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+  ForEach-Object { $_.ServerAddresses } |
+  Where-Object { $_ })
+$metric = (Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).InterfaceMetric
+"adapter_dns_ipv4=" + ($after -join ',') + "; interface_metric=" + $metric + "; metric_changed=" + $metricChanged
+"#,
+            ])
+            .creation_flags(0x08000000)
+            .output();
+
+        let mut runtime = state().lock().unwrap();
+        match output {
+            Ok(output) if output.status.success() => {
+                let detail = format!(
+                    "DoodleRay Tunnel DNS client policy pinned to IPv4 resolvers ({})",
+                    redact(String::from_utf8_lossy(&output.stdout).trim())
+                );
+                log_service_event(&detail);
+                if !runtime
+                    .route_explanations
+                    .iter()
+                    .any(|existing| existing == &detail)
+                {
+                    runtime.route_explanations.push(detail);
+                }
+            }
+            Ok(output) => {
+                let detail = format!(
+                    "Windows DNS client policy could not be pinned to the DoodleRay Tunnel adapter: {}{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                log_service_event(&detail);
+                let detail = redact(&detail);
+                if !runtime
+                    .degraded_checks
+                    .iter()
+                    .any(|existing| existing == &detail)
+                {
+                    runtime.degraded_checks.push(detail);
+                }
+            }
+            Err(error) => {
+                let detail = format!(
+                    "Windows DNS client policy could not be pinned to the DoodleRay Tunnel adapter: {}",
+                    error
+                );
+                log_service_event(&detail);
+                let detail = redact(&detail);
+                if !runtime
+                    .degraded_checks
+                    .iter()
+                    .any(|existing| existing == &detail)
+                {
+                    runtime.degraded_checks.push(detail);
+                }
+            }
+        }
+    }
+
     fn mark_dns_policy_ready() {
         let mut runtime = state().lock().unwrap();
         runtime.dns_ready = Some(true);
@@ -2260,6 +2369,107 @@ $summary -join "`n"
             "protected DNS policy is owned by sing-box DNS hijack with remote DoH over the proxy detour"
                 .into(),
         );
+    }
+
+    fn windows_system_resolver_canary() -> Result<String, String> {
+        let targets = [
+            ("auth.openai.com", "https://auth.openai.com"),
+            ("api.ipify.org", "https://api.ipify.org"),
+        ];
+        let mut ok = Vec::new();
+        let mut last_error = None;
+        for (host, url) in targets {
+            let output = Command::new("curl.exe")
+                .args([
+                    "-4",
+                    "--connect-timeout",
+                    "4",
+                    "--max-time",
+                    "8",
+                    "--noproxy",
+                    "*",
+                    "--silent",
+                    "--show-error",
+                    "--output",
+                    "NUL",
+                    "--write-out",
+                    "%{http_code}",
+                    url,
+                ])
+                .creation_flags(0x08000000)
+                .output()
+                .map_err(|error| format!("failed to run curl.exe resolver canary: {}", error))?;
+
+            let combined = format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            if output.status.success() {
+                ok.push(format!("{}={}", host, combined.trim()));
+                continue;
+            }
+
+            let lower = combined.to_lowercase();
+            let dns_like = lower.contains("could not resolve host")
+                || lower.contains("resolving timed out")
+                || lower.contains("getaddrinfo")
+                || lower.contains("enotfound")
+                || lower.contains("name or service not known");
+            last_error = Some(if dns_like {
+                format!(
+                    "Windows system resolver canary failed after TUN route setup for {}: {}",
+                    host,
+                    redact(combined.trim())
+                )
+            } else {
+                format!(
+                    "Windows HTTPS canary failed after TUN route setup for {}: {}",
+                    host,
+                    redact(combined.trim())
+                )
+            });
+            break;
+        }
+
+        if ok.len() == targets.len() {
+            Ok(format!(
+                "Windows system resolver canaries passed through TUN ({})",
+                ok.join(", ")
+            ))
+        } else {
+            Err(last_error.unwrap_or_else(|| {
+                "Windows system resolver canary failed after TUN route setup".into()
+            }))
+        }
+    }
+
+    fn wait_for_windows_system_resolver_ready(
+        timeout: Duration,
+        generation: u64,
+    ) -> Result<(), String> {
+        let deadline = Instant::now() + timeout;
+        let mut last_error = "Windows system resolver canary did not run".to_string();
+        while Instant::now() < deadline {
+            ensure_current_generation(generation)?;
+            match windows_system_resolver_canary() {
+                Ok(message) => {
+                    log_service_event(&format!("DNS readiness ok: {}", message));
+                    let mut runtime = state().lock().unwrap();
+                    let detail =
+                        "Windows system resolver canaries passed through TUN (auth.openai.com, api.ipify.org)";
+                    if !runtime.route_explanations.iter().any(|item| item == detail) {
+                        runtime.route_explanations.push(detail.into());
+                    }
+                    return Ok(());
+                }
+                Err(error) => {
+                    last_error = error;
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+            }
+        }
+        Err(last_error)
     }
 
     fn spawn_nonfatal_policy_checks(generation: u64) {

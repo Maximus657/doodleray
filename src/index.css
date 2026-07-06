@@ -335,18 +335,16 @@
   }
 
   /* Main glass panel = window body: glass gradient layered over the warm
-     plum radial (design bg); wallpaper blobs float inside, clipped by the
-     rounded corners. */
+     plum radial design background. */
   .v6-panel {
     background:
-      linear-gradient(150deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.04)),
-      radial-gradient(120% 120% at 20% 10%, #2a1118 0%, #160b11 55%, #0d070a 100%);
+      linear-gradient(150deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.035)),
+      radial-gradient(120% 120% at 20% 10%, #23161d 0%, #170d12 56%, #0d070a 100%);
     border: 1px solid rgba(255, 255, 255, 0.16);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
   }
 
-  /* Section cards (design: white 0.05 / border 0.09) — true glass: the
-     wallpaper blobs and layers behind blur through each surface. Kept to a
+  /* Section cards (design: white 0.05 / border 0.09) — true glass. Kept to a
      handful of large surfaces so WebView2 stays smooth. */
   .v6-glass {
     background: rgba(255, 255, 255, 0.05);
@@ -386,26 +384,151 @@
   }
 
   /* Design animations (DoodleVPN.dc.html) */
-  @keyframes v6-floatA { 0%, 100% { transform: translate(0, 0); } 50% { transform: translate(40px, 30px); } }
-  @keyframes v6-floatB { 0%, 100% { transform: translate(0, 0); } 50% { transform: translate(-50px, -30px); } }
-  @keyframes v6-floatC { 0%, 100% { transform: translate(0, 0); } 50% { transform: translate(30px, -40px); } }
   @keyframes v6-pulsering { 0% { transform: scale(0.9); opacity: 0.6; } 100% { transform: scale(1.45); opacity: 0; } }
   @keyframes v6-breathe { 0%, 100% { transform: scale(1); opacity: 0.55; } 50% { transform: scale(1.08); opacity: 0.95; } }
   @keyframes v6-spin { to { transform: rotate(360deg); } }
   @keyframes v6-fadein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes v6-brand-enter {
+    from { opacity: 0; transform: translateX(-14px) scale(0.94); filter: blur(8px); }
+    to { opacity: 1; transform: translateX(0) scale(1); filter: blur(0); }
+  }
+  @keyframes v6-brand-after-flight {
+    0% { opacity: 0; transform: translateX(-6px) scale(0.97); filter: blur(8px); }
+    100% { opacity: 1; transform: translateX(0) scale(1); filter: blur(0); }
+  }
+  @keyframes v6-onboarding-enter {
+    from { opacity: 0; transform: translateY(18px) scale(0.975); filter: blur(10px); }
+    to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+  }
+  @keyframes v6-onboarding-exit {
+    0% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+    100% { opacity: 0; transform: translateY(-22px) scale(0.955); filter: blur(14px); }
+  }
+  @keyframes v6-block-reveal {
+    from { opacity: 0; transform: translateY(22px) scale(0.982); filter: blur(12px); }
+    to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+  }
 
-  .v6-blob-a { animation: v6-floatA 19s ease-in-out infinite; }
-  .v6-blob-b { animation: v6-floatB 23s ease-in-out infinite; }
-  .v6-blob-c { animation: v6-floatC 17s ease-in-out infinite; }
-  .v6-pulsering { animation: v6-pulsering 2.2s ease-out infinite; }
-  .v6-pulsering-slow { animation: v6-pulsering 4.6s ease-out infinite; }
-  .v6-breathe { animation: v6-breathe 2.6s ease-in-out infinite; }
+  .v6-pulsering {
+    animation: v6-pulsering 2.2s ease-out infinite;
+    will-change: transform, opacity;
+  }
+  .v6-pulsering-slow {
+    animation: v6-pulsering 4.6s ease-out infinite;
+    will-change: transform, opacity;
+  }
+  .v6-breathe {
+    animation: v6-breathe 2.6s ease-in-out infinite;
+    will-change: transform, opacity;
+  }
   .v6-orb-spin { animation: v6-spin 0.9s linear infinite; }
   .v6-fadein { animation: v6-fadein 0.25s ease; }
+  .v6-brand-hidden {
+    opacity: 0;
+    transform: translateX(-10px) scale(0.96);
+  }
+  .v6-brand-enter {
+    animation: v6-brand-enter 0.72s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  body.v6-login-transition-active .v6-brand-enter {
+    opacity: 0;
+    animation: v6-brand-after-flight 0.46s cubic-bezier(0.16, 1, 0.3, 1) 1.12s both;
+  }
+  .v6-onboarding-card {
+    animation: v6-onboarding-enter 0.72s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .v6-onboarding-card-exit {
+    animation: v6-onboarding-exit 0.48s cubic-bezier(0.45, 0, 0.55, 1) forwards;
+  }
+  .v6-login-flight-stage {
+    isolation: isolate;
+  }
+  .v6-login-flight-wash {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    background:
+      radial-gradient(260px 180px at 50% 48%, rgba(255, 158, 56, 0.16), transparent 68%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 44%);
+    will-change: transform, opacity;
+  }
+  .v6-login-flight {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 1;
+    height: 72px;
+    width: 72px;
+    will-change: transform, opacity, filter;
+  }
+  .v6-login-flight img {
+    box-shadow: 0 14px 42px rgba(234, 109, 6, 0.44);
+  }
+  .v6-login-flight-word {
+    position: absolute;
+    left: calc(100% + 14px);
+    top: 50%;
+    transform: translateY(-50%);
+    white-space: nowrap;
+    font-size: 19px;
+    font-weight: 650;
+    line-height: 1;
+    color: #fff;
+    letter-spacing: -0.01em;
+    will-change: transform, opacity, filter;
+  }
+  .v6-login-flight-word span {
+    font-weight: 300;
+    color: rgba(255, 255, 255, 0.72);
+  }
+  .v6-dashboard-enter > *,
+  .v6-dashboard-reveal > * {
+    opacity: 0;
+    animation: v6-block-reveal 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  .v6-dashboard-enter > *:nth-child(1),
+  .v6-dashboard-reveal > *:nth-child(1) {
+    animation-delay: 0.04s;
+  }
+  .v6-dashboard-enter > *:nth-child(2),
+  .v6-dashboard-reveal > *:nth-child(2) {
+    animation-delay: 0.14s;
+  }
+  .v6-dashboard-enter > *:nth-child(2) > *,
+  .v6-dashboard-reveal > *:nth-child(2) > * {
+    opacity: 0;
+    animation: v6-block-reveal 0.68s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  .v6-dashboard-enter > *:nth-child(2) > *:nth-child(1),
+  .v6-dashboard-reveal > *:nth-child(2) > *:nth-child(1) { animation-delay: 0.20s; }
+  .v6-dashboard-enter > *:nth-child(2) > *:nth-child(2),
+  .v6-dashboard-reveal > *:nth-child(2) > *:nth-child(2) { animation-delay: 0.29s; }
+  .v6-dashboard-enter > *:nth-child(2) > *:nth-child(3),
+  .v6-dashboard-reveal > *:nth-child(2) > *:nth-child(3) { animation-delay: 0.38s; }
+  .v6-dashboard-enter > *:nth-child(2) > *:nth-child(4),
+  .v6-dashboard-reveal > *:nth-child(2) > *:nth-child(4) { animation-delay: 0.47s; }
+
+  .v6-dashboard-reveal > *:nth-child(1) { animation-delay: 0.58s; }
+  .v6-dashboard-reveal > *:nth-child(2) { animation-delay: 0.70s; }
+  .v6-dashboard-reveal > *:nth-child(2) > *:nth-child(1) { animation-delay: 0.80s; }
+  .v6-dashboard-reveal > *:nth-child(2) > *:nth-child(2) { animation-delay: 0.92s; }
+  .v6-dashboard-reveal > *:nth-child(2) > *:nth-child(3) { animation-delay: 1.04s; }
+  .v6-dashboard-reveal > *:nth-child(2) > *:nth-child(4) { animation-delay: 1.16s; }
 
   @media (prefers-reduced-motion: reduce) {
-    .v6-blob-a, .v6-blob-b, .v6-blob-c, .v6-pulsering, .v6-pulsering-slow, .v6-breathe {
-      animation: none !important;
+    .v6-pulsering { animation: v6-pulsering 4.8s ease-out infinite !important; }
+    .v6-pulsering-slow { animation: v6-pulsering 7.2s ease-out infinite !important; }
+    .v6-breathe { animation: v6-breathe 5.2s ease-in-out infinite !important; }
+    .v6-brand-enter,
+    .v6-onboarding-card,
+    .v6-onboarding-card-exit,
+    .v6-dashboard-enter > *,
+    .v6-dashboard-reveal > *,
+    .v6-dashboard-enter > *:nth-child(2) > *,
+    .v6-dashboard-reveal > *:nth-child(2) > * {
+      animation-duration: 1ms !important;
+      animation-delay: 0ms !important;
+      filter: none !important;
     }
   }
 }

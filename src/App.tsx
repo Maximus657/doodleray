@@ -16,6 +16,8 @@ import { isHealthAcceptable, summarizeHealthFailures, waitForConnectionHealth } 
 import { resolveConnectServer } from './lib/server-selection';
 import { checkForAppUpdate, installAppUpdate } from './lib/app-updater';
 import { isInAppUpdateEnabled, openStoreUpdatePage } from './lib/update-channel';
+import { buildAppConnectLocationRequestFromState, isClosedLocationServer } from './lib/app-control-plane';
+import { isClosedControlPlaneEnabled } from './lib/build-policy';
 import './index.css';
 
 function formatMessage(template: string, values: Record<string, string | number>) {
@@ -370,8 +372,11 @@ function App() {
         state.addLog('info', `Auto-connecting to ${srv.name}...`);
         
         const { invoke } = await import('@tauri-apps/api/core');
-        const request = await buildConnectRequestFromState(srv);
-        const result: any = await invoke('vpn_connect', { request });
+        const useClosedLocation = isClosedControlPlaneEnabled() && isClosedLocationServer(srv);
+        const request = useClosedLocation
+          ? await buildAppConnectLocationRequestFromState(srv)
+          : await buildConnectRequestFromState(srv);
+        const result: any = await invoke(useClosedLocation ? 'app_connect_location' : 'vpn_connect', { request });
         
         if (result.success) {
           const { health } = await waitForConnectionHealth(

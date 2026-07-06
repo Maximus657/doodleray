@@ -65,6 +65,7 @@ qa-update-sandbox/
 qa-real-subscription-sandbox/
 
 # Local LAN/dirty-host QA evidence and downloaded admin tools
+.qa/
 friend-*/
 baseline-user-*.json
 lan-baseline-system*.json

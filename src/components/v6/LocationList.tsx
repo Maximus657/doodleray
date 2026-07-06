@@ -35,6 +35,7 @@ interface Props {
   onSearchChange: (q: string) => void;
   onSelect: (server: ServerConfig) => void;
   onAdd: () => void;
+  canAdd?: boolean;
   onPingAll: () => void;
   t: T;
 }
@@ -49,6 +50,7 @@ export default function LocationList({
   onSearchChange,
   onSelect,
   onAdd,
+  canAdd = true,
   onPingAll,
   t,
 }: Props) {
@@ -83,15 +85,17 @@ export default function LocationList({
           >
             <RefreshCw className={`h-3.5 w-3.5 ${pingingServerIds.size > 0 ? 'v6-orb-spin' : ''}`} strokeWidth={2.2} />
           </button>
-          <button
-            type="button"
-            onClick={onAdd}
-            title={t('addSubOrServer' as never)}
-            aria-label={t('addSubOrServer' as never)}
-            className="v6-hover-bright flex h-6 w-6 items-center justify-center rounded-lg border border-white/[0.12] bg-white/[0.07] text-white/70 v6-focus"
-          >
-            <Plus className="h-3.5 w-3.5" strokeWidth={2.4} />
-          </button>
+          {canAdd && (
+            <button
+              type="button"
+              onClick={onAdd}
+              title={t('addSubOrServer' as never)}
+              aria-label={t('addSubOrServer' as never)}
+              className="v6-hover-bright flex h-6 w-6 items-center justify-center rounded-lg border border-white/[0.12] bg-white/[0.07] text-white/70 v6-focus"
+            >
+              <Plus className="h-3.5 w-3.5" strokeWidth={2.4} />
+            </button>
+          )}
         </span>
       </div>
 
@@ -112,7 +116,7 @@ export default function LocationList({
       <div role="listbox" aria-label={t('servers' as never)} className="-mr-1 flex min-h-0 flex-1 flex-col gap-[7px] overflow-y-auto pr-1">
         {groups.length === 0 ? (
           <div className="grid flex-1 place-items-center px-4 text-center text-[12px] text-white/45">
-            {searchQuery.trim() ? t('v6NoResults' as never) : t('addSubOrServer' as never)}
+            {searchQuery.trim() ? t('v6NoResults' as never) : canAdd ? t('addSubOrServer' as never) : t('v6NoResults' as never)}
           </div>
         ) : (
           groups.map((g) => (

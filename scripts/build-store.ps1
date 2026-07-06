@@ -44,10 +44,16 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 Set-Location $repoRoot
 
-# --- Channel env (baked into the frontend by Vite during beforeBuildCommand) ---
+# --- Channel/control-plane env baked into frontend and Rust during tauri build ---
 $env:VITE_DOODLERAY_UPDATE_CHANNEL = 'store-win32'
+$env:VITE_DOODLERAY_BUILD_CHANNEL = 'store-win32'
+$env:VITE_DOODLERAY_CLOSED_CONTROL_PLANE = '1'
 $env:VITE_DOODLERAY_STORE_SELF_UPDATE = if ($EnableSelfUpdate) { '1' } else { '0' }
 $env:VITE_DOODLERAY_STORE_FALLBACK_URL = $StoreFallbackUrl
+$env:DOODLERAY_BUILD_CHANNEL = 'store-win32'
+$env:DOODLERAY_CLOSED_CONTROL_PLANE = '1'
+Remove-Item Env:\DOODLERAY_ENABLE_LEGACY_IMPORT -ErrorAction SilentlyContinue
+Remove-Item Env:\VITE_DOODLERAY_ENABLE_LEGACY_IMPORT -ErrorAction SilentlyContinue
 
 # --- Signing policy: fail closed unless explicitly waived ---
 if ($AllowUnsigned) {
@@ -69,7 +75,7 @@ if ($WithUpdaterArtifacts) {
 }
 
 Write-Host "== DoodleRay store-win32 build ==" -ForegroundColor Cyan
-Write-Host ("channel=store-win32 selfUpdate={0} signedRequired={1}" -f $env:VITE_DOODLERAY_STORE_SELF_UPDATE, $env:WINDOWS_CODESIGN_REQUIRED)
+Write-Host ("channel=store-win32 closedControlPlane=1 selfUpdate={0} signedRequired={1}" -f $env:VITE_DOODLERAY_STORE_SELF_UPDATE, $env:WINDOWS_CODESIGN_REQUIRED)
 
 npx tauri build --bundles nsis @configArgs
 if ($LASTEXITCODE -ne 0) { throw "tauri build failed with exit code $LASTEXITCODE" }

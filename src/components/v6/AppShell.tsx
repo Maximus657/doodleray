@@ -1,4 +1,4 @@
-import { useState, type ReactNode, type CSSProperties } from 'react';
+import { useState, type ReactNode } from 'react';
 import { HelpCircle, SlidersHorizontal } from 'lucide-react';
 import { useAppStore } from '../../stores/app-store';
 import { useTranslation } from '../../locales';
@@ -9,19 +9,20 @@ import SettingsModal from './SettingsModal';
 
 /**
  * v6 shell, ported from the DoodleVPN Claude Design prototype: warm plum
- * background with floating color blobs (vivid while connected), one large
- * glass panel, and a design header (logo, traffic chip, support/settings,
- * Windows window controls on the undecorated window).
+ * glass panel and a design header (logo, traffic chip, support/settings,
+ * Windows window controls on the undecorated window). The prototype's large
+ * connected-state wallpaper blobs are intentionally removed: in the real app
+ * they looked like full-window warning lights behind the content.
  */
 export default function AppShell({ children }: { children: ReactNode }) {
-  const status = useAppStore((s) => s.status);
   const subscriptions = useAppStore((s) => s.subscriptions);
   const activeServer = useAppStore((s) => s.activeServer);
+  const serversCount = useAppStore((s) => s.servers.length);
+  const status = useAppStore((s) => s.status);
   const { t } = useTranslation();
   const [supportOpen, setSupportOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-
-  const vivid = status === 'connected';
+  const hasMainContent = serversCount > 0 || status !== 'disconnected';
 
   // Traffic chip: real quota of the active subscription (design: "X.X GB left").
   const activeSub = getSubscriptionById(subscriptions, activeServer?.subscriptionId) ?? subscriptions[0] ?? null;
@@ -48,44 +49,24 @@ export default function AppShell({ children }: { children: ReactNode }) {
     }
   };
 
-  const blob = (color: string, size: number, pos: CSSProperties, anim: string, op: number): ReactNode => (
-    <div
-      aria-hidden
-      className={anim}
-      style={{
-        position: 'absolute',
-        width: size,
-        height: size,
-        borderRadius: '50%',
-        background: `radial-gradient(circle, ${color} 0%, transparent 67%)`,
-        filter: vivid ? 'blur(30px) saturate(1.1)' : 'blur(36px) saturate(0.22) brightness(0.7)',
-        opacity: vivid ? op : op * 0.4,
-        transition: 'opacity .7s ease, filter .7s ease',
-        pointerEvents: 'none',
-        ...pos,
-      }}
-    />
-  );
-
   return (
     <div className="v6-app relative flex h-screen w-screen flex-col overflow-hidden">
       <div className="v6-panel relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[34px] p-[18px]">
-        {/* Sunset wallpaper blobs (design), clipped by the rounded panel */}
-        {blob('#F97F16', 640, { left: -160, top: -200 }, 'v6-blob-a', 0.9)}
-        {blob('#FF3D7F', 560, { right: -140, bottom: -180 }, 'v6-blob-b', 0.85)}
-        {blob('#FFB02E', 480, { right: '18%', top: -120 }, 'v6-blob-c', 0.7)}
-
         {/* Top drag strip: covers the whole header band (incl. panel padding)
             so the window drags from anywhere up top except the buttons. */}
         <div data-tauri-drag-region className="absolute inset-x-0 top-0 z-[5] h-[68px]" />
 
         {/* HEADER */}
         <div data-tauri-drag-region className="relative z-10 flex shrink-0 select-none items-center justify-between px-2.5 pb-4 pt-1.5">
-          <div data-tauri-drag-region className="pointer-events-none flex items-center gap-[11px]">
+          <div
+            data-tauri-drag-region
+            className={`pointer-events-none flex items-center gap-[11px] ${hasMainContent ? 'v6-brand-enter' : 'v6-brand-hidden'}`}
+          >
             <img
               src="/assets/mascot.png"
               alt=""
               draggable={false}
+              data-v6-brand-logo
               className="h-[34px] w-[34px] rounded-[11px]"
               style={{ boxShadow: '0 6px 18px rgba(234,109,6,0.45)' }}
             />

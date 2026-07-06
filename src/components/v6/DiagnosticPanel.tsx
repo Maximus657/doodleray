@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   X, Stethoscope, Loader2, Wrench, Copy, Check, FileDown, ChevronDown,
-  ShieldCheck, ShieldAlert, ShieldX, Info,
+  ShieldCheck, ShieldAlert, ShieldX,
 } from 'lucide-react';
 import { useAppStore } from '../../stores/app-store';
+import { getActiveRoutingRules, resolveSystemProxyModeForRouting } from '../../lib/connect-helpers';
 
 type T = (key: never) => string;
 
@@ -92,10 +93,16 @@ export default function DiagnosticPanel({ onClose, onExportSupportBundle, t }: P
     setCopied(false);
     try {
       const s = useAppStore.getState();
+      const routingRules = s.proxyMode === 'tun' ? await getActiveRoutingRules() : [];
+      const systemProxyMode = resolveSystemProxyModeForRouting(
+        s.proxyMode,
+        s.systemProxyMode,
+        routingRules,
+      );
       const { invoke } = await import('@tauri-apps/api/core');
       const result = await invoke<NetworkDiagnosisReport>('run_network_diagnosis', {
         proxyMode: s.proxyMode,
-        systemProxyMode: s.systemProxyMode,
+        systemProxyMode,
         socksPort: s.socksPort,
         httpPort: s.httpPort,
         lastSubscriptionError: null,
@@ -143,7 +150,12 @@ export default function DiagnosticPanel({ onClose, onExportSupportBundle, t }: P
 
   const meta = report ? OVERALL_META[report.overall] ?? OVERALL_META.degraded : null;
   const cause = report ? localizedCause(t, report) : null;
-  const problems = report?.checks.filter((c) => c.status === 'error' || c.status === 'warning') ?? [];
+  const showWarningsAsProblems = report
+    ? !['all_ok', 'ipv6_quic_unverified'].includes(report.primary_cause_code ?? '')
+    : false;
+  const problems = report?.checks.filter((c) => (
+    c.status === 'error' || (showWarningsAsProblems && c.status === 'warning')
+  )) ?? [];
 
   return (
     <div
@@ -285,10 +297,6 @@ export default function DiagnosticPanel({ onClose, onExportSupportBundle, t }: P
               {t('v6DiagSaveFull' as never)}
             </button>
           )}
-        </div>
-        <div className="mt-2 flex items-start gap-1.5 text-[10.5px] leading-snug text-white/35">
-          <Info className="mt-px h-3 w-3 shrink-0" strokeWidth={2} />
-          {t('v6DiagPrivacyNote' as never)}
         </div>
       </div>
     </div>

@@ -19,6 +19,33 @@ const LEVEL_META: Record<LogEntry['level'], { color: string; icon: typeof Info }
   debug: { color: 'rgba(255,255,255,0.35)', icon: Info },
 };
 
+function isActionableIssueLog(log: LogEntry): boolean {
+  if (log.level !== 'error' && log.level !== 'warning') return false;
+  return !/disconnecting|connection active|starting connection/i.test(log.message);
+}
+
+function displayLogLevel(log: LogEntry): LogEntry['level'] {
+  if ((log.level === 'warning' || log.level === 'error') && !isActionableIssueLog(log)) {
+    return 'info';
+  }
+  return log.level;
+}
+
+function activeIssueWindow(logs: LogEntry[]): LogEntry[] {
+  let start = 0;
+  for (let i = logs.length - 1; i >= 0; i--) {
+    const log = logs[i];
+    if (
+      (log.level === 'success' && /connection active|connected/i.test(log.message)) ||
+      (log.level === 'info' && /disconnecting|disconnected|starting connection/i.test(log.message))
+    ) {
+      start = i + 1;
+      break;
+    }
+  }
+  return logs.slice(start);
+}
+
 /**
  * Bottom status rail with the honest issue count and support-bundle export.
  * The expanded log view opens as an overlay popover ABOVE the bar (absolute,
@@ -31,7 +58,7 @@ export default function DiagnosticsDrawer({ logs, onClear, onOpenDiagnostics, t 
   // Service/diagnostic chatter stays out of the user-facing list; it is still
   // kept in the store for QA snapshots and support bundles.
   const visibleLogs = logs.filter((l) => l.level !== 'debug');
-  const issues = visibleLogs.filter((l) => l.level === 'error' || l.level === 'warning').length;
+  const issues = activeIssueWindow(visibleLogs).filter(isActionableIssueLog).length;
   const latest = visibleLogs[visibleLogs.length - 1];
 
   // Scroll only the log list itself — scrollIntoView would also scroll every
@@ -64,7 +91,7 @@ export default function DiagnosticsDrawer({ logs, onClear, onOpenDiagnostics, t 
                 <div className="py-6 text-center text-[11px] text-white/40">{t('v6NoEvents' as never)}</div>
               ) : (
                 visibleLogs.map((log) => {
-                  const meta = LEVEL_META[log.level];
+                  const meta = LEVEL_META[displayLogLevel(log)];
                   const Icon = meta.icon;
                   return (
                     <div key={log.id} className="flex items-start gap-2 rounded-md px-1.5 py-1 text-[10.5px] leading-snug hover:bg-white/[0.04]">
@@ -98,7 +125,7 @@ export default function DiagnosticsDrawer({ logs, onClear, onOpenDiagnostics, t 
             </span>
           )}
           {latest && !open && (
-            <span className="min-w-0 flex-1 truncate text-[11px]" style={{ color: LEVEL_META[latest.level].color }}>
+            <span className="min-w-0 flex-1 truncate text-[11px]" style={{ color: LEVEL_META[displayLogLevel(latest)].color }}>
               {latest.message}
             </span>
           )}

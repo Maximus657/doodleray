@@ -5,6 +5,8 @@
 import type { ServerConfig, ProxyMode, SystemProxyMode } from '../stores/app-store';
 import { useAppStore } from '../stores/app-store';
 
+export type RoutingRulePayload = { rule_type: string; value: string; action: string };
+
 export interface ConnectOpts {
   proxyMode: ProxyMode;
   socksPort: number;
@@ -13,17 +15,47 @@ export interface ConnectOpts {
   dnsMode: string;
   strictRoute: boolean;
   killSwitch: boolean;
-  routingRules: Array<{ rule_type: string; value: string; action: string }>;
+  routingRules: RoutingRulePayload[];
   systemProxyMode?: SystemProxyMode;
+}
+
+export function hasDirectAppRoutingRule(routingRules: RoutingRulePayload[]): boolean {
+  return routingRules.some(rule =>
+    rule.rule_type === 'exe' &&
+    rule.action === 'direct' &&
+    rule.value.trim().length > 0
+  );
+}
+
+export function resolveSystemProxyModeForRouting(
+  proxyMode: ProxyMode,
+  requestedSystemProxyMode: SystemProxyMode | undefined,
+  routingRules: RoutingRulePayload[],
+): SystemProxyMode {
+  const normalizedSystemProxyMode =
+    !requestedSystemProxyMode || requestedSystemProxyMode === 'clear'
+      ? 'unchanged'
+      : requestedSystemProxyMode;
+
+  if (
+    proxyMode === 'tun' &&
+    normalizedSystemProxyMode === 'set' &&
+    hasDirectAppRoutingRule(routingRules)
+  ) {
+    return 'unchanged';
+  }
+
+  return normalizedSystemProxyMode;
 }
 
 /** Build the request payload for the `vpn_connect` Tauri command. */
 export function buildConnectRequest(server: ServerConfig, opts: ConnectOpts) {
   const requestedSystemProxyMode = opts.systemProxyMode ?? useAppStore.getState().systemProxyMode;
-  const systemProxyMode =
-    requestedSystemProxyMode === 'clear'
-      ? 'unchanged'
-      : requestedSystemProxyMode;
+  const systemProxyMode = resolveSystemProxyModeForRouting(
+    opts.proxyMode,
+    requestedSystemProxyMode,
+    opts.routingRules,
+  );
 
   return {
     server_address: server.address,

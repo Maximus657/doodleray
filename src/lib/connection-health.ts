@@ -50,6 +50,35 @@ export function isHealthAcceptable(mode: ProxyMode, health: ConnectionHealthRepo
   return health.verdict !== 'failed' && health.verdict !== 'cleanup_pending';
 }
 
+const NON_ACTIONABLE_PROTECTED_DEGRADED_RE =
+  /(ipv6 full-protection leak proof is not collected|degraded_disabled|quic\/http3 is not verified|quic.*not verified|unverified-no-tooling|ipv6_default_route=.*doodleray tunnel)/i;
+
+function failedHealthLines(health: ConnectionHealthReport): string[] {
+  const failedChecks = (health.checks ?? [])
+    .filter(check => check.severity === 'error' || check.severity === 'warning')
+    .map(check => `${check.code} ${check.title} ${check.detail}`);
+  return [
+    ...(health.service_fatal_checks ?? []),
+    ...(health.service_degraded_checks ?? []),
+    ...(health.service_warning_checks ?? []),
+    ...failedChecks,
+  ].filter(Boolean);
+}
+
+export function isNonActionableProtectedDegraded(health: ConnectionHealthReport | null | undefined): boolean {
+  if (!health || health.verdict !== 'protected_degraded') return false;
+  if ((health.service_fatal_checks ?? []).length > 0) return false;
+
+  const failed = failedHealthLines(health);
+  if (failed.length === 0) return true;
+  return failed.every(line => NON_ACTIONABLE_PROTECTED_DEGRADED_RE.test(line));
+}
+
+export function getUserVisibleHealthVerdict(health: ConnectionHealthReport | null | undefined): string | null {
+  if (!health) return null;
+  return isNonActionableProtectedDegraded(health) ? 'protected' : health.verdict;
+}
+
 export function isHealthFatal(mode: ProxyMode, health: ConnectionHealthReport | null | undefined): boolean {
   if (!health || (health.verdict !== 'failed' && health.verdict !== 'cleanup_pending')) return false;
   if (mode !== 'tun') return false;
@@ -74,6 +103,9 @@ export function needsProtectedRuntimeRepair(health: ConnectionHealthReport | nul
 }
 
 export function summarizeHealthFailures(health: ConnectionHealthReport | null | undefined): string {
+  if (isNonActionableProtectedDegraded(health)) {
+    return 'non-actionable IPv6/QUIC verification warnings';
+  }
   const failed = (health?.checks ?? []).filter(check => check.severity === 'error' || check.severity === 'warning');
   if (failed.length === 0) return `health verdict=${health?.verdict ?? 'missing'}`;
   return failed.slice(0, 3).map(check => `${check.title}: ${check.detail}`).join('; ');

@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '../stores/app-store';
-import { getActiveRoutingRules } from './connect-helpers';
+import { getActiveRoutingRules, resolveSystemProxyModeForRouting } from './connect-helpers';
 
 export type DiagnosticSeverity = 'ok' | 'info' | 'warning' | 'error';
 
@@ -51,6 +51,11 @@ export interface CacheClearReport {
 export async function runNetworkDiagnostics(subscriptionUrl?: string | null) {
   const state = useAppStore.getState();
   const routingRules = await getActiveRoutingRules();
+  const systemProxyMode = resolveSystemProxyModeForRouting(
+    state.proxyMode,
+    state.systemProxyMode,
+    routingRules,
+  );
   return invoke<NetworkDiagnosticsReport>('run_network_diagnostics', {
     subscriptionUrl: subscriptionUrl || null,
     socksPort: state.socksPort,
@@ -61,7 +66,7 @@ export async function runNetworkDiagnostics(subscriptionUrl?: string | null) {
     proxyMode: state.proxyMode,
     appStatus: state.status,
     activeRoutingRuleCount: routingRules.length,
-    systemProxyMode: state.systemProxyMode,
+    systemProxyMode,
     dnsMode: state.dnsMode,
     networkStack: state.networkStack,
   });

@@ -1,6 +1,6 @@
 import { ShieldCheck, ShieldAlert, ShieldX } from 'lucide-react';
 import type { OrbState } from './status';
-import { FlagIcon } from './ServerRow';
+import { ServerIcon } from './ServerRow';
 
 interface Props {
   state: OrbState;
@@ -10,6 +10,7 @@ interface Props {
   /** honest status text for the pill under the button (Protected/Degraded/Limited/Failed) */
   statusLabel?: string | null;
   serverName?: string | null;
+  serverRawName?: string | null;
   serverCountryCode?: string | null;
   disabled?: boolean;
   onClick: () => void;
@@ -20,7 +21,7 @@ interface Props {
 
 /**
  * Design connect core: 172px radial button (gray when off, orange when on),
- * pulse rings + breathing glow, status pill below. Honesty rule: the green
+ * with a compact status pill below. Honesty rule: the green
  * "Encrypted" pill appears only for the protected verdict; degraded/limited
  * get an amber pill, failed gets red — never fake-green.
  */
@@ -30,13 +31,13 @@ export default function ConnectOrb({
   subLabel,
   statusLabel,
   serverName,
+  serverRawName,
   serverCountryCode,
   disabled,
   onClick,
   onDiagnose,
   diagnoseLabel,
 }: Props) {
-  const off = state === 'idle';
   const busy = state === 'connecting' || state === 'disconnecting';
   const tunnelOn = state === 'protected' || state === 'degraded' || state === 'limited';
   const failed = state === 'failed';
@@ -65,26 +66,6 @@ export default function ConnectOrb({
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 rounded-[26px] border border-white/[0.08] bg-white/[0.03]">
       <div className="relative flex h-[248px] w-[248px] items-center justify-center">
-        {/* Idle: slow white pulse rings */}
-        {off && (
-          <>
-            <span aria-hidden className="v6-pulsering-slow absolute inset-0 rounded-full border border-white/[0.16]" />
-            <span aria-hidden className="v6-pulsering-slow absolute inset-0 rounded-full border border-white/[0.11]" style={{ animationDelay: '2.3s' }} />
-          </>
-        )}
-        {/* Active: breathing glow + orange pulse rings */}
-        {tunnelOn && (
-          <>
-            <span
-              aria-hidden
-              className="v6-breathe pointer-events-none absolute -inset-[22px] rounded-full"
-              style={{ background: 'radial-gradient(circle, rgba(249,127,22,0.4), transparent 68%)' }}
-            />
-            <span aria-hidden className="v6-pulsering absolute inset-0 rounded-full border-[1.5px] border-[#FF9E38]/[0.55]" />
-            <span aria-hidden className="v6-pulsering absolute inset-0 rounded-full border-[1.5px] border-[#FF9E38]/[0.45]" style={{ animationDelay: '1.1s' }} />
-          </>
-        )}
-
         <button
           type="button"
           id="connect-button"
@@ -137,7 +118,10 @@ export default function ConnectOrb({
               {serverName && (
                 <>
                   <span className="opacity-60">·</span>
-                  {serverCountryCode && <FlagIcon countryCode={serverCountryCode} size={18} />}
+                  <ServerIcon
+                    server={{ name: serverRawName || serverName, countryCode: serverCountryCode ?? undefined }}
+                    size={18}
+                  />
                   <span className="truncate">{serverName}</span>
                 </>
               )}

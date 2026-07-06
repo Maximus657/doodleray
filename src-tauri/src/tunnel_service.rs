@@ -387,6 +387,7 @@ pub fn is_repairable_tun_bringup_error(error: &str) -> bool {
         "DoodleRay Tunnel IPv4 interface is not ready",
         "DoodleRay Tunnel IPv4 routes are missing",
         "DoodleRay Tunnel route is not preferred",
+        "Windows system resolver canary failed after TUN route setup",
         "sing-box exited",
         "sing-box process is not running",
         "Cannot create a file when that file already exists",
@@ -427,6 +428,9 @@ mod tun_bringup_tests {
         ));
         assert!(is_repairable_tun_bringup_error(
             "sing-box exited with exit code: 1: fatal start"
+        ));
+        assert!(is_repairable_tun_bringup_error(
+            "Windows system resolver canary failed after TUN route setup: curl: (28) Resolving timed out"
         ));
         assert!(is_repairable_tun_bringup_error(
             "sing-box exited with exit status: 1: FATAL start service: start inbound/tun[tun-in]: configure tun interface: (create adapter: Cannot create a file when that file already exists. | open existing adapter: Element not found.)"

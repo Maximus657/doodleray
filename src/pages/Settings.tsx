@@ -209,7 +209,7 @@ export default function Settings() {
       message: 'Are you absolutely sure you want to delete ALL servers and subscriptions? This cannot be undone.',
       onConfirm: () => {
         wipeData();
-        addLog('warning', 'All server configurations have been wiped from the device.');
+        addLog('info', 'All server configurations have been wiped from the device.');
         setConfirmModal(prev => ({ ...prev, show: false }));
       }
     });
