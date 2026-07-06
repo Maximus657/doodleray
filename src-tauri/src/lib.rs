@@ -9189,6 +9189,13 @@ fn qa_control_update_frontend_snapshot(snapshot: serde_json::Value) -> bool {
     false
 }
 
+#[cfg(not(windows))]
+#[tauri::command]
+fn qa_control_update_frontend_snapshot(snapshot: serde_json::Value) -> bool {
+    let _ = snapshot;
+    false
+}
+
 /// QA-only local control surface (loopback HTTP on 127.0.0.1:48765), enabled
 /// exclusively by DOODLERAY_QA_CONTROL=1 in the app environment. It replaces
 /// fragile CDP DOM automation for connect/disconnect/mode/refresh actions by
