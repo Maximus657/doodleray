@@ -12,10 +12,32 @@ from a first-party immutable downloads host.
 - Bootstrap script: `scripts/release/bootstrap-downloads-host.sh`
 
 The host is the same Dokploy machine that serves bot/subsvc traffic. Do not
-replace Caddy or touch existing `doodlevpn.online` / `ddlvpn.lol` routes. The
-bootstrap script only adds a separate Caddy import file:
+replace nginx/Dokploy or touch existing `doodlevpn.online` / `ddlvpn.lol`
+routes. The live host currently uses nginx vhosts, not Caddy. The bootstrap
+script auto-detects nginx/Caddy and only adds a separate vhost for
+`doodleray.clickflare.click`.
 
-`/etc/caddy/conf.d/doodleray-downloads.caddy`
+Known current staging state:
+
+- Dokploy compose `doodleray-downloads` exists and is healthy.
+- It serves static files through nginx inside Docker.
+- It is exposed on the host loopback as `127.0.0.1:18089`.
+- Public domain routing still needs the host nginx vhost below if SSH/root
+  access is not already restored.
+
+For the current Dokploy-backed host, run as root:
+
+```bash
+cd /tmp
+curl -fsSL -o bootstrap-downloads-host.sh https://raw.githubusercontent.com/Maximus657/doodleray/production/scripts/release/bootstrap-downloads-host.sh
+DOMAIN=doodleray.clickflare.click \
+UPSTREAM=http://127.0.0.1:18089 \
+WEB_SERVER=nginx \
+bash bootstrap-downloads-host.sh
+```
+
+If publishing directly to host storage instead of Dokploy volume, omit
+`UPSTREAM`; nginx will serve `/srv/doodleray-downloads/public` directly.
 
 ## URL Contract
 
