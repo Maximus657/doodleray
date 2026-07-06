@@ -17,6 +17,7 @@ fi
 
 install -d -m 0755 "$ROOT/public/releases/direct" "$ROOT/public/releases/store-win32"
 install -d -m 0755 "$ROOT/public/channels/direct" "$ROOT/public/channels/store-win32"
+install -d -m 0755 "$ROOT/public/download/windows"
 install -d -m 0750 "$ROOT/staging"
 
 cat > "$ROOT/public/index.html" <<EOF
@@ -24,12 +25,149 @@ cat > "$ROOT/public/index.html" <<EOF
 <html lang="en">
   <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>DoodleRay Downloads</title>
-    <meta name="robots" content="noindex">
+    <meta name="description" content="Download DoodleRay VPN for Windows from the official first-party downloads host.">
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #17090f;
+        --panel: rgba(255,255,255,.075);
+        --border: rgba(255,255,255,.14);
+        --text: #fff7f2;
+        --muted: rgba(255,247,242,.68);
+        --accent: #ff7a2f;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 32px;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background:
+          radial-gradient(circle at 25% 10%, rgba(255,122,47,.24), transparent 34%),
+          radial-gradient(circle at 82% 80%, rgba(255,59,114,.18), transparent 38%),
+          var(--bg);
+        color: var(--text);
+      }
+      main {
+        width: min(720px, 100%);
+        padding: 42px;
+        border: 1px solid var(--border);
+        border-radius: 28px;
+        background: linear-gradient(145deg, rgba(255,255,255,.11), rgba(255,255,255,.04));
+        box-shadow: 0 30px 90px rgba(0,0,0,.36);
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 28px;
+        font-weight: 800;
+        font-size: 24px;
+        letter-spacing: -.02em;
+      }
+      .mark {
+        width: 48px;
+        height: 48px;
+        display: grid;
+        place-items: center;
+        border-radius: 14px;
+        background: linear-gradient(135deg, #ffb000, #ff6724);
+        color: #210b05;
+        font-weight: 900;
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: clamp(34px, 7vw, 58px);
+        line-height: .95;
+        letter-spacing: -.05em;
+      }
+      p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 18px;
+        line-height: 1.55;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 32px;
+      }
+      a.button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 54px;
+        padding: 0 22px;
+        border-radius: 16px;
+        color: #190904;
+        background: linear-gradient(135deg, #ff9d45, var(--accent));
+        text-decoration: none;
+        font-weight: 800;
+      }
+      a.secondary {
+        color: var(--text);
+        background: var(--panel);
+        border: 1px solid var(--border);
+      }
+      .note {
+        margin-top: 22px;
+        font-size: 14px;
+      }
+    </style>
   </head>
   <body>
-    <h1>DoodleRay Downloads</h1>
-    <p>Release artifacts are served from immutable versioned paths.</p>
+    <main>
+      <div class="brand"><div class="mark">DR</div><span>DoodleRay VPN</span></div>
+      <h1>Download for Windows</h1>
+      <p>Official DoodleRay installer from our own downloads host. Release files are published to immutable versioned paths, while this page always points to the current direct Windows build.</p>
+      <div class="actions">
+        <a class="button" href="/download/windows/latest.exe">Download DoodleRay for Windows</a>
+        <a class="button secondary" href="/channels/direct/manifest.json">Release manifest</a>
+      </div>
+      <p class="note">If the button is not available yet, the next public build has not been published to this host.</p>
+    </main>
+  </body>
+</html>
+EOF
+
+cat > "$ROOT/public/download/windows/index.html" <<EOF
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Download DoodleRay for Windows</title>
+    <meta http-equiv="refresh" content="1; url=/download/windows/latest.exe">
+    <style>
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #17090f;
+        color: #fff7f2;
+      }
+      main {
+        width: min(560px, calc(100vw - 40px));
+        padding: 32px;
+        border: 1px solid rgba(255,255,255,.14);
+        border-radius: 22px;
+        background: rgba(255,255,255,.075);
+      }
+      a { color: #ff9d45; font-weight: 800; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Starting download...</h1>
+      <p>If it does not start automatically, <a href="/download/windows/latest.exe">click here to download DoodleRay for Windows</a>.</p>
+    </main>
   </body>
 </html>
 EOF

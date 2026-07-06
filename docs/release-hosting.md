@@ -4,6 +4,9 @@ Goal: stop using GitHub Releases as the product CDN. GitHub may still build
 artifacts, but users, the updater, and Microsoft Store Partner Center must read
 from a first-party immutable downloads host.
 
+Current product decision: the primary Windows distribution path is the direct
+first-party download page. Microsoft Store remains optional/later.
+
 ## Host
 
 - Domain: `doodleray.clickflare.click`
@@ -20,9 +23,10 @@ script auto-detects nginx/Caddy and only adds a separate vhost for
 Current host state:
 
 - Dokploy compose `doodleray-downloads` exists and is healthy.
-- It serves static files through nginx inside Docker.
-- It is exposed on the host loopback as `127.0.0.1:18089`.
-- Host nginx proxies `doodleray.clickflare.click` to `127.0.0.1:18089`.
+- Host nginx now serves `doodleray.clickflare.click` directly from
+  `/srv/doodleray-downloads/public`.
+- The old Dokploy compose may still exist on loopback `127.0.0.1:18089`, but it
+  is no longer the public serving path for downloads.
 - Let's Encrypt HTTPS is active for `https://doodleray.clickflare.click/`.
 - `http://doodleray.clickflare.click/` redirects to HTTPS.
 
@@ -32,15 +36,24 @@ If this vhost ever has to be recreated, run as root:
 cd /tmp
 curl -fsSL -o bootstrap-downloads-host.sh https://raw.githubusercontent.com/Maximus657/doodleray/58e44cfc761a4d5b60a0785b6238fefde5021ab8/scripts/release/bootstrap-downloads-host.sh
 DOMAIN=doodleray.clickflare.click \
-UPSTREAM=http://127.0.0.1:18089 \
 WEB_SERVER=nginx \
 bash bootstrap-downloads-host.sh
 ```
 
-If publishing directly to host storage instead of Dokploy volume, omit
-`UPSTREAM`; nginx will serve `/srv/doodleray-downloads/public` directly.
+Do not pass `UPSTREAM` for the main direct-download path. Nginx should serve
+`/srv/doodleray-downloads/public` directly, because the publish script uploads
+release files there.
 
 ## URL Contract
+
+Human-facing download URLs:
+
+```text
+https://doodleray.clickflare.click/
+https://doodleray.clickflare.click/download/windows
+https://doodleray.clickflare.click/download/windows/latest.exe
+https://doodleray.clickflare.click/download/windows/latest.json
+```
 
 Versioned artifacts are immutable:
 
@@ -60,6 +73,10 @@ https://doodleray.clickflare.click/channels/store-win32/manifest.json
 
 Never overwrite a file under `/releases/<channel>/<version>/` after it has been
 submitted to Partner Center. Build a new version and publish a new URL.
+
+`/download/windows/latest.exe` is intentionally mutable. It is a convenience
+alias for the newest direct Windows installer and is updated only by the direct
+channel publish flow.
 
 ## Branch Model
 
@@ -93,6 +110,12 @@ Invoke-WebRequest https://doodleray.clickflare.click/releases/store-win32/6.0.0/
 ```
 
 5. Partner Center uses the versioned `.exe` URL, not the channel URL.
+
+For direct website downloads, users can use:
+
+```text
+https://doodleray.clickflare.click/download/windows
+```
 
 ## GitHub Secrets For CI Publish
 
