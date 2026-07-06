@@ -7,7 +7,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/Maximus657/doodleray/releases/latest/download/latest-store-win32.json"
+        "https://doodleray.clickflare.click/channels/store-win32/latest.json"
       ]
     }
   }

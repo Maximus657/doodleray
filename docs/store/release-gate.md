@@ -46,7 +46,7 @@ docs/release-gate.md (reliability gate) — both must be green.
 - [ ] Previous store installer URL still live (immutable history).
 - [ ] Support page documents manual downgrade path.
 - [ ] In-app critical-update banner can point store users to a fixed version
-      via `latest-store-win32.json` without touching direct-channel users.
+      via `channels/store-win32/latest.json` without touching direct-channel users.
 
 ## Final verdict template
 

@@ -9,7 +9,7 @@ base config. The store flavor:
 - keeps WebView2 offlineInstaller (inherited from base config);
 - bakes the store-win32 update channel into the frontend (in-app self-update
   disabled by default; UI opens the Store/support page instead);
-- produces no direct-channel (GitHub latest.json) updater artifacts.
+- produces no direct-channel updater artifacts.
 
 Signing: by default signing is REQUIRED (fail-closed). Use -AllowUnsigned for
 a local RC-only smoke build. Production Store submissions must be signed CI
@@ -25,7 +25,7 @@ user-initiated in-app updates from the store-win32 channel. Implies
 
 .PARAMETER WithUpdaterArtifacts
 Re-enables updater artifacts (zip+sig) for publishing the explicit
-store-win32 channel manifest. Never publish these to the direct latest.json.
+store-win32 channel manifest. Never publish these to the direct channel.
 
 .PARAMETER StoreFallbackUrl
 URL opened by the UI for user-initiated updates when self-update is disabled.
@@ -70,7 +70,7 @@ if ($AllowUnsigned) {
 $configArgs = @('--config', 'src-tauri/tauri.microsoftstore.conf.json')
 if ($WithUpdaterArtifacts) {
   # Inline override merged last: produce updater artifacts for the explicit
-  # store-win32 channel (publish only to latest-store-win32.json).
+  # store-win32 channel (publish only to channels/store-win32/latest.json).
   $configArgs += @('--config', '{"bundle":{"createUpdaterArtifacts":"v1Compatible"}}')
 }
 

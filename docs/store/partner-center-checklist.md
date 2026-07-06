@@ -54,7 +54,7 @@ box is checked with evidence. Do not submit unsigned or locally-built artifacts.
 - Store flavor bakes channel `store-win32`; default policy:
   in-app self-update **disabled**, update banner opens the Store/support page
   (user-initiated). Critical-update banner UX is preserved.
-- Optional signed in-app channel: publish `latest-store-win32.json` +
+- Optional signed in-app channel: publish `channels/store-win32/latest.json` +
   updater artifacts from `build-store.ps1 -WithUpdaterArtifacts`, enable with
   `-EnableSelfUpdate`. Tauri updater verifies the minisign signature before
   install; PrepareForUpdate/startup-repair flow is unchanged.

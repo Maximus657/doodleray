@@ -39,14 +39,14 @@ scripts/windows-qa/Invoke-DoodleRayFullStandQa.ps1 against the store build:
 
 ## Store-channel update behavior
 
-- [ ] Store build shows update banner when `latest-store-win32.json` advertises
+- [ ] Store build shows update banner when `channels/store-win32/latest.json` advertises
       a newer version.
 - [ ] Default policy: pressing the banner button opens the Store/support page
       (no in-app download); phase returns to `available`, no stuck spinner.
 - [ ] With `-EnableSelfUpdate` build: in-app update downloads, minisign
       signature verified by updater, PrepareForUpdate runs, app relaunches.
 - [ ] Store build never contacts the direct-channel `latest.json`.
-      (Verify via logs/proxy: only `latest-store-win32.json` endpoint.)
+      (Verify via logs/proxy: only `channels/store-win32/latest.json` endpoint.)
 
 ## Upgrade rows
 
