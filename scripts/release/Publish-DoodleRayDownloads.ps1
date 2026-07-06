@@ -14,6 +14,10 @@ For the direct Windows channel it also updates:
 
 The script never mutates existing versioned artifacts unless -Force is passed.
 Use this for direct and store-win32 channels instead of GitHub Releases as CDN.
+By default it does not update the public Windows download alias. Unsigned
+self-hosted installers can trigger Microsoft Defender SmartScreen on fresh
+domains, so update the public alias only when the artifact is signed/reputed or
+when -PublicWindowsDownloadUrl points to a known public release URL.
 #>
 [CmdletBinding()]
 param(
@@ -31,6 +35,8 @@ param(
   [int]$Port = 22,
   [string]$RemoteRoot = '/srv/doodleray-downloads',
   [string]$SshKeyPath = $env:DOODLERAY_DOWNLOADS_SSH_KEY,
+  [switch]$UpdatePublicWindowsAlias,
+  [string]$PublicWindowsDownloadUrl = '',
   [switch]$Force
 )
 
@@ -96,6 +102,7 @@ if ($LASTEXITCODE -ne 0) { throw "ssh mkdir failed" }
 if ($LASTEXITCODE -ne 0) { throw "scp upload failed" }
 
 $forceValue = if ($Force) { '1' } else { '0' }
+$updatePublicWindowsAliasValue = if ($UpdatePublicWindowsAlias -or $PublicWindowsDownloadUrl) { '1' } else { '0' }
 $remoteScript = @"
 set -euo pipefail
 remote_root='$RemoteRoot'
@@ -103,6 +110,8 @@ channel='$Channel'
 version='$Version'
 archive='$remoteArchive'
 force='$forceValue'
+update_public_windows_alias='$updatePublicWindowsAliasValue'
+public_windows_download_url='$PublicWindowsDownloadUrl'
 dest="`$remote_root/public/releases/`$channel/`$version"
 tmp="`$dest.tmp.$$"
 if [ -e "`$dest" ] && [ "`$force" != "1" ]; then
@@ -124,7 +133,7 @@ if [ -f "`$dest/latest.json" ]; then
   cp "`$dest/latest.json" "`$remote_root/public/channels/`$channel/latest.json"
 fi
 ln -sfn "../../releases/`$channel/`$version" "`$remote_root/public/channels/`$channel/current"
-if [ "`$channel" = "direct" ]; then
+if [ "`$channel" = "direct" ] && [ "`$update_public_windows_alias" = "1" ]; then
   installer=""
   for candidate in "`$dest"/DoodleRay_*_x64-setup.exe "`$dest"/*setup.exe "`$dest"/*.exe; do
     if [ -f "`$candidate" ]; then
@@ -132,7 +141,71 @@ if [ "`$channel" = "direct" ]; then
       break
     fi
   done
-  if [ -n "`$installer" ]; then
+  if [ -n "`$public_windows_download_url" ]; then
+    mkdir -p "`$remote_root/public/download/windows"
+    rm -f "`$remote_root/public/download/windows/latest.exe"
+    cp "`$dest/manifest.json" "`$remote_root/public/download/windows/latest.json"
+    cat > "`$remote_root/public/download/windows/index.html" <<HTML
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Download DoodleRay for Windows</title>
+    <meta http-equiv="refresh" content="1; url=`$public_windows_download_url">
+    <style>
+      body { min-height: 100vh; margin: 0; display: grid; place-items: center; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #17090f; color: #fff7f2; }
+      main { width: min(560px, calc(100vw - 40px)); padding: 32px; border: 1px solid rgba(255,255,255,.14); border-radius: 22px; background: rgba(255,255,255,.075); }
+      a { color: #ff9d45; font-weight: 800; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Starting download...</h1>
+      <p>DoodleRay for Windows.</p>
+      <p>If it does not start automatically, <a href="`$public_windows_download_url">click here to download DoodleRay for Windows</a>.</p>
+    </main>
+  </body>
+</html>
+HTML
+    cat > "`$remote_root/public/index.html" <<HTML
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>DoodleRay VPN Download</title>
+    <meta name="description" content="Download DoodleRay VPN for Windows.">
+    <style>
+      :root { color-scheme: dark; --bg: #17090f; --panel: rgba(255,255,255,.075); --border: rgba(255,255,255,.14); --text: #fff7f2; --muted: rgba(255,247,242,.68); --accent: #ff7a2f; }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 32px; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: radial-gradient(circle at 25% 10%, rgba(255,122,47,.24), transparent 34%), radial-gradient(circle at 82% 80%, rgba(255,59,114,.18), transparent 38%), var(--bg); color: var(--text); }
+      main { width: min(720px, 100%); padding: 42px; border: 1px solid var(--border); border-radius: 28px; background: linear-gradient(145deg, rgba(255,255,255,.11), rgba(255,255,255,.04)); box-shadow: 0 30px 90px rgba(0,0,0,.36); }
+      .brand { display: flex; align-items: center; gap: 14px; margin-bottom: 28px; font-weight: 800; font-size: 24px; letter-spacing: -.02em; }
+      .mark { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 14px; background: linear-gradient(135deg, #ffb000, #ff6724); color: #210b05; font-weight: 900; }
+      h1 { margin: 0 0 12px; font-size: clamp(34px, 7vw, 58px); line-height: .95; letter-spacing: -.05em; }
+      p { margin: 0; color: var(--muted); font-size: 18px; line-height: 1.55; }
+      .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
+      a.button { display: inline-flex; align-items: center; justify-content: center; min-height: 54px; padding: 0 22px; border-radius: 16px; color: #190904; background: linear-gradient(135deg, #ff9d45, var(--accent)); text-decoration: none; font-weight: 800; }
+      a.secondary { color: var(--text); background: var(--panel); border: 1px solid var(--border); }
+      .note { margin-top: 22px; font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="brand"><div class="mark">DR</div><span>DoodleRay VPN</span></div>
+      <h1>Download for Windows</h1>
+      <p>Official DoodleRay Windows installer.</p>
+      <div class="actions">
+        <a class="button" href="`$public_windows_download_url">Download DoodleRay for Windows</a>
+        <a class="button secondary" href="https://github.com/Maximus657/doodleray/releases/latest">Release notes</a>
+      </div>
+    </main>
+  </body>
+</html>
+HTML
+    echo "updated public Windows download URL: `$public_windows_download_url"
+  elif [ -n "`$installer" ]; then
     installer_name="`$(basename "`$installer")"
     mkdir -p "`$remote_root/public/download/windows"
     ln -sfn "../../releases/`$channel/`$version/`$installer_name" "`$remote_root/public/download/windows/latest.exe"
@@ -201,6 +274,8 @@ HTML
   else
     echo "warning: direct channel published without a Windows installer alias" >&2
   fi
+elif [ "`$channel" = "direct" ]; then
+  echo "public Windows download alias not updated; pass -UpdatePublicWindowsAlias or -PublicWindowsDownloadUrl to update it"
 fi
 rm -f "`$archive"
 echo "published `$channel `$version"
@@ -218,7 +293,11 @@ if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 300) {
 Write-Host "Published DoodleRay $Version ($Channel)." -ForegroundColor Green
 Write-Host "Manifest: $manifestUrl"
 Write-Host "Base URL: https://$HostName/releases/$Channel/$Version/"
-if ($Channel -eq 'direct') {
+if ($Channel -eq 'direct' -and ($UpdatePublicWindowsAlias -or $PublicWindowsDownloadUrl)) {
   Write-Host "Windows download: https://$HostName/download/windows"
-  Write-Host "Stable installer: https://$HostName/download/windows/latest.exe"
+  if ($PublicWindowsDownloadUrl) {
+    Write-Host "Public Windows URL: $PublicWindowsDownloadUrl"
+  } else {
+    Write-Host "Stable installer: https://$HostName/download/windows/latest.exe"
+  }
 }

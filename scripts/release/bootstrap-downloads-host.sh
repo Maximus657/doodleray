@@ -9,6 +9,7 @@ CADDY_SNIPPET="${CADDY_SNIPPET:-/etc/caddy/conf.d/doodleray-downloads.caddy}"
 CADDYFILE="${CADDYFILE:-/etc/caddy/Caddyfile}"
 NGINX_SITE="${NGINX_SITE:-/etc/nginx/sites-available/doodleray-clickflare-click}"
 NGINX_ENABLED="${NGINX_ENABLED:-/etc/nginx/sites-enabled/doodleray-clickflare-click}"
+WINDOWS_EXE_REDIRECT="${WINDOWS_EXE_REDIRECT:-}"
 
 if [[ "$(id -u)" != "0" ]]; then
   echo "Run as root on the downloads host." >&2
@@ -124,12 +125,12 @@ cat > "$ROOT/public/index.html" <<EOF
     <main>
       <div class="brand"><div class="mark">DR</div><span>DoodleRay VPN</span></div>
       <h1>Download for Windows</h1>
-      <p>Official DoodleRay installer from our own downloads host. Release files are published to immutable versioned paths, while this page always points to the current direct Windows build.</p>
+      <p>Official DoodleRay download host. Release files are published to immutable versioned paths, and the public Windows download button is enabled only for a release channel that is ready for users.</p>
       <div class="actions">
-        <a class="button" href="/download/windows/latest.exe">Download DoodleRay for Windows</a>
+        <a class="button" href="/download/windows/">Download DoodleRay for Windows</a>
         <a class="button secondary" href="/channels/direct/manifest.json">Release manifest</a>
       </div>
-      <p class="note">If the button is not available yet, the next public build has not been published to this host.</p>
+      <p class="note">If the download is not available yet, the next public build has not been published to this host.</p>
     </main>
   </body>
 </html>
@@ -142,7 +143,6 @@ cat > "$ROOT/public/download/windows/index.html" <<EOF
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Download DoodleRay for Windows</title>
-    <meta http-equiv="refresh" content="1; url=/download/windows/latest.exe">
     <style>
       body {
         min-height: 100vh;
@@ -165,8 +165,8 @@ cat > "$ROOT/public/download/windows/index.html" <<EOF
   </head>
   <body>
     <main>
-      <h1>Starting download...</h1>
-      <p>If it does not start automatically, <a href="/download/windows/latest.exe">click here to download DoodleRay for Windows</a>.</p>
+      <h1>Download is being prepared</h1>
+      <p>The public Windows download is not linked on this host yet. Use the current public release channel or try again later.</p>
     </main>
   </body>
 </html>
@@ -252,6 +252,17 @@ server {
 }
 EOF
   else
+    download_redirect_block=""
+    if [[ -n "$WINDOWS_EXE_REDIRECT" ]]; then
+      download_redirect_block=$(cat <<EOF
+    location = /download/windows/latest.exe {
+        return 302 $WINDOWS_EXE_REDIRECT;
+    }
+
+EOF
+)
+    fi
+
     cat > "$NGINX_SITE" <<EOF
 server {
     listen 80;
@@ -280,6 +291,7 @@ server {
         try_files \$uri =404;
     }
 
+$download_redirect_block
     location / {
         try_files \$uri \$uri/ =404;
     }

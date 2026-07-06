@@ -7,6 +7,12 @@ from a first-party immutable downloads host.
 Current product decision: the primary Windows distribution path is the direct
 first-party download page. Microsoft Store remains optional/later.
 
+Unsigned Windows installers served from a fresh first-party domain can trigger
+Microsoft Defender SmartScreen even when the same unsigned release on GitHub
+does not. Until DoodleRay has a code-signing/reputation solution, the public
+download page may point to the current GitHub release asset while this host keeps
+immutable mirrors and future signed direct-channel artifacts.
+
 ## Host
 
 - Domain: `doodleray.clickflare.click`
@@ -55,6 +61,11 @@ https://doodleray.clickflare.click/download/windows/latest.exe
 https://doodleray.clickflare.click/download/windows/latest.json
 ```
 
+`/download/windows/latest.exe` is optional. Do not publish it for unsigned
+self-hosted installers unless the release has already been reputation-tested.
+For unsigned public releases, prefer a GitHub release URL through
+`-PublicWindowsDownloadUrl`.
+
 Versioned artifacts are immutable:
 
 ```text
@@ -74,9 +85,9 @@ https://doodleray.clickflare.click/channels/store-win32/manifest.json
 Never overwrite a file under `/releases/<channel>/<version>/` after it has been
 submitted to Partner Center. Build a new version and publish a new URL.
 
-`/download/windows/latest.exe` is intentionally mutable. It is a convenience
-alias for the newest direct Windows installer and is updated only by the direct
-channel publish flow.
+`/download/windows/latest.exe` is intentionally mutable when enabled. It is a
+convenience alias for the newest direct Windows installer and is updated only by
+the direct channel publish flow when explicitly requested.
 
 ## Branch Model
 
@@ -116,6 +127,20 @@ For direct website downloads, users can use:
 ```text
 https://doodleray.clickflare.click/download/windows
 ```
+
+For unsigned public releases that should keep GitHub download reputation:
+
+```powershell
+.\scripts\release\Publish-DoodleRayDownloads.ps1 `
+  -Version 5.9.0 `
+  -Channel direct `
+  -ArtifactDir .\dist-direct `
+  -HostName doodleray.clickflare.click `
+  -PublicWindowsDownloadUrl https://github.com/Maximus657/doodleray/releases/download/v5.9.0/DoodleRay_5.9.0_x64-setup.exe
+```
+
+For signed/reputation-tested direct installers, add `-UpdatePublicWindowsAlias`
+instead of `-PublicWindowsDownloadUrl`.
 
 ## GitHub Secrets For CI Publish
 
