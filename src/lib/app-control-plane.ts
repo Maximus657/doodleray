@@ -160,20 +160,37 @@ export async function appApiLogout(): Promise<void> {
   if (!isTauriRuntime()) {
     localPreviewLoggedIn = false;
     useAppStore.setState({
+      status: 'disconnected',
       activeServer: null,
       lastSelectedServerKey: null,
       servers: [],
       subscriptions: [],
+      connectedAt: null,
+      currentDownload: 0,
+      currentUpload: 0,
+      speedHistory: [],
+      totalDown: 0,
+      totalUp: 0,
     });
     return;
   }
-  await invoke('app_api_logout');
-  useAppStore.setState({
-    activeServer: null,
-    lastSelectedServerKey: null,
-    servers: [],
-    subscriptions: [],
-  });
+  try {
+    await invoke('app_api_logout');
+  } finally {
+    useAppStore.setState({
+      status: 'disconnected',
+      activeServer: null,
+      lastSelectedServerKey: null,
+      servers: [],
+      subscriptions: [],
+      connectedAt: null,
+      currentDownload: 0,
+      currentUpload: 0,
+      speedHistory: [],
+      totalDown: 0,
+      totalUp: 0,
+    });
+  }
 }
 
 export async function appApiLocations(): Promise<AppApiLocationsResponse> {

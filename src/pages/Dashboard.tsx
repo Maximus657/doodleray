@@ -270,6 +270,19 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!closedControlPlane) return;
+    const handleAppLogout = () => {
+      setAppSession(null);
+      setAppLoginCode('');
+      setAppLoginError(null);
+      setAppLocationsLoading(false);
+      setPostLoginFlight(false);
+      setPostLoginFlightSettled(false);
+      if (loginFlightTimerRef.current !== null) {
+        window.clearTimeout(loginFlightTimerRef.current);
+        loginFlightTimerRef.current = null;
+      }
+    };
+    window.addEventListener('doodleray:app-logout', handleAppLogout);
     let disposed = false;
     (async () => {
       setAppLocationsLoading(true);
@@ -299,7 +312,10 @@ export default function Dashboard() {
         if (!disposed) setAppLocationsLoading(false);
       }
     })();
-    return () => { disposed = true; };
+    return () => {
+      disposed = true;
+      window.removeEventListener('doodleray:app-logout', handleAppLogout);
+    };
   }, [closedControlPlane, addLog]);
 
   const markConnectedIfHealthy = useCallback(async (

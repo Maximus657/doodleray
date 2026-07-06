@@ -3,6 +3,7 @@ import { X, LogOut, RefreshCw, Trash2, DownloadCloud, Wrench, Loader2 } from 'lu
 import { useAppStore, type SupportedLanguage } from '../../stores/app-store';
 import { refreshSubscription } from '../../lib/subscription';
 import { isClosedControlPlaneEnabled } from '../../lib/build-policy';
+import { appApiLogout } from '../../lib/app-control-plane';
 import Toggle from './Toggle';
 
 type T = (key: never) => string;
@@ -73,6 +74,7 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
   const [armedDeleteId, setArmedDeleteId] = useState<string | null>(null);
   const [updateStatus, setUpdateStatus] = useState<string | null>(null);
   const [repairing, setRepairing] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const [wipeArmed, setWipeArmed] = useState(false);
   const closedControlPlane = isClosedControlPlaneEnabled();
 
@@ -139,6 +141,41 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
       addLog('error', `Repair failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setRepairing(false);
+    }
+  };
+
+  const handleExit = async () => {
+    if (closedControlPlane) {
+      if (loggingOut) return;
+      setLoggingOut(true);
+      try {
+        if (isTauri()) {
+          const { invoke } = await import('@tauri-apps/api/core');
+          await invoke('vpn_disconnect').catch(() => {});
+        }
+        let logoutError: unknown = null;
+        await appApiLogout().catch((err) => { logoutError = err; });
+        if (logoutError) {
+          addLog('warning', `Signed out locally; API logout failed: ${logoutError instanceof Error ? logoutError.message : String(logoutError)}`);
+        } else {
+          addLog('success', 'Signed out');
+        }
+        window.dispatchEvent(new CustomEvent('doodleray:app-logout'));
+        onClose();
+      } catch (err) {
+        addLog('error', `Sign out failed: ${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        setLoggingOut(false);
+      }
+      return;
+    }
+
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('vpn_disconnect').catch(() => {});
+      await invoke('quit_app');
+    } catch {
+      window.close();
     }
   };
 
@@ -288,16 +325,10 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
           <Row
             title={t('quit' as never)}
             danger
-            onClick={async () => {
-              try {
-                const { invoke } = await import('@tauri-apps/api/core');
-                await invoke('vpn_disconnect').catch(() => {});
-                await invoke('quit_app');
-              } catch {
-                window.close();
-              }
-            }}
-            right={<LogOut className="h-[18px] w-[18px] shrink-0 text-[#ff8a7a]" strokeWidth={1.9} />}
+            onClick={handleExit}
+            right={loggingOut
+              ? <Loader2 className="h-[18px] w-[18px] shrink-0 v6-orb-spin text-[#ff8a7a]" strokeWidth={2} />
+              : <LogOut className="h-[18px] w-[18px] shrink-0 text-[#ff8a7a]" strokeWidth={1.9} />}
           />
         </div>
       </div>

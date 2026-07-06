@@ -679,7 +679,7 @@ export const translations = {
     versionAvailable: 'доступна!',
     installRestart: 'Установить и перезапустить',
     installingUpdate: 'Установка...',
-    quit: 'Выход',
+    quit: 'Выйти',
     vpnDisconnected: 'VPN отключён',
     vpnConnected: 'VPN подключён ✓',
     updateNow: 'Обновить сейчас',
