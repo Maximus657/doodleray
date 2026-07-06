@@ -444,12 +444,22 @@
     filter: none;
     animation: none;
   }
+  body.v6-login-transition-settled .v6-brand-enter {
+    opacity: 1;
+    transform: none;
+    filter: none;
+    animation: none;
+  }
   body.v6-login-transition-active .v6-brand-logo {
     animation: none;
   }
   body.v6-login-transition-active .v6-brand-word {
     display: inline-block;
     overflow: hidden;
+    animation: none;
+  }
+  body.v6-login-transition-settled .v6-brand-logo,
+  body.v6-login-transition-settled .v6-brand-word {
     animation: none;
   }
   .v6-onboarding-card {

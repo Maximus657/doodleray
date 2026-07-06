@@ -209,6 +209,7 @@ export default function Dashboard() {
   const [appLoginError, setAppLoginError] = useState<string | null>(null);
   const [appLocationsLoading, setAppLocationsLoading] = useState(false);
   const [postLoginFlight, setPostLoginFlight] = useState(false);
+  const [postLoginFlightSettled, setPostLoginFlightSettled] = useState(false);
   const legacyImportEnabled = isLegacyImportEnabled();
   const closedControlPlane = isClosedControlPlaneEnabled();
   const appLoginDigits = normalizeAppLoginCode(appLoginCode);
@@ -216,10 +217,12 @@ export default function Dashboard() {
 
   useLayoutEffect(() => {
     document.body.classList.toggle('v6-login-transition-active', postLoginFlight);
+    document.body.classList.toggle('v6-login-transition-settled', postLoginFlightSettled);
     return () => {
       document.body.classList.remove('v6-login-transition-active');
+      document.body.classList.remove('v6-login-transition-settled');
     };
-  }, [postLoginFlight]);
+  }, [postLoginFlight, postLoginFlightSettled]);
 
   const refreshTunnelServiceHealth = useCallback(async () => {
     if (!isTauriRuntime()) return false;
@@ -937,8 +940,10 @@ export default function Dashboard() {
       if (loginFlightTimerRef.current !== null) {
         window.clearTimeout(loginFlightTimerRef.current);
       }
+      setPostLoginFlightSettled(false);
       setPostLoginFlight(true);
       loginFlightTimerRef.current = window.setTimeout(() => {
+        setPostLoginFlightSettled(true);
         setPostLoginFlight(false);
         loginFlightTimerRef.current = null;
       }, 2400);
