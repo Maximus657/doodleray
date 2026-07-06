@@ -67,10 +67,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
               alt=""
               draggable={false}
               data-v6-brand-logo
-              className="h-[34px] w-[34px] rounded-[11px]"
+              className="v6-brand-logo h-[34px] w-[34px] rounded-[11px]"
               style={{ boxShadow: '0 6px 18px rgba(234,109,6,0.45)' }}
             />
-            <div className="text-[19px] font-semibold tracking-[-0.01em] text-white">
+            <div className="v6-brand-word text-[19px] font-semibold tracking-[-0.01em] text-white">
               Doodle<span className="font-light text-white/70">Ray</span>
             </div>
           </div>

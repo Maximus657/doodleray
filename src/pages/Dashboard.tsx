@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import { Plus, Loader2, ClipboardPaste } from 'lucide-react';
 import { useAppStore } from '../stores/app-store';
 import { formatTime } from '../lib/utils';
@@ -214,7 +214,7 @@ export default function Dashboard() {
   const appLoginDigits = normalizeAppLoginCode(appLoginCode);
   const canSubmitAppLoginCode = appLoginDigits.length === 8 && !appLoginBusy;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     document.body.classList.toggle('v6-login-transition-active', postLoginFlight);
     return () => {
       document.body.classList.remove('v6-login-transition-active');
@@ -941,7 +941,7 @@ export default function Dashboard() {
       loginFlightTimerRef.current = window.setTimeout(() => {
         setPostLoginFlight(false);
         loginFlightTimerRef.current = null;
-      }, 1800);
+      }, 2400);
       addLog('success', t('v6AppLoginSuccess' as never));
       await refreshClosedControlPlane(session);
     } catch (err) {
