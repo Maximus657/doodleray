@@ -387,6 +387,7 @@ if ($proxyUrl) {
         telegram = Invoke-CurlMetric -Url "https://api.telegram.org" -Proxy $proxyUrl
         discordGateway = Invoke-CurlMetric -Url "https://discord.com/api/v10/gateway" -Proxy $proxyUrl
         openAi = Invoke-CurlMetric -Url "https://chat.openai.com" -Proxy $proxyUrl
+        openAiAuth = Invoke-CurlMetric -Url "https://auth.openai.com" -Proxy $proxyUrl
         claude = Invoke-CurlMetric -Url "https://claude.ai" -Proxy $proxyUrl
         sse = Invoke-CurlMetric -Url "https://stream.wikimedia.org/v2/stream/recentchange" -Proxy $proxyUrl -MaxTime 10
     }
@@ -452,6 +453,7 @@ $autoConfigStatus = if ($internetSettings.AutoConfigURL) { "present-redacted" } 
         nrpt = Get-NrptSummary
         google = Get-DnsResolutionProbe "www.google.com"
         apple = Get-DnsResolutionProbe "captive.apple.com"
+        openAiAuth = Get-DnsResolutionProbe "auth.openai.com"
         telegram = Get-DnsResolutionProbe "api.telegram.org"
     }
     directProbes = [pscustomobject]@{
@@ -463,6 +465,7 @@ $autoConfigStatus = if ($internetSettings.AutoConfigURL) { "present-redacted" } 
         telegram = Invoke-CurlMetric -Url "https://api.telegram.org"
         discordGateway = Invoke-CurlMetric -Url "https://discord.com/api/v10/gateway"
         openAi = Invoke-CurlMetric -Url "https://chat.openai.com"
+        openAiAuth = Invoke-CurlMetric -Url "https://auth.openai.com"
         claude = Invoke-CurlMetric -Url "https://claude.ai"
         sse = Invoke-CurlMetric -Url "https://stream.wikimedia.org/v2/stream/recentchange" -MaxTime 10
     }

@@ -147,6 +147,7 @@ tests, `still missing` = not done; do not claim it).
 | sing-box / mihomo | TUN + strict-route semantics; structured runtime ports instead of log scraping; DoH-over-tunnel DNS; explicit QUIC non-claim until a controlled probe passes; current-schema configs (no legacy FakeIP/DNS). | yes | runtime ports/health via service JSON in all harnesses; `quicProbe` honest verdict in deep snapshot | sing-box local gRPC API adoption; QUIC probe still `unverified-no-tooling` on the stand. |
 | v2rayN / Clash Verge Rev / sing-box-windows | Desktop proxy UX: mode cards (Whole computer / Browsers / Manual), tray/system-proxy guard equivalents, hot mode switching with live reconnect, route-exclude support. | yes | mode-switch chain Proxy->Whole->Proxy->Manual->Whole via CDP UI pass | proxy-guard-style continuous WinINet watchdog is app-side only; no per-app split UI. |
 | Microsoft / Tauri / WebView2 docs | Offline WebView2 installer mode; WinINet vs WinHTTP inspected separately; NCSI treated as warning; Authenticode fail-closed CI; no EV/SmartScreen myths; perMachine NSIS with service repair hooks. | yes | WebView2/VC++/WinHTTP/NCSI in deep snapshot; unsigned-RC gate + CI workflow checks (workflow itself not yet exercised with real secrets) | signed CI run with real certs; SmartScreen reputation plan; MSI (currently NSIS-only). |
+| Windows IP Helper / WireGuard interface watcher pattern | Native-first protected connect readiness: `GetAdaptersAddresses`, `SetIpInterfaceEntry`, `GetBestRoute2`, and long-lived interface/address/route callbacks wake the hot path; PowerShell is bounded fallback only. | yes | unit/build gates only in the 2026-07-04 optimization pass | Play2Go/friend-LAN before/after perf evidence; full hot server-switch without engine restart. |
 
 ## Next Required Work
 
@@ -163,3 +164,6 @@ tests, `still missing` = not done; do not claim it).
    `quicProbe` can return `verified`; until then QUIC is explicitly unclaimed.
 6. Run signed CI Authenticode validation before production tag.
 7. Move proxy/browser mode lifecycle under service authority if v6.1 expands beyond protected mode.
+8. Re-run `Invoke-DoodleRayConnectPerfQa.ps1` on a real Windows QA stand once
+   current credentials are available, and compare before/after medians for
+   `tun-cold`, `tun-reconnect`, and `tun-warm-reassert`.

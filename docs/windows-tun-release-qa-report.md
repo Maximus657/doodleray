@@ -883,3 +883,59 @@ Remaining friend-LAN caveats:
 
 - This is a dirty Windows 10 real-user test, not a clean Win10/Win11 matrix.
   Clean OS evidence and signed CI evidence are still separate release blockers.
+
+## 2026-07-04 - 5.9.0 Protected Connect Optimization Pass
+
+Artifact built locally:
+
+- `D:\DoodleRayPC-5.9-sync\src-tauri\target\release\bundle\nsis\DoodleRay_5.9.0_x64-setup.exe`
+- SHA-256 `97B9E55F2E01622553625C65E85FB705306DB404B394824B69DD062C0ADA1476`
+- Unsigned QA-only. Local Tauri build emitted the NSIS setup, then failed at
+  updater artifact signing because `TAURI_SIGNING_PRIVATE_KEY` is intentionally
+  absent locally.
+
+Implemented in this pass:
+
+- Added service-side native Windows IP Helper readiness module:
+  `src-tauri/src/windows_net.rs`.
+- Adapter discovery, interface metric, route-canary checks, and cleanup
+  adapter snapshots are native-first. PowerShell remains only as a bounded
+  fallback/diagnostic path.
+- Added long-lived IP Helper callbacks for interface, IPv4 unicast-address,
+  and IPv4 route changes. The connect hot path now wakes on those Windows
+  events while keeping native polling as the correctness fallback.
+- Added structured performance fields to service status/support diagnostics:
+  `powershell_fallback_count`, `singbox_check_ms`, `xray_spawn_ms`,
+  adapter/route backend, native probe timings, and fallback probe timings.
+- Added effective-config hash caching for `sing-box check`; unchanged configs
+  skip repeated validation inside the same service lifetime.
+- Moved IPv6/QUIC non-claim checks out of the blocking protected connect path.
+- Added safe warm reassert: if a new `StartTunnel` matches the already-running
+  protected runtime exactly (same engine, ports, and configs), the service
+  reuses the existing runtime and reasserts routes/DNS/listeners instead of
+  killing and recreating the tunnel. Server switches with changed configs still
+  use the cold, honest path.
+- Added QA-only `/repair-runtime` control endpoint and
+  `Invoke-DoodleRayConnectPerfQa.ps1`, including `tun-warm-reassert` timing.
+
+Local verification:
+
+- `cargo fmt --check` passed.
+- `cargo check --bin DoodleRayService` passed.
+- `cargo check --bin DoodleRay` passed.
+- `cargo test --lib`: 57 passed, 3 ignored.
+- `cargo test --all-targets`: 57 passed, 4 ignored/no-op binary tests.
+- `npm run build` passed.
+- `git diff --check` passed.
+- PowerShell parser check for `Invoke-DoodleRayConnectPerfQa.ps1` passed.
+
+Not proven in this pass:
+
+- No Play2Go perf pass was run because the available Play2Go secret file is a
+  protocol/server markdown note, not the Windows QA stand credential format
+  required by `Invoke-Play2GoPowerShell.ps1`.
+- Friend-LAN testing was intentionally stopped after the owner asked to remove
+  access.
+- Full hot server-switch without restarting sing-box/xray is not implemented;
+  this pass implements only safe same-runtime warm reassert. Changed configs
+  still reconnect cold to avoid fake-green or stale dataplane state.

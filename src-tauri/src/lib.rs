@@ -7,6 +7,8 @@ pub mod xray;
 pub mod ipc;
 #[cfg(windows)]
 pub mod sysproxy;
+#[cfg(windows)]
+pub mod windows_net;
 
 #[cfg(target_os = "macos")]
 #[path = "sysproxy_macos.rs"]
@@ -3564,6 +3566,25 @@ mod tests {
     }
 
     #[test]
+    fn start_tunnel_request_can_omit_api_port_for_legacy_service_retry() {
+        let request = tunnel_service::StartTunnelRequest {
+            op_id: "op-test".into(),
+            engine_kind: tunnel_service::TunnelEngineKind::SingboxTun,
+            xray_config: None,
+            singbox_config: json!({ "log": { "disabled": true } }),
+            socks_port: 31001,
+            http_port: 31002,
+            api_port: None,
+            redacted_label: "vless:tcp".into(),
+        };
+        let value =
+            serde_json::to_value(tunnel_service::TunnelCommand::StartTunnel(request)).unwrap();
+
+        assert_eq!(value["type"], json!("start_tunnel"));
+        assert!(value.get("api_port").is_none());
+    }
+
+    #[test]
     fn service_verdict_overrides_app_side_health_verdict() {
         let mut report = health_report(
             "protected",
@@ -3608,6 +3629,13 @@ mod tests {
             ),
             error: None,
             timings_ms: vec![("connected".into(), 1000)],
+            powershell_fallback_count: 0,
+            singbox_check_ms: Some(10),
+            xray_spawn_ms: Some(20),
+            adapter_probe_backend: Some("native_iphelper".into()),
+            route_probe_backend: Some("native_getbestroute2".into()),
+            native_probe_ms: vec![("adapter_snapshot".into(), 5)],
+            fallback_probe_ms: Vec::new(),
         };
 
         attach_tunnel_status_to_health(&mut report, Some(&status));
@@ -7065,18 +7093,16 @@ fn tunnel_service_start(
         }
     }
     let _ = ipc::tunnel_service_hello(env!("CARGO_PKG_VERSION"))?;
-    let response = ipc::send_tunnel_command(&tunnel_service::TunnelCommand::StartTunnel(
-        tunnel_service::StartTunnelRequest {
-            op_id: tun_op_id(),
-            engine_kind,
-            xray_config,
-            singbox_config,
-            socks_port: request.socks_port,
-            http_port: request.http_port,
-            api_port: Some(request.api_port),
-            redacted_label: format!("{}:{}", request.protocol, request.transport),
-        },
-    ))?;
+    let response = send_start_tunnel_command(tunnel_service::StartTunnelRequest {
+        op_id: tun_op_id(),
+        engine_kind,
+        xray_config,
+        singbox_config,
+        socks_port: request.socks_port,
+        http_port: request.http_port,
+        api_port: Some(request.api_port),
+        redacted_label: format!("{}:{}", request.protocol, request.transport),
+    })?;
     let mut status = match response {
         tunnel_service::TunnelResponse::Status(status) => status,
         tunnel_service::TunnelResponse::Error { message } => return Err(message),
@@ -7137,6 +7163,30 @@ fn tunnel_service_start(
             last_phase = status.phase.clone();
         }
     }
+}
+
+#[cfg(windows)]
+fn send_start_tunnel_command(
+    mut request: tunnel_service::StartTunnelRequest,
+) -> Result<tunnel_service::TunnelResponse, String> {
+    match ipc::send_tunnel_command(&tunnel_service::TunnelCommand::StartTunnel(request.clone())) {
+        Err(error) if request.api_port.is_some() && is_legacy_api_port_rejection(&error) => {
+            vpn_log(
+                "Tunnel Service is from an older build and does not accept runtime api_port; retrying StartTunnel with legacy-compatible IPC payload.",
+            );
+            request.api_port = None;
+            ipc::send_tunnel_command(&tunnel_service::TunnelCommand::StartTunnel(request))
+        }
+        result => result,
+    }
+}
+
+#[cfg(windows)]
+fn is_legacy_api_port_rejection(error: &str) -> bool {
+    error.contains("unknown field `api_port`")
+        || (error.contains("unknown field")
+            && error.contains("api_port")
+            && error.contains("StartTunnel"))
 }
 
 #[cfg(windows)]
@@ -7281,12 +7331,19 @@ fn tunnel_service_health() -> Result<String, String> {
 fn tunnel_service_diagnostics() -> Result<String, String> {
     match ipc::send_tunnel_command(&tunnel_service::TunnelCommand::GetDiagnostics)? {
         tunnel_service::TunnelResponse::Diagnostics(diagnostics) => Ok(format!(
-            "service_version={}\nstate={:?}\nphase={:?}\nerror={:?}\ntimings_ms={:?}\n\n{}",
+            "service_version={}\nstate={:?}\nphase={:?}\nerror={:?}\ntimings_ms={:?}\npowershell_fallback_count={}\nsingbox_check_ms={:?}\nxray_spawn_ms={:?}\nadapter_probe_backend={:?}\nroute_probe_backend={:?}\nnative_probe_ms={:?}\nfallback_probe_ms={:?}\n\n{}",
             diagnostics.status.service_version,
             diagnostics.status.state,
             diagnostics.status.phase,
             diagnostics.status.error,
             diagnostics.status.timings_ms,
+            diagnostics.status.powershell_fallback_count,
+            diagnostics.status.singbox_check_ms,
+            diagnostics.status.xray_spawn_ms,
+            diagnostics.status.adapter_probe_backend,
+            diagnostics.status.route_probe_backend,
+            diagnostics.status.native_probe_ms,
+            diagnostics.status.fallback_probe_ms,
             diagnostics.log_tail.join("\n")
         )),
         tunnel_service::TunnelResponse::Status(_) => {
@@ -9240,6 +9297,24 @@ fn qa_control_dispatch(app: &tauri::AppHandle, path: &str) -> (&'static str, Str
                 serde_json::json!({ "ok": false, "error": error }).to_string(),
             ),
         },
+        "/repair-runtime" => {
+            let reason =
+                qa_query_param(query, "reason").unwrap_or_else(|| "qa-control-repair".into());
+            let op_id = qa_query_param(query, "op_id");
+            let request = tunnel_service::TunnelCommand::RepairRuntime(
+                tunnel_service::RepairRuntimeRequest { op_id, reason },
+            );
+            match ipc::send_tunnel_command(&request) {
+                Ok(response) => (
+                    "200 OK",
+                    serde_json::json!({ "ok": true, "response": response }).to_string(),
+                ),
+                Err(error) => (
+                    "500 Internal Server Error",
+                    serde_json::json!({ "ok": false, "error": error.to_string() }).to_string(),
+                ),
+            }
+        }
         "/connect"
         | "/disconnect"
         | "/switch-mode"

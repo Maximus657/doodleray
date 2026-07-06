@@ -5,7 +5,7 @@ pub const TUNNEL_SERVICE_DISPLAY_NAME: &str = "DoodleRay Tunnel Service";
 pub const TUNNEL_PIPE_NAME: &str = r"\\.\pipe\DoodleRay.TunnelService.v1";
 pub const TUNNEL_PROTOCOL_VERSION: u32 = 1;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TunnelEngineKind {
     XrayTun,
@@ -175,6 +175,20 @@ pub struct TunnelStatus {
     pub previous_unclean_shutdown: Option<String>,
     pub error: Option<String>,
     pub timings_ms: Vec<(String, u64)>,
+    #[serde(default)]
+    pub powershell_fallback_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub singbox_check_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub xray_spawn_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adapter_probe_backend: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_probe_backend: Option<String>,
+    #[serde(default)]
+    pub native_probe_ms: Vec<(String, u64)>,
+    #[serde(default)]
+    pub fallback_probe_ms: Vec<(String, u64)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

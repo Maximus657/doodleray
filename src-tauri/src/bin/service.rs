@@ -1,10 +1,12 @@
 #[cfg(windows)]
 mod windows_service_main {
     use serde_json::Value;
+    use std::collections::hash_map::DefaultHasher;
     use std::ffi::OsString;
     use std::fs::OpenOptions;
+    use std::hash::{Hash, Hasher};
     use std::mem::{size_of, zeroed};
-    use std::net::TcpStream;
+    use std::net::{Ipv4Addr, TcpStream};
     use std::os::windows::io::AsRawHandle;
     use std::os::windows::process::CommandExt;
     use std::path::{Path, PathBuf};
@@ -20,6 +22,7 @@ mod windows_service_main {
         TunnelHealthVerdict, TunnelResponse, TunnelState, TunnelStatus, TUNNEL_PIPE_NAME,
         TUNNEL_PROTOCOL_VERSION, TUNNEL_SERVICE_DISPLAY_NAME, TUNNEL_SERVICE_NAME,
     };
+    use tauri_app_lib::windows_net;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::windows::named_pipe::{PipeMode, ServerOptions};
     use windows_service::define_windows_service;
@@ -53,6 +56,8 @@ mod windows_service_main {
     };
 
     static STATE: OnceLock<Mutex<TunnelRuntime>> = OnceLock::new();
+    static SINGBOX_VALIDATION_CACHE: OnceLock<Mutex<Option<SingboxValidationCache>>> =
+        OnceLock::new();
     static STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
     static OP_GENERATION: AtomicU64 = AtomicU64::new(0);
     const PIPE_WORKERS: usize = 4;
@@ -89,6 +94,13 @@ mod windows_service_main {
         last_rotation_seq: u64,
         error: Option<String>,
         timings_ms: Vec<(String, u64)>,
+        powershell_fallback_count: u32,
+        singbox_check_ms: Option<u64>,
+        xray_spawn_ms: Option<u64>,
+        adapter_probe_backend: Option<String>,
+        route_probe_backend: Option<String>,
+        native_probe_ms: Vec<(String, u64)>,
+        fallback_probe_ms: Vec<(String, u64)>,
         xray: Option<Child>,
         singbox: Option<Child>,
         job: Option<JobHandle>,
@@ -125,11 +137,23 @@ mod windows_service_main {
                 last_rotation_seq: 0,
                 error: None,
                 timings_ms: Vec::new(),
+                powershell_fallback_count: 0,
+                singbox_check_ms: None,
+                xray_spawn_ms: None,
+                adapter_probe_backend: None,
+                route_probe_backend: None,
+                native_probe_ms: Vec::new(),
+                fallback_probe_ms: Vec::new(),
                 xray: None,
                 singbox: None,
                 job: None,
             }
         }
+    }
+
+    #[derive(Clone, Copy)]
+    struct SingboxValidationCache {
+        config_hash: u64,
     }
 
     struct JobHandle(HANDLE);
@@ -753,6 +777,9 @@ mod windows_service_main {
                     request.engine_kind,
                     request.redacted_label
                 ));
+                if let Some(response) = try_warm_reassert_start(&request) {
+                    return response;
+                }
                 let busy = {
                     let runtime = state().lock().unwrap();
                     matches!(
@@ -870,6 +897,57 @@ mod windows_service_main {
         }
     }
 
+    fn try_warm_reassert_start(request: &StartTunnelRequest) -> Option<TunnelResponse> {
+        let generation = {
+            let mut runtime = state().lock().unwrap();
+            refresh_connected_process_state(&mut runtime);
+            refresh_runtime_verdict(&mut runtime);
+            if !matches!(runtime.state, TunnelState::Connected) {
+                return None;
+            }
+            let previous = runtime.last_start_request.as_ref()?;
+            if !start_requests_share_runtime(previous, request) {
+                return None;
+            }
+            runtime.active_op_id = Some(request.op_id.clone());
+            runtime.last_start_request = Some(request.clone());
+            runtime.phase = Some("warm_reassert_queued".into());
+            runtime.last_repair_action = Some("warm_reassert_start".into());
+            runtime.route_ready = None;
+            runtime.dns_ready = None;
+            runtime.route_explanations.push(
+                "warm reconnect reused the existing protected runtime; reasserting routes, DNS, and local listeners"
+                    .into(),
+            );
+            runtime.service_generation
+        };
+
+        log_service_event(&format!(
+            "warm reassert accepted op_id={} generation={}",
+            sanitize_id(&request.op_id),
+            generation
+        ));
+        write_session_marker(&request.op_id, generation);
+        Some(
+            match repair_connected_runtime("warm_reassert_start", None) {
+                Ok(status) => TunnelResponse::Status(status),
+                Err(message) => TunnelResponse::Error { message },
+            },
+        )
+    }
+
+    fn start_requests_share_runtime(
+        previous: &StartTunnelRequest,
+        next: &StartTunnelRequest,
+    ) -> bool {
+        previous.engine_kind == next.engine_kind
+            && previous.socks_port == next.socks_port
+            && previous.http_port == next.http_port
+            && previous.api_port == next.api_port
+            && previous.xray_config == next.xray_config
+            && previous.singbox_config == next.singbox_config
+    }
+
     fn status_snapshot() -> TunnelStatus {
         let mut runtime = state().lock().unwrap();
         refresh_connected_process_state(&mut runtime);
@@ -905,6 +983,13 @@ mod windows_service_main {
             previous_unclean_shutdown: runtime.previous_unclean_shutdown.clone(),
             error: runtime.error.clone(),
             timings_ms: runtime.timings_ms.clone(),
+            powershell_fallback_count: runtime.powershell_fallback_count,
+            singbox_check_ms: runtime.singbox_check_ms,
+            xray_spawn_ms: runtime.xray_spawn_ms,
+            adapter_probe_backend: runtime.adapter_probe_backend.clone(),
+            route_probe_backend: runtime.route_probe_backend.clone(),
+            native_probe_ms: runtime.native_probe_ms.clone(),
+            fallback_probe_ms: runtime.fallback_probe_ms.clone(),
         }
     }
 
@@ -1253,9 +1338,17 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             runtime.last_repair_action = Some("replace_tunnel".into());
             runtime.error = None;
             runtime.timings_ms.clear();
+            runtime.powershell_fallback_count = 0;
+            runtime.singbox_check_ms = None;
+            runtime.xray_spawn_ms = None;
+            runtime.adapter_probe_backend = None;
+            runtime.route_probe_backend = None;
+            runtime.native_probe_ms.clear();
+            runtime.fallback_probe_ms.clear();
         }
         stop_owned_processes("replace_tunnel")?;
         ensure_current_generation(generation)?;
+        start_network_watchers_for_connect();
         write_session_marker(&request.op_id, generation);
 
         let runtime_dir = runtime_root().join(sanitize_id(&request.op_id));
@@ -1396,12 +1489,14 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             let xray_config_path = runtime_dir.join("xray_config.json");
             write_json_file(&xray_config_path, xray_config)?;
             let xray_log_path = runtime_dir.join("xray.log");
+            let spawn_started = Instant::now();
             let child = spawn_engine(
                 xray_exe_path()?,
                 &["run", "-c"],
                 &xray_config_path,
                 &xray_log_path,
             )?;
+            set_xray_spawn_ms(elapsed_ms(spawn_started));
             assign_child_to_job(&child)?;
             state().lock().unwrap().xray = Some(child);
             // Do not serialize xray readiness before Wintun bring-up. The sing-box
@@ -1419,7 +1514,12 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         write_json_file(&singbox_config_path, &singbox_config)?;
         let singbox_log_path = runtime_dir.join("singbox_tun.log");
         let singbox_exe = singbox_exe_path()?;
-        check_singbox_config(&singbox_exe, &singbox_config_path, &runtime_dir)?;
+        check_singbox_config(
+            &singbox_exe,
+            &singbox_config_path,
+            &runtime_dir,
+            singbox_config,
+        )?;
         let child = spawn_engine(
             singbox_exe,
             &["run", "-c"],
@@ -1468,8 +1568,7 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         mark_route_ready();
         set_phase("routes_ready", started, generation)?;
         mark_dns_policy_ready();
-        mark_ipv6_policy_status();
-        mark_quic_policy_status();
+        spawn_nonfatal_policy_checks(generation);
         if let Some(path) = xray_log_path.as_deref() {
             ensure_xray_alive(path)?;
         }
@@ -1536,17 +1635,11 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
 
         ensure_current_generation(generation)?;
         refresh_adapter_snapshot_required()?;
-        let metric = apply_doodleray_interface_metric()?;
-        {
-            let mut runtime = state().lock().unwrap();
-            runtime.route_explanations.push(redact(&metric));
-        }
         wait_for_doodleray_ipv4_interface(Duration::from_secs(8), generation)?;
         wait_for_doodleray_route_preferred(Duration::from_secs(8), generation)?;
         mark_route_ready();
         mark_dns_policy_ready();
-        mark_ipv6_policy_status();
-        mark_quic_policy_status();
+        spawn_nonfatal_policy_checks(generation);
         wait_for_port(socks_port, Duration::from_secs(5), generation)?;
         if http_port != socks_port {
             match wait_for_port(http_port, Duration::from_secs(5), generation) {
@@ -1674,7 +1767,15 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
     }
 
     fn clear_timings() {
-        state().lock().unwrap().timings_ms.clear();
+        let mut runtime = state().lock().unwrap();
+        runtime.timings_ms.clear();
+        runtime.powershell_fallback_count = 0;
+        runtime.singbox_check_ms = None;
+        runtime.xray_spawn_ms = None;
+        runtime.adapter_probe_backend = None;
+        runtime.route_probe_backend = None;
+        runtime.native_probe_ms.clear();
+        runtime.fallback_probe_ms.clear();
     }
 
     fn is_current_generation(generation: u64) -> bool {
@@ -1694,6 +1795,92 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         let mut runtime = state().lock().unwrap();
         runtime.phase = Some(phase.into());
         runtime.timings_ms.push((phase.into(), elapsed_ms(started)));
+        Ok(())
+    }
+
+    fn record_native_probe(label: &str, started: Instant) {
+        state()
+            .lock()
+            .unwrap()
+            .native_probe_ms
+            .push((label.into(), elapsed_ms(started)));
+    }
+
+    fn record_fallback_probe(label: &str, started: Instant) {
+        let mut runtime = state().lock().unwrap();
+        runtime.powershell_fallback_count = runtime.powershell_fallback_count.saturating_add(1);
+        runtime
+            .fallback_probe_ms
+            .push((label.into(), elapsed_ms(started)));
+    }
+
+    fn set_adapter_probe_backend(backend: &str) {
+        state().lock().unwrap().adapter_probe_backend = Some(backend.into());
+    }
+
+    fn set_route_probe_backend(backend: &str) {
+        state().lock().unwrap().route_probe_backend = Some(backend.into());
+    }
+
+    fn set_singbox_check_ms(value: u64) {
+        state().lock().unwrap().singbox_check_ms = Some(value);
+    }
+
+    fn set_xray_spawn_ms(value: u64) {
+        state().lock().unwrap().xray_spawn_ms = Some(value);
+    }
+
+    fn start_network_watchers_for_connect() {
+        match windows_net::ensure_network_watchers() {
+            Ok(detail) => {
+                let mut runtime = state().lock().unwrap();
+                let note = format!("native network change watchers ready: {detail}");
+                if !runtime.route_explanations.iter().any(|item| item == &note) {
+                    runtime.route_explanations.push(note);
+                }
+            }
+            Err(error) => {
+                let mut runtime = state().lock().unwrap();
+                let note = format!(
+                    "native network change watchers unavailable; using timed native polling: {}",
+                    error
+                );
+                if !runtime.warning_checks.iter().any(|item| item == &note) {
+                    runtime.warning_checks.push(note);
+                }
+            }
+        }
+    }
+
+    fn wait_for_adapter_event_or_delay(
+        cursor: windows_net::NetworkEventCursors,
+        max_delay: Duration,
+        generation: u64,
+    ) -> Result<(), String> {
+        let deadline = Instant::now() + max_delay;
+        while Instant::now() < deadline {
+            ensure_current_generation(generation)?;
+            if cursor.adapter_changed_since() {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        Ok(())
+    }
+
+    fn wait_for_route_event_or_delay(
+        cursor: windows_net::NetworkEventCursors,
+        max_delay: Duration,
+        generation: u64,
+    ) -> Result<(), String> {
+        let deadline = Instant::now() + max_delay;
+        while Instant::now() < deadline {
+            ensure_current_generation(generation)?;
+            if cursor.route_changed_since() {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
         Ok(())
     }
 
@@ -1783,7 +1970,23 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         exe: &Path,
         config_path: &Path,
         runtime_dir: &Path,
+        config: &Value,
     ) -> Result<(), String> {
+        let config_hash = hash_json_value(config)?;
+        let cache_hit = singbox_validation_cache()
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|cache| cache.config_hash == config_hash);
+        if cache_hit {
+            set_singbox_check_ms(0);
+            log_service_event(
+                "sing-box config check skipped: effective config hash was already validated",
+            );
+            return Ok(());
+        }
+
+        let started = Instant::now();
         let output = Command::new(exe)
             .args(["check", "-c"])
             .arg(config_path)
@@ -1791,7 +1994,10 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             .creation_flags(0x08000000)
             .output()
             .map_err(|e| format!("sing-box check failed to run: {}", e))?;
+        set_singbox_check_ms(elapsed_ms(started));
         if output.status.success() {
+            *singbox_validation_cache().lock().unwrap() =
+                Some(SingboxValidationCache { config_hash });
             return Ok(());
         }
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1801,6 +2007,17 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             redact(&stdout),
             redact(&stderr)
         ))
+    }
+
+    fn singbox_validation_cache() -> &'static Mutex<Option<SingboxValidationCache>> {
+        SINGBOX_VALIDATION_CACHE.get_or_init(|| Mutex::new(None))
+    }
+
+    fn hash_json_value(value: &Value) -> Result<u64, String> {
+        let bytes = serde_json::to_vec(value).map_err(|e| format!("hash config: {}", e))?;
+        let mut hasher = DefaultHasher::new();
+        bytes.hash(&mut hasher);
+        Ok(hasher.finish())
     }
 
     fn wait_for_port(port: u16, timeout: Duration, generation: u64) -> Result<(), String> {
@@ -1939,28 +2156,57 @@ $summary -join "`n"
         generation: u64,
     ) -> Result<(String, Option<u32>), String> {
         let deadline = Instant::now() + timeout;
+        let native_started = Instant::now();
+        let mut last_native_error: Option<String> = None;
         while Instant::now() < deadline {
             ensure_current_generation(generation)?;
-            let output = Command::new("powershell")
-                .args([
-                    "-NoProfile",
-                    "-Command",
-                    &format!(
-                        "Get-NetAdapter -Name '{}' -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object {{ \"$($_.Name)|$($_.ifIndex)\" }}",
-                        adapter_name.replace('\'', "''")
-                    ),
-                ])
-                .creation_flags(0x08000000)
-                .output();
-            if let Ok(output) = output {
-                let text = String::from_utf8_lossy(&output.stdout);
-                if let Some(snapshot) = parse_adapter_snapshot_line(&text) {
-                    return Ok(snapshot);
+            let cursor = windows_net::network_event_cursors();
+            match windows_net::find_adapter_by_alias(adapter_name) {
+                Ok(snapshot) => {
+                    record_native_probe("adapter_snapshot", native_started);
+                    set_adapter_probe_backend("native_iphelper_evented");
+                    return Ok((snapshot.alias, Some(snapshot.ifindex)));
+                }
+                Err(error) => {
+                    last_native_error = Some(error.to_string());
+                    if !error.is_not_found() {
+                        break;
+                    }
                 }
             }
-            std::thread::sleep(Duration::from_millis(150));
+            wait_for_adapter_event_or_delay(cursor, Duration::from_millis(125), generation)?;
         }
-        Err("DoodleRay Tunnel adapter did not become ready".into())
+
+        let fallback_started = Instant::now();
+        if let Some(snapshot) = wait_for_adapter_powershell_once(adapter_name) {
+            record_fallback_probe("adapter_snapshot", fallback_started);
+            set_adapter_probe_backend("powershell_fallback");
+            return Ok(snapshot);
+        }
+        Err(format!(
+            "DoodleRay Tunnel adapter did not become ready{}",
+            last_native_error
+                .as_deref()
+                .map(|error| format!(": native probe: {}", error))
+                .unwrap_or_default()
+        ))
+    }
+
+    fn wait_for_adapter_powershell_once(adapter_name: &str) -> Option<(String, Option<u32>)> {
+        let output = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                &format!(
+                    "Get-NetAdapter -Name '{}' -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object {{ \"$($_.Name)|$($_.ifIndex)\" }}",
+                    adapter_name.replace('\'', "''")
+                ),
+            ])
+            .creation_flags(0x08000000)
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&output.stdout);
+        parse_adapter_snapshot_line(&text)
     }
 
     fn parse_adapter_snapshot_line(text: &str) -> Option<(String, Option<u32>)> {
@@ -2018,6 +2264,19 @@ $summary -join "`n"
             "protected DNS policy is owned by sing-box DNS hijack with remote DoH over the proxy detour"
                 .into(),
         );
+    }
+
+    fn spawn_nonfatal_policy_checks(generation: u64) {
+        std::thread::spawn(move || {
+            if !is_current_generation(generation) {
+                return;
+            }
+            mark_ipv6_policy_status();
+            if !is_current_generation(generation) {
+                return;
+            }
+            mark_quic_policy_status();
+        });
     }
 
     fn mark_ipv6_policy_status() {
@@ -2085,6 +2344,10 @@ $routes | ForEach-Object {
     }
 
     fn doodleray_adapter_snapshot() -> Option<(String, Option<u32>)> {
+        if let Ok(snapshot) = windows_net::find_adapter_by_alias("DoodleRay Tunnel") {
+            return Some((snapshot.alias, Some(snapshot.ifindex)));
+        }
+
         let output = Command::new("powershell")
             .args([
                 "-NoProfile",
@@ -2113,6 +2376,18 @@ $routes | ForEach-Object {
     }
 
     fn apply_doodleray_interface_metric() -> Result<String, String> {
+        let native_started = Instant::now();
+        match windows_net::apply_interface_metric("DoodleRay Tunnel", 50) {
+            Ok(message) => {
+                record_native_probe("ipv4_metric", native_started);
+                set_adapter_probe_backend("native_iphelper");
+                Ok(message)
+            }
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    fn apply_doodleray_interface_metric_powershell() -> Result<String, String> {
         let script = r#"
 $ErrorActionPreference = 'Stop'
 $adapter = Get-NetAdapter -Name 'DoodleRay Tunnel' -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -2172,6 +2447,7 @@ Write-Output ("DoodleRay Tunnel IPv4 ready: ifIndex={0}, metric={1}, state={2}, 
         let mut last_error = "DoodleRay Tunnel IPv4 interface did not become ready".to_string();
         while Instant::now() < deadline {
             ensure_current_generation(generation)?;
+            let cursor = windows_net::network_event_cursors();
             match apply_doodleray_interface_metric() {
                 Ok(message) => {
                     log_service_event(&format!(
@@ -2182,7 +2458,17 @@ Write-Output ("DoodleRay Tunnel IPv4 ready: ifIndex={0}, metric={1}, state={2}, 
                 }
                 Err(message) => last_error = message,
             }
-            std::thread::sleep(Duration::from_millis(300));
+            wait_for_adapter_event_or_delay(cursor, Duration::from_millis(175), generation)?;
+        }
+        let fallback_started = Instant::now();
+        if let Ok(message) = apply_doodleray_interface_metric_powershell() {
+            record_fallback_probe("ipv4_metric_final", fallback_started);
+            set_adapter_probe_backend("powershell_fallback");
+            log_service_event(&format!(
+                "applied DoodleRay Tunnel interface metric via final fallback: {}",
+                message
+            ));
+            return Ok(());
         }
         Err(format!(
             "DoodleRay Tunnel IPv4 readiness failed: {}",
@@ -2190,7 +2476,24 @@ Write-Output ("DoodleRay Tunnel IPv4 ready: ifIndex={0}, metric={1}, state={2}, 
         ))
     }
 
-    fn ensure_doodleray_route_preferred() -> Result<(), String> {
+    fn ensure_doodleray_route_preferred_native() -> Result<String, String> {
+        let canaries = [
+            Ipv4Addr::new(104, 26, 13, 205),
+            Ipv4Addr::new(142, 251, 20, 113),
+            Ipv4Addr::new(162, 159, 136, 232),
+        ];
+        let started = Instant::now();
+        match windows_net::route_canaries_prefer_adapter("DoodleRay Tunnel", &canaries) {
+            Ok(message) => {
+                record_native_probe("route_canaries", started);
+                set_route_probe_backend("native_getbestroute2");
+                Ok(message)
+            }
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    fn ensure_doodleray_route_preferred_powershell() -> Result<(), String> {
         let script = r#"
 $adapter = Get-NetAdapter -Name 'DoodleRay Tunnel' -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $adapter) {
@@ -2316,13 +2619,25 @@ Write-Output ("DoodleRay Tunnel route preferred: shape={0}, tun={1}, best_other=
         let mut last_error = "DoodleRay Tunnel route did not become ready".to_string();
         while Instant::now() < deadline {
             ensure_current_generation(generation)?;
-            match ensure_doodleray_route_preferred() {
-                Ok(()) => return Ok(()),
+            let cursor = windows_net::network_event_cursors();
+            match ensure_doodleray_route_preferred_native() {
+                Ok(message) => {
+                    log_service_event(&format!("route readiness ok: {}", message));
+                    return Ok(());
+                }
                 Err(message) => last_error = message,
             }
-            std::thread::sleep(Duration::from_millis(300));
+            wait_for_route_event_or_delay(cursor, Duration::from_millis(175), generation)?;
         }
-        Err(last_error)
+        let fallback_started = Instant::now();
+        match ensure_doodleray_route_preferred_powershell() {
+            Ok(()) => {
+                record_fallback_probe("route_canaries_final", fallback_started);
+                set_route_probe_backend("powershell_fallback");
+                Ok(())
+            }
+            Err(fallback_error) => Err(format!("{}; fallback: {}", last_error, fallback_error)),
+        }
     }
 
     fn with_tun_interface_name(mut config: Value) -> Value {
