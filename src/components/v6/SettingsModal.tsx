@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X, LogOut, RefreshCw, Trash2, DownloadCloud, Wrench, Loader2 } from 'lucide-react';
 import { useAppStore, type SupportedLanguage } from '../../stores/app-store';
 import { refreshSubscription } from '../../lib/subscription';
+import { isClosedControlPlaneEnabled } from '../../lib/build-policy';
 import Toggle from './Toggle';
 
 type T = (key: never) => string;
@@ -73,6 +74,7 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
   const [updateStatus, setUpdateStatus] = useState<string | null>(null);
   const [repairing, setRepairing] = useState(false);
   const [wipeArmed, setWipeArmed] = useState(false);
+  const closedControlPlane = isClosedControlPlaneEnabled();
 
   const launchOn = autoStart || silentAdminAutostart;
   const toggleLaunch = async () => {
@@ -186,30 +188,34 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
 
           {/* Connection */}
           <SectionTitle>{t('v6SecConnection' as never)}</SectionTitle>
-          <Row title={t('v6SetAutoSelect' as never)} sub={t('v6SetAutoSelectSub' as never)} onClick={() => setAutoSelectFastest(!autoSelectFastest)} right={<Toggle on={autoSelectFastest} label={t('v6SetAutoSelect' as never)} />} />
+          {!closedControlPlane && (
+            <Row title={t('v6SetAutoSelect' as never)} sub={t('v6SetAutoSelectSub' as never)} onClick={() => setAutoSelectFastest(!autoSelectFastest)} right={<Toggle on={autoSelectFastest} label={t('v6SetAutoSelect' as never)} />} />
+          )}
           <Row title={t('strictRoute' as never)} sub={t('strictRouteDesc' as never)} onClick={() => setStrictRoute(!strictRoute)} right={<Toggle on={strictRoute} label={t('strictRoute' as never)} />} />
           <Row title={t('socksPort' as never)} right={<PortInput value={socksPort} onCommit={setSocksPort} label={t('socksPort' as never)} />} />
           <Row title={t('httpPort' as never)} right={<PortInput value={httpPort} onCommit={setHttpPort} label={t('httpPort' as never)} />} />
-          <Row
-            title={t('subAutoUpdate' as never)}
-            sub={t('subAutoUpdateDesc' as never)}
-            right={
-              <select
-                value={subAutoUpdateMinutes}
-                onChange={(e) => setSubAutoUpdateMinutes(Number(e.target.value))}
-                className="cursor-pointer rounded-xl border border-white/[0.14] bg-white/[0.08] px-3 py-2 text-[13px] font-medium text-white outline-none v6-focus [&>option]:bg-[#1c1116]"
-              >
-                <option value={0}>—</option>
-                <option value={60}>1h</option>
-                <option value={180}>3h</option>
-                <option value={720}>12h</option>
-                <option value={1440}>24h</option>
-              </select>
-            }
-          />
+          {!closedControlPlane && (
+            <Row
+              title={t('subAutoUpdate' as never)}
+              sub={t('subAutoUpdateDesc' as never)}
+              right={
+                <select
+                  value={subAutoUpdateMinutes}
+                  onChange={(e) => setSubAutoUpdateMinutes(Number(e.target.value))}
+                  className="cursor-pointer rounded-xl border border-white/[0.14] bg-white/[0.08] px-3 py-2 text-[13px] font-medium text-white outline-none v6-focus [&>option]:bg-[#1c1116]"
+                >
+                  <option value={0}>—</option>
+                  <option value={60}>1h</option>
+                  <option value={180}>3h</option>
+                  <option value={720}>12h</option>
+                  <option value={1440}>24h</option>
+                </select>
+              }
+            />
+          )}
 
           {/* Subscriptions */}
-          {subscriptions.length > 0 && (
+          {!closedControlPlane && subscriptions.length > 0 && (
             <>
               <SectionTitle>{t('subscriptions' as never)}</SectionTitle>
               {subscriptions.map((sub) => (
@@ -265,16 +271,18 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
               ? <Loader2 className="h-[18px] w-[18px] shrink-0 v6-orb-spin text-[#FF9E38]" strokeWidth={2} />
               : <Wrench className="h-[18px] w-[18px] shrink-0 text-white/50" strokeWidth={1.9} />}
           />
-          <Row
-            title={wipeArmed ? t('v6ConfirmAgain' as never) : t('v6SetWipe' as never)}
-            sub={t('v6SetWipeSub' as never)}
-            danger
-            onClick={() => {
-              if (wipeArmed) { wipeData(); setWipeArmed(false); addLog('info', 'All servers and subscriptions were removed'); }
-              else { setWipeArmed(true); setTimeout(() => setWipeArmed(false), 4000); }
-            }}
-            right={<Trash2 className="h-[18px] w-[18px] shrink-0 text-[#ff8a7a]" strokeWidth={1.9} />}
-          />
+          {!closedControlPlane && (
+            <Row
+              title={wipeArmed ? t('v6ConfirmAgain' as never) : t('v6SetWipe' as never)}
+              sub={t('v6SetWipeSub' as never)}
+              danger
+              onClick={() => {
+                if (wipeArmed) { wipeData(); setWipeArmed(false); addLog('info', 'All servers and subscriptions were removed'); }
+                else { setWipeArmed(true); setTimeout(() => setWipeArmed(false), 4000); }
+              }}
+              right={<Trash2 className="h-[18px] w-[18px] shrink-0 text-[#ff8a7a]" strokeWidth={1.9} />}
+            />
+          )}
 
           {/* Quit */}
           <Row

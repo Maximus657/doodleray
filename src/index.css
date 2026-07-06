@@ -470,6 +470,7 @@
   }
   .v6-login-flight-stage {
     isolation: isolate;
+    opacity: 0;
   }
   .v6-login-flight-wash {
     position: fixed;
@@ -487,6 +488,7 @@
     z-index: 1;
     height: 72px;
     width: 72px;
+    opacity: 0;
     will-change: transform, opacity, filter;
   }
   .v6-login-flight img {

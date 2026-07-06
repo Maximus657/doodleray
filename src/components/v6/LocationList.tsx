@@ -134,8 +134,7 @@ export default function LocationList({
       {/* Subscription block (design) */}
       {days !== null && dCol && (
         <div className="mt-3.5 border-t border-white/[0.08] pt-4">
-          <div className="mb-[9px] flex items-center justify-between">
-            <span className="truncate text-[12px] text-white/50">{activeSub?.name || t('v6Subscription' as never)}</span>
+          <div className="mb-[9px] flex items-center justify-end">
             <button type="button" onClick={openRenew} className="text-[12px] font-semibold text-[#FF9E38] v6-focus">
               {t('v6Renew' as never)}
             </button>
