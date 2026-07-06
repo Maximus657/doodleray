@@ -17,19 +17,20 @@ routes. The live host currently uses nginx vhosts, not Caddy. The bootstrap
 script auto-detects nginx/Caddy and only adds a separate vhost for
 `doodleray.clickflare.click`.
 
-Known current staging state:
+Current host state:
 
 - Dokploy compose `doodleray-downloads` exists and is healthy.
 - It serves static files through nginx inside Docker.
 - It is exposed on the host loopback as `127.0.0.1:18089`.
-- Public domain routing still needs the host nginx vhost below if SSH/root
-  access is not already restored.
+- Host nginx proxies `doodleray.clickflare.click` to `127.0.0.1:18089`.
+- Let's Encrypt HTTPS is active for `https://doodleray.clickflare.click/`.
+- `http://doodleray.clickflare.click/` redirects to HTTPS.
 
-For the current Dokploy-backed host, run as root:
+If this vhost ever has to be recreated, run as root:
 
 ```bash
 cd /tmp
-curl -fsSL -o bootstrap-downloads-host.sh https://raw.githubusercontent.com/Maximus657/doodleray/production/scripts/release/bootstrap-downloads-host.sh
+curl -fsSL -o bootstrap-downloads-host.sh https://raw.githubusercontent.com/Maximus657/doodleray/58e44cfc761a4d5b60a0785b6238fefde5021ab8/scripts/release/bootstrap-downloads-host.sh
 DOMAIN=doodleray.clickflare.click \
 UPSTREAM=http://127.0.0.1:18089 \
 WEB_SERVER=nginx \
