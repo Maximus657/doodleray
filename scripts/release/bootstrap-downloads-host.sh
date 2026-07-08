@@ -90,6 +90,14 @@ cat > "$ROOT/public/index.html" <<EOF
         height: 100%;
         object-fit: cover;
       }
+      img[src="/assets/doodleray-logo.png"] {
+        width: 48px !important;
+        height: 48px !important;
+        max-width: 48px !important;
+        max-height: 48px !important;
+        object-fit: cover !important;
+        border-radius: 14px;
+      }
       .mark span { display: none; }
       .mark--fallback span { display: block; }
       h1 {
@@ -161,16 +169,27 @@ cat > "$ROOT/public/index.html" <<EOF
         font-weight: 900;
       }
       .platform-icon {
-        width: 34px;
-        height: 34px;
+        width: 44px;
+        height: 44px;
+        flex: 0 0 44px;
         border-radius: 11px;
         display: grid;
         place-items: center;
-        background: rgba(255,122,47,.16);
+        background: linear-gradient(145deg, rgba(255,122,47,.20), rgba(255,255,255,.06));
         color: #ffb15f;
-        font-size: 12px;
-        font-weight: 900;
-        letter-spacing: .04em;
+        border: 1px solid rgba(255,255,255,.10);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.10);
+      }
+      .platform-icon svg {
+        display: block;
+        width: 25px;
+        height: 25px;
+        fill: currentColor;
+      }
+      .platform-card--primary .platform-icon {
+        color: #ffcf89;
+        background: linear-gradient(145deg, rgba(255,122,47,.30), rgba(255,122,47,.10));
+        border-color: rgba(255,122,47,.26);
       }
       .platform-card p {
         margin: 12px 0 0;
@@ -228,15 +247,15 @@ cat > "$ROOT/public/index.html" <<EOF
       <p>Выберите версию под свое устройство. Публичная кнопка скачивания включается только для версии, которая готова для пользователей.</p>
       <section class="platforms" aria-label="Выбор версии DoodleRay">
         <a class="platform-card platform-card--primary" href="/download/windows/">
-          <span class="platform-label"><span class="platform-icon">WIN</span>Windows</span>
+          <span class="platform-label"><span class="platform-icon"><svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path d="M4 7.1 14.2 5.7v9.8H4V7.1Zm12.1-1.7L28 3.8v11.7H16.1V5.4ZM4 17h10.2v9.5L4 25.1V17Zm12.1 0H28v11.2l-11.9-1.7V17Z"/></svg></span>Windows</span>
           <p>Для Windows 10/11, 64-bit. Рекомендуемый вариант для большинства компьютеров.</p>
         </a>
         <a class="platform-card" href="/download/macos/apple-silicon/">
-          <span class="platform-label"><span class="platform-icon">M</span>macOS Apple Silicon</span>
+          <span class="platform-label"><span class="platform-icon"><svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path d="M21.8 2.8c.1 1.5-.5 3-1.5 4.1-1 1.2-2.6 2.1-4.1 2-.2-1.5.6-3 1.5-4 1.1-1.2 2.8-2 4.1-2.1Zm5.1 20.9c-.6 1.4-.9 2-1.7 3.2-1.1 1.7-2.7 3.8-4.7 3.8-1.7 0-2.2-1.1-4.6-1.1-2.4 0-3 1.1-4.7 1.1-2 0-3.5-1.9-4.7-3.6-3.2-4.8-3.6-10.5-1.6-13.5 1.4-2.1 3.6-3.4 5.6-3.4 2.1 0 3.4 1.1 5.1 1.1 1.7 0 2.7-1.1 5.2-1.1 1.8 0 3.8 1 5.2 2.8-4.6 2.5-3.9 9.1.8 10.7Z"/></svg></span>macOS Apple Silicon</span>
           <p>Для Mac на M1, M2, M3, M4 и новее.</p>
         </a>
         <a class="platform-card" href="/download/macos/intel/">
-          <span class="platform-label"><span class="platform-icon">INT</span>macOS Intel</span>
+          <span class="platform-label"><span class="platform-icon"><svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path d="M21.8 2.8c.1 1.5-.5 3-1.5 4.1-1 1.2-2.6 2.1-4.1 2-.2-1.5.6-3 1.5-4 1.1-1.2 2.8-2 4.1-2.1Zm5.1 20.9c-.6 1.4-.9 2-1.7 3.2-1.1 1.7-2.7 3.8-4.7 3.8-1.7 0-2.2-1.1-4.6-1.1-2.4 0-3 1.1-4.7 1.1-2 0-3.5-1.9-4.7-3.6-3.2-4.8-3.6-10.5-1.6-13.5 1.4-2.1 3.6-3.4 5.6-3.4 2.1 0 3.4 1.1 5.1 1.1 1.7 0 2.7-1.1 5.2-1.1 1.8 0 3.8 1 5.2 2.8-4.6 2.5-3.9 9.1.8 10.7Z"/></svg></span>macOS Intel</span>
           <p>Для Mac старше 2020 года. Технически это версия x86-64.</p>
         </a>
       </section>
