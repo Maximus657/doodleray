@@ -130,6 +130,36 @@ cat > "$ROOT/public/index.html" <<EOF
         margin-top: 22px;
         font-size: 14px;
       }
+      .release-history {
+        margin-top: 34px;
+        padding-top: 28px;
+        border-top: 1px solid var(--border);
+      }
+      .section-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 16px;
+        color: var(--text);
+        font-size: 18px;
+        font-weight: 900;
+      }
+      .release-item {
+        padding: 18px;
+        border: 1px solid rgba(255,122,47,.30);
+        border-radius: 18px;
+        background: rgba(255,122,47,.08);
+      }
+      .release-item h3 {
+        margin: 0 0 6px;
+        color: var(--text);
+        font-size: 18px;
+      }
+      .release-item p {
+        margin: 0;
+        font-size: 15px;
+      }
     </style>
   </head>
   <body>
@@ -139,9 +169,16 @@ cat > "$ROOT/public/index.html" <<EOF
       <p>Официальный хост загрузок DoodleRay. Публичная кнопка скачивания включается только для версии, которая готова для пользователей.</p>
       <div class="actions">
         <a class="button" href="/download/windows/">Скачать DoodleRay для Windows</a>
-        <a class="button secondary" href="/channels/direct/manifest.json">Информация о релизе</a>
+        <a class="button secondary" href="#versions">Что изменилось</a>
       </div>
       <p class="note">Если скачивание пока недоступно, значит новая публичная версия ещё не опубликована.</p>
+      <section id="versions" class="release-history">
+        <div class="section-title"><span>История версий</span></div>
+        <article class="release-item">
+          <h3>Скоро появится после публикации релиза</h3>
+          <p>Каждый публичный релиз DoodleRay будет публиковаться с коротким и понятным списком изменений.</p>
+        </article>
+      </section>
     </main>
   </body>
 </html>

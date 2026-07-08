@@ -60,6 +60,7 @@ workshop-api/
 secrets/
 
 # Local QA sandboxes: large installers, raw logs, screenshots
+.release-upload/
 qa-sandbox/
 qa-update-sandbox/
 qa-real-subscription-sandbox/

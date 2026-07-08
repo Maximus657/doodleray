@@ -35,6 +35,7 @@ param(
   [int]$Port = 22,
   [string]$RemoteRoot = '/srv/doodleray-downloads',
   [string]$SshKeyPath = $env:DOODLERAY_DOWNLOADS_SSH_KEY,
+  [string]$ReleaseNotesFile = '',
   [switch]$UpdatePublicWindowsAlias,
   [string]$PublicWindowsDownloadUrl = '',
   [switch]$Force
@@ -44,7 +45,34 @@ $ErrorActionPreference = 'Stop'
 if (-not (Test-Path -LiteralPath $ArtifactDir)) { throw "ArtifactDir not found: $ArtifactDir" }
 
 $repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
-$work = Join-Path $repoRoot ".release-upload\$Channel-$Version"
+if ([string]::IsNullOrWhiteSpace($ReleaseNotesFile)) {
+  $ReleaseNotesFile = Join-Path $repoRoot "docs\release-notes\$Version.md"
+}
+if (-not (Test-Path -LiteralPath $ReleaseNotesFile)) {
+  throw "Release notes are required for every public build. Create docs/release-notes/$Version.md with a plain-language summary and bullet list, or pass -ReleaseNotesFile."
+}
+
+function ConvertTo-PlainReleaseText {
+  param([string]$Text)
+  return (($Text -replace '<[^>]+>', '') -replace '\s+', ' ').Trim()
+}
+
+function ConvertTo-HtmlText {
+  param([string]$Text)
+  return [System.Net.WebUtility]::HtmlEncode((ConvertTo-PlainReleaseText $Text))
+}
+
+$releaseNoteLines = Get-Content -LiteralPath $ReleaseNotesFile -Encoding utf8
+$releaseTitle = ($releaseNoteLines | Where-Object { $_ -match '^\s*#\s+(.+?)\s*$' } | Select-Object -First 1)
+if ($releaseTitle) { $releaseTitle = ($releaseTitle -replace '^\s*#\s+', '').Trim() } else { $releaseTitle = "DoodleRay $Version" }
+$releaseSummary = ($releaseNoteLines | Where-Object { $_ -match '^\s*Коротко:\s*(.+?)\s*$' } | Select-Object -First 1)
+if ($releaseSummary) { $releaseSummary = ($releaseSummary -replace '^\s*Коротко:\s*', '').Trim() } else { throw "Release notes must contain a 'Коротко:' line: $ReleaseNotesFile" }
+$releaseChanges = @($releaseNoteLines | Where-Object { $_ -match '^\s*-\s+(.+?)\s*$' } | ForEach-Object { ($_ -replace '^\s*-\s+', '').Trim() })
+if ($releaseChanges.Count -eq 0) { throw "Release notes must contain at least one plain-language bullet starting with '- ': $ReleaseNotesFile" }
+
+$uploadWorkRoot = Join-Path ([System.IO.Path]::GetTempPath()) 'doodleray-release-upload'
+New-Item -ItemType Directory -Force -Path $uploadWorkRoot | Out-Null
+$work = Join-Path $uploadWorkRoot "$Channel-$Version"
 Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 
@@ -60,7 +88,10 @@ foreach ($file in $files) {
   Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $work $name) -Force
 }
 
-$logoSource = Join-Path $repoRoot 'public\assets\mascot.png'
+$logoSource = Join-Path $repoRoot 'src-tauri\icons\StoreLogo.png'
+if (-not (Test-Path -LiteralPath $logoSource)) {
+  $logoSource = Join-Path $repoRoot 'public\assets\mascot.png'
+}
 if (-not (Test-Path -LiteralPath $logoSource)) {
   $logoSource = Join-Path $repoRoot 'devil_icon.png'
 }
@@ -69,6 +100,89 @@ if (Test-Path -LiteralPath $logoSource) {
   New-Item -ItemType Directory -Force -Path $siteAssets | Out-Null
   Copy-Item -LiteralPath $logoSource -Destination (Join-Path $siteAssets 'doodleray-logo.png') -Force
 }
+
+$releaseNotes = [ordered]@{
+  version = $Version
+  channel = $Channel
+  title = (ConvertTo-PlainReleaseText $releaseTitle)
+  summary = (ConvertTo-PlainReleaseText $releaseSummary)
+  changes = @($releaseChanges | ForEach-Object { ConvertTo-PlainReleaseText $_ })
+  createdAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+}
+$releaseNotes | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $work 'release-notes.json') -Encoding utf8
+
+$historyUrl = "https://$HostName/channels/$Channel/history.json"
+$previousHistory = @()
+try {
+  $historyResponse = Invoke-WebRequest -Uri $historyUrl -UseBasicParsing -TimeoutSec 10
+  $historyJson = $historyResponse.Content | ConvertFrom-Json
+  if ($historyJson.releases) { $previousHistory = @($historyJson.releases) }
+} catch {
+  $previousHistory = @()
+}
+$historyReleases = @($releaseNotes) + @($previousHistory | Where-Object { $_.version -ne $Version } | Select-Object -First 11)
+$history = [ordered]@{
+  product = 'DoodleRay'
+  channel = $Channel
+  updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+  releases = @($historyReleases)
+}
+$history | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $work 'history.json') -Encoding utf8
+
+$latestChangeItems = ($releaseChanges | ForEach-Object { "          <li>$(ConvertTo-HtmlText $_)</li>" }) -join "`n"
+$releaseHistoryItems = ($historyReleases | Select-Object -Skip 1 | ForEach-Object {
+  $itemVersion = ConvertTo-HtmlText $_.version
+  $itemTitle = ConvertTo-HtmlText $_.title
+  $itemSummary = ConvertTo-HtmlText $_.summary
+  $itemChanges = @($_.changes | Select-Object -First 4 | ForEach-Object { "              <li>$(ConvertTo-HtmlText $_)</li>" }) -join "`n"
+  @"
+        <article class="release-item">
+          <div class="release-version">v$itemVersion</div>
+          <div>
+            <h3>$itemTitle</h3>
+            <p>$itemSummary</p>
+            <ul>
+$itemChanges
+            </ul>
+          </div>
+        </article>
+"@
+}) -join "`n"
+$releaseHistoryHtml = @"
+      <section id="versions" class="release-history">
+        <div class="section-title">
+          <span>История версий</span>
+          <a href="/channels/$Channel/history.json">JSON</a>
+        </div>
+        <article class="release-item release-item--latest">
+          <div class="release-version">v$(ConvertTo-HtmlText $Version)</div>
+          <div>
+            <h3>$(ConvertTo-HtmlText $releaseTitle)</h3>
+            <p>$(ConvertTo-HtmlText $releaseSummary)</p>
+            <ul>
+$latestChangeItems
+            </ul>
+          </div>
+        </article>
+$releaseHistoryItems
+      </section>
+"@
+$releaseHistoryStyles = @"
+      .release-history { margin-top: 34px; padding-top: 28px; border-top: 1px solid var(--border); }
+      .section-title { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; color: var(--text); font-size: 18px; font-weight: 900; }
+      .section-title a { color: var(--muted); font-size: 13px; text-decoration: none; }
+      .release-item { display: grid; grid-template-columns: 88px 1fr; gap: 18px; padding: 18px 0; border-top: 1px solid rgba(255,255,255,.08); }
+      .release-item:first-of-type { border-top: 0; padding-top: 0; }
+      .release-item--latest { padding: 18px; border: 1px solid rgba(255,122,47,.30); border-radius: 18px; background: rgba(255,122,47,.08); }
+      .release-version { color: #ffb15f; font-weight: 900; white-space: nowrap; }
+      .release-item h3 { margin: 0 0 6px; color: var(--text); font-size: 18px; }
+      .release-item p { margin: 0 0 10px; font-size: 15px; }
+      .release-item ul { margin: 0; padding-left: 18px; color: var(--muted); line-height: 1.55; }
+      .release-item li { margin: 5px 0; }
+      @media (max-width: 640px) {
+        .release-item { grid-template-columns: 1fr; gap: 8px; }
+      }
+"@
 
 $artifactRows = Get-ChildItem -LiteralPath $work -File | Sort-Object Name | ForEach-Object {
   [pscustomobject]@{
@@ -91,7 +205,7 @@ $manifest = [ordered]@{
 }
 $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $work 'manifest.json') -Encoding utf8
 
-$archive = Join-Path (Split-Path $work -Parent) "$Channel-$Version.tar.gz"
+$archive = Join-Path $uploadWorkRoot "$Channel-$Version.tar.gz"
 Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
 tar -czf $archive -C $work .
 
@@ -141,6 +255,12 @@ mkdir -p "`$remote_root/public/channels/`$channel"
 cp "`$dest/manifest.json" "`$remote_root/public/channels/`$channel/manifest.json"
 if [ -f "`$dest/latest.json" ]; then
   cp "`$dest/latest.json" "`$remote_root/public/channels/`$channel/latest.json"
+fi
+if [ -f "`$dest/release-notes.json" ]; then
+  cp "`$dest/release-notes.json" "`$remote_root/public/channels/`$channel/latest-notes.json"
+fi
+if [ -f "`$dest/history.json" ]; then
+  cp "`$dest/history.json" "`$remote_root/public/channels/`$channel/history.json"
 fi
 ln -sfn "../../releases/`$channel/`$version" "`$remote_root/public/channels/`$channel/current"
 if [ -f "`$dest/_site-assets/doodleray-logo.png" ]; then
@@ -207,6 +327,7 @@ HTML
       a.button { display: inline-flex; align-items: center; justify-content: center; min-height: 54px; padding: 0 22px; border-radius: 16px; color: #190904; background: linear-gradient(135deg, #ff9d45, var(--accent)); text-decoration: none; font-weight: 800; }
       a.secondary { color: var(--text); background: var(--panel); border: 1px solid var(--border); }
       .note { margin-top: 22px; font-size: 14px; }
+$releaseHistoryStyles
     </style>
   </head>
   <body>
@@ -216,8 +337,9 @@ HTML
       <p>Официальный установщик DoodleRay для Windows.</p>
       <div class="actions">
         <a class="button" href="`$public_windows_download_url">Скачать DoodleRay для Windows</a>
-        <a class="button secondary" href="https://github.com/Maximus657/doodleray/releases/latest">Что изменилось</a>
+        <a class="button secondary" href="#versions">Что изменилось</a>
       </div>
+$releaseHistoryHtml
     </main>
   </body>
 </html>
@@ -275,6 +397,7 @@ HTML
       a.button { display: inline-flex; align-items: center; justify-content: center; min-height: 54px; padding: 0 22px; border-radius: 16px; color: #190904; background: linear-gradient(135deg, #ff9d45, var(--accent)); text-decoration: none; font-weight: 800; }
       a.secondary { color: var(--text); background: var(--panel); border: 1px solid var(--border); }
       .note { margin-top: 22px; font-size: 14px; }
+$releaseHistoryStyles
     </style>
   </head>
   <body>
@@ -284,9 +407,10 @@ HTML
       <p>Официальный установщик DoodleRay `$version для Windows.</p>
       <div class="actions">
         <a class="button" href="/download/windows/latest.exe">Скачать DoodleRay для Windows</a>
-        <a class="button secondary" href="/download/windows/latest.json">Информация о релизе</a>
+        <a class="button secondary" href="#versions">Что изменилось</a>
       </div>
       <p class="note">Файл версии: /releases/direct/`$version/`$installer_name</p>
+$releaseHistoryHtml
     </main>
   </body>
 </html>

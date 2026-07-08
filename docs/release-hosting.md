@@ -40,7 +40,7 @@ If this vhost ever has to be recreated, run as root:
 
 ```bash
 cd /tmp
-curl -fsSL -o bootstrap-downloads-host.sh https://raw.githubusercontent.com/Maximus657/doodleray/58e44cfc761a4d5b60a0785b6238fefde5021ab8/scripts/release/bootstrap-downloads-host.sh
+curl -fsSL -o bootstrap-downloads-host.sh https://raw.githubusercontent.com/Maximus657/doodleray/production/scripts/release/bootstrap-downloads-host.sh
 DOMAIN=doodleray.clickflare.click \
 WEB_SERVER=nginx \
 bash bootstrap-downloads-host.sh
@@ -59,6 +59,8 @@ https://doodleray.clickflare.click/
 https://doodleray.clickflare.click/download/windows
 https://doodleray.clickflare.click/download/windows/latest.exe
 https://doodleray.clickflare.click/download/windows/latest.json
+https://doodleray.clickflare.click/channels/direct/history.json
+https://doodleray.clickflare.click/channels/direct/latest-notes.json
 ```
 
 `/download/windows/latest.exe` is optional. Do not publish it for unsigned
@@ -80,6 +82,10 @@ https://doodleray.clickflare.click/channels/direct/latest.json
 https://doodleray.clickflare.click/channels/store-win32/latest.json
 https://doodleray.clickflare.click/channels/direct/manifest.json
 https://doodleray.clickflare.click/channels/store-win32/manifest.json
+https://doodleray.clickflare.click/channels/direct/history.json
+https://doodleray.clickflare.click/channels/store-win32/history.json
+https://doodleray.clickflare.click/channels/direct/latest-notes.json
+https://doodleray.clickflare.click/channels/store-win32/latest-notes.json
 ```
 
 Never overwrite a file under `/releases/<channel>/<version>/` after it has been
@@ -102,8 +108,11 @@ the direct channel publish flow when explicitly requested.
 ## Publish Flow
 
 1. Merge tested changes into `production`.
-2. Build signed artifacts in CI or locally.
-3. Publish with:
+2. Create public release notes at `docs/release-notes/<version>.md`.
+   They must be written in plain user language and include `Коротко:` plus a
+   short bullet list. These notes are shown on the download page.
+3. Build signed artifacts in CI or locally.
+4. Publish with:
 
 ```powershell
 .\scripts\release\Publish-DoodleRayDownloads.ps1 `
@@ -113,14 +122,27 @@ the direct channel publish flow when explicitly requested.
   -HostName doodleray.clickflare.click
 ```
 
-4. Verify:
+By default the publish script reads `docs/release-notes/<version>.md`. For an
+emergency or non-standard build, pass `-ReleaseNotesFile <path>`.
+
+The script publishes:
+
+- immutable release files under `/releases/<channel>/<version>/`;
+- `/releases/<channel>/<version>/release-notes.json`;
+- `/channels/<channel>/latest-notes.json`;
+- `/channels/<channel>/history.json`;
+- a human-readable “История версий” block on the download page when the public
+  Windows alias is updated.
+
+5. Verify:
 
 ```powershell
 Invoke-WebRequest https://doodleray.clickflare.click/channels/store-win32/manifest.json
+Invoke-WebRequest https://doodleray.clickflare.click/channels/store-win32/history.json
 Invoke-WebRequest https://doodleray.clickflare.click/releases/store-win32/6.0.0/DoodleRay-store-win32-6.0.0-x64-setup.exe -Method Head
 ```
 
-5. Partner Center uses the versioned `.exe` URL, not the channel URL.
+6. Partner Center uses the versioned `.exe` URL, not the channel URL.
 
 For direct website downloads, users can use:
 

@@ -19,6 +19,10 @@ Release only after a complete local validation pass and an explicit approval to 
 - Do not publish while a known Full Computer / TUN blocker is still reproducing.
 - Do not publish while updater UI, service install, connect/disconnect, or shutdown behavior is visibly broken.
 - Do not publish multiple patch versions for small follow-up edits. Batch fixes locally, then release one approved version.
+- Do not publish without public, plain-language release notes in
+  `docs/release-notes/<version>.md`. These notes are shown on the download page
+  and must explain what changed for a normal user, not only internal technical
+  details.
 - All subscription, proxy, protected/TUN, split-routing, and speed QA uses the
   canonical DoodleVPN test subscription from `docs/qa-test-subscription.md`.
 - v6 Windows releases must be signed by CI. The Windows workflow must fail if
@@ -101,6 +105,8 @@ approval requires the default signed gate to pass without that flag.
 Attach a redacted evidence note to the release checklist that includes:
 
 - app version, service version, and installer/updater path tested;
+- the public release notes file path, with a short confirmation that the text is
+  understandable for non-technical users;
 - subscription import/refresh result and server count;
   use the canonical DoodleVPN test subscription stored in the ignored
   `secrets/doodlevpn-test-subscription-url.txt` file; see
@@ -115,6 +121,37 @@ Attach a redacted evidence note to the release checklist that includes:
 
 Raw provider credentials, subscription URLs, UUIDs, endpoint IPs, and private
 keys must stay out of committed logs and screenshots.
+
+## Public Release Notes
+
+Every user-facing release must have a file:
+
+```text
+docs/release-notes/X.Y.Z.md
+```
+
+Required format:
+
+```markdown
+# DoodleRay X.Y.Z
+
+Дата: 8 июля 2026
+
+Коротко: one simple sentence explaining why this update matters.
+
+- A normal-user benefit in one short sentence.
+- Another benefit or fix in one short sentence.
+```
+
+Write for people who do not know what TUN, WinINet, Wintun, NRPT, or xray are.
+If a technical fix matters, translate it into user impact: for example,
+“режим «Весь компьютер» теперь лучше восстанавливается без перезагрузки” instead
+of “fixed stale adapter generation mismatch”.
+
+`scripts/release/Publish-DoodleRayDownloads.ps1` refuses to publish if this file
+is missing or does not contain `Коротко:` and at least one bullet. The publish
+script copies the notes into the immutable release folder and updates the public
+version history on the download page.
 
 ## Production Release Approval
 
