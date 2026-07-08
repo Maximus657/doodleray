@@ -28,7 +28,7 @@ cat > "$ROOT/public/index.html" <<EOF
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>DoodleRay Downloads</title>
-    <meta name="description" content="Download DoodleRay VPN for Windows from the official first-party downloads host.">
+    <meta name="description" content="Скачать DoodleRay VPN для Windows с официального хоста загрузок.">
     <style>
       :root {
         color-scheme: dark;
@@ -124,13 +124,13 @@ cat > "$ROOT/public/index.html" <<EOF
   <body>
     <main>
       <div class="brand"><div class="mark">DR</div><span>DoodleRay VPN</span></div>
-      <h1>Download for Windows</h1>
-      <p>Official DoodleRay download host. Release files are published to immutable versioned paths, and the public Windows download button is enabled only for a release channel that is ready for users.</p>
+      <h1>Скачать для Windows</h1>
+      <p>Официальный хост загрузок DoodleRay. Публичная кнопка скачивания включается только для версии, которая готова для пользователей.</p>
       <div class="actions">
-        <a class="button" href="/download/windows/">Download DoodleRay for Windows</a>
-        <a class="button secondary" href="/channels/direct/manifest.json">Release manifest</a>
+        <a class="button" href="/download/windows/">Скачать DoodleRay для Windows</a>
+        <a class="button secondary" href="/channels/direct/manifest.json">Информация о релизе</a>
       </div>
-      <p class="note">If the download is not available yet, the next public build has not been published to this host.</p>
+      <p class="note">Если скачивание пока недоступно, значит новая публичная версия ещё не опубликована.</p>
     </main>
   </body>
 </html>
@@ -142,7 +142,7 @@ cat > "$ROOT/public/download/windows/index.html" <<EOF
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Download DoodleRay for Windows</title>
+    <title>Скачать DoodleRay для Windows</title>
     <style>
       body {
         min-height: 100vh;
@@ -165,8 +165,8 @@ cat > "$ROOT/public/download/windows/index.html" <<EOF
   </head>
   <body>
     <main>
-      <h1>Download is being prepared</h1>
-      <p>The public Windows download is not linked on this host yet. Use the current public release channel or try again later.</p>
+      <h1>Скачивание готовится</h1>
+      <p>Публичная ссылка для Windows ещё не подключена на этом хосте. Попробуйте позже или используйте текущий публичный релиз.</p>
     </main>
   </body>
 </html>

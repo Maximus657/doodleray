@@ -151,7 +151,7 @@ if [ "`$channel" = "direct" ] && [ "`$update_public_windows_alias" = "1" ]; then
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Download DoodleRay for Windows</title>
+    <title>Скачать DoodleRay для Windows</title>
     <meta http-equiv="refresh" content="1; url=`$public_windows_download_url">
     <style>
       body { min-height: 100vh; margin: 0; display: grid; place-items: center; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #17090f; color: #fff7f2; }
@@ -161,9 +161,9 @@ if [ "`$channel" = "direct" ] && [ "`$update_public_windows_alias" = "1" ]; then
   </head>
   <body>
     <main>
-      <h1>Starting download...</h1>
-      <p>DoodleRay for Windows.</p>
-      <p>If it does not start automatically, <a href="`$public_windows_download_url">click here to download DoodleRay for Windows</a>.</p>
+      <h1>Скачивание начинается...</h1>
+      <p>DoodleRay для Windows.</p>
+      <p>Если скачивание не началось автоматически, <a href="`$public_windows_download_url">нажмите здесь</a>.</p>
     </main>
   </body>
 </html>
@@ -174,8 +174,8 @@ HTML
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>DoodleRay VPN Download</title>
-    <meta name="description" content="Download DoodleRay VPN for Windows.">
+    <title>Скачать DoodleRay VPN</title>
+    <meta name="description" content="Скачать DoodleRay VPN для Windows.">
     <style>
       :root { color-scheme: dark; --bg: #17090f; --panel: rgba(255,255,255,.075); --border: rgba(255,255,255,.14); --text: #fff7f2; --muted: rgba(255,247,242,.68); --accent: #ff7a2f; }
       * { box-sizing: border-box; }
@@ -194,11 +194,11 @@ HTML
   <body>
     <main>
       <div class="brand"><div class="mark">DR</div><span>DoodleRay VPN</span></div>
-      <h1>Download for Windows</h1>
-      <p>Official DoodleRay Windows installer.</p>
+      <h1>Скачать для Windows</h1>
+      <p>Официальный установщик DoodleRay для Windows.</p>
       <div class="actions">
-        <a class="button" href="`$public_windows_download_url">Download DoodleRay for Windows</a>
-        <a class="button secondary" href="https://github.com/Maximus657/doodleray/releases/latest">Release notes</a>
+        <a class="button" href="`$public_windows_download_url">Скачать DoodleRay для Windows</a>
+        <a class="button secondary" href="https://github.com/Maximus657/doodleray/releases/latest">Что изменилось</a>
       </div>
     </main>
   </body>
@@ -216,7 +216,7 @@ HTML
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Download DoodleRay for Windows</title>
+    <title>Скачать DoodleRay для Windows</title>
     <meta http-equiv="refresh" content="1; url=/download/windows/latest.exe">
     <style>
       body { min-height: 100vh; margin: 0; display: grid; place-items: center; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #17090f; color: #fff7f2; }
@@ -226,9 +226,9 @@ HTML
   </head>
   <body>
     <main>
-      <h1>Starting download...</h1>
-      <p>DoodleRay `$version for Windows.</p>
-      <p>If it does not start automatically, <a href="/download/windows/latest.exe">click here to download DoodleRay for Windows</a>.</p>
+      <h1>Скачивание начинается...</h1>
+      <p>DoodleRay `$version для Windows.</p>
+      <p>Если скачивание не началось автоматически, <a href="/download/windows/latest.exe">нажмите здесь</a>.</p>
     </main>
   </body>
 </html>
@@ -239,8 +239,8 @@ HTML
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>DoodleRay VPN Download</title>
-    <meta name="description" content="Download DoodleRay VPN for Windows from the official first-party downloads host.">
+    <title>Скачать DoodleRay VPN</title>
+    <meta name="description" content="Скачать DoodleRay VPN для Windows с официального хоста загрузок.">
     <style>
       :root { color-scheme: dark; --bg: #17090f; --panel: rgba(255,255,255,.075); --border: rgba(255,255,255,.14); --text: #fff7f2; --muted: rgba(255,247,242,.68); --accent: #ff7a2f; }
       * { box-sizing: border-box; }
@@ -259,13 +259,13 @@ HTML
   <body>
     <main>
       <div class="brand"><div class="mark">DR</div><span>DoodleRay VPN</span></div>
-      <h1>Download for Windows</h1>
-      <p>Official DoodleRay `$version installer from our own downloads host.</p>
+      <h1>Скачать для Windows</h1>
+      <p>Официальный установщик DoodleRay `$version для Windows.</p>
       <div class="actions">
-        <a class="button" href="/download/windows/latest.exe">Download DoodleRay for Windows</a>
-        <a class="button secondary" href="/download/windows/latest.json">Release details</a>
+        <a class="button" href="/download/windows/latest.exe">Скачать DoodleRay для Windows</a>
+        <a class="button secondary" href="/download/windows/latest.json">Информация о релизе</a>
       </div>
-      <p class="note">Versioned file: /releases/direct/`$version/`$installer_name</p>
+      <p class="note">Файл версии: /releases/direct/`$version/`$installer_name</p>
     </main>
   </body>
 </html>
