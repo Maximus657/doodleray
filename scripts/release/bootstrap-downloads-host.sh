@@ -20,6 +20,7 @@ install -d -m 0755 "$ROOT/public/assets"
 install -d -m 0755 "$ROOT/public/releases/direct" "$ROOT/public/releases/store-win32"
 install -d -m 0755 "$ROOT/public/channels/direct" "$ROOT/public/channels/store-win32"
 install -d -m 0755 "$ROOT/public/download/windows"
+install -d -m 0755 "$ROOT/public/download/macos/apple-silicon" "$ROOT/public/download/macos/intel"
 install -d -m 0750 "$ROOT/staging"
 
 cat > "$ROOT/public/index.html" <<EOF
@@ -130,6 +131,59 @@ cat > "$ROOT/public/index.html" <<EOF
         margin-top: 22px;
         font-size: 14px;
       }
+      .platforms {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 30px;
+      }
+      .platform-card {
+        min-height: 132px;
+        padding: 18px;
+        border-radius: 18px;
+        border: 1px solid var(--border);
+        background: rgba(255,255,255,.06);
+        color: var(--text);
+        text-decoration: none;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+      }
+      .platform-card--primary {
+        border-color: rgba(255,122,47,.40);
+        background: rgba(255,122,47,.10);
+      }
+      .platform-label {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 18px;
+        font-weight: 900;
+      }
+      .platform-icon {
+        width: 34px;
+        height: 34px;
+        border-radius: 11px;
+        display: grid;
+        place-items: center;
+        background: rgba(255,122,47,.16);
+        color: #ffb15f;
+        font-size: 12px;
+        font-weight: 900;
+        letter-spacing: .04em;
+      }
+      .platform-card p {
+        margin: 12px 0 0;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.45;
+      }
+      .platform-hint {
+        margin-top: 12px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.45;
+      }
       .release-history {
         margin-top: 34px;
         padding-top: 28px;
@@ -160,15 +214,34 @@ cat > "$ROOT/public/index.html" <<EOF
         margin: 0;
         font-size: 15px;
       }
+      @media (max-width: 760px) {
+        .platforms {
+          grid-template-columns: 1fr;
+        }
+      }
     </style>
   </head>
   <body>
     <main>
       <div class="brand"><div class="mark"><img src="/assets/doodleray-logo.png" alt="" onerror="this.remove();this.parentElement.classList.add('mark--fallback');"><span>DR</span></div><span>DoodleRay VPN</span></div>
-      <h1>Скачать для Windows</h1>
-      <p>Официальный хост загрузок DoodleRay. Публичная кнопка скачивания включается только для версии, которая готова для пользователей.</p>
+      <h1>Скачать DoodleRay</h1>
+      <p>Выберите версию под свое устройство. Публичная кнопка скачивания включается только для версии, которая готова для пользователей.</p>
+      <section class="platforms" aria-label="Выбор версии DoodleRay">
+        <a class="platform-card platform-card--primary" href="/download/windows/">
+          <span class="platform-label"><span class="platform-icon">WIN</span>Windows</span>
+          <p>Для Windows 10/11, 64-bit. Рекомендуемый вариант для большинства компьютеров.</p>
+        </a>
+        <a class="platform-card" href="/download/macos/apple-silicon/">
+          <span class="platform-label"><span class="platform-icon">M</span>macOS Apple Silicon</span>
+          <p>Для Mac на M1, M2, M3, M4 и новее.</p>
+        </a>
+        <a class="platform-card" href="/download/macos/intel/">
+          <span class="platform-label"><span class="platform-icon">INT</span>macOS Intel</span>
+          <p>Для Mac старше 2020 года. Технически это версия x86-64.</p>
+        </a>
+      </section>
+      <p class="platform-hint">Если не знаете, какой Mac у вас: M1/M2/M3/M4 — Apple Silicon, старые Intel Mac — версия Intel.</p>
       <div class="actions">
-        <a class="button" href="/download/windows/">Скачать DoodleRay для Windows</a>
         <a class="button secondary" href="#versions">Что изменилось</a>
       </div>
       <p class="note">Если скачивание пока недоступно, значит новая публичная версия ещё не опубликована.</p>
@@ -215,6 +288,50 @@ cat > "$ROOT/public/download/windows/index.html" <<EOF
     <main>
       <h1>Скачивание готовится</h1>
       <p>Публичная ссылка для Windows ещё не подключена на этом хосте. Попробуйте позже или используйте текущий публичный релиз.</p>
+    </main>
+  </body>
+</html>
+EOF
+
+cat > "$ROOT/public/download/macos/apple-silicon/index.html" <<EOF
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>DoodleRay для macOS Apple Silicon</title>
+    <style>
+      body { min-height: 100vh; margin: 0; display: grid; place-items: center; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #17090f; color: #fff7f2; }
+      main { width: min(560px, calc(100vw - 40px)); padding: 32px; border: 1px solid rgba(255,255,255,.14); border-radius: 22px; background: rgba(255,255,255,.075); }
+      p { color: rgba(255,247,242,.68); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Скачивание готовится</h1>
+      <p>Версия для Mac на M1/M2/M3/M4 пока не опубликована на этом хосте.</p>
+    </main>
+  </body>
+</html>
+EOF
+
+cat > "$ROOT/public/download/macos/intel/index.html" <<EOF
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>DoodleRay для macOS Intel</title>
+    <style>
+      body { min-height: 100vh; margin: 0; display: grid; place-items: center; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #17090f; color: #fff7f2; }
+      main { width: min(560px, calc(100vw - 40px)); padding: 32px; border: 1px solid rgba(255,255,255,.14); border-radius: 22px; background: rgba(255,255,255,.075); }
+      p { color: rgba(255,247,242,.68); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Скачивание готовится</h1>
+      <p>Версия для Mac старше 2020 года, x86-64, пока не опубликована на этом хосте.</p>
     </main>
   </body>
 </html>

@@ -59,6 +59,11 @@ https://doodleray.clickflare.click/
 https://doodleray.clickflare.click/download/windows
 https://doodleray.clickflare.click/download/windows/latest.exe
 https://doodleray.clickflare.click/download/windows/latest.json
+https://doodleray.clickflare.click/download/macos
+https://doodleray.clickflare.click/download/macos/apple-silicon
+https://doodleray.clickflare.click/download/macos/apple-silicon/latest.dmg
+https://doodleray.clickflare.click/download/macos/intel
+https://doodleray.clickflare.click/download/macos/intel/latest.dmg
 https://doodleray.clickflare.click/channels/direct/history.json
 https://doodleray.clickflare.click/channels/direct/latest-notes.json
 ```
@@ -158,7 +163,9 @@ For unsigned public releases that should keep GitHub download reputation:
   -Channel direct `
   -ArtifactDir .\dist-direct `
   -HostName doodleray.clickflare.click `
-  -PublicWindowsDownloadUrl https://github.com/Maximus657/doodleray/releases/download/v5.9.0/DoodleRay_5.9.0_x64-setup.exe
+  -PublicWindowsDownloadUrl https://github.com/Maximus657/doodleray/releases/download/v5.9.0/DoodleRay_5.9.0_x64-setup.exe `
+  -PublicMacAppleSiliconDownloadUrl https://github.com/Maximus657/doodleray/releases/download/v5.9.0/DoodleRay_5.9.0_aarch64.dmg `
+  -PublicMacIntelDownloadUrl https://github.com/Maximus657/doodleray/releases/download/v5.9.0/DoodleRay_5.9.0_x64.dmg
 ```
 
 For signed/reputation-tested direct installers, add `-UpdatePublicWindowsAlias`

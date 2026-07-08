@@ -38,6 +38,8 @@ param(
   [string]$ReleaseNotesFile = '',
   [switch]$UpdatePublicWindowsAlias,
   [string]$PublicWindowsDownloadUrl = '',
+  [string]$PublicMacAppleSiliconDownloadUrl = '',
+  [string]$PublicMacIntelDownloadUrl = '',
   [switch]$Force
 )
 
@@ -183,6 +185,36 @@ $releaseHistoryStyles = @"
         .release-item { grid-template-columns: 1fr; gap: 8px; }
       }
 "@
+$platformSelectStyles = @"
+      .platforms { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 30px; }
+      .platform-card { min-height: 132px; padding: 18px; border-radius: 18px; border: 1px solid var(--border); background: rgba(255,255,255,.06); color: var(--text); text-decoration: none; display: flex; flex-direction: column; justify-content: space-between; transition: transform .18s ease, border-color .18s ease, background .18s ease; }
+      .platform-card:hover { transform: translateY(-2px); border-color: rgba(255,122,47,.54); background: rgba(255,122,47,.10); }
+      .platform-card--primary { border-color: rgba(255,122,47,.40); background: rgba(255,122,47,.10); }
+      .platform-label { display: flex; align-items: center; gap: 10px; font-size: 18px; font-weight: 900; }
+      .platform-icon { width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; background: rgba(255,122,47,.16); color: #ffb15f; font-size: 12px; font-weight: 900; letter-spacing: .04em; }
+      .platform-card p { margin: 12px 0 0; color: var(--muted); font-size: 14px; line-height: 1.45; }
+      .platform-hint { margin-top: 12px; color: var(--muted); font-size: 13px; line-height: 1.45; }
+      @media (max-width: 760px) {
+        .platforms { grid-template-columns: 1fr; }
+      }
+"@
+$platformSelectHtml = @"
+      <section class="platforms" aria-label="Выбор версии DoodleRay">
+        <a class="platform-card platform-card--primary" href="/download/windows/">
+          <span class="platform-label"><span class="platform-icon">WIN</span>Windows</span>
+          <p>Для Windows 10/11, 64-bit. Рекомендуемый вариант для большинства компьютеров.</p>
+        </a>
+        <a class="platform-card" href="/download/macos/apple-silicon/">
+          <span class="platform-label"><span class="platform-icon">M</span>macOS Apple Silicon</span>
+          <p>Для Mac на M1, M2, M3, M4 и новее.</p>
+        </a>
+        <a class="platform-card" href="/download/macos/intel/">
+          <span class="platform-label"><span class="platform-icon">INT</span>macOS Intel</span>
+          <p>Для Mac старше 2020 года. Технически это версия x86-64.</p>
+        </a>
+      </section>
+      <p class="platform-hint">Если не знаете, какой Mac у вас: M1/M2/M3/M4 — Apple Silicon, старые Intel Mac — версия Intel.</p>
+"@
 
 $artifactRows = Get-ChildItem -LiteralPath $work -File | Sort-Object Name | ForEach-Object {
   [pscustomobject]@{
@@ -226,7 +258,7 @@ if ($LASTEXITCODE -ne 0) { throw "ssh mkdir failed" }
 if ($LASTEXITCODE -ne 0) { throw "scp upload failed" }
 
 $forceValue = if ($Force) { '1' } else { '0' }
-$updatePublicWindowsAliasValue = if ($UpdatePublicWindowsAlias -or $PublicWindowsDownloadUrl) { '1' } else { '0' }
+$updatePublicWindowsAliasValue = if ($UpdatePublicWindowsAlias -or $PublicWindowsDownloadUrl -or $PublicMacAppleSiliconDownloadUrl -or $PublicMacIntelDownloadUrl) { '1' } else { '0' }
 $remoteScript = @"
 set -euo pipefail
 remote_root='$RemoteRoot'
@@ -236,6 +268,8 @@ archive='$remoteArchive'
 force='$forceValue'
 update_public_windows_alias='$updatePublicWindowsAliasValue'
 public_windows_download_url='$PublicWindowsDownloadUrl'
+public_macos_apple_silicon_download_url='$PublicMacAppleSiliconDownloadUrl'
+public_macos_intel_download_url='$PublicMacIntelDownloadUrl'
 dest="`$remote_root/public/releases/`$channel/`$version"
 tmp="`$dest.tmp.$$"
 if [ -e "`$dest" ] && [ "`$force" != "1" ]; then
@@ -273,6 +307,20 @@ if [ "`$channel" = "direct" ] && [ "`$update_public_windows_alias" = "1" ]; then
   for candidate in "`$dest"/DoodleRay_*_x64-setup.exe "`$dest"/*setup.exe "`$dest"/*.exe; do
     if [ -f "`$candidate" ]; then
       installer="`$candidate"
+      break
+    fi
+  done
+  macos_apple_silicon=""
+  for candidate in "`$dest"/DoodleRay_*_aarch64.dmg "`$dest"/*aarch64*.dmg "`$dest"/*arm64*.dmg; do
+    if [ -f "`$candidate" ]; then
+      macos_apple_silicon="`$candidate"
+      break
+    fi
+  done
+  macos_intel=""
+  for candidate in "`$dest"/DoodleRay_*_x64.dmg "`$dest"/*x86_64*.dmg "`$dest"/*intel*.dmg; do
+    if [ -f "`$candidate" ]; then
+      macos_intel="`$candidate"
       break
     fi
   done
@@ -327,16 +375,17 @@ HTML
       a.button { display: inline-flex; align-items: center; justify-content: center; min-height: 54px; padding: 0 22px; border-radius: 16px; color: #190904; background: linear-gradient(135deg, #ff9d45, var(--accent)); text-decoration: none; font-weight: 800; }
       a.secondary { color: var(--text); background: var(--panel); border: 1px solid var(--border); }
       .note { margin-top: 22px; font-size: 14px; }
+$platformSelectStyles
 $releaseHistoryStyles
     </style>
   </head>
   <body>
     <main>
       <div class="brand"><div class="mark"><img src="/assets/doodleray-logo.png" alt="" onerror="this.remove();this.parentElement.classList.add('mark--fallback');"><span>DR</span></div><span>DoodleRay VPN</span></div>
-      <h1>Скачать для Windows</h1>
-      <p>Официальный установщик DoodleRay для Windows.</p>
+      <h1>Скачать DoodleRay</h1>
+      <p>Выберите версию под свое устройство. Windows, новые Mac на Apple Silicon и старые Intel Mac вынесены отдельно.</p>
+$platformSelectHtml
       <div class="actions">
-        <a class="button" href="`$public_windows_download_url">Скачать DoodleRay для Windows</a>
         <a class="button secondary" href="#versions">Что изменилось</a>
       </div>
 $releaseHistoryHtml
@@ -397,16 +446,17 @@ HTML
       a.button { display: inline-flex; align-items: center; justify-content: center; min-height: 54px; padding: 0 22px; border-radius: 16px; color: #190904; background: linear-gradient(135deg, #ff9d45, var(--accent)); text-decoration: none; font-weight: 800; }
       a.secondary { color: var(--text); background: var(--panel); border: 1px solid var(--border); }
       .note { margin-top: 22px; font-size: 14px; }
+$platformSelectStyles
 $releaseHistoryStyles
     </style>
   </head>
   <body>
     <main>
       <div class="brand"><div class="mark"><img src="/assets/doodleray-logo.png" alt="" onerror="this.remove();this.parentElement.classList.add('mark--fallback');"><span>DR</span></div><span>DoodleRay VPN</span></div>
-      <h1>Скачать для Windows</h1>
-      <p>Официальный установщик DoodleRay `$version для Windows.</p>
+      <h1>Скачать DoodleRay</h1>
+      <p>Выберите версию под свое устройство. Windows, новые Mac на Apple Silicon и старые Intel Mac вынесены отдельно.</p>
+      $platformSelectHtml
       <div class="actions">
-        <a class="button" href="/download/windows/latest.exe">Скачать DoodleRay для Windows</a>
         <a class="button secondary" href="#versions">Что изменилось</a>
       </div>
       <p class="note">Файл версии: /releases/direct/`$version/`$installer_name</p>
@@ -418,6 +468,78 @@ HTML
     echo "updated direct Windows download alias: /download/windows/latest.exe -> `$installer_name"
   else
     echo "warning: direct channel published without a Windows installer alias" >&2
+  fi
+  mkdir -p "`$remote_root/public/download/macos" "`$remote_root/public/download/macos/apple-silicon" "`$remote_root/public/download/macos/intel"
+  if [ -z "`$public_macos_apple_silicon_download_url" ] && [ -n "`$macos_apple_silicon" ]; then
+    macos_apple_silicon_name="`$(basename "`$macos_apple_silicon")"
+    ln -sfn "../../../releases/`$channel/`$version/`$macos_apple_silicon_name" "`$remote_root/public/download/macos/apple-silicon/latest.dmg"
+    public_macos_apple_silicon_download_url="/download/macos/apple-silicon/latest.dmg"
+  fi
+  if [ -z "`$public_macos_intel_download_url" ] && [ -n "`$macos_intel" ]; then
+    macos_intel_name="`$(basename "`$macos_intel")"
+    ln -sfn "../../../releases/`$channel/`$version/`$macos_intel_name" "`$remote_root/public/download/macos/intel/latest.dmg"
+    public_macos_intel_download_url="/download/macos/intel/latest.dmg"
+  fi
+  cat > "`$remote_root/public/download/macos/index.html" <<HTML
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Скачать DoodleRay для macOS</title>
+    <style>
+      :root { color-scheme: dark; --bg: #17090f; --panel: rgba(255,255,255,.075); --border: rgba(255,255,255,.14); --text: #fff7f2; --muted: rgba(255,247,242,.68); --accent: #ff7a2f; }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 32px; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: radial-gradient(circle at 25% 10%, rgba(255,122,47,.20), transparent 34%), var(--bg); color: var(--text); }
+      main { width: min(720px, 100%); padding: 34px; border: 1px solid var(--border); border-radius: 24px; background: linear-gradient(145deg, rgba(255,255,255,.11), rgba(255,255,255,.04)); }
+      h1 { margin: 0 0 10px; font-size: clamp(30px, 6vw, 48px); line-height: 1; }
+      p { margin: 0; color: var(--muted); font-size: 17px; line-height: 1.55; }
+$platformSelectStyles
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Выберите версию для macOS</h1>
+      <p>Для новых Mac выбирайте Apple Silicon. Для старых Mac выбирайте Intel.</p>
+      <section class="platforms" aria-label="Выбор версии macOS">
+        <a class="platform-card platform-card--primary" href="/download/macos/apple-silicon/">
+          <span class="platform-label"><span class="platform-icon">M</span>Apple Silicon</span>
+          <p>Для Mac на M1, M2, M3, M4 и новее.</p>
+        </a>
+        <a class="platform-card" href="/download/macos/intel/">
+          <span class="platform-label"><span class="platform-icon">INT</span>Intel</span>
+          <p>Для Mac старше 2020 года. Технически это версия x86-64.</p>
+        </a>
+      </section>
+    </main>
+  </body>
+</html>
+HTML
+  if [ -n "`$public_macos_apple_silicon_download_url" ]; then
+    cat > "`$remote_root/public/download/macos/apple-silicon/index.html" <<HTML
+<!doctype html>
+<html lang="ru">
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Скачать DoodleRay для macOS Apple Silicon</title><meta http-equiv="refresh" content="1; url=`$public_macos_apple_silicon_download_url"><style>body{min-height:100vh;margin:0;display:grid;place-items:center;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#17090f;color:#fff7f2}main{width:min(560px,calc(100vw - 40px));padding:32px;border:1px solid rgba(255,255,255,.14);border-radius:22px;background:rgba(255,255,255,.075)}a{color:#ff9d45;font-weight:800}</style></head>
+  <body><main><h1>Скачивание начинается...</h1><p>DoodleRay для macOS Apple Silicon: M1, M2, M3, M4 и новее.</p><p>Если скачивание не началось автоматически, <a href="`$public_macos_apple_silicon_download_url">нажмите здесь</a>.</p></main></body>
+</html>
+HTML
+  else
+    cat > "`$remote_root/public/download/macos/apple-silicon/index.html" <<HTML
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>DoodleRay для macOS Apple Silicon</title><style>body{min-height:100vh;margin:0;display:grid;place-items:center;font-family:Inter,ui-sans-serif,system-ui;background:#17090f;color:#fff7f2}main{width:min(560px,calc(100vw - 40px));padding:32px;border:1px solid rgba(255,255,255,.14);border-radius:22px;background:rgba(255,255,255,.075)}p{color:rgba(255,247,242,.68)}</style></head><body><main><h1>Скачивание готовится</h1><p>Версия для Mac на M1/M2/M3/M4 пока не опубликована на этом хосте.</p></main></body></html>
+HTML
+  fi
+  if [ -n "`$public_macos_intel_download_url" ]; then
+    cat > "`$remote_root/public/download/macos/intel/index.html" <<HTML
+<!doctype html>
+<html lang="ru">
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Скачать DoodleRay для macOS Intel</title><meta http-equiv="refresh" content="1; url=`$public_macos_intel_download_url"><style>body{min-height:100vh;margin:0;display:grid;place-items:center;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#17090f;color:#fff7f2}main{width:min(560px,calc(100vw - 40px));padding:32px;border:1px solid rgba(255,255,255,.14);border-radius:22px;background:rgba(255,255,255,.075)}a{color:#ff9d45;font-weight:800}</style></head>
+  <body><main><h1>Скачивание начинается...</h1><p>DoodleRay для macOS Intel. Это версия для Mac старше 2020 года, x86-64.</p><p>Если скачивание не началось автоматически, <a href="`$public_macos_intel_download_url">нажмите здесь</a>.</p></main></body>
+</html>
+HTML
+  else
+    cat > "`$remote_root/public/download/macos/intel/index.html" <<HTML
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>DoodleRay для macOS Intel</title><style>body{min-height:100vh;margin:0;display:grid;place-items:center;font-family:Inter,ui-sans-serif,system-ui;background:#17090f;color:#fff7f2}main{width:min(560px,calc(100vw - 40px));padding:32px;border:1px solid rgba(255,255,255,.14);border-radius:22px;background:rgba(255,255,255,.075)}p{color:rgba(255,247,242,.68)}</style></head><body><main><h1>Скачивание готовится</h1><p>Версия для Mac старше 2020 года, x86-64, пока не опубликована на этом хосте.</p></main></body></html>
+HTML
   fi
 elif [ "`$channel" = "direct" ]; then
   echo "public Windows download alias not updated; pass -UpdatePublicWindowsAlias or -PublicWindowsDownloadUrl to update it"
