@@ -60,6 +60,16 @@ foreach ($file in $files) {
   Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $work $name) -Force
 }
 
+$logoSource = Join-Path $repoRoot 'public\assets\mascot.png'
+if (-not (Test-Path -LiteralPath $logoSource)) {
+  $logoSource = Join-Path $repoRoot 'devil_icon.png'
+}
+if (Test-Path -LiteralPath $logoSource) {
+  $siteAssets = Join-Path $work '_site-assets'
+  New-Item -ItemType Directory -Force -Path $siteAssets | Out-Null
+  Copy-Item -LiteralPath $logoSource -Destination (Join-Path $siteAssets 'doodleray-logo.png') -Force
+}
+
 $artifactRows = Get-ChildItem -LiteralPath $work -File | Sort-Object Name | ForEach-Object {
   [pscustomobject]@{
     name = $_.Name
@@ -133,6 +143,11 @@ if [ -f "`$dest/latest.json" ]; then
   cp "`$dest/latest.json" "`$remote_root/public/channels/`$channel/latest.json"
 fi
 ln -sfn "../../releases/`$channel/`$version" "`$remote_root/public/channels/`$channel/current"
+if [ -f "`$dest/_site-assets/doodleray-logo.png" ]; then
+  mkdir -p "`$remote_root/public/assets"
+  cp "`$dest/_site-assets/doodleray-logo.png" "`$remote_root/public/assets/doodleray-logo.png"
+  chmod 0644 "`$remote_root/public/assets/doodleray-logo.png"
+fi
 if [ "`$channel" = "direct" ] && [ "`$update_public_windows_alias" = "1" ]; then
   installer=""
   for candidate in "`$dest"/DoodleRay_*_x64-setup.exe "`$dest"/*setup.exe "`$dest"/*.exe; do
@@ -147,7 +162,7 @@ if [ "`$channel" = "direct" ] && [ "`$update_public_windows_alias" = "1" ]; then
     cp "`$dest/manifest.json" "`$remote_root/public/download/windows/latest.json"
     cat > "`$remote_root/public/download/windows/index.html" <<HTML
 <!doctype html>
-<html lang="en">
+<html lang="ru">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -170,7 +185,7 @@ if [ "`$channel" = "direct" ] && [ "`$update_public_windows_alias" = "1" ]; then
 HTML
     cat > "`$remote_root/public/index.html" <<HTML
 <!doctype html>
-<html lang="en">
+<html lang="ru">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -182,7 +197,10 @@ HTML
       body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 32px; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: radial-gradient(circle at 25% 10%, rgba(255,122,47,.24), transparent 34%), radial-gradient(circle at 82% 80%, rgba(255,59,114,.18), transparent 38%), var(--bg); color: var(--text); }
       main { width: min(720px, 100%); padding: 42px; border: 1px solid var(--border); border-radius: 28px; background: linear-gradient(145deg, rgba(255,255,255,.11), rgba(255,255,255,.04)); box-shadow: 0 30px 90px rgba(0,0,0,.36); }
       .brand { display: flex; align-items: center; gap: 14px; margin-bottom: 28px; font-weight: 800; font-size: 24px; letter-spacing: -.02em; }
-      .mark { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 14px; background: linear-gradient(135deg, #ffb000, #ff6724); color: #210b05; font-weight: 900; }
+      .mark { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 14px; background: linear-gradient(135deg, #ffb000, #ff6724); color: #210b05; font-weight: 900; overflow: hidden; box-shadow: 0 12px 30px rgba(255, 122, 47, .24); }
+      .mark img { display: block; width: 100%; height: 100%; object-fit: cover; }
+      .mark span { display: none; }
+      .mark--fallback span { display: block; }
       h1 { margin: 0 0 12px; font-size: clamp(34px, 7vw, 58px); line-height: .95; letter-spacing: -.05em; }
       p { margin: 0; color: var(--muted); font-size: 18px; line-height: 1.55; }
       .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
@@ -193,7 +211,7 @@ HTML
   </head>
   <body>
     <main>
-      <div class="brand"><div class="mark">DR</div><span>DoodleRay VPN</span></div>
+      <div class="brand"><div class="mark"><img src="/assets/doodleray-logo.png" alt="" onerror="this.remove();this.parentElement.classList.add('mark--fallback');"><span>DR</span></div><span>DoodleRay VPN</span></div>
       <h1>Скачать для Windows</h1>
       <p>Официальный установщик DoodleRay для Windows.</p>
       <div class="actions">
@@ -212,7 +230,7 @@ HTML
     cp "`$dest/manifest.json" "`$remote_root/public/download/windows/latest.json"
     cat > "`$remote_root/public/download/windows/index.html" <<HTML
 <!doctype html>
-<html lang="en">
+<html lang="ru">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -235,7 +253,7 @@ HTML
 HTML
     cat > "`$remote_root/public/index.html" <<HTML
 <!doctype html>
-<html lang="en">
+<html lang="ru">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -247,7 +265,10 @@ HTML
       body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 32px; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: radial-gradient(circle at 25% 10%, rgba(255,122,47,.24), transparent 34%), radial-gradient(circle at 82% 80%, rgba(255,59,114,.18), transparent 38%), var(--bg); color: var(--text); }
       main { width: min(720px, 100%); padding: 42px; border: 1px solid var(--border); border-radius: 28px; background: linear-gradient(145deg, rgba(255,255,255,.11), rgba(255,255,255,.04)); box-shadow: 0 30px 90px rgba(0,0,0,.36); }
       .brand { display: flex; align-items: center; gap: 14px; margin-bottom: 28px; font-weight: 800; font-size: 24px; letter-spacing: -.02em; }
-      .mark { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 14px; background: linear-gradient(135deg, #ffb000, #ff6724); color: #210b05; font-weight: 900; }
+      .mark { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 14px; background: linear-gradient(135deg, #ffb000, #ff6724); color: #210b05; font-weight: 900; overflow: hidden; box-shadow: 0 12px 30px rgba(255, 122, 47, .24); }
+      .mark img { display: block; width: 100%; height: 100%; object-fit: cover; }
+      .mark span { display: none; }
+      .mark--fallback span { display: block; }
       h1 { margin: 0 0 12px; font-size: clamp(34px, 7vw, 58px); line-height: .95; letter-spacing: -.05em; }
       p { margin: 0; color: var(--muted); font-size: 18px; line-height: 1.55; }
       .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
@@ -258,7 +279,7 @@ HTML
   </head>
   <body>
     <main>
-      <div class="brand"><div class="mark">DR</div><span>DoodleRay VPN</span></div>
+      <div class="brand"><div class="mark"><img src="/assets/doodleray-logo.png" alt="" onerror="this.remove();this.parentElement.classList.add('mark--fallback');"><span>DR</span></div><span>DoodleRay VPN</span></div>
       <h1>Скачать для Windows</h1>
       <p>Официальный установщик DoodleRay `$version для Windows.</p>
       <div class="actions">

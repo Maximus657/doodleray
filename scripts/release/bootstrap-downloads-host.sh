@@ -16,6 +16,7 @@ if [[ "$(id -u)" != "0" ]]; then
   exit 1
 fi
 
+install -d -m 0755 "$ROOT/public/assets"
 install -d -m 0755 "$ROOT/public/releases/direct" "$ROOT/public/releases/store-win32"
 install -d -m 0755 "$ROOT/public/channels/direct" "$ROOT/public/channels/store-win32"
 install -d -m 0755 "$ROOT/public/download/windows"
@@ -23,7 +24,7 @@ install -d -m 0750 "$ROOT/staging"
 
 cat > "$ROOT/public/index.html" <<EOF
 <!doctype html>
-<html lang="en">
+<html lang="ru">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -79,7 +80,17 @@ cat > "$ROOT/public/index.html" <<EOF
         background: linear-gradient(135deg, #ffb000, #ff6724);
         color: #210b05;
         font-weight: 900;
+        overflow: hidden;
+        box-shadow: 0 12px 30px rgba(255, 122, 47, .24);
       }
+      .mark img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+      .mark span { display: none; }
+      .mark--fallback span { display: block; }
       h1 {
         margin: 0 0 12px;
         font-size: clamp(34px, 7vw, 58px);
@@ -123,7 +134,7 @@ cat > "$ROOT/public/index.html" <<EOF
   </head>
   <body>
     <main>
-      <div class="brand"><div class="mark">DR</div><span>DoodleRay VPN</span></div>
+      <div class="brand"><div class="mark"><img src="/assets/doodleray-logo.png" alt="" onerror="this.remove();this.parentElement.classList.add('mark--fallback');"><span>DR</span></div><span>DoodleRay VPN</span></div>
       <h1>Скачать для Windows</h1>
       <p>Официальный хост загрузок DoodleRay. Публичная кнопка скачивания включается только для версии, которая готова для пользователей.</p>
       <div class="actions">
@@ -138,7 +149,7 @@ EOF
 
 cat > "$ROOT/public/download/windows/index.html" <<EOF
 <!doctype html>
-<html lang="en">
+<html lang="ru">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
