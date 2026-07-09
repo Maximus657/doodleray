@@ -60,7 +60,13 @@ mod windows_service_main {
         OnceLock::new();
     static STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
     static OP_GENERATION: AtomicU64 = AtomicU64::new(0);
-    const PIPE_WORKERS: usize = 4;
+    // The UI can legitimately have several IPC calls in flight at once
+    // (status polling, health checks, a connect/stop command, diagnostics
+    // for a support bundle, ...). Each is a fixed named-pipe server
+    // instance - CreateFile fails immediately with ERROR_PIPE_BUSY once all
+    // instances are taken, it does not queue. Size the pool with headroom
+    // above realistic concurrent callers instead of the bare minimum.
+    const PIPE_WORKERS: usize = 16;
     const VPN_USERS_GROUP: &str = "DoodleRay VPN Users";
 
     define_windows_service!(ffi_service_main, service_main);
