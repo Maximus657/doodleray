@@ -42,5 +42,5 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # Windows-only dependencies
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.7"
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinInet", "Win32_Networking_WinSock", "Win32_Security", "Win32_Security_Authorization", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_Threading"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinInet", "Win32_Networking_WinSock", "Win32_Security", "Win32_Security_Authorization", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
 winreg = "0.52"

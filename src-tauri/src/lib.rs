@@ -130,11 +130,50 @@ fn quote_ps_single(value: &str) -> String {
 }
 
 #[cfg(windows)]
+fn windows_session_is_ending() -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_SHUTTINGDOWN};
+    unsafe { GetSystemMetrics(SM_SHUTTINGDOWN) != 0 }
+}
+
+#[cfg(not(windows))]
+fn windows_session_is_ending() -> bool {
+    false
+}
+
+#[cfg(windows)]
 fn run_hidden_powershell(script: &str) {
-    let mut cmd = std::process::Command::new("powershell");
-    cmd.args(["-NoProfile", "-Command", script]);
-    cmd.creation_flags(0x08000000);
-    let _ = cmd.output();
+    if windows_session_is_ending() {
+        // Spawning a new console-attached process while the OS is tearing
+        // down the session can itself fail to initialize
+        // (STATUS_DLL_INIT_FAILED) and shows a crash dialog that blocks this
+        // thread until dismissed - which blocks our own process exit and
+        // makes Windows report DoodleRay as preventing shutdown. The OS is
+        // about to terminate our process tree anyway, so just skip it.
+        return;
+    }
+    let mut child = match std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", script])
+        .creation_flags(0x08000000)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => return,
+    };
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) | Err(_) => return,
+            Ok(None) => {}
+        }
+        if started.elapsed() >= Duration::from_secs(5) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 #[cfg(windows)]
@@ -9496,6 +9535,14 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 window.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        if windows_session_is_ending() {
+                            // Real OS shutdown/logoff, not the user clicking X.
+                            // Let the window (and app) actually close instead
+                            // of swallowing this into "hide to tray" - doing
+                            // that made Windows report DoodleRay as blocking
+                            // shutdown, since the app never actually exits.
+                            return;
+                        }
                         // Hide instead of close → minimize to tray
                         api.prevent_close();
                         if let Some(win) = app_handle.get_webview_window("main") {
