@@ -66,6 +66,7 @@ $clientScript = {
     $deadline = (Get-Date).AddSeconds(5)
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
 
+    try {
     while ($true) {
         $handle = [DoodleRayQa.PipeNative]::CreateFile(
             $PipeName, ($GENERIC_READ -bor $GENERIC_WRITE), [uint32]0, [System.IntPtr]::Zero,
@@ -123,6 +124,15 @@ $clientScript = {
 
         return [pscustomobject]@{ success = $false; win32Error = $err; elapsedMs = $sw.Elapsed.TotalMilliseconds; waited = $false }
     }
+    } catch {
+        return [pscustomobject]@{
+            success    = $false
+            win32Error = -1
+            elapsedMs  = $sw.Elapsed.TotalMilliseconds
+            waited     = $false
+            exception  = $_.Exception.Message
+        }
+    }
 }
 
 Write-Host "DoodleRay pipe-busy repro harness: mode=$ClientMode concurrency=$Concurrency rounds=$Rounds pipe=$PipeName"
@@ -143,9 +153,22 @@ for ($round = 1; $round -le $Rounds; $round++) {
     }
 
     foreach ($h in $handles) {
-        $result = $h.Pipeline.EndInvoke($h.Async)
-        $allResults.Add($result)
-        $h.Pipeline.Dispose()
+        try {
+            $result = $h.Pipeline.EndInvoke($h.Async)
+            foreach ($item in $result) {
+                $allResults.Add($item)
+            }
+        } catch {
+            $allResults.Add([pscustomobject]@{
+                success    = $false
+                win32Error = -1
+                elapsedMs  = 0
+                waited     = $false
+                exception  = $_.Exception.Message
+            })
+        } finally {
+            $h.Pipeline.Dispose()
+        }
     }
     $pool.Close()
     $pool.Dispose()
