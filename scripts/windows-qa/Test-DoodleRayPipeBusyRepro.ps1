@@ -45,7 +45,7 @@ public static extern bool WaitNamedPipe(string lpNamedPipeName, uint nTimeOut);
 
 # Sanity check: fail fast with a clear message instead of a wall of per-client
 # errors if the service pipe does not exist at all.
-$probe = [DoodleRayQa.PipeNative]::CreateFile($PipeName, [uint32]0x80000000, [uint32]0, [System.IntPtr]::Zero, [uint32]3, [uint32]0, [System.IntPtr]::Zero)
+$probe = [DoodleRayQa.PipeNative]::CreateFile($PipeName, [uint32]2147483648, [uint32]0, [System.IntPtr]::Zero, [uint32]3, [uint32]0, [System.IntPtr]::Zero)
 if ($probe.IsInvalid) {
     $probeErr = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
     if ($probeErr -ne 231) {
@@ -59,8 +59,8 @@ else {
 $clientScript = {
     param($Mode, $PipeName, $HoldMs)
 
-    [uint32] $GENERIC_READ = 0x80000000
-    [uint32] $GENERIC_WRITE = 0x40000000
+    [uint32] $GENERIC_READ = 2147483648
+    [uint32] $GENERIC_WRITE = 1073741824
     [uint32] $OPEN_EXISTING = 3
     $ERROR_PIPE_BUSY = 231
     $deadline = (Get-Date).AddSeconds(5)
