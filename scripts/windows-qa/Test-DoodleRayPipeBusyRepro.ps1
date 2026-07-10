@@ -183,6 +183,11 @@ $totalFail = ($allResults | Where-Object { -not $_.success }).Count
 $totalBusy = ($allResults | Where-Object { $_.win32Error -eq 231 }).Count
 $totalWaited = ($allResults | Where-Object { $_.waited }).Count
 
+$errorBreakdown = $allResults | Where-Object { -not $_.success } | Group-Object win32Error | ForEach-Object {
+    [pscustomobject]@{ win32Error = $_.Name; count = $_.Count }
+}
+$exceptionSamples = $allResults | Where-Object { $_.exception } | Select-Object -First 5 -ExpandProperty exception -Unique
+
 [pscustomobject]@{
     clientMode                    = $ClientMode
     concurrency                   = $Concurrency
@@ -191,5 +196,7 @@ $totalWaited = ($allResults | Where-Object { $_.waited }).Count
     totalFailures                 = $totalFail
     totalErrorPipeBusy            = $totalBusy
     clientsThatWaitedAndSucceeded = $totalWaited
+    errorBreakdown                = $errorBreakdown
+    exceptionSamples               = $exceptionSamples
     maxElapsedMs                  = ($allResults | Measure-Object -Property elapsedMs -Maximum).Maximum
-} | ConvertTo-Json
+} | ConvertTo-Json -Depth 4
