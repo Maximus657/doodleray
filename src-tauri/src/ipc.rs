@@ -23,6 +23,16 @@ use crate::tunnel_service::{
 #[cfg(windows)]
 const ERROR_PIPE_BUSY: i32 = 231;
 
+// Each server worker fully tears down its listening pipe instance after an
+// idle accept timeout before recreating it (see serve_once in
+// bin/service.rs). Under a burst, a client can land in the brief gap where
+// zero instances exist momentarily - Windows reports that as
+// ERROR_FILE_NOT_FOUND, not ERROR_PIPE_BUSY. WaitNamedPipe cannot help here
+// (per Win32 docs it returns immediately if no instance of the pipe exists
+// at all), so this is a short bounded retry instead of a wait.
+#[cfg(windows)]
+const ERROR_FILE_NOT_FOUND: i32 = 2;
+
 #[cfg(windows)]
 fn wait_for_pipe_slot(timeout: Duration) -> bool {
     use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
@@ -53,6 +63,12 @@ fn open_tunnel_pipe() -> std::io::Result<File> {
                 // A slot just freed up (or another instance was still being
                 // torn down) - loop back and race CreateFile again rather
                 // than failing on a purely transient, self-clearing state.
+            }
+            Err(e) if e.raw_os_error() == Some(ERROR_FILE_NOT_FOUND) => {
+                if Instant::now() >= deadline {
+                    return Err(e);
+                }
+                std::thread::sleep(Duration::from_millis(15));
             }
             Err(e) => return Err(e),
         }

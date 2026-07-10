@@ -112,6 +112,7 @@ $clientScript = {
         }
 
         $err = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        $ERROR_FILE_NOT_FOUND = 2
 
         if ($Mode -eq "Fixed" -and $err -eq $ERROR_PIPE_BUSY) {
             $remainingMs = [Math]::Max(0, ($deadline - (Get-Date)).TotalMilliseconds)
@@ -119,6 +120,19 @@ $clientScript = {
                 return [pscustomobject]@{ success = $false; win32Error = $err; elapsedMs = $sw.Elapsed.TotalMilliseconds; waited = $true }
             }
             [void][DoodleRayQa.PipeNative]::WaitNamedPipe($PipeName, [uint32]$remainingMs)
+            continue
+        }
+
+        if ($Mode -eq "Fixed" -and $err -eq $ERROR_FILE_NOT_FOUND) {
+            # No instance of the pipe exists this instant (a worker just tore
+            # its listener down and hasn't recreated it yet). WaitNamedPipe
+            # cannot help here - it returns immediately with no instances to
+            # wait on - so this is a short bounded retry instead of a wait,
+            # matching src-tauri/src/ipc.rs::open_tunnel_pipe.
+            if ((Get-Date) -ge $deadline) {
+                return [pscustomobject]@{ success = $false; win32Error = $err; elapsedMs = $sw.Elapsed.TotalMilliseconds; waited = $true }
+            }
+            Start-Sleep -Milliseconds 15
             continue
         }
 
