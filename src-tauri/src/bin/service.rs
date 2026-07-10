@@ -446,23 +446,55 @@ mod windows_service_main {
             "child generation rotated after Windows network/power event: {}",
             reason
         );
-        match start_tunnel(request, generation) {
-            Ok(()) => {
-                if let Ok(mut runtime) = state().lock() {
-                    runtime.warning_checks.push(rotated_note);
+
+        // A network/power event (sleep/wake, adapter blip, DHCP renewal)
+        // firing right as we try to rebuild the tunnel can hit a genuinely
+        // transient window - the NIC or TUN adapter still settling, DNS not
+        // ready yet. Previously a single failed attempt here went straight
+        // to a permanent Failed state with no further auto-repair, since
+        // repair_connected_runtime only reasserts while state==Connected.
+        // Give it a couple of backed-off retries before giving up, so one
+        // bad moment during resume doesn't strand the user until they
+        // manually reconnect.
+        const RETRY_BACKOFFS: [Duration; 2] = [Duration::from_secs(5), Duration::from_secs(15)];
+        let mut attempt = 0usize;
+        loop {
+            match start_tunnel(request.clone(), generation) {
+                Ok(()) => {
+                    if let Ok(mut runtime) = state().lock() {
+                        runtime.warning_checks.push(rotated_note);
+                    }
+                    log_service_event("child generation rotation succeeded");
+                    return;
                 }
-                log_service_event("child generation rotation succeeded");
-            }
-            Err(message) => {
-                if is_current_generation(generation) {
-                    let _ = stop_owned_processes("failed_cleanup");
-                    if is_current_generation(generation) {
-                        set_failed(&message);
-                    } else {
+                Err(message) => {
+                    if !is_current_generation(generation) {
                         log_service_event(
                             "ignored stale rotate failure after newer tunnel operation",
                         );
+                        return;
                     }
+                    let _ = stop_owned_processes("failed_cleanup");
+                    if !is_current_generation(generation) {
+                        log_service_event(
+                            "ignored stale rotate failure after newer tunnel operation",
+                        );
+                        return;
+                    }
+                    if attempt < RETRY_BACKOFFS.len() {
+                        let backoff = RETRY_BACKOFFS[attempt];
+                        log_service_event(&format!(
+                            "child generation rotation attempt {} failed ({}), retrying in {:?}",
+                            attempt + 1,
+                            redact(&message),
+                            backoff
+                        ));
+                        attempt += 1;
+                        std::thread::sleep(backoff);
+                        continue;
+                    }
+                    set_failed(&message);
+                    return;
                 }
             }
         }
