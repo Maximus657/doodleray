@@ -1789,13 +1789,24 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             );
             log_service_event("cleanup pending: DoodleRay Tunnel adapter still present after stop");
         }
-        for action in repair_stale_wintun_ghost_devices(reason) {
-            log_service_event(&action);
-            if action.contains("removed=") && !action.contains("removed=0") {
-                let mut runtime = state().lock().unwrap();
-                runtime.warning_checks.push(action);
+        // Stale-ghost repair only matters for a *previous* crashed/leaked
+        // adapter, not the one we just tore down above - it doesn't gate
+        // reporting this disconnect as done. It shells out to
+        // Get-PnpDevice/pnputil, which costs real seconds (PowerShell
+        // startup + module autoload) on every single disconnect even when
+        // there is nothing stale to find. Run it in the background so it
+        // doesn't add to user-visible disconnect latency; still logged and
+        // still recorded into warning_checks once it finishes.
+        let reason_owned = reason.to_string();
+        std::thread::spawn(move || {
+            for action in repair_stale_wintun_ghost_devices(&reason_owned) {
+                log_service_event(&action);
+                if action.contains("removed=") && !action.contains("removed=0") {
+                    let mut runtime = state().lock().unwrap();
+                    runtime.warning_checks.push(action);
+                }
             }
-        }
+        });
         Ok(())
     }
 

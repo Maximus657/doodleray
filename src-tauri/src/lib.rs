@@ -5807,8 +5807,13 @@ async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
         }
     }
 
+    // This sweep is only for stragglers we don't already have a handle to
+    // (e.g. from a previous crashed session) - it doesn't gate anything
+    // below. It shells out to Get-CimInstance, which costs real seconds on
+    // every single disconnect even when nothing is orphaned. Background it
+    // so it doesn't add to user-visible disconnect latency.
     #[cfg(windows)]
-    terminate_orphaned_doodleray_engine_processes();
+    std::thread::spawn(terminate_orphaned_doodleray_engine_processes);
 
     restore_system_proxy_if_owned(false);
 
