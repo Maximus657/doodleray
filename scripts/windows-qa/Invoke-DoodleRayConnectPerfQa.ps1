@@ -169,16 +169,24 @@ function Start-DoodleRayQaApp {
     Start-Sleep -Seconds 3
     # A plain Start-Process from this (SSH-exec'd, non-interactive) process
     # has no window station/desktop for the WebView2 GUI to attach to, so it
-    # never brings up the QA control HTTP surface. Launch it the same way
-    # every other harness in this suite does: via the pre-configured
-    # DoodleRayCodexCDP scheduled task, which runs Interactive/Highest and
-    # already bakes in DOODLERAY_QA_CONTROL=1 and the CDP debug port
-    # (see Invoke-DoodleRayFullStandQa.ps1's bootstrap of
-    # C:\DoodleRayQA\start-doodleray-cdp.cmd).
-    if (-not (Get-ScheduledTask -TaskName "DoodleRayCodexCDP" -ErrorAction SilentlyContinue)) {
-        throw "DoodleRayCodexCDP scheduled task not found - run Invoke-DoodleRayFullStandQa.ps1's bootstrap stage first."
-    }
-    schtasks /Run /TN DoodleRayCodexCDP | Out-Null
+    # never brings up the QA control HTTP surface. Launch it via a
+    # dedicated Interactive/Highest scheduled task instead, mirroring the
+    # DoodleRayCodexCDP pattern used elsewhere in this suite but
+    # self-contained (does not depend on that other task already existing).
+    $launcherDir = "C:\DoodleRayQA\codex-run"
+    $launcherPath = Join-Path $launcherDir "Start-DoodleRayPerfQaApp.ps1"
+    New-Item -ItemType Directory -Force -Path $launcherDir | Out-Null
+    @"
+`$env:DOODLERAY_QA_CONTROL = "1"
+`$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9333 --remote-allow-origins=*"
+Start-Process -FilePath "$appExe" -WorkingDirectory "$(Split-Path -Parent $appExe)"
+"@ | Set-Content -LiteralPath $launcherPath -Encoding UTF8
+    $taskName = "DoodleRayConnectPerfQa"
+    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$launcherPath`""
+    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
+    Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Force | Out-Null
+    Start-ScheduledTask -TaskName $taskName
     return (Wait-QaControl 90)
 }
 
