@@ -33,11 +33,19 @@ if (-not (Test-Path -LiteralPath $AppPath)) {
     throw "DoodleRay.exe not found at $AppPath - is it installed?"
 }
 
-Start-Process -FilePath $AppPath
-Start-Sleep -Seconds 5
-$proc = Get-Process -Name DoodleRay -ErrorAction SilentlyContinue
+# A plain Start-Process over a non-interactive remote PowerShell session has
+# no window station/desktop for the GUI app to attach to. Launch it the same
+# way the rest of the QA harness does: via the pre-configured
+# DoodleRayCodexCDP scheduled task, which runs in a real interactive session.
+schtasks /Run /TN DoodleRayCodexCDP | Out-Null
+$proc = $null
+for ($i = 0; $i -lt 15; $i++) {
+    Start-Sleep -Seconds 2
+    $proc = Get-Process -Name DoodleRay -ErrorAction SilentlyContinue
+    if ($proc) { break }
+}
 if (-not $proc) {
-    throw "DoodleRay.exe did not start from $AppPath"
+    throw "DoodleRay.exe did not start via the DoodleRayCodexCDP scheduled task"
 }
 
 $bootTimeBefore = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime
