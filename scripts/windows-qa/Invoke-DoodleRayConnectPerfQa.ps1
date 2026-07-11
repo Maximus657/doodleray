@@ -167,9 +167,18 @@ function Start-DoodleRayQaApp {
     if (-not (Test-Path -LiteralPath $appExe)) { throw "DoodleRay.exe missing: $appExe" }
     Get-Process DoodleRay -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 3
-    $env:DOODLERAY_QA_CONTROL = "1"
-    $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9333 --remote-allow-origins=*"
-    Start-Process -FilePath $appExe -WorkingDirectory (Split-Path -Parent $appExe)
+    # A plain Start-Process from this (SSH-exec'd, non-interactive) process
+    # has no window station/desktop for the WebView2 GUI to attach to, so it
+    # never brings up the QA control HTTP surface. Launch it the same way
+    # every other harness in this suite does: via the pre-configured
+    # DoodleRayCodexCDP scheduled task, which runs Interactive/Highest and
+    # already bakes in DOODLERAY_QA_CONTROL=1 and the CDP debug port
+    # (see Invoke-DoodleRayFullStandQa.ps1's bootstrap of
+    # C:\DoodleRayQA\start-doodleray-cdp.cmd).
+    if (-not (Get-ScheduledTask -TaskName "DoodleRayCodexCDP" -ErrorAction SilentlyContinue)) {
+        throw "DoodleRayCodexCDP scheduled task not found - run Invoke-DoodleRayFullStandQa.ps1's bootstrap stage first."
+    }
+    schtasks /Run /TN DoodleRayCodexCDP | Out-Null
     return (Wait-QaControl 90)
 }
 
