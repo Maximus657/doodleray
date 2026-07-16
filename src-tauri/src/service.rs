@@ -1,3 +1,5 @@
+// Kept outside src/bin so Tauri's desktop bundler cannot mistake this
+// separately built Windows service for a companion macOS application binary.
 #[cfg(windows)]
 mod windows_service_main {
     use serde_json::Value;

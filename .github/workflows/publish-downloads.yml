@@ -97,7 +97,7 @@ jobs:
           if (-not (Test-Path 'src-tauri/DoodleRayService.exe')) {
             New-Item -ItemType File -Path 'src-tauri/DoodleRayService.exe' -Force | Out-Null
           }
-          cargo build --release --manifest-path src-tauri/Cargo.toml --bin DoodleRayService
+          cargo build --release --manifest-path src-tauri/Cargo.toml --bin DoodleRayService --features windows-service
           Copy-Item 'src-tauri/target/release/DoodleRayService.exe' 'src-tauri/' -Force
 
       - name: Clean Tauri updater signing key

@@ -1,0 +1,75 @@
+name: DoodleRayAppStoreExtensions
+
+options:
+  createIntermediateGroups: true
+  deploymentTarget:
+    macOS: "12.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "12.0"
+    CLANG_ENABLE_MODULES: YES
+    CODE_SIGN_STYLE: Manual
+
+targets:
+  DoodleRayVPN:
+    type: app-extension
+    platform: macOS
+    deploymentTarget: "12.0"
+    sources:
+      - path: PacketTunnelProvider
+        excludes:
+          - Info.plist
+          - Entitlements.plist
+    info:
+      path: PacketTunnelProvider/Info.plist
+      properties:
+        CFBundleDevelopmentRegion: $(DEVELOPMENT_LANGUAGE)
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleInfoDictionaryVersion: "6.0"
+        CFBundleName: $(PRODUCT_NAME)
+        CFBundlePackageType: XPC!
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
+    entitlements:
+      path: PacketTunnelProvider/Entitlements.plist
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.network.client: true
+        com.apple.developer.networking.networkextension:
+          - packet-tunnel-provider
+        com.apple.security.application-groups:
+          - group.com.doodleray.doodleray
+    dependencies:
+      - framework: LibXray.xcframework
+        embed: false
+        link: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.doodleray.doodleray.DoodleRayVPN
+        PRODUCT_NAME: DoodleRayVPN
+        PRODUCT_MODULE_NAME: DoodleRayVPN
+        MARKETING_VERSION: "6.0.0"
+        CURRENT_PROJECT_VERSION: "60000"
+        SKIP_INSTALL: YES
+        ENABLE_APP_SANDBOX: YES
+        CODE_SIGN_ENTITLEMENTS: PacketTunnelProvider/Entitlements.plist
+        OTHER_LDFLAGS:
+          - $(inherited)
+          - -ObjC
+          - -lresolv
+        GCC_WARN_INHIBIT_ALL_WARNINGS: NO
+        SWIFT_STRICT_CONCURRENCY: minimal
+
+schemes:
+  DoodleRayVPN:
+    build:
+      targets:
+        DoodleRayVPN: all
+    archive:
+      config: Release

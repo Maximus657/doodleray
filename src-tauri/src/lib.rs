@@ -1,7 +1,12 @@
+#![cfg_attr(all(target_os = "macos", feature = "app-store"), allow(dead_code))]
+
 pub mod singbox;
 pub mod tun;
 pub mod tunnel_service;
 pub mod xray;
+
+#[cfg(all(target_os = "macos", feature = "app-store"))]
+mod app_store_tunnel;
 
 #[cfg(windows)]
 pub mod ipc;
@@ -66,10 +71,13 @@ const APP_MANAGED_PORTS: &[u16] = &[10808, 10809, 10813];
 const SECURE_STORE_SERVICE: &str = "DoodleRay";
 const SECURE_STORE_CHUNK_BYTES: usize = 1800;
 const SECURE_STORE_CHUNK_PREFIX: &str = "chunked:v1:";
-const APP_IDENTIFIER: &str = "com.doodlevpn.doodleray";
+const APP_IDENTIFIER: &str = match option_env!("DOODLERAY_APP_IDENTIFIER") {
+    Some(identifier) => identifier,
+    None => "com.doodlevpn.doodleray",
+};
 const APP_PRODUCT_NAME: &str = "DoodleRay";
 const PROFILE_PING_URL: &str = "https://captive.apple.com/hotspot-detect.html";
-const APP_API_DEFAULT_BASE_URL: &str = "https://ddlvpn.lol/v1/app";
+const APP_API_DEFAULT_BASE_URL: &str = "https://ddlvpn.lol/v1/mobile";
 const APP_API_SESSION_KEY: &str = "app-api-session-v1";
 const APP_API_DEVICE_KEY: &str = "app-api-device-v1";
 
@@ -2330,12 +2338,6 @@ fn secure_store_fallback_get(app: &tauri::AppHandle, key: &str) -> Result<Option
     }
 }
 
-fn secure_store_fallback_set(app: &tauri::AppHandle, key: &str, value: &str) -> Result<(), String> {
-    let path = secure_store_fallback_path(app, key)?;
-    write_private_file(&path, value.as_bytes())
-        .map_err(|e| format!("Secure storage fallback write failed: {}", e))
-}
-
 fn secure_store_fallback_delete(app: &tauri::AppHandle, key: &str) -> Result<(), String> {
     let path = secure_store_fallback_path(app, key)?;
     match std::fs::remove_file(path) {
@@ -2403,63 +2405,44 @@ fn secure_store_keyring_delete(key: &str) -> Result<(), String> {
 #[tauri::command]
 fn secure_store_get(app: tauri::AppHandle, key: String) -> Result<Option<String>, String> {
     validate_renderer_secure_store_key(&key)?;
-    match secure_store_fallback_get(&app, &key) {
-        Ok(Some(value)) => return Ok(Some(value)),
-        Ok(None) => {}
-        Err(fallback_error) => {
-            eprintln!(
-                "[warn] secure storage fallback read failed: {}",
-                fallback_error
-            );
-        }
-    }
-
     match secure_store_keyring_get(&key) {
         Ok(Some(value)) => {
-            // Keep the app-data fallback warm for later boots where the OS
-            // credential store is temporarily unavailable.
-            if let Err(fallback_error) = secure_store_fallback_set(&app, &key, &value) {
+            // Remove the legacy plaintext mirror once Keychain/Credential
+            // Manager is confirmed readable.
+            if let Err(fallback_error) = secure_store_fallback_delete(&app, &key) {
                 eprintln!(
-                    "[warn] secure storage fallback backfill failed: {}",
+                    "[warn] legacy secure storage fallback cleanup failed: {}",
                     fallback_error
                 );
             }
             Ok(Some(value))
         }
-        Ok(None) => Ok(None),
-        Err(keyring_error) => {
-            eprintln!(
-                "[warn] secure storage keyring read failed: {}",
-                keyring_error
-            );
-            Err(keyring_error)
+        Ok(None) => {
+            // One-way migration for builds that mirrored the renderer state
+            // into app data as plaintext. Never create or refresh this file.
+            let Some(legacy_value) = secure_store_fallback_get(&app, &key)? else {
+                return Ok(None);
+            };
+            secure_store_keyring_set(&key, &legacy_value)
+                .map_err(|error| format!("Legacy secure storage migration failed: {}", error))?;
+            secure_store_fallback_delete(&app, &key)?;
+            Ok(Some(legacy_value))
         }
+        Err(keyring_error) => Err(keyring_error),
     }
 }
 
 #[tauri::command]
 fn secure_store_set(app: tauri::AppHandle, key: String, value: String) -> Result<(), String> {
     validate_renderer_secure_store_key(&key)?;
-
-    let fallback_result = secure_store_fallback_set(&app, &key, &value);
-    if let Err(fallback_error) = &fallback_result {
+    secure_store_keyring_set(&key, &value)?;
+    if let Err(fallback_error) = secure_store_fallback_delete(&app, &key) {
         eprintln!(
-            "[warn] secure storage fallback mirror write failed: {}",
+            "[warn] legacy secure storage fallback cleanup failed: {}",
             fallback_error
         );
     }
-
-    match secure_store_keyring_set(&key, &value) {
-        Ok(()) => fallback_result,
-        Err(keyring_error) => {
-            eprintln!(
-                "[warn] secure storage keyring write failed: {}",
-                keyring_error
-            );
-            fallback_result
-                .map_err(|fallback_error| format!("{}; {}", keyring_error, fallback_error))
-        }
-    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -2469,7 +2452,9 @@ fn secure_store_delete(app: tauri::AppHandle, key: String) -> Result<(), String>
     let fallback_result = secure_store_fallback_delete(&app, &key);
 
     match (keyring_result, fallback_result) {
-        (Ok(()), _) | (_, Ok(())) => Ok(()),
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(keyring_error), Ok(())) => Err(keyring_error),
+        (Ok(()), Err(fallback_error)) => Err(fallback_error),
         (Err(keyring_error), Err(fallback_error)) => {
             Err(format!("{}; {}", keyring_error, fallback_error))
         }
@@ -3122,7 +3107,7 @@ fn app_api_connection_result_body(
         "profile_id": lease.profile_id,
         "device_id": session.device_id,
         "app_version": env!("CARGO_PKG_VERSION"),
-        "core_version": "pc-v6",
+        "core_version": app_api_core_version(),
         "success": success,
         "error_code": if success { "" } else { "pc_connect_failed" },
         "latency_ms": latency_ms.max(0),
@@ -3135,6 +3120,101 @@ fn app_api_connection_result_body(
             "target_country_id": lease.target_country_id
         }
     })
+}
+
+fn app_api_platform() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "macos"
+    }
+    #[cfg(windows)]
+    {
+        "windows"
+    }
+    #[cfg(all(not(windows), not(target_os = "macos")))]
+    {
+        "desktop"
+    }
+}
+
+fn app_api_core_version() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "macos-v6"
+    }
+    #[cfg(windows)]
+    {
+        "pc-v6"
+    }
+    #[cfg(all(not(windows), not(target_os = "macos")))]
+    {
+        "desktop-v6"
+    }
+}
+
+fn app_api_client_capabilities() -> serde_json::Value {
+    serde_json::json!({
+        "windows": cfg!(windows),
+        "macos": cfg!(target_os = "macos"),
+        "tun": true,
+        "network_extension": cfg!(all(target_os = "macos", feature = "app-store")),
+        "xray_reality": true,
+        "dns_hijack": true
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn macos_product_version() -> Option<String> {
+    use std::ffi::CString;
+    use std::ptr;
+
+    let name = CString::new("kern.osproductversion").ok()?;
+    let mut length = 0usize;
+    let size_result = unsafe {
+        libc::sysctlbyname(
+            name.as_ptr(),
+            ptr::null_mut(),
+            &mut length,
+            ptr::null_mut(),
+            0,
+        )
+    };
+    if size_result != 0 || length <= 1 {
+        return None;
+    }
+
+    let mut value = vec![0u8; length];
+    let read_result = unsafe {
+        libc::sysctlbyname(
+            name.as_ptr(),
+            value.as_mut_ptr().cast(),
+            &mut length,
+            ptr::null_mut(),
+            0,
+        )
+    };
+    if read_result != 0 {
+        return None;
+    }
+
+    value.truncate(length);
+    if let Some(nul) = value.iter().position(|byte| *byte == 0) {
+        value.truncate(nul);
+    }
+    let version = String::from_utf8(value).ok()?.trim().to_string();
+    (!version.is_empty()).then_some(version)
+}
+
+fn app_api_os_version() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        macos_product_version().unwrap_or_else(|| "unknown".into())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        std::env::var("OS").unwrap_or_else(|_| "unknown".into())
+    }
 }
 
 #[tauri::command]
@@ -3157,16 +3237,16 @@ async fn app_api_exchange_code(
     let device = app_api_load_or_create_device()?;
     let computer_name = std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| "Windows PC".into());
+        .unwrap_or_else(|_| APP_PRODUCT_NAME.into());
     let body = serde_json::json!({
         "code": code,
         "device": {
             "device_id": device.client_device_id,
-            "platform": "windows",
+            "platform": app_api_platform(),
             "model": computer_name,
-            "os_version": std::env::var("OS").unwrap_or_else(|_| "Windows".into()),
+            "os_version": app_api_os_version(),
             "app_version": env!("CARGO_PKG_VERSION"),
-            "core_version": "pc-v6",
+            "core_version": app_api_core_version(),
             "service_version": env!("CARGO_PKG_VERSION"),
             "package_identity": APP_IDENTIFIER,
             "channel": option_env!("DOODLERAY_BUILD_CHANNEL").unwrap_or("direct"),
@@ -3261,13 +3341,8 @@ async fn app_connect_location(
         "selection_mode": "manual",
         "profile_delivery": "consume",
         "app_version": env!("CARGO_PKG_VERSION"),
-        "core_version": "pc-v6",
-        "client_capabilities": {
-            "windows": true,
-            "tun": true,
-            "xray_reality": true,
-            "dns_hijack": true
-        }
+        "core_version": app_api_core_version(),
+        "client_capabilities": app_api_client_capabilities()
     });
     let lease = match app_api_authorized_json::<AppApiProfileLeaseResponse>(
         reqwest::Method::POST,
@@ -3685,7 +3760,19 @@ async fn ping_server(address: String, port: u16, server_id: String) -> PingResul
 /// Check a full VPN profile by starting an isolated local proxy and performing
 /// an HTTP GET through it. This avoids false-green TCP port checks.
 #[tauri::command]
-async fn ping_server_profile(mut request: ConnectRequest, server_id: String) -> PingResult {
+async fn ping_server_profile(request: ConnectRequest, server_id: String) -> PingResult {
+    #[cfg(all(target_os = "macos", feature = "app-store"))]
+    {
+        ping_server(request.server_address, request.server_port, server_id).await
+    }
+    #[cfg(not(all(target_os = "macos", feature = "app-store")))]
+    {
+        ping_server_profile_direct(request, server_id).await
+    }
+}
+
+#[cfg(not(all(target_os = "macos", feature = "app-store")))]
+async fn ping_server_profile_direct(mut request: ConnectRequest, server_id: String) -> PingResult {
     let sid = server_id.clone();
     let ping_ms = match profile_http_ping_ms(&mut request).await {
         Ok(ms) => ms,
@@ -4565,6 +4652,11 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[test]
+    fn app_api_default_uses_the_canonical_mobile_contract() {
+        assert_eq!(APP_API_DEFAULT_BASE_URL, "https://ddlvpn.lol/v1/mobile");
+    }
+
     fn diag_health(
         verdict: &str,
         fatal: Vec<&str>,
@@ -4916,6 +5008,34 @@ mod tests {
             .expect_err("unsupported profile must not be accepted");
 
         assert!(err.contains("Unsupported DoodleVPN profile type"));
+    }
+
+    #[test]
+    fn app_api_capabilities_match_the_compiled_platform() {
+        let capabilities = app_api_client_capabilities();
+        assert_eq!(capabilities["windows"], json!(cfg!(windows)));
+        assert_eq!(capabilities["macos"], json!(cfg!(target_os = "macos")));
+        assert_eq!(
+            capabilities["network_extension"],
+            json!(cfg!(all(target_os = "macos", feature = "app-store")))
+        );
+        assert_eq!(
+            app_api_core_version(),
+            if cfg!(target_os = "macos") {
+                "macos-v6"
+            } else if cfg!(windows) {
+                "pc-v6"
+            } else {
+                "desktop-v6"
+            }
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn app_api_reads_macos_version_without_spawning_a_process() {
+        let version = macos_product_version().expect("macOS product version should be readable");
+        assert!(version.split('.').all(|part| part.parse::<u32>().is_ok()));
     }
 
     #[test]
@@ -5529,7 +5649,7 @@ mod tests {
 
     #[test]
     fn tauri_config_bundles_offline_webview2_installer() {
-        let config_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tauri.conf.json");
+        let config_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tauri.windows.conf.json");
         let config: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(config_path).unwrap()).unwrap();
 
@@ -6456,9 +6576,257 @@ fn build_xray_config(req: &ConnectRequest) -> serde_json::Value {
     })
 }
 
+#[cfg(all(target_os = "macos", feature = "app-store"))]
+fn prepare_app_store_xray_config(mut config: serde_json::Value) -> serde_json::Value {
+    if let Some(root) = config.as_object_mut() {
+        root.remove("api");
+        root.remove("stats");
+        root.remove("policy");
+        root.remove("metrics");
+    }
+
+    config["log"] = serde_json::json!({ "loglevel": "warning" });
+    config["inbounds"] = serde_json::json!([{
+        "tag": "tun-in",
+        "port": 0,
+        "protocol": "tun",
+        "settings": {
+            "name": "doodleray-ne",
+            "mtu": 1408
+        },
+        "sniffing": {
+            "enabled": true,
+            "destOverride": ["http", "tls", "quic", "fakedns"],
+            "routeOnly": true
+        }
+    }]);
+
+    if let Some(outbounds) = config
+        .get_mut("outbounds")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        outbounds.retain(|outbound| {
+            outbound.get("tag").and_then(serde_json::Value::as_str) != Some("api")
+        });
+    }
+    if let Some(rules) = config
+        .get_mut("routing")
+        .and_then(|routing| routing.get_mut("rules"))
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        rules.retain(|rule| {
+            let targets_api =
+                rule.get("outboundTag").and_then(serde_json::Value::as_str) == Some("api");
+            let has_stale_inbound = rule
+                .get("inboundTag")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|tags| !tags.iter().any(|tag| tag.as_str() == Some("tun-in")));
+            !targets_api && !has_stale_inbound
+        });
+    }
+
+    config
+}
+
+#[cfg(all(target_os = "macos", feature = "app-store"))]
+fn build_app_store_xray_config(request: &ConnectRequest) -> serde_json::Value {
+    let config = if let Some(ref raw) = request.raw_xray_config {
+        inject_xray_inbounds(raw.clone(), request)
+    } else {
+        build_xray_config(request)
+    };
+    prepare_app_store_xray_config(config)
+}
+
+#[cfg(all(test, target_os = "macos", feature = "app-store"))]
+mod app_store_config_tests {
+    use super::{app_store_connection_health_from_response, prepare_app_store_xray_config};
+    use crate::app_store_tunnel::TunnelResponse;
+    use serde_json::json;
+
+    #[test]
+    fn network_extension_config_removes_local_api_and_proxy_inbounds() {
+        let config = prepare_app_store_xray_config(json!({
+            "api": { "tag": "api" },
+            "stats": {},
+            "policy": {},
+            "metrics": {},
+            "inbounds": [{ "tag": "socks-in", "protocol": "socks" }],
+            "outbounds": [
+                { "tag": "proxy", "protocol": "vless" },
+                { "tag": "api", "protocol": "freedom" }
+            ],
+            "routing": { "rules": [
+                { "inboundTag": ["api"], "outboundTag": "api" },
+                { "domain": ["domain:example.com"], "outboundTag": "proxy" }
+            ] }
+        }));
+
+        assert!(config.get("api").is_none());
+        assert!(config.get("stats").is_none());
+        assert_eq!(config["inbounds"][0]["protocol"], "tun");
+        assert_eq!(config["inbounds"][0]["settings"]["mtu"], 1408);
+        assert_eq!(config["outbounds"].as_array().unwrap().len(), 1);
+        assert_eq!(config["routing"]["rules"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn network_extension_health_does_not_require_direct_proxy_ports() {
+        let connected = app_store_connection_health_from_response(&TunnelResponse {
+            success: true,
+            status: "connected".into(),
+            message: String::new(),
+        });
+        assert_eq!(connected.verdict, "protected");
+        assert_eq!(
+            connected.engine_kind.as_deref(),
+            Some("xray+network-extension")
+        );
+        assert!(connected.runtime_socks_port.is_none());
+        assert!(connected.runtime_http_port.is_none());
+        assert_eq!(connected.checks[0].code, "network_extension");
+
+        let connecting = app_store_connection_health_from_response(&TunnelResponse {
+            success: true,
+            status: "connecting".into(),
+            message: String::new(),
+        });
+        assert_eq!(connecting.verdict, "protected_degraded");
+
+        let disconnected = app_store_connection_health_from_response(&TunnelResponse {
+            success: true,
+            status: "disconnected".into(),
+            message: String::new(),
+        });
+        assert_eq!(disconnected.verdict, "failed");
+    }
+}
+
+#[cfg(all(target_os = "macos", feature = "app-store"))]
+async fn vpn_connect_app_store(request: ConnectRequest, app: tauri::AppHandle) -> ConnectResult {
+    let _runtime_guard = RUNTIME_OP_LOCK.lock().await;
+    if let Ok(mut logs) = CONNECT_LOG.lock() {
+        logs.clear();
+    }
+    vpn_log("starting App Store Network Extension tunnel");
+
+    let config = build_app_store_xray_config(&request);
+    match wait_for_app_store_tunnel_connected(app_store_tunnel::start(&config)).await {
+        Ok(response) => {
+            if let Ok(mut state) = CONNECTION_STATE.lock() {
+                *state = true;
+            }
+            if let Ok(mut engine) = ACTIVE_ENGINE.lock() {
+                *engine = Some("xray+network-extension".into());
+            }
+            update_tray_connected(&app, &request.server_address);
+            vpn_log("App Store Network Extension accepted the tunnel start");
+            ConnectResult {
+                success: true,
+                message: "DoodleRay VPN is connected through Network Extension".into(),
+                health: Some(app_store_connection_health_from_response(&response)),
+            }
+        }
+        Err(error) => {
+            let _ = app_store_tunnel::stop();
+            vpn_log("App Store Network Extension did not reach connected state");
+            ConnectResult {
+                success: false,
+                message: error,
+                health: None,
+            }
+        }
+    }
+}
+
+#[cfg(all(target_os = "macos", feature = "app-store"))]
+async fn wait_for_app_store_tunnel_connected(
+    initial: Result<app_store_tunnel::TunnelResponse, String>,
+) -> Result<app_store_tunnel::TunnelResponse, String> {
+    let mut response = initial?;
+    for attempt in 0..40 {
+        if response.success && app_store_tunnel::is_connected_status(&response.status) {
+            return Ok(response);
+        }
+        if !response.success
+            || (!app_store_tunnel::is_active_status(&response.status) && attempt > 0)
+        {
+            return Err(if response.message.is_empty() {
+                format!("Network Extension stopped with status {}", response.status)
+            } else {
+                response.message
+            });
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        response = app_store_tunnel::status()?;
+    }
+    Err("Network Extension timed out while connecting".into())
+}
+
+#[cfg(all(target_os = "macos", feature = "app-store"))]
+fn app_store_connection_health_from_response(
+    response: &app_store_tunnel::TunnelResponse,
+) -> ConnectionHealthReport {
+    let (severity, detail) =
+        if response.success && app_store_tunnel::is_connected_status(&response.status) {
+            ("ok", "Network Extension reports connected".to_string())
+        } else if response.success && app_store_tunnel::is_active_status(&response.status) {
+            (
+                "warning",
+                format!("Network Extension reports {}", response.status),
+            )
+        } else {
+            (
+                "error",
+                if response.message.is_empty() {
+                    format!("Network Extension reports {}", response.status)
+                } else {
+                    response.message.clone()
+                },
+            )
+        };
+    let mut health = health_report(
+        "protected",
+        vec![health_check(
+            "network_extension",
+            severity,
+            "Network Extension tunnel",
+            detail,
+        )],
+    );
+    health.engine_kind = Some("xray+network-extension".into());
+    health
+}
+
+#[cfg(all(target_os = "macos", feature = "app-store"))]
+fn app_store_connection_health() -> ConnectionHealthReport {
+    match app_store_tunnel::status() {
+        Ok(response) => app_store_connection_health_from_response(&response),
+        Err(error) => {
+            app_store_connection_health_from_response(&app_store_tunnel::TunnelResponse {
+                success: false,
+                status: "unknown".into(),
+                message: error,
+            })
+        }
+    }
+}
+
 #[tauri::command]
+async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectResult {
+    #[cfg(all(target_os = "macos", feature = "app-store"))]
+    {
+        vpn_connect_app_store(request, app).await
+    }
+    #[cfg(not(all(target_os = "macos", feature = "app-store")))]
+    {
+        vpn_connect_direct(request, app).await
+    }
+}
+
+#[cfg(not(all(target_os = "macos", feature = "app-store")))]
 #[cfg_attr(windows, allow(unreachable_code))]
-async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> ConnectResult {
+async fn vpn_connect_direct(mut request: ConnectRequest, app: tauri::AppHandle) -> ConnectResult {
     let _runtime_guard = RUNTIME_OP_LOCK.lock().await;
 
     // Clear previous connect logs
@@ -7392,8 +7760,61 @@ async fn vpn_connect(mut request: ConnectRequest, app: tauri::AppHandle) -> Conn
     }
 }
 
+#[cfg(all(target_os = "macos", feature = "app-store"))]
+async fn vpn_disconnect_app_store(app: tauri::AppHandle) -> ConnectResult {
+    let _runtime_guard = RUNTIME_OP_LOCK.lock().await;
+    let was_connected = CONNECTION_STATE.lock().map(|state| *state).unwrap_or(false);
+
+    match app_store_tunnel::stop() {
+        Ok(response) if response.success => {
+            if let Ok(mut state) = CONNECTION_STATE.lock() {
+                *state = false;
+            }
+            if let Ok(mut engine) = ACTIVE_ENGINE.lock() {
+                *engine = None;
+            }
+            update_tray_disconnected(&app);
+            ConnectResult {
+                success: true,
+                message: if was_connected {
+                    "Disconnected".into()
+                } else {
+                    "VPN is already disconnected".into()
+                },
+                health: None,
+            }
+        }
+        Ok(response) => ConnectResult {
+            success: false,
+            message: if response.message.is_empty() {
+                "Network Extension could not stop the VPN".into()
+            } else {
+                response.message
+            },
+            health: None,
+        },
+        Err(error) => ConnectResult {
+            success: false,
+            message: error,
+            health: None,
+        },
+    }
+}
+
 #[tauri::command]
 async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
+    #[cfg(all(target_os = "macos", feature = "app-store"))]
+    {
+        vpn_disconnect_app_store(app).await
+    }
+    #[cfg(not(all(target_os = "macos", feature = "app-store")))]
+    {
+        vpn_disconnect_direct(app).await
+    }
+}
+
+#[cfg(not(all(target_os = "macos", feature = "app-store")))]
+async fn vpn_disconnect_direct(app: tauri::AppHandle) -> ConnectResult {
     let _runtime_guard = RUNTIME_OP_LOCK.lock().await;
 
     let is_connected = {
@@ -7635,17 +8056,33 @@ async fn fetch_http_response_with_fallback(
 
 #[tauri::command]
 fn vpn_status() -> bool {
-    #[cfg(windows)]
+    #[cfg(all(target_os = "macos", feature = "app-store"))]
     {
-        if tunnel_service_reports_active() {
-            if let Ok(mut state) = CONNECTION_STATE.lock() {
-                *state = true;
-            }
-            return true;
+        let active = app_store_tunnel::status()
+            .map(|response| {
+                response.success && app_store_tunnel::is_active_status(&response.status)
+            })
+            .unwrap_or_else(|_| CONNECTION_STATE.lock().map(|state| *state).unwrap_or(false));
+        if let Ok(mut state) = CONNECTION_STATE.lock() {
+            *state = active;
         }
+        active
     }
 
-    CONNECTION_STATE.lock().map(|state| *state).unwrap_or(false)
+    #[cfg(not(all(target_os = "macos", feature = "app-store")))]
+    {
+        #[cfg(windows)]
+        {
+            if tunnel_service_reports_active() {
+                if let Ok(mut state) = CONNECTION_STATE.lock() {
+                    *state = true;
+                }
+                return true;
+            }
+        }
+
+        CONNECTION_STATE.lock().map(|state| *state).unwrap_or(false)
+    }
 }
 
 /// Check if we're running with Administrator/root privileges
@@ -8657,6 +9094,7 @@ fn apply_compat_proxy_after_tun(request: &ConnectRequest) -> Result<&'static str
 #[derive(Debug, Clone, Default)]
 struct CompatProxyOutcome {
     degraded: Option<String>,
+    #[cfg_attr(not(windows), allow(dead_code))]
     report_detail: Option<&'static str>,
 }
 
@@ -8753,6 +9191,7 @@ fn loopback_port_available(port: u16) -> bool {
     TcpListener::bind(("127.0.0.1", port)).is_ok()
 }
 
+#[cfg(windows)]
 fn tun_op_id() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -9106,12 +9545,20 @@ fn get_connection_health(
     socks_port: u16,
     http_port: u16,
 ) -> ConnectionHealthReport {
-    build_connection_health(
-        proxy_mode.as_deref().unwrap_or("tun"),
-        system_proxy_mode.as_deref().unwrap_or("set"),
-        socks_port,
-        http_port,
-    )
+    #[cfg(all(target_os = "macos", feature = "app-store"))]
+    {
+        let _ = (proxy_mode, system_proxy_mode, socks_port, http_port);
+        app_store_connection_health()
+    }
+    #[cfg(not(all(target_os = "macos", feature = "app-store")))]
+    {
+        build_connection_health(
+            proxy_mode.as_deref().unwrap_or("tun"),
+            system_proxy_mode.as_deref().unwrap_or("set"),
+            socks_port,
+            http_port,
+        )
+    }
 }
 
 #[tauri::command]
@@ -9121,12 +9568,20 @@ fn get_connection_health_full(
     socks_port: u16,
     http_port: u16,
 ) -> ConnectionHealthReport {
-    build_full_connection_health(
-        proxy_mode.as_deref().unwrap_or("tun"),
-        system_proxy_mode.as_deref().unwrap_or("set"),
-        socks_port,
-        http_port,
-    )
+    #[cfg(all(target_os = "macos", feature = "app-store"))]
+    {
+        let _ = (proxy_mode, system_proxy_mode, socks_port, http_port);
+        app_store_connection_health()
+    }
+    #[cfg(not(all(target_os = "macos", feature = "app-store")))]
+    {
+        build_full_connection_health(
+            proxy_mode.as_deref().unwrap_or("tun"),
+            system_proxy_mode.as_deref().unwrap_or("set"),
+            socks_port,
+            http_port,
+        )
+    }
 }
 
 #[tauri::command]
@@ -9506,6 +9961,9 @@ fn build_fast_tun_connection_health(
     tunnel_status: Option<&tunnel_service::TunnelStatus>,
     compatibility_degraded: Option<&str>,
 ) -> ConnectionHealthReport {
+    #[cfg(not(windows))]
+    let _ = (system_proxy_mode, compatibility_degraded);
+
     let mut checks = Vec::new();
     let effective_socks_port = tunnel_status
         .and_then(|status| status.runtime_socks_port)
@@ -11330,14 +11788,20 @@ async fn check_silent_autostart() -> bool {
 /// Full cleanup — stop all engines, kill subprocesses, unset system proxy
 /// Safe to call multiple times (idempotent)
 fn full_cleanup() {
-    #[cfg(windows)]
-    let _ = tunnel_service_stop("full_cleanup");
-    let _ = singbox::stop_singbox();
-    let _ = xray::stop_xray();
-    let _ = tun::stop_tun();
-    #[cfg(windows)]
-    terminate_orphaned_doodleray_engine_processes();
-    restore_system_proxy_if_owned(false);
+    #[cfg(all(target_os = "macos", feature = "app-store"))]
+    let _ = app_store_tunnel::stop();
+
+    #[cfg(not(all(target_os = "macos", feature = "app-store")))]
+    {
+        #[cfg(windows)]
+        let _ = tunnel_service_stop("full_cleanup");
+        let _ = singbox::stop_singbox();
+        let _ = xray::stop_xray();
+        let _ = tun::stop_tun();
+        #[cfg(windows)]
+        terminate_orphaned_doodleray_engine_processes();
+        restore_system_proxy_if_owned(false);
+    }
 
     // Reset connection state
     if let Ok(mut state) = CONNECTION_STATE.lock() {
@@ -11368,6 +11832,12 @@ fn qa_control_update_frontend_snapshot(snapshot: serde_json::Value) -> bool {
         *guard = Some(snapshot);
         return true;
     }
+    false
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+fn qa_control_update_frontend_snapshot(_snapshot: serde_json::Value) -> bool {
     false
 }
 
@@ -11548,24 +12018,27 @@ pub fn run() {
     // If the service still owns an active protected tunnel, preserve it and
     // let the reloaded UI reconcile from service status. Only stale/non-active
     // generations should be scrubbed here.
-    #[cfg(windows)]
-    let preserve_service_tunnel = tunnel_service_reports_active();
-    #[cfg(not(windows))]
-    let preserve_service_tunnel = false;
+    #[cfg(not(all(target_os = "macos", feature = "app-store")))]
+    {
+        #[cfg(windows)]
+        let preserve_service_tunnel = tunnel_service_reports_active();
+        #[cfg(not(windows))]
+        let preserve_service_tunnel = false;
 
-    if !preserve_service_tunnel {
-        #[cfg(windows)]
-        let _ = tunnel_service_stop("startup_cleanup");
-        let _ = tun::stop_tun(); // Kill any orphaned sing-box.exe
-        #[cfg(windows)]
-        terminate_orphaned_doodleray_engine_processes();
-        #[cfg(windows)]
-        let _ = sysproxy::recover_orphaned_proxy_on_startup();
-    } else {
-        vpn_log("startup cleanup: preserving active tunnel service state");
+        if !preserve_service_tunnel {
+            #[cfg(windows)]
+            let _ = tunnel_service_stop("startup_cleanup");
+            let _ = tun::stop_tun(); // Kill any orphaned sing-box.exe
+            #[cfg(windows)]
+            terminate_orphaned_doodleray_engine_processes();
+            #[cfg(windows)]
+            let _ = sysproxy::recover_orphaned_proxy_on_startup();
+        } else {
+            vpn_log("startup cleanup: preserving active tunnel service state");
+        }
+        #[cfg(target_os = "macos")]
+        let _ = sysproxy::unset_system_proxy(); // Restore stale app proxy on macOS
     }
-    #[cfg(target_os = "macos")]
-    let _ = sysproxy::unset_system_proxy(); // Restore stale app proxy on macOS
     if let Ok(mut managed) = SYSTEM_PROXY_MANAGED.lock() {
         *managed = false;
     }
@@ -11576,13 +12049,17 @@ pub fn run() {
         std::process::exit(0);
     });
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(not(feature = "app-store"))]
+    let builder = builder
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--minimized"]), // launch minimized by default if started via autostart
-        ))
+        ));
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_http::init())
         .invoke_handler(tauri::generate_handler![

@@ -6,6 +6,7 @@ import { useAppStore } from '../stores/app-store';
 import { checkForAppUpdate, getCachedUpdate, installAppUpdate } from '../lib/app-updater';
 import { clearAppCache, diagnosticsReportToText, getStorageReport, runNetworkDiagnostics, type DiagnosticCheck, type NetworkDiagnosticsReport, type StorageReport } from '../lib/diagnostics';
 import { reportConnectionError } from '../lib/workshop-api';
+import { isDesktopAutostartAvailable } from '../lib/build-policy';
 
 function Toggle({ checked, onChange, label, description, warning }: { checked: boolean; onChange: (v: boolean) => void; label: string; description?: string; warning?: string }) {
   return (
@@ -171,6 +172,7 @@ function diagnosticSeverity(severity: DiagnosticCheck['severity'], language: str
 }
 
 export default function Settings() {
+  const desktopAutostartAvailable = isDesktopAutostartAvailable();
   const {
     socksPort, setSocksPort,
     httpPort, setHttpPort,
@@ -366,6 +368,18 @@ export default function Settings() {
       updateProgress: null,
     });
     try {
+      const { isUpdateManagedByStore, openStoreUpdatePage } = await import('../lib/update-channel');
+      if (isUpdateManagedByStore()) {
+        await openStoreUpdatePage();
+        setUpdateState({
+          availableUpdate: null,
+          updatePhase: 'idle',
+          updateStatus: 'updateOpenStore',
+          updateProgress: null,
+        });
+        return;
+      }
+
       let update = getCachedUpdate();
       if (!update) {
         update = await checkForAppUpdate();
@@ -514,12 +528,14 @@ export default function Settings() {
               <Monitor className="w-5 h-5 text-black stroke-[3px]" /> {t('basicSettings')}
             </h2>
             <div className="space-y-2">
-              <Toggle
-                checked={silentAdminAutostart}
-                onChange={handleAdminAutostartToggle}
-                label={t('launchStartup')}
-                description={t('launchStartupDesc')}
-              />
+              {desktopAutostartAvailable && (
+                <Toggle
+                  checked={silentAdminAutostart}
+                  onChange={handleAdminAutostartToggle}
+                  label={t('launchStartup')}
+                  description={t('launchStartupDesc')}
+                />
+              )}
               <Toggle
                 checked={autoConnectOnStartup}
                 onChange={setAutoConnectOnStartup}

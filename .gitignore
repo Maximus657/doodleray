@@ -10,6 +10,7 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+dist-app-store/
 *.local
 
 # Editor directories and files
@@ -31,6 +32,10 @@ src-tauri/*.log
 src-tauri/*.bat
 src-tauri/*.sh
 src-tauri/.tauri/
+.build/
+src-tauri/macos/LibXray.xcframework/
+src-tauri/macos/DerivedData/
+src-tauri/macos/profiles/
 
 # Binaries (bundled separately)
 *.exe

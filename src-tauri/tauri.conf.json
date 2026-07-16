@@ -30,13 +30,6 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": "v1Compatible",
-    "targets": ["nsis", "dmg", "app"],
-    "resources": {
-      "xray-core/*": "xray-core/",
-      "sing-box*": "./",
-      "wintun*": "./",
-      "DoodleRayService.exe": "DoodleRayService.exe"
-    },
     "icon": [
       "icons/32x32.png",
       "icons/64x64.png",
@@ -44,33 +37,7 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ],
-    "windows": {
-      "webviewInstallMode": {
-        "type": "offlineInstaller",
-        "silent": true
-      },
-      "signCommand": {
-        "cmd": "powershell",
-        "args": [
-          "-NoProfile",
-          "-ExecutionPolicy",
-          "Bypass",
-          "-File",
-          "./sign-windows-if-configured.ps1",
-          "%1"
-        ]
-      },
-      "nsis": {
-        "installMode": "perMachine",
-        "installerHooks": "nsis-hooks.nsh"
-      }
-    },
-    "macOS": {
-      "minimumSystemVersion": "10.15",
-      "signingIdentity": null,
-      "exceptionDomain": null
-    }
+    ]
   },
   "plugins": {
     "updater": {

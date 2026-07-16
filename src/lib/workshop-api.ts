@@ -3,6 +3,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { sanitizeSensitiveText } from './redaction';
+import { isDiagnosticsTelemetryEnabled } from './build-policy';
 
 const API_BASE = 'https://94-241-172-101.sslip.io/doodleray-api/api';
 
@@ -218,6 +219,7 @@ export type UserIssueEventType =
 
 // Report app launch (called once on startup)
 export async function reportLaunch(): Promise<void> {
+  if (!isDiagnosticsTelemetryEnabled()) return;
   try {
     const version = await getAppVersion();
     await apiPost('/analytics/launch', {
@@ -234,6 +236,7 @@ export async function reportLaunch(): Promise<void> {
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 
 export function startHeartbeat(): void {
+  if (!isDiagnosticsTelemetryEnabled()) return;
   if (heartbeatInterval) return; // already running
   
   const sendHeartbeat = async () => {
@@ -281,6 +284,7 @@ export async function reportConnectionError(opts: {
   errorMessage?: string;
   details?: Record<string, unknown>;
 }): Promise<void> {
+  if (!isDiagnosticsTelemetryEnabled()) return;
   try {
     const version = await getAppVersion();
     let state: any = null;

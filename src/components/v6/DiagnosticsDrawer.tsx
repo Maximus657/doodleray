@@ -7,7 +7,7 @@ type T = (key: never) => string;
 interface Props {
   logs: LogEntry[];
   onClear: () => void;
-  onOpenDiagnostics: () => void;
+  onOpenDiagnostics?: () => void;
   t: T;
 }
 
@@ -132,15 +132,17 @@ export default function DiagnosticsDrawer({ logs, onClear, onOpenDiagnostics, t 
           <ChevronUp className={`ml-auto h-4 w-4 shrink-0 text-white/50 transition-transform ${open ? 'rotate-180' : ''}`} strokeWidth={2.2} />
         </button>
 
-        <button
-          type="button"
-          onClick={onOpenDiagnostics}
-          title={t('v6Diag' as never)}
-          className="v6-hover-bright flex shrink-0 items-center gap-1.5 rounded-xl border border-white/[0.1] bg-white/[0.06] px-2.5 py-1.5 text-[11px] font-medium text-white v6-focus"
-        >
-          <Stethoscope className="h-3.5 w-3.5" strokeWidth={2.2} />
-          <span className="hidden lg:inline">{t('v6Diag' as never)}</span>
-        </button>
+        {onOpenDiagnostics && (
+          <button
+            type="button"
+            onClick={onOpenDiagnostics}
+            title={t('v6Diag' as never)}
+            className="v6-hover-bright flex shrink-0 items-center gap-1.5 rounded-xl border border-white/[0.1] bg-white/[0.06] px-2.5 py-1.5 text-[11px] font-medium text-white v6-focus"
+          >
+            <Stethoscope className="h-3.5 w-3.5" strokeWidth={2.2} />
+            <span className="hidden lg:inline">{t('v6Diag' as never)}</span>
+          </button>
+        )}
       </div>
     </div>
   );

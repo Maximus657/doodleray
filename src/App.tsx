@@ -17,7 +17,7 @@ import { resolveConnectServer } from './lib/server-selection';
 import { checkForAppUpdate, installAppUpdate } from './lib/app-updater';
 import { isInAppUpdateEnabled, openStoreUpdatePage } from './lib/update-channel';
 import { buildAppConnectLocationRequestFromState, isClosedLocationServer } from './lib/app-control-plane';
-import { isClosedControlPlaneEnabled } from './lib/build-policy';
+import { isClosedControlPlaneEnabled, isDesktopAutostartAvailable } from './lib/build-policy';
 import './index.css';
 
 function formatMessage(template: string, values: Record<string, string | number>) {
@@ -241,6 +241,10 @@ function App() {
 
     async function syncStartupAutostart() {
       if (!isTauriRuntime()) return;
+      if (!isDesktopAutostartAvailable()) {
+        useAppStore.setState({ autoStart: false, silentAdminAutostart: false });
+        return;
+      }
 
       let silentEnabled = false;
       try {
@@ -256,16 +260,12 @@ function App() {
       }
 
       try {
-        const { enable, isEnabled } = await import('@tauri-apps/plugin-autostart');
+        const { isEnabled } = await import('@tauri-apps/plugin-autostart');
         const enabled = await isEnabled();
-        if (!enabled) {
-          await enable();
-          useAppStore.getState().addLog('debug', 'App autostart enabled');
-        }
-        useAppStore.setState({ autoStart: true });
+        useAppStore.setState({ autoStart: enabled });
       } catch (err) {
         useAppStore.setState({ autoStart: false });
-        useAppStore.getState().addLog('warning', `App autostart could not be enabled: ${err instanceof Error ? err.message : String(err)}`);
+        useAppStore.getState().addLog('warning', `App autostart status is unavailable: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 

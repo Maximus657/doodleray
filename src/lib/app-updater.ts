@@ -54,6 +54,12 @@ export function setCachedUpdate(update: UpdateLike | null) {
 }
 
 export async function checkForAppUpdate() {
+  const { isUpdateManagedByStore } = await import('./update-channel');
+  if (isUpdateManagedByStore()) {
+    cachedUpdate = null;
+    return null;
+  }
+
   const { check } = await import('@tauri-apps/plugin-updater');
   const update = (await check({ timeout: UPDATE_CHECK_TIMEOUT_MS })) as UpdateLike | null;
   cachedUpdate = update;

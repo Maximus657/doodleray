@@ -230,15 +230,6 @@ pub fn stop_xray() -> Result<(), String> {
     }
     *proc = None;
 
-    // Do not kill by image name on Windows: Full Computer mode is owned by the
-    // tunnel service/job object, and global taskkill can hit unrelated Xray users.
-    #[cfg(not(windows))]
-    {
-        let _ = std::process::Command::new("pkill")
-            .args(["-f", "xray"])
-            .output();
-    }
-
     // Brief pause to let ports release
     std::thread::sleep(std::time::Duration::from_millis(300));
     clear_log_buffer();

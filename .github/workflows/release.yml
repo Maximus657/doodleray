@@ -12,6 +12,11 @@ jobs:
   build-windows:
     runs-on: windows-latest
     env:
+      DOODLERAY_CLOSED_CONTROL_PLANE: "1"
+      VITE_DOODLERAY_CLOSED_CONTROL_PLANE: "1"
+      VITE_DOODLERAY_BUILD_CHANNEL: "direct"
+      VITE_DOODLERAY_UPDATE_CHANNEL: "direct"
+      VITE_DOODLERAY_DIAGNOSTICS_TELEMETRY: "0"
       WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
       WINDOWS_CODESIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PFX_PASSWORD }}
       WINDOWS_CODESIGN_REQUIRED: "true"
@@ -89,7 +94,7 @@ jobs:
           if (-not (Test-Path "src-tauri/DoodleRayService.exe")) {
             New-Item -ItemType File -Path "src-tauri/DoodleRayService.exe" -Force | Out-Null
           }
-          cargo build --release --manifest-path src-tauri/Cargo.toml --bin DoodleRayService
+          cargo build --release --manifest-path src-tauri/Cargo.toml --bin DoodleRayService --features windows-service
           Copy-Item "src-tauri/target/release/DoodleRayService.exe" "src-tauri/" -Force
         shell: pwsh
 
@@ -211,6 +216,16 @@ jobs:
   build-macos:
     needs: build-windows
     runs-on: macos-latest
+    env:
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      DOODLERAY_CLOSED_CONTROL_PLANE: "1"
+      VITE_DOODLERAY_CLOSED_CONTROL_PLANE: "1"
+      VITE_DOODLERAY_BUILD_CHANNEL: "direct"
+      VITE_DOODLERAY_UPDATE_CHANNEL: "direct"
+      VITE_DOODLERAY_DIAGNOSTICS_TELEMETRY: "0"
     strategy:
       max-parallel: 1
       matrix:
@@ -240,6 +255,25 @@ jobs:
       
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Verify macOS release secrets
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID TAURI_PRIVATE_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "Required macOS release secret is missing: ${name}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Import Apple signing certificate
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
+          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
 
       # Download xray-core for macOS
       - name: Download xray-core
@@ -272,29 +306,14 @@ jobs:
           cp sing-box-${SB_VERSION}-${SB_ARCH}/sing-box src-tauri/
           chmod +x src-tauri/sing-box
 
-      # Ad-hoc codesign the external binaries so macOS doesn't quarantine them
-      - name: Codesign external binaries
+      - name: Sign macOS runtime binaries
         run: |
-          # Remove quarantine attributes
           xattr -cr src-tauri/xray-core/xray 2>/dev/null || true
           xattr -cr src-tauri/sing-box 2>/dev/null || true
-          # Ad-hoc codesign (required for macOS to allow execution)
-          codesign --force --sign - src-tauri/xray-core/xray
-          codesign --force --sign - src-tauri/sing-box
-          # Verify
-          codesign -v src-tauri/xray-core/xray && echo "xray signed OK"
-          codesign -v src-tauri/sing-box && echo "sing-box signed OK"
-          # List what Tauri will bundle
-          echo "=== xray-core/ contents ==="
-          ls -la src-tauri/xray-core/
-          echo "=== sing-box ==="
-          ls -la src-tauri/sing-box
-
-      - name: Prepare macOS resource placeholders
-        run: |
-          # Windows tunnel service is bundled only for Windows, but the shared
-          # Tauri resource map is validated on macOS too.
-          touch src-tauri/DoodleRayService.exe
+          codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" src-tauri/xray-core/xray
+          codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" src-tauri/sing-box
+          codesign --verify --strict --verbose=2 src-tauri/xray-core/xray
+          codesign --verify --strict --verbose=2 src-tauri/sing-box
 
       # Strip trailing whitespace/newlines from signing key
       - name: Clean signing key
@@ -335,7 +354,7 @@ jobs:
             > **Tip:** If you're not sure which file to pick — on **Windows** grab the `.exe`, on **Mac** grab the `.dmg` matching your chip (Apple Silicon = `aarch64`, Intel = `x64`).
           releaseDraft: false
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'BETA') }}
-          args: --target ${{ matrix.target }}
+          args: --target ${{ matrix.target }} --config src-tauri/tauri.direct-macos.conf.json
 
   patch-updater-metadata:
     needs: build-macos

@@ -133,6 +133,7 @@ export interface AppState {
   updateStatus: string;
   updateProgress: number | null;
   showStats: boolean; // Hide/show statistics on dashboard
+  appSessionLoggedIn: boolean;
 
   setStatus: (status: ConnectionStatus) => void;
   setActiveServer: (server: ServerConfig | null) => void;
@@ -258,13 +259,15 @@ const secureStorage: StateStorage<Promise<void> | void> = {
       return;
     }
 
-    // Write local first so a Keychain/IPC failure never loses newly added servers.
-    safeLocalSet(name, value);
     try {
       await invoke('secure_store_set', { key: name, value });
+      // Remove any plaintext value left by older builds after the secure write
+      // has completed successfully.
       safeLocalRemove(name);
     } catch (err) {
-      console.warn('[storage] secure write failed, keeping local fallback', err);
+      persistedValueCache.delete(name);
+      console.error('[storage] secure write failed', err);
+      throw err;
     }
   },
   async removeItem(name) {
@@ -380,6 +383,7 @@ function compactStateForPersist(state: AppState): Partial<AppState> {
     'updatePhase',
     'updateStatus',
     'updateProgress',
+    'appSessionLoggedIn',
   ]);
 
   return Object.fromEntries(
@@ -448,7 +452,7 @@ export const useAppStore = create<AppState>()(
       logs: [],
       socksPort: 10808,
       httpPort: 10809,
-      autoStart: true,
+      autoStart: false,
       silentAdminAutostart: false,
       theme: 'dark',
       language: detectInitialLanguage(),
@@ -466,6 +470,7 @@ export const useAppStore = create<AppState>()(
       updateStatus: '',
       updateProgress: null,
       showStats: false,
+      appSessionLoggedIn: false,
 
       setStatus: (status) => set({ status }),
       setActiveServer: (server) => set({

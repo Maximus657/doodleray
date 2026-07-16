@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { X, LogOut, RefreshCw, Trash2, DownloadCloud, Wrench, Loader2 } from 'lucide-react';
 import { useAppStore, type SupportedLanguage } from '../../stores/app-store';
 import { refreshSubscription } from '../../lib/subscription';
-import { isClosedControlPlaneEnabled } from '../../lib/build-policy';
+import { isClosedControlPlaneEnabled, isDesktopAutostartAvailable, isNetworkExtensionOnlyBuild } from '../../lib/build-policy';
 import { appApiLogout } from '../../lib/app-control-plane';
+import { isUpdateManagedByStore, openStoreUpdatePage } from '../../lib/update-channel';
 import Toggle from './Toggle';
 
 type T = (key: never) => string;
@@ -67,7 +68,7 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
     autoSelectFastest, setAutoSelectFastest,
     subAutoUpdateMinutes, setSubAutoUpdateMinutes,
     subscriptions, updateSubscription, removeSubscription,
-    wipeData, addLog,
+    wipeData, addLog, appSessionLoggedIn,
   } = useAppStore();
 
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
@@ -77,6 +78,9 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
   const [loggingOut, setLoggingOut] = useState(false);
   const [wipeArmed, setWipeArmed] = useState(false);
   const closedControlPlane = isClosedControlPlaneEnabled();
+  const desktopAutostartAvailable = isDesktopAutostartAvailable();
+  const networkExtensionOnly = isNetworkExtensionOnlyBuild();
+  const storeManagedUpdates = isUpdateManagedByStore();
 
   const launchOn = autoStart || silentAdminAutostart;
   const toggleLaunch = async () => {
@@ -108,6 +112,13 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
   const handleCheckUpdates = async () => {
     setUpdateStatus(t('updateChecking' as never));
     try {
+      if (isUpdateManagedByStore()) {
+        await openStoreUpdatePage();
+        setUpdateStatus(t('updateOpenStore' as never));
+        setTimeout(() => setUpdateStatus(null), 4000);
+        return;
+      }
+
       const { checkForAppUpdate } = await import('../../lib/app-updater');
       const update = await checkForAppUpdate();
       if (update) {
@@ -203,10 +214,16 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
 
         <div className="-mr-3 min-h-0 flex-1 overflow-y-auto pr-3">
           {/* General */}
-          <Row title={t('v6SetLaunch' as never)} sub={t('v6SetLaunchSub' as never)} onClick={toggleLaunch} right={<Toggle on={launchOn} label={t('v6SetLaunch' as never)} />} />
+          {desktopAutostartAvailable && (
+            <Row title={t('v6SetLaunch' as never)} sub={t('v6SetLaunchSub' as never)} onClick={toggleLaunch} right={<Toggle on={launchOn} label={t('v6SetLaunch' as never)} />} />
+          )}
           <Row title={t('v6SetAutoConnect' as never)} sub={t('v6SetAutoConnectSub' as never)} onClick={() => setAutoConnectOnStartup(!autoConnectOnStartup)} right={<Toggle on={autoConnectOnStartup} label={t('v6SetAutoConnect' as never)} />} />
-          <Row title={t('v6SetKillSwitch' as never)} sub={t('v6SetKillSwitchSub' as never)} onClick={() => setKillSwitch(!killSwitch)} right={<Toggle on={killSwitch} label={t('v6SetKillSwitch' as never)} />} />
-          <Row title={t('v6SetStats' as never)} sub={t('v6SetStatsSub' as never)} onClick={() => setShowStats(!showStats)} right={<Toggle on={showStats} label={t('v6SetStats' as never)} />} />
+          {!networkExtensionOnly && (
+            <Row title={t('v6SetKillSwitch' as never)} sub={t('v6SetKillSwitchSub' as never)} onClick={() => setKillSwitch(!killSwitch)} right={<Toggle on={killSwitch} label={t('v6SetKillSwitch' as never)} />} />
+          )}
+          {!networkExtensionOnly && (
+            <Row title={t('v6SetStats' as never)} sub={t('v6SetStatsSub' as never)} onClick={() => setShowStats(!showStats)} right={<Toggle on={showStats} label={t('v6SetStats' as never)} />} />
+          )}
           <Row
             title={t('v6SetLanguage' as never)}
             sub={t('v6SetLanguageSub' as never)}
@@ -224,13 +241,17 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
           />
 
           {/* Connection */}
-          <SectionTitle>{t('v6SecConnection' as never)}</SectionTitle>
+          {!networkExtensionOnly && <SectionTitle>{t('v6SecConnection' as never)}</SectionTitle>}
           {!closedControlPlane && (
             <Row title={t('v6SetAutoSelect' as never)} sub={t('v6SetAutoSelectSub' as never)} onClick={() => setAutoSelectFastest(!autoSelectFastest)} right={<Toggle on={autoSelectFastest} label={t('v6SetAutoSelect' as never)} />} />
           )}
-          <Row title={t('strictRoute' as never)} sub={t('strictRouteDesc' as never)} onClick={() => setStrictRoute(!strictRoute)} right={<Toggle on={strictRoute} label={t('strictRoute' as never)} />} />
-          <Row title={t('socksPort' as never)} right={<PortInput value={socksPort} onCommit={setSocksPort} label={t('socksPort' as never)} />} />
-          <Row title={t('httpPort' as never)} right={<PortInput value={httpPort} onCommit={setHttpPort} label={t('httpPort' as never)} />} />
+          {!networkExtensionOnly && (
+            <>
+              <Row title={t('strictRoute' as never)} sub={t('strictRouteDesc' as never)} onClick={() => setStrictRoute(!strictRoute)} right={<Toggle on={strictRoute} label={t('strictRoute' as never)} />} />
+              <Row title={t('socksPort' as never)} right={<PortInput value={socksPort} onCommit={setSocksPort} label={t('socksPort' as never)} />} />
+              <Row title={t('httpPort' as never)} right={<PortInput value={httpPort} onCommit={setHttpPort} label={t('httpPort' as never)} />} />
+            </>
+          )}
           {!closedControlPlane && (
             <Row
               title={t('subAutoUpdate' as never)}
@@ -295,19 +316,21 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
           {/* Maintenance */}
           <SectionTitle>{t('v6SecMaintenance' as never)}</SectionTitle>
           <Row
-            title={t('checkForUpdates' as never)}
+            title={t((storeManagedUpdates ? 'updateOpenStore' : 'checkForUpdates') as never)}
             sub={updateStatus ?? undefined}
             onClick={handleCheckUpdates}
             right={<DownloadCloud className="h-[18px] w-[18px] shrink-0 text-white/50" strokeWidth={1.9} />}
           />
-          <Row
-            title={t('v6SetRepair' as never)}
-            sub={t('v6SetRepairSub' as never)}
-            onClick={handleRepair}
-            right={repairing
-              ? <Loader2 className="h-[18px] w-[18px] shrink-0 v6-orb-spin text-[#FF9E38]" strokeWidth={2} />
-              : <Wrench className="h-[18px] w-[18px] shrink-0 text-white/50" strokeWidth={1.9} />}
-          />
+          {!networkExtensionOnly && (
+            <Row
+              title={t('v6SetRepair' as never)}
+              sub={t('v6SetRepairSub' as never)}
+              onClick={handleRepair}
+              right={repairing
+                ? <Loader2 className="h-[18px] w-[18px] shrink-0 v6-orb-spin text-[#FF9E38]" strokeWidth={2} />
+                : <Wrench className="h-[18px] w-[18px] shrink-0 text-white/50" strokeWidth={1.9} />}
+            />
+          )}
           {!closedControlPlane && (
             <Row
               title={wipeArmed ? t('v6ConfirmAgain' as never) : t('v6SetWipe' as never)}
@@ -322,14 +345,16 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
           )}
 
           {/* Quit */}
-          <Row
-            title={t('quit' as never)}
-            danger
-            onClick={handleExit}
-            right={loggingOut
-              ? <Loader2 className="h-[18px] w-[18px] shrink-0 v6-orb-spin text-[#ff8a7a]" strokeWidth={2} />
-              : <LogOut className="h-[18px] w-[18px] shrink-0 text-[#ff8a7a]" strokeWidth={1.9} />}
-          />
+          {(!closedControlPlane || appSessionLoggedIn) && (
+            <Row
+              title={t((closedControlPlane ? 'signOut' : 'quit') as never)}
+              danger
+              onClick={handleExit}
+              right={loggingOut
+                ? <Loader2 className="h-[18px] w-[18px] shrink-0 v6-orb-spin text-[#ff8a7a]" strokeWidth={2} />
+                : <LogOut className="h-[18px] w-[18px] shrink-0 text-[#ff8a7a]" strokeWidth={1.9} />}
+            />
+          )}
         </div>
       </div>
     </div>

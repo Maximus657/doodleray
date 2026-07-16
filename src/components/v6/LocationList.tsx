@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { Search, Plus, RefreshCw } from 'lucide-react';
 import type { ServerConfig, Subscription } from '../../stores/app-store';
 import { buildServerDisplayGroups, serverMatchesGroupQuery } from '../../lib/server-groups';
+import { isNetworkExtensionOnlyBuild } from '../../lib/build-policy';
 import ServerRow from './ServerRow';
 
 type T = (key: never) => string;
@@ -67,6 +68,7 @@ export default function LocationList({
   const expire = activeSub?.traffic?.expire;
   const days = expire && expire > 0 ? Math.max(0, Math.ceil((expire * 1000 - Date.now()) / 86_400_000)) : null;
   const dCol = days !== null ? dayColor(days) : null;
+  const externalRenewalAvailable = !isNetworkExtensionOnlyBuild();
 
   return (
     <div className="flex min-h-0 w-[clamp(280px,32%,392px)] shrink-0 flex-col rounded-[26px] border border-white/[0.09] bg-white/[0.05] p-5">
@@ -134,11 +136,13 @@ export default function LocationList({
       {/* Subscription block (design) */}
       {days !== null && dCol && (
         <div className="mt-3.5 border-t border-white/[0.08] pt-4">
-          <div className="mb-[9px] flex items-center justify-end">
-            <button type="button" onClick={openRenew} className="text-[12px] font-semibold text-[#FF9E38] v6-focus">
-              {t('v6Renew' as never)}
-            </button>
-          </div>
+          {externalRenewalAvailable && (
+            <div className="mb-[9px] flex items-center justify-end">
+              <button type="button" onClick={openRenew} className="text-[12px] font-semibold text-[#FF9E38] v6-focus">
+                {t('v6Renew' as never)}
+              </button>
+            </div>
+          )}
           <div className="mb-[11px] flex items-baseline gap-1.5">
             <span className="text-[24px] font-semibold leading-none tabular-nums text-white">{days}</span>
             <span className="text-[12.5px] text-white/45">

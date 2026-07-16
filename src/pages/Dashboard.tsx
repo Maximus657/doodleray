@@ -26,7 +26,7 @@ import { buildServerSelectionIndex, findMatchingServer, findMatchingServerInInde
 import { getSubscriptionById, getSubscriptionTrafficStatus } from '../lib/subscription-status';
 import { pingServersWithLimit } from '../lib/ping-runner';
 import { describeSubscriptionSource } from '../lib/redaction';
-import { isClosedControlPlaneEnabled, isLegacyImportEnabled, legacyImportDisabledMessage } from '../lib/build-policy';
+import { getPrivacyPolicyUrl, isClosedControlPlaneEnabled, isLegacyImportEnabled, isNetworkExtensionOnlyBuild, legacyImportDisabledMessage } from '../lib/build-policy';
 import {
   appApiExchangeCode,
   appApiLocations,
@@ -212,6 +212,8 @@ export default function Dashboard() {
   const [postLoginFlightSettled, setPostLoginFlightSettled] = useState(false);
   const legacyImportEnabled = isLegacyImportEnabled();
   const closedControlPlane = isClosedControlPlaneEnabled();
+  const privacyPolicyUrl = getPrivacyPolicyUrl();
+  const networkExtensionOnly = isNetworkExtensionOnlyBuild();
   const appLoginDigits = normalizeAppLoginCode(appLoginCode);
   const canSubmitAppLoginCode = appLoginDigits.length === 8 && !appLoginBusy;
 
@@ -223,6 +225,12 @@ export default function Dashboard() {
       document.body.classList.remove('v6-login-transition-settled');
     };
   }, [postLoginFlight, postLoginFlightSettled]);
+
+  useEffect(() => {
+    if (!networkExtensionOnly || productMode === 'protected') return;
+    setProxyMode('tun');
+    setSystemProxyMode('set');
+  }, [networkExtensionOnly, productMode, setProxyMode, setSystemProxyMode]);
 
   const refreshTunnelServiceHealth = useCallback(async () => {
     if (!isTauriRuntime()) return false;
@@ -247,6 +255,7 @@ export default function Dashboard() {
     try {
       const session = sessionOverride ?? await appApiSessionStatus();
       setAppSession(session);
+      useAppStore.setState({ appSessionLoggedIn: session.logged_in });
       if (!session.logged_in) {
         syncClosedLocationsToStore(session, []);
         return;
@@ -272,6 +281,7 @@ export default function Dashboard() {
     if (!closedControlPlane) return;
     const handleAppLogout = () => {
       setAppSession(null);
+      useAppStore.setState({ appSessionLoggedIn: false });
       setAppLoginCode('');
       setAppLoginError(null);
       setAppLocationsLoading(false);
@@ -290,6 +300,7 @@ export default function Dashboard() {
         const session = await appApiSessionStatus();
         if (disposed) return;
         setAppSession(session);
+        useAppStore.setState({ appSessionLoggedIn: session.logged_in });
         if (session.logged_in) {
           const locations = await appApiLocations();
           if (disposed) return;
@@ -952,6 +963,7 @@ export default function Dashboard() {
     try {
       const session = await appApiExchangeCode(code);
       setAppSession(session);
+      useAppStore.setState({ appSessionLoggedIn: session.logged_in });
       setAppLoginCode('');
       if (loginFlightTimerRef.current !== null) {
         window.clearTimeout(loginFlightTimerRef.current);
@@ -1595,6 +1607,27 @@ export default function Dashboard() {
             )}
             {!legacyImportEnabled && (
               <div className="mt-7 text-left">
+                <div className="mb-5 rounded-[16px] border border-white/[0.1] bg-white/[0.045] px-4 py-3.5">
+                  <p className="text-[11.5px] leading-relaxed text-white/55">
+                    {t('v6VpnDataDisclosure' as never)}
+                  </p>
+                  {privacyPolicyUrl && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          const { openUrl } = await import('@tauri-apps/plugin-opener');
+                          await openUrl(privacyPolicyUrl);
+                        } catch {
+                          window.open(privacyPolicyUrl, '_blank', 'noopener,noreferrer');
+                        }
+                      }}
+                      className="mt-2 text-[11.5px] font-medium text-[#FFAE57] underline decoration-[#FFAE57]/45 underline-offset-4 v6-focus"
+                    >
+                      {t('v6PrivacyPolicy' as never)}
+                    </button>
+                  )}
+                </div>
                 <label className="mb-2.5 block text-[12px] font-semibold uppercase tracking-[0.16em] text-white/45">
                   {t('v6AppLoginCode' as never)}
                 </label>
@@ -1647,7 +1680,9 @@ export default function Dashboard() {
 
           {/* RIGHT: modes, connect core, bottom row */}
           <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
-            <ModeSelector current={productMode} onSelect={handleModeSelect} disabled={busy} t={t} />
+            {!networkExtensionOnly && (
+              <ModeSelector current={productMode} onSelect={handleModeSelect} disabled={busy} t={t} />
+            )}
 
             <ConnectOrb
               state={orbState}
@@ -1659,13 +1694,15 @@ export default function Dashboard() {
               serverCountryCode={activeServer?.countryCode ?? null}
               disabled={status === 'disconnected' && !canConnect}
               onClick={handleConnect}
-              onDiagnose={() => setShowDiagModal(true)}
+              onDiagnose={networkExtensionOnly ? undefined : () => setShowDiagModal(true)}
               diagnoseLabel={t('v6DiagIssueCta' as never)}
             />
 
             <div className="flex shrink-0 gap-3.5">
-              <SplitRoutingToggle protectedMode={productMode === 'protected'} onOpen={() => setShowSplitModal(true)} t={t} />
-              {showStats && (
+              {!networkExtensionOnly && (
+                <SplitRoutingToggle protectedMode={productMode === 'protected'} onOpen={() => setShowSplitModal(true)} t={t} />
+              )}
+              {!networkExtensionOnly && showStats && (
                 <TrafficStats
                   connected={connected}
                   currentDownload={currentDownload}
@@ -1678,14 +1715,14 @@ export default function Dashboard() {
             <DiagnosticsDrawer
               logs={logs}
               onClear={clearLogs}
-              onOpenDiagnostics={() => setShowDiagModal(true)}
+              onOpenDiagnostics={networkExtensionOnly ? undefined : () => setShowDiagModal(true)}
               t={t}
             />
           </div>
         </div>
       )}
 
-      {showDiagModal && (
+      {!networkExtensionOnly && showDiagModal && (
         <DiagnosticPanel
           onClose={() => setShowDiagModal(false)}
           onExportSupportBundle={handleExportSupportBundle}
@@ -1693,7 +1730,7 @@ export default function Dashboard() {
         />
       )}
 
-      {showSplitModal && (
+      {!networkExtensionOnly && showSplitModal && (
         <SplitRoutingModal
           protectedMode={productMode === 'protected'}
           onClose={() => setShowSplitModal(false)}

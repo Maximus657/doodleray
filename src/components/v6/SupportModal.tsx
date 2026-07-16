@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { X, MessageCircle, Mail, LifeBuoy, ChevronRight } from 'lucide-react';
+import { isNetworkExtensionOnlyBuild } from '../../lib/build-policy';
 
 type T = (key: never) => string;
 
@@ -38,12 +39,12 @@ export default function SupportModal({ onClose, onExportSupportBundle, t }: Prop
       sub: 'doodlerayhelp@hotmail.com',
       onClick: () => open('mailto:doodlerayhelp@hotmail.com'),
     },
-    {
+    ...(!isNetworkExtensionOnlyBuild() ? [{
       icon: LifeBuoy,
       title: t('supportBundle' as never),
       sub: t('v6SupportBundleSub' as never),
       onClick: () => { onExportSupportBundle(); onClose(); },
-    },
+    }] : []),
   ];
 
   return (

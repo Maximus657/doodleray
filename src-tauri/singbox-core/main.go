@@ -19,12 +19,13 @@ var instance *box.Box
 func logError(msg string) {
 	exePath, _ := os.Executable()
 	logPath := filepath.Join(filepath.Dir(exePath), "singbox_error.log")
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		return
 	}
 	defer f.Close()
-	fmt.Fprintln(f, msg)
+	_ = f.Chmod(0600)
+	fmt.Fprintf(f, "%s %s\n", time.Now().UTC().Format(time.RFC3339), msg)
 }
 
 //export StartSingBox
@@ -32,7 +33,6 @@ func StartSingBox(configJson *C.char) C.int {
 	configStr := C.GoString(configJson)
 
 	logError("=== StartSingBox called ===")
-	logError("Config: " + configStr)
 
 	// Close any previous instance first
 	if instance != nil {
@@ -46,7 +46,9 @@ func StartSingBox(configJson *C.char) C.int {
 
 	opt, err := sjson.UnmarshalExtendedContext[option.Options](ctx, []byte(configStr))
 	if err != nil {
-		logError("Error parsing config: " + err.Error())
+		// Never log the parser error or raw configuration: either can expose
+		// server addresses, UUIDs, credentials, and routing metadata.
+		logError("Error parsing sing-box configuration")
 		return -1
 	}
 
@@ -56,13 +58,13 @@ func StartSingBox(configJson *C.char) C.int {
 	})
 
 	if err != nil {
-		logError("Error creating sing-box: " + err.Error())
+		logError("Error creating sing-box instance")
 		return -2
 	}
 
 	err = b.Start()
 	if err != nil {
-		logError("Error starting sing-box: " + err.Error())
+		logError("Error starting sing-box instance")
 		b.Close() // Clean up to release bound ports
 		return -3
 	}
@@ -77,7 +79,7 @@ func StopSingBox() C.int {
 	if instance != nil {
 		err := instance.Close()
 		if err != nil {
-			logError("Error stopping sing-box: " + err.Error())
+			logError("Error stopping sing-box instance")
 			return -1
 		}
 		instance = nil

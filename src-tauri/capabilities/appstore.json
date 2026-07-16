@@ -1,0 +1,24 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "appstore",
+  "description": "Minimal capability set for the sandboxed Mac App Store host app",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-minimize",
+    "core:window:allow-maximize",
+    "core:window:allow-unmaximize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-is-maximized",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "opener:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://doodleraydb-doodleray-ic3y6k-c7350f-94-241-172-101.traefik.me/**" },
+        { "url": "https://94-241-172-101.sslip.io/doodleray-api/**" }
+      ]
+    }
+  ]
+}
