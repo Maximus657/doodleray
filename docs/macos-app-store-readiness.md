@@ -58,7 +58,9 @@ flavor. Runtime branching in JavaScript is not a sufficient boundary.
       delegates update installation to Apple.
 - [ ] Add automated extension tests plus real-device connect/disconnect,
       sleep/wake, network-change, kill-switch, DNS/IPv6, upgrade, and uninstall
-      tests.
+      tests. The host-safe and isolated-guest strategy is documented in
+      [`vpn-isolated-qa.md`](vpn-isolated-qa.md); real Packet Tunnel acceptance
+      remains pending an external SSD/QA Mac.
 
 ## Blocking product, privacy, and App Store Connect work
 
@@ -134,6 +136,8 @@ flavor. Runtime branching in JavaScript is not a sufficient boundary.
 - The host reads the macOS product version through `sysctl` instead of spawning
   `sw_vers`, and the bundle includes a valid tracking-free
   `PrivacyInfo.xcprivacy` matching the v6 API data inventory.
+- A host-safe libXray smoke test validates the embedded framework's lifecycle
+  and loopback TCP proxying without touching host routes, DNS, or VPN state.
 
 ## Automated gate
 
@@ -173,6 +177,10 @@ mandatory.
   installed.
 - Signed universal `DoodleRay VPN.app`: bundle verifier pass without launching
   it or interrupting the laptop's active VPN.
+- Host-safe libXray loopback smoke: the exact embedded 26.7.11 framework starts,
+  proxies TCP, and stops without creating a TUN device.
+- Isolated Colima TUN smoke: Xray carries HTTPS and UDP DNS through a guest
+  `/dev/net/tun`; host default route and DNS hashes stay unchanged.
 - App Store preflight: 27 checks pass; the live v6 privacy-policy content and
   installer identity fail.
 
