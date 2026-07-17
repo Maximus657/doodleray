@@ -49,6 +49,7 @@ require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' 
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$host_info")" "60000" "host build number"
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :ITSAppUsesNonExemptEncryption' "$host_info")" "false" "export-compliance declaration"
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$extension_info")" "com.doodleray.doodleray.DoodleRayVPN" "extension bundle identifier"
+require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$extension_info")" "DoodleRay VPN" "extension display name"
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$extension_info")" "6.0.0" "extension marketing version"
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$extension_info")" "60000" "extension build number"
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionPointIdentifier' "$extension_info")" "com.apple.networkextension.packet-tunnel" "Packet Tunnel extension point"

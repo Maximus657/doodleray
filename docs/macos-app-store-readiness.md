@@ -81,19 +81,20 @@ flavor. Runtime branching in JavaScript is not a sufficient boundary.
 - [ ] Prepare App Store privacy labels, support URL, marketing URL, review notes,
       demo credentials/instructions, screenshots, category, age rating, EULA,
       and export-compliance/encryption answers. Metadata, URLs, localizations,
-      privacy labels, category, age rating, price, availability, and App Store
-      export questionnaire are saved; screenshots, reviewer credentials/contact
-      information, content rights, and build selection remain.
+      privacy labels, category, age rating, price, availability, App Store
+      export questionnaire, build upload, and one real 1440x900 VM screenshot
+      are saved; reviewer credentials/contact information, content rights, and
+      the final build-selection save remain.
 - [ ] Confirm and document the legal relationship between the App Store seller
       and the operator named in the privacy policy. Do not publish an invented
       controller/processor relationship.
 - [ ] Complete App Store Connect tax/banking, metadata, privacy answers,
       provisioning profiles, build upload, and TestFlight/internal review. The
-      app record, bundle IDs, capability switches, and Developer Program
-      agreement are already in place.
-- [ ] Install a Mac Installer Distribution certificate, produce the signed
-      `.pkg`, and validate/upload it. Apple Distribution app signing is already
-      working; the installer identity is the only failed local preflight check.
+      app record, bundle IDs, capability switches, Developer Program agreement,
+      signed package, processed build 60000, and initial screenshot are in
+      place; the final build-selection save and TestFlight review remain.
+- [x] Install a Mac Installer Distribution certificate, produce the signed
+      `.pkg`, validate it, and upload build 60000 to App Store Connect.
 - [x] Complete the Digital Services Act trader declaration in App Store
       Connect. The free-app agreement is active; a paid-app agreement is not
       required while the app has no paid download or in-app purchases.
@@ -141,6 +142,8 @@ flavor. Runtime branching in JavaScript is not a sufficient boundary.
 - The Packet Tunnel distribution target disables Xcode's base-entitlement
   injection, preventing the debug-only `get-task-allow` entitlement from
   entering the App Store extension signature.
+- The Packet Tunnel extension declares the App Store-required display name,
+  and the signed-bundle verifier fails closed if regeneration removes it.
 - A host-safe libXray smoke test validates the embedded framework's lifecycle
   and loopback TCP proxying without touching host routes, DNS, or VPN state.
 
@@ -152,12 +155,18 @@ Run:
 ./scripts/macos/verify-app-store-readiness.sh
 ```
 
-The static gate currently passes 32 checks and fails one: the Mac Installer
-Distribution identity is unavailable. `build-app-store.sh` additionally
-verifies the signed `.app`; `package-app-store.sh` will fail closed until the
-installer certificate exists. Passing these gates means “ready for upload QA,”
-not “approved for submission.” TestFlight and the real-device VPN matrix remain
-mandatory.
+The static gate currently passes all 34 checks. `build-app-store.sh`
+additionally verifies the signed `.app`; `package-app-store.sh` fails closed if
+the installer certificate is unavailable. `upload-app-store.sh` constructs a
+symbol-bearing `.xcarchive`, validates it through Xcode, and uploads it to App
+Store Connect using the signed-in Xcode account:
+
+```bash
+./scripts/macos/upload-app-store.sh
+```
+
+Passing the local gates means “ready for App Store upload,” not “approved for
+submission.” TestFlight and the real-device VPN matrix remain mandatory.
 
 ## Current local evidence
 
@@ -177,17 +186,22 @@ mandatory.
   `govulncheck ./...` reports no reachable vulnerabilities after Go 1.26.5 and
   dependency updates.
 - Local Apple Distribution signing identity: installed.
+- Local Mac App Store installer signing identity: installed.
 - Matching host and Packet Tunnel Provider App Store provisioning profiles:
   installed.
 - Signed universal `DoodleRay VPN.app`: bundle verifier pass without launching
   it or interrupting the laptop's active VPN.
-- Tart macOS 26 guest: the corrected release bundle passes in-guest static
-  signature validation. Direct launch is correctly rejected because a
-  production Mac App Store profile must arrive through Apple's install flow;
-  real tunnel acceptance now needs TestFlight or guest-specific development
-  profiles.
+- Tart macOS 26 guest: a guest-specific development build passes signature
+  validation and launches the v6 sign-in UI. Real tunnel acceptance still
+  needs a dedicated reusable reviewer subscription code.
 - Host-safe libXray loopback smoke: the exact embedded 26.7.11 framework starts,
   proxies TCP, and stops without creating a TUN device.
+- Xcode validation accepted build 60000 and uploaded it to App Store Connect on
+  2026-07-17. App Store Connect reports the binary as confirmed, symbols as
+  included, non-exempt encryption as absent, and both `arm64` and `x86_64` as
+  supported. Saving the release build selection is the next portal gate.
+- A real 1440x900 screenshot from the isolated macOS guest is uploaded to the
+  Store version; it shows the v6 sign-in UI and pre-use VPN data disclosure.
 - Isolated Colima TUN smoke: Xray carries HTTPS and UDP DNS through a guest
   `/dev/net/tun`; host default route and DNS hashes stay unchanged.
 - App Store Connect: English and Russian metadata, 4+ age rating, privacy

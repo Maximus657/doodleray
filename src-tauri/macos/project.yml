@@ -30,6 +30,7 @@ targets:
         CFBundleExecutable: $(EXECUTABLE_NAME)
         CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
         CFBundleInfoDictionaryVersion: "6.0"
+        CFBundleDisplayName: DoodleRay VPN
         CFBundleName: $(PRODUCT_NAME)
         CFBundlePackageType: XPC!
         CFBundleShortVersionString: $(MARKETING_VERSION)

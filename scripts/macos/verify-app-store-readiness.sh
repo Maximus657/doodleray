@@ -67,6 +67,7 @@ require_file "src-tauri/macos/PacketTunnelProvider/Entitlements.plist" "Packet T
 require_file "scripts/macos/build-app-store.sh" "reproducible App Store build script exists"
 require_file "scripts/macos/verify-app-store-bundle.sh" "signed-bundle verifier exists"
 require_file "scripts/macos/package-app-store.sh" "signed App Store package script exists"
+require_file "scripts/macos/upload-app-store.sh" "reproducible App Store upload script exists"
 require_file "src-tauri/resources/PrivacyInfo.xcprivacy" "App Store privacy manifest exists"
 
 if [ -f "src-tauri/resources/PrivacyInfo.xcprivacy" ] && \
