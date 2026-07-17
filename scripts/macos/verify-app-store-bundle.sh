@@ -63,10 +63,10 @@ require_equal "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.network.c
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.networking.networkextension:0' "$EXTENSION_ENTITLEMENTS")" "packet-tunnel-provider" "extension Network Extension entitlement"
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.application-groups:0' "$EXTENSION_ENTITLEMENTS")" "group.com.doodleray.doodleray" "extension App Group entitlement"
 
-if host_get_task_allow="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.get-task-allow' "$HOST_ENTITLEMENTS" 2>/dev/null)"; then
+if host_get_task_allow="$(/usr/libexec/PlistBuddy -c 'Print :get-task-allow' "$HOST_ENTITLEMENTS" 2>/dev/null)"; then
   require_equal "$host_get_task_allow" "false" "host distribution build disables get-task-allow"
 fi
-if extension_get_task_allow="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.get-task-allow' "$EXTENSION_ENTITLEMENTS" 2>/dev/null)"; then
+if extension_get_task_allow="$(/usr/libexec/PlistBuddy -c 'Print :get-task-allow' "$EXTENSION_ENTITLEMENTS" 2>/dev/null)"; then
   require_equal "$extension_get_task_allow" "false" "extension distribution build disables get-task-allow"
 fi
 

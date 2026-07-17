@@ -72,6 +72,7 @@ rustup target add x86_64-apple-darwin >/dev/null
 if ! xcodebuild \
   -project "$MACOS_DIR/DoodleRayAppStoreExtensions.xcodeproj" \
   -scheme DoodleRayVPN \
+  -destination 'generic/platform=macOS' \
   -configuration Release \
   -derivedDataPath "$MACOS_DIR/DerivedData" \
   ARCHS="arm64 x86_64" \
