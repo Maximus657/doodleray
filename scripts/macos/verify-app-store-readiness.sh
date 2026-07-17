@@ -165,6 +165,12 @@ else
   fail "App Store build must compile Rust with the closed control plane and App Store channel"
 fi
 
+if rg -Fq 'MACOS_APP_STORE_SIGNING_IDENTITY_NAME:-Apple Distribution' scripts/macos/build-app-store.sh; then
+  pass "release build defaults to Apple Distribution despite the explicit VM QA override"
+else
+  fail "release build must default to Apple Distribution signing"
+fi
+
 if [ "${DOODLERAY_APP_SUPPORTS_ACCOUNT_CREATION:-0}" = "1" ]; then
   if rg -q 'app_api_delete_account|delete_account' src src-tauri/src; then
     pass "account-creating build has an in-app deletion path"

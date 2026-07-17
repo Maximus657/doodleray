@@ -12,6 +12,7 @@ HOST_PROFILE_STAGED="$STAGING_DIR/DoodleRayHost.provisionprofile"
 HOST_ENTITLEMENTS_STAGED="$STAGING_DIR/DoodleRayHost.entitlements"
 EXTENSION_BUNDLE="$MACOS_DIR/DerivedData/Build/Products/Release/DoodleRayVPN.appex"
 APP_BUNDLE="$ROOT_DIR/src-tauri/target/universal-apple-darwin/release/bundle/macos/DoodleRay VPN.app"
+SIGNING_IDENTITY_NAME="${MACOS_APP_STORE_SIGNING_IDENTITY_NAME:-Apple Distribution}"
 
 find_profile_by_name() {
   local expected_name="$1"
@@ -47,11 +48,13 @@ extension_team_id="$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$STAG
 host_application_id="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.application-identifier' "$STAGING_DIR/host-profile.plist")"
 extension_application_id="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.application-identifier' "$STAGING_DIR/extension-profile.plist")"
 extension_profile_name="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$STAGING_DIR/extension-profile.plist")"
+identity="$(security find-identity -v -p codesigning | sed -n 's/.*"\([^"]*\)"/\1/p' | awk -v prefix="$SIGNING_IDENTITY_NAME:" 'index($0, prefix) == 1 { print; exit }')"
 
 [[ "$team_id" =~ ^[A-Z0-9]+$ ]] || { printf 'Invalid Team ID in host profile.\n' >&2; exit 1; }
 [ "$team_id" = "$extension_team_id" ] || { printf 'Host and extension profiles belong to different teams.\n' >&2; exit 1; }
 [ "$host_application_id" = "$team_id.com.doodleray.doodleray" ] || { printf 'Host profile does not match the App Store bundle identifier.\n' >&2; exit 1; }
 [ "$extension_application_id" = "$team_id.com.doodleray.doodleray.DoodleRayVPN" ] || { printf 'Extension profile does not match the Packet Tunnel bundle identifier.\n' >&2; exit 1; }
+[ -n "$identity" ] || { printf '%s signing identity is missing.\n' "$SIGNING_IDENTITY_NAME" >&2; exit 1; }
 
 cp "$host_profile" "$HOST_PROFILE_STAGED"
 cp "$ROOT_DIR/src-tauri/Entitlements.appstore.plist" "$HOST_ENTITLEMENTS_STAGED"
@@ -75,7 +78,7 @@ if ! xcodebuild \
   ONLY_ACTIVE_ARCH=NO \
   DEVELOPMENT_TEAM="$team_id" \
   CODE_SIGN_STYLE=Manual \
-  CODE_SIGN_IDENTITY="Apple Distribution" \
+  CODE_SIGN_IDENTITY="$identity" \
   PROVISIONING_PROFILE_SPECIFIER="$extension_profile_name" \
   build > /tmp/doodleray-app-store-extension-build.log 2>&1; then
   tail -n 160 /tmp/doodleray-app-store-extension-build.log >&2
@@ -83,8 +86,6 @@ if ! xcodebuild \
 fi
 
 [ -d "$EXTENSION_BUNDLE" ] || { printf 'Signed Packet Tunnel bundle was not produced.\n' >&2; exit 1; }
-identity="$(security find-identity -v -p codesigning | sed -n 's/.*"\(Apple Distribution:.*\)"/\1/p' | head -n 1)"
-[ -n "$identity" ] || { printf 'Apple Distribution signing identity is missing.\n' >&2; exit 1; }
 
 export APPLE_SIGNING_IDENTITY="$identity"
 export DOODLERAY_BUILD_CHANNEL="app-store"

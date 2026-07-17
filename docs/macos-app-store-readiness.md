@@ -152,7 +152,7 @@ Run:
 ./scripts/macos/verify-app-store-readiness.sh
 ```
 
-The static gate currently passes 31 checks and fails one: the Mac Installer
+The static gate currently passes 32 checks and fails one: the Mac Installer
 Distribution identity is unavailable. `build-app-store.sh` additionally
 verifies the signed `.app`; `package-app-store.sh` will fail closed until the
 installer certificate exists. Passing these gates means “ready for upload QA,”
@@ -193,7 +193,7 @@ mandatory.
 - App Store Connect: English and Russian metadata, 4+ age rating, privacy
   labels, free pricing, manual release, and 173-market availability are saved;
   the privacy inventory is published.
-- App Store preflight: 31 checks pass; only the installer identity fails.
+- App Store preflight: 32 checks pass; only the installer identity fails.
 
 ## Primary references
 

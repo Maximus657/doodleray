@@ -65,6 +65,21 @@ Apple's installation flow. For a development build, register the disposable VM
 as a development Mac and use matching host and extension development profiles;
 for a production build, install it through TestFlight.
 
+The build script defaults to distribution signing and must stay that way for
+release packaging. For a registered disposable VM, pass explicit development
+profiles and opt in to the development identity:
+
+```bash
+MACOS_APP_STORE_PROVISIONING_PROFILE=/secure/qa-host.provisionprofile \
+PACKET_TUNNEL_PROVISIONING_PROFILE=/secure/qa-extension.provisionprofile \
+MACOS_APP_STORE_SIGNING_IDENTITY_NAME='Apple Development' \
+./scripts/macos/build-app-store.sh
+```
+
+Copy the resulting QA app into the VM, then rebuild once without those
+variables before creating the upload `.pkg`. Never upload the development-
+signed artifact.
+
 Prefer `tart exec` through the Tart guest agent for test control and log
 collection. That channel does not depend on guest SSH/network connectivity, so
 a broken TUN route cannot strand the runner. Never run the acceptance matrix on
