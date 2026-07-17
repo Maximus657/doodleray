@@ -58,6 +58,7 @@ else
 fi
 
 require_file "src-tauri/tauri.appstore.conf.json" "dedicated App Store Tauri config exists"
+require_file "src-tauri/Info.appstore.plist" "App Store export-compliance Info.plist exists"
 require_file "src-tauri/Entitlements.appstore.plist" "sandboxed host-app entitlements exist"
 require_file "src-tauri/macos/project.yml" "XcodeGen Packet Tunnel project is source-controlled"
 require_file "src-tauri/macos/PacketTunnelProvider/PacketTunnelProvider.swift" "Packet Tunnel Provider implementation exists"
@@ -122,11 +123,26 @@ else
   fail "Packet Tunnel source entitlements are incomplete"
 fi
 
+if rg -q 'CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO' src-tauri/macos/project.yml; then
+  pass "distribution extension disables the debug get-task-allow injection"
+else
+  fail "distribution extension must set CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO"
+fi
+
 if [ -f "src-tauri/tauri.appstore.conf.json" ] && \
    node -e "const c=require('./src-tauri/tauri.appstore.conf.json'); process.exit(c.bundle?.createUpdaterArtifacts === false ? 0 : 1)"; then
   pass "App Store config disables updater artifacts"
 else
   fail "App Store config must set bundle.createUpdaterArtifacts=false"
+fi
+
+if [ -f "src-tauri/Info.appstore.plist" ] && \
+   plutil -lint "src-tauri/Info.appstore.plist" >/dev/null 2>&1 && \
+   /usr/libexec/PlistBuddy -c 'Print :ITSAppUsesNonExemptEncryption' src-tauri/Info.appstore.plist 2>/dev/null | rg -q '^false$' && \
+   node -e "const c=require('./src-tauri/tauri.appstore.conf.json'); process.exit(c.bundle?.macOS?.infoPlist === 'Info.appstore.plist' ? 0 : 1)"; then
+  pass "Store bundle declares no non-exempt encryption per App Store Connect determination"
+else
+  fail "Store bundle must merge ITSAppUsesNonExemptEncryption=false"
 fi
 
 if rg -q "'app-store'" src/lib/update-channel.ts && \

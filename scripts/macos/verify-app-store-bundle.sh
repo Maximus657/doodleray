@@ -47,6 +47,7 @@ extension_executable="$EXTENSION_BUNDLE/Contents/MacOS/DoodleRayVPN"
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$host_info")" "com.doodleray.doodleray" "host bundle identifier"
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$host_info")" "6.0.0" "host marketing version"
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$host_info")" "60000" "host build number"
+require_equal "$(/usr/libexec/PlistBuddy -c 'Print :ITSAppUsesNonExemptEncryption' "$host_info")" "false" "export-compliance declaration"
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$extension_info")" "com.doodleray.doodleray.DoodleRayVPN" "extension bundle identifier"
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$extension_info")" "6.0.0" "extension marketing version"
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$extension_info")" "60000" "extension build number"
@@ -61,6 +62,13 @@ require_equal "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.app-sandb
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.network.client' "$EXTENSION_ENTITLEMENTS")" "true" "extension network client entitlement"
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.networking.networkextension:0' "$EXTENSION_ENTITLEMENTS")" "packet-tunnel-provider" "extension Network Extension entitlement"
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.application-groups:0' "$EXTENSION_ENTITLEMENTS")" "group.com.doodleray.doodleray" "extension App Group entitlement"
+
+if host_get_task_allow="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.get-task-allow' "$HOST_ENTITLEMENTS" 2>/dev/null)"; then
+  require_equal "$host_get_task_allow" "false" "host distribution build disables get-task-allow"
+fi
+if extension_get_task_allow="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.get-task-allow' "$EXTENSION_ENTITLEMENTS" 2>/dev/null)"; then
+  require_equal "$extension_get_task_allow" "false" "extension distribution build disables get-task-allow"
+fi
 
 host_team="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "$HOST_ENTITLEMENTS")"
 extension_team="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "$EXTENSION_ENTITLEMENTS")"

@@ -1,7 +1,7 @@
 # DoodleRay VPN — App Store submission draft
 
-Status: **draft ready for App Store Connect entry after the legal and privacy
-publication gates are resolved.** Do not put reviewer credentials or personal
+Status: **core metadata, privacy labels, age rating, availability, and pricing
+are saved in App Store Connect.** Do not put reviewer credentials or personal
 contact details in Git.
 
 ## App information
@@ -12,7 +12,7 @@ contact details in Git.
 | Version | `6.0.0` |
 | Primary category | Utilities |
 | Secondary category | Productivity |
-| Privacy policy URL | `https://doodlevpn.online/privacy` — blocked until the audited v6 revision is deployed |
+| Privacy policy URL | `https://doodlevpn.online/privacy` |
 | Support URL | `https://doodlevpn.online/support` |
 | Marketing URL | `https://doodlevpn.online/` |
 | License agreement | Use Apple's standard EULA unless the seller confirms that the DoodleVPN terms may be attached to this App Store listing |
@@ -21,24 +21,25 @@ contact details in Git.
 
 Subtitle (30-character limit):
 
-> VPN tunnel for your Mac
+> One-tap VPN for your Mac
 
 Promotional text:
 
-> Connect your Mac to DoodleVPN locations through Apple's system VPN framework, with a simple location picker and clear connection states.
+> Connect in one tap. DoodleRay VPN protects your whole Mac with Apple's system VPN, simple location selection, and unlimited traffic on every plan.
 
 Description:
 
-> DoodleRay VPN is a macOS client for an existing DoodleVPN subscription. Sign in with a DoodleVPN code, choose a location, and connect your Mac through a system VPN tunnel powered by Apple's Network Extension framework.
+> DoodleRay VPN makes protecting your Mac simple. Sign in with your DoodleVPN code, choose a location, and connect in one tap. Your connection runs through the macOS system VPN powered by Apple's Network Extension framework.
 >
-> • Full-device VPN through the macOS system VPN
-> • Country-based locations and automatic selection
-> • Clear connection states and a local event history
-> • Optional auto-connect when the app starts
-> • No advertising or third-party analytics SDKs
-> • Updates delivered through the Mac App Store
+> • Protect your whole Mac through the system VPN
+> • Choose a country or let DoodleRay pick automatically
+> • Enjoy unlimited traffic with every DoodleVPN plan
+> • See clear connection states and local event history
+> • Turn on automatic connection at app launch
+> • Get help quickly if something does not connect
+> • No ads or third-party analytics SDKs
 >
-> An active DoodleVPN subscription is required. Subscriptions are purchased and managed outside this app. DoodleRay VPN does not create accounts or sell subscriptions in the app.
+> An active DoodleVPN subscription is required. Subscription and account management take place in the DoodleVPN account outside the app. DoodleRay VPN does not create accounts or sell subscriptions in the app.
 
 Keywords (under 100 bytes):
 
@@ -48,27 +49,29 @@ Keywords (under 100 bytes):
 
 Subtitle:
 
-> VPN-туннель для вашего Mac
+> VPN для Mac в одно касание
 
 Promotional text:
 
-> Подключайте Mac к локациям DoodleVPN через системный VPN от Apple — с простым выбором страны и понятными состояниями соединения.
+> Подключайтесь в одно касание. DoodleRay VPN защищает весь Mac через системный VPN от Apple, предлагает простой выбор локации и безлимитный трафик.
 
 Description:
 
-> DoodleRay VPN — клиент macOS для действующей подписки DoodleVPN. Войдите по коду DoodleVPN, выберите локацию и подключите Mac через системный VPN-туннель Network Extension.
+> DoodleRay VPN делает защиту Mac простой. Войдите по коду DoodleVPN, выберите локацию и подключитесь в одно касание. Соединение работает через системный VPN macOS на базе Network Extension от Apple.
 >
-> • VPN для всего устройства через системный механизм macOS
-> • Локации по странам и автоматический выбор
-> • Понятные состояния подключения и локальная история событий
+> • Защита всего Mac через системный VPN
+> • Выбор страны или автоматической локации
+> • Безлимитный трафик в каждом тарифе DoodleVPN
+> • Понятные состояния и локальная история событий
 > • Автоподключение при запуске приложения
+> • Быстрая помощь, если что-то не подключается
 > • Без рекламы и сторонних аналитических SDK
-> • Обновления через Mac App Store
 >
-> Для работы нужна действующая подписка DoodleVPN. Подписка оформляется и управляется вне приложения. В DoodleRay VPN нельзя создать аккаунт или купить подписку.
+> Для работы нужна действующая подписка DoodleVPN. Подписка и аккаунт управляются в личном кабинете DoodleVPN вне приложения. В DoodleRay VPN нельзя создать аккаунт или купить подписку.
 
-Russian keywords must be byte-counted in App Store Connect before saving; its
-limit is bytes, not characters.
+Keywords (76 UTF-8 bytes, saved):
+
+> vpn,впн,приватность,сеть,туннель,macos,защита
 
 ## App Review information
 
@@ -106,10 +109,10 @@ the current v6 API requests:
 | Apple data type | What v6 sends | Linked to user | Tracking | Purpose |
 |---|---|---:|---:|---|
 | User ID | The account/subscription identity resolved from the sign-in code | Yes | No | App Functionality |
-| Device ID | Generated device ID/HWID and device public key | Yes | No | App Functionality, security and fraud prevention |
+| Device ID | Generated device ID/HWID and device public key | Yes | No | App Functionality |
 | Product Interaction | Selected location and connect attempt | Yes | No | App Functionality |
-| Other Diagnostic Data | Connection success/failure, latency, route/transport and redacted readiness result | Yes | No | App Functionality and service reliability |
-| Other Data Types | Device name/model, platform, OS/app/core versions, package/channel and client capabilities | Yes | No | App Functionality and compatibility |
+| Other Diagnostic Data | Connection success/failure, latency, route/transport and redacted readiness result | Yes | No | App Functionality |
+| Other Data Types | Device name/model, platform, OS/app/core versions, package/channel and client capabilities | Yes | No | App Functionality |
 
 Do not select advertising, physical location, browsing history, search history,
 contacts, health, financial information, or traffic contents. The selected VPN
@@ -124,22 +127,31 @@ opened outside the app, and the Store UI does not auto-upload a support bundle.
 
 ## Age rating
 
-Expected questionnaire profile: no violence, sexual content, profanity,
+Saved questionnaire profile: no violence, sexual content, profanity,
 drugs, gambling, loot boxes, contests, horror, unrestricted web browsing, or
 in-app user-generated content. The app itself has no chat or social feed; its
-Support action opens an external support channel. Do not select Made for Kids.
-Use the calculated rating unless the confirmed service terms require a higher
-minimum age, in which case apply the matching override.
+Support action opens an external support channel. The resulting international
+rating is 4+ (with Apple's regional equivalents); the app is not marked Made
+for Kids.
 
 ## Encryption and export compliance
 
-Do not guess the `ITSAppUsesNonExemptEncryption` answer. The app contains
-standard VPN and TLS cryptography through Network Extension and the linked
-Xray/Reality implementation. Complete Apple's encryption questionnaire for the
-actual countries of distribution and obtain the resulting exemption or
-documentation determination before adding any Info.plist compliance key. A
-VPN-specific export classification may need legal review and, depending on the
-determination, periodic reporting outside App Store Connect.
+App Store Connect records that the app contains standard encryption algorithms
+outside Apple's operating system and no proprietary encryption. France is not
+in the distribution list. Apple's questionnaire therefore requires no export
+documentation upload for this build, and the host bundle sets
+`ITSAppUsesNonExemptEncryption` to `false`.
+
+This clears the App Store Connect documentation gate only. The seller must
+still confirm any external U.S. export-classification and annual
+self-classification reporting obligations before release.
+
+## Availability and price
+
+The app is saved as free with the United States as the base storefront. It is
+available in 173 markets. France is excluded pending any required French
+encryption declaration; Mainland China is excluded pending VPN licensing.
+Release is manual after App Review approval.
 
 ## Screenshots
 
@@ -160,12 +172,11 @@ endpoint, profile, and reviewer information.
 
 - Confirm the legal relationship between the App Store seller and the operator
   named in the policy/terms.
-- Deploy and verify the audited v6 privacy policy.
-- Complete export-compliance determination.
 - Install the Mac Installer Distribution identity and build the signed `.pkg`.
 - Run the real Network Extension QA matrix and prepare accepted-size screenshots.
-- Enter/publish metadata, privacy and age-rating answers only after those facts
-  are final; then upload to TestFlight before requesting App Review.
+- Confirm any external export-reporting obligation.
+- Complete content-rights and reviewer information, upload the build, run
+  TestFlight acceptance, and request App Review.
 
 ## Apple references
 

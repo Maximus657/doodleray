@@ -58,7 +58,12 @@ tart run --dir=doodleray-build:"$PWD":ro doodleray-v6-run
 
 Keep the app/build mount read-only. Use a development-signed QA build or
 TestFlight build with the same host/extension bundle IDs, App Group, Packet
-Tunnel entitlement, and libXray binary as the release flavor.
+Tunnel entitlement, and libXray binary as the release flavor. A
+production-profile `.app` cannot be side-loaded for this test: macOS accepts
+its static signature but rejects the embedded Mac App Store profile outside
+Apple's installation flow. For a development build, register the disposable VM
+as a development Mac and use matching host and extension development profiles;
+for a production build, install it through TestFlight.
 
 Prefer `tart exec` through the Tart guest agent for test control and log
 collection. That channel does not depend on guest SSH/network connectivity, so

@@ -16,8 +16,8 @@ The v6 App Store flavor now compiles the Xray engine into a sandboxed
 `xray`, `sing-box`, administrator-script, or system-proxy runtime. A signed,
 universal host app and extension pass the local bundle verifier. Submission is
 still blocked by the missing Mac Installer Distribution certificate, the legal
-seller/operator mismatch, undeployed privacy-policy revision, incomplete App
-Store metadata/privacy answers, and real-device VPN QA.
+seller/operator mismatch, incomplete review assets/information, and real-device
+VPN QA.
 
 ## Release tracks
 
@@ -64,7 +64,7 @@ flavor. Runtime branching in JavaScript is not a sufficient boundary.
 
 ## Blocking product, privacy, and App Store Connect work
 
-- [ ] Publish a live HTTPS privacy policy and link it before sign-in/use. It
+- [x] Publish a live HTTPS privacy policy and link it before sign-in/use. It
       must describe authentication/device data, VPN configuration, diagnostics,
       retention, deletion, subprocessors, and support-bundle behavior.
 - [x] Disable automatic diagnostics telemetry by default. It now requires the
@@ -80,7 +80,10 @@ flavor. Runtime branching in JavaScript is not a sufficient boundary.
       purchases or uses the VPN service.
 - [ ] Prepare App Store privacy labels, support URL, marketing URL, review notes,
       demo credentials/instructions, screenshots, category, age rating, EULA,
-      and export-compliance/encryption answers.
+      and export-compliance/encryption answers. Metadata, URLs, localizations,
+      privacy labels, category, age rating, price, availability, and App Store
+      export questionnaire are saved; screenshots, reviewer credentials/contact
+      information, content rights, and build selection remain.
 - [ ] Confirm and document the legal relationship between the App Store seller
       and the operator named in the privacy policy. Do not publish an invented
       controller/processor relationship.
@@ -90,8 +93,7 @@ flavor. Runtime branching in JavaScript is not a sufficient boundary.
       agreement are already in place.
 - [ ] Install a Mac Installer Distribution certificate, produce the signed
       `.pkg`, and validate/upload it. Apple Distribution app signing is already
-      working; installer signing and live v6 privacy-policy content are the two
-      failed local preflight checks.
+      working; the installer identity is the only failed local preflight check.
 - [x] Complete the Digital Services Act trader declaration in App Store
       Connect. The free-app agreement is active; a paid-app agreement is not
       required while the app has no paid download or in-app purchases.
@@ -136,6 +138,9 @@ flavor. Runtime branching in JavaScript is not a sufficient boundary.
 - The host reads the macOS product version through `sysctl` instead of spawning
   `sw_vers`, and the bundle includes a valid tracking-free
   `PrivacyInfo.xcprivacy` matching the v6 API data inventory.
+- The Packet Tunnel distribution target disables Xcode's base-entitlement
+  injection, preventing the debug-only `get-task-allow` entitlement from
+  entering the App Store extension signature.
 - A host-safe libXray smoke test validates the embedded framework's lifecycle
   and loopback TCP proxying without touching host routes, DNS, or VPN state.
 
@@ -147,8 +152,7 @@ Run:
 ./scripts/macos/verify-app-store-readiness.sh
 ```
 
-The static gate currently passes 27 checks and fails two: the audited v6
-privacy-policy revision is not yet published, and the Mac Installer
+The static gate currently passes 31 checks and fails one: the Mac Installer
 Distribution identity is unavailable. `build-app-store.sh` additionally
 verifies the signed `.app`; `package-app-store.sh` will fail closed until the
 installer certificate exists. Passing these gates means “ready for upload QA,”
@@ -177,12 +181,19 @@ mandatory.
   installed.
 - Signed universal `DoodleRay VPN.app`: bundle verifier pass without launching
   it or interrupting the laptop's active VPN.
+- Tart macOS 26 guest: the corrected release bundle passes in-guest static
+  signature validation. Direct launch is correctly rejected because a
+  production Mac App Store profile must arrive through Apple's install flow;
+  real tunnel acceptance now needs TestFlight or guest-specific development
+  profiles.
 - Host-safe libXray loopback smoke: the exact embedded 26.7.11 framework starts,
   proxies TCP, and stops without creating a TUN device.
 - Isolated Colima TUN smoke: Xray carries HTTPS and UDP DNS through a guest
   `/dev/net/tun`; host default route and DNS hashes stay unchanged.
-- App Store preflight: 27 checks pass; the live v6 privacy-policy content and
-  installer identity fail.
+- App Store Connect: English and Russian metadata, 4+ age rating, privacy
+  labels, free pricing, manual release, and 173-market availability are saved;
+  the privacy inventory is published.
+- App Store preflight: 31 checks pass; only the installer identity fails.
 
 ## Primary references
 
