@@ -3002,6 +3002,9 @@ fn app_api_profile_to_connect_request(
         .get("type")
         .and_then(|v| v.as_str())
         .unwrap_or_default();
+    if profile_type == "xray" {
+        return app_api_xray_profile_to_connect_request(profile, request);
+    }
     let security = profile
         .get("security")
         .and_then(|v| v.as_str())
@@ -3093,6 +3096,86 @@ fn app_api_profile_to_connect_request(
         workers: None,
         encryption: None,
         raw_xray_config: None,
+    })
+}
+
+fn app_api_xray_profile_to_connect_request(
+    profile: &serde_json::Value,
+    request: &AppConnectLocationRequest,
+) -> Result<ConnectRequest, String> {
+    if profile.get("format").and_then(|v| v.as_str()) != Some("xray-outbound-v1") {
+        return Err("Unsupported DoodleVPN Xray profile format".into());
+    }
+    let config = profile
+        .get("config")
+        .filter(|value| value.is_object())
+        .ok_or_else(|| "DoodleVPN Xray profile is missing config".to_string())?
+        .clone();
+    let outbounds = config
+        .get("outbounds")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| "DoodleVPN Xray profile is missing outbounds".to_string())?;
+    let proxy = outbounds
+        .iter()
+        .find(|outbound| outbound.get("tag").and_then(|value| value.as_str()) == Some("proxy"))
+        .ok_or_else(|| "DoodleVPN Xray profile is missing proxy outbound".to_string())?;
+    if proxy.get("protocol").and_then(|value| value.as_str()) != Some("vless") {
+        return Err("Unsupported DoodleVPN Xray outbound protocol".into());
+    }
+    let address = profile
+        .get("connect_address")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "DoodleVPN Xray profile is missing connect address".to_string())?
+        .to_string();
+    let port = profile
+        .get("port")
+        .and_then(|value| value.as_u64())
+        .filter(|value| *value > 0 && *value <= u16::MAX as u64)
+        .ok_or_else(|| "DoodleVPN Xray profile has an invalid port".to_string())?
+        as u16;
+
+    Ok(ConnectRequest {
+        server_address: address,
+        server_port: port,
+        protocol: "vless".into(),
+        uuid: None,
+        password: None,
+        transport: "xhttp".into(),
+        security: "tls".into(),
+        sni: None,
+        host: None,
+        path: None,
+        fingerprint: None,
+        public_key: None,
+        short_id: None,
+        flow: None,
+        proxy_mode: request.proxy_mode.clone(),
+        system_proxy_mode: request.system_proxy_mode.clone(),
+        socks_port: request.socks_port,
+        http_port: request.http_port,
+        api_port: default_xray_api_port(),
+        network_stack: request.network_stack.clone(),
+        dns_mode: request.dns_mode.clone(),
+        strict_route: request.strict_route,
+        kill_switch: request.kill_switch,
+        routing_rules: request.routing_rules.clone(),
+        obfs_type: None,
+        obfs_password: None,
+        up_mbps: None,
+        down_mbps: None,
+        congestion_control: None,
+        udp_relay_mode: None,
+        alpn: None,
+        private_key: None,
+        peer_public_key: None,
+        pre_shared_key: None,
+        local_address: None,
+        reserved: None,
+        mtu: None,
+        workers: None,
+        encryption: None,
+        raw_xray_config: Some(config),
     })
 }
 
@@ -4940,6 +5023,41 @@ mod tests {
         assert_eq!(mapped.routing_rules[0].value, "2ip.ru");
         assert!(uses_xray_engine(&mapped));
         assert!(mapped.raw_xray_config.is_none());
+    }
+
+    #[test]
+    fn app_api_xray_outbound_profile_preserves_production_transport_config() {
+        let native = json!({
+            "type": "xray",
+            "format": "xray-outbound-v1",
+            "connect_address": "203.0.113.30",
+            "port": 443,
+            "config": {
+                "outbounds": [{
+                    "tag": "proxy",
+                    "protocol": "vless",
+                    "settings": {"vnext": [{"address": "203.0.113.30", "port": 443}]},
+                    "streamSettings": {
+                        "network": "xhttp",
+                        "security": "tls",
+                        "xhttpSettings": {"path": "/reserve", "mode": "packet-up"}
+                    }
+                }],
+                "routing": {"rules": []}
+            }
+        });
+
+        let mapped = app_api_profile_to_connect_request(&native, &sample_app_connect_request())
+            .expect("xray profile should map");
+
+        assert_eq!(mapped.server_address, "203.0.113.30");
+        assert_eq!(mapped.server_port, 443);
+        assert!(uses_xray_engine(&mapped));
+        let config = mapped.raw_xray_config.expect("raw config");
+        assert_eq!(
+            config["outbounds"][0]["streamSettings"]["xhttpSettings"]["mode"],
+            json!("packet-up")
+        );
     }
 
     #[test]

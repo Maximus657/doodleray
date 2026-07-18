@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Loader2, Globe } from 'lucide-react';
 import { getEmoji, getFluentEmojiCDN } from '@lobehub/fluent-emoji';
 import type { ServerConfig } from '../../stores/app-store';
-import { protocolLabel } from '../../lib/utils';
 
 function pingColor(p?: number): string {
   if (p === undefined || p <= 0) return 'rgba(255,255,255,0.35)';
@@ -117,7 +116,7 @@ export function displayServerName(server: Pick<ServerConfig, 'name' | 'countryCo
   return name || server.name;
 }
 
-/** Design location row: flag, name + protocol line, ping dot + ms. */
+/** Design location row: flag, user-facing location name, ping dot + ms. */
 export default function ServerRow({ server, active, pinging, onSelect }: Props) {
   const pc = pingColor(server.ping);
   const hasPing = server.ping !== undefined && server.ping > 0;
@@ -141,7 +140,6 @@ export default function ServerRow({ server, active, pinging, onSelect }: Props) 
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[14.5px] font-medium text-white" title={server.name}>{name}</span>
-        <span className="mt-0.5 block truncate text-[12px] text-white/45">{protocolLabel(server.protocol, server.transport)}</span>
       </span>
       <span className="flex shrink-0 items-center justify-end gap-[7px]">
         {pinging ? (

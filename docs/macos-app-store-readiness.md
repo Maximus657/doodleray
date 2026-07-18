@@ -92,7 +92,8 @@ flavor. Runtime branching in JavaScript is not a sufficient boundary.
       provisioning profiles, build upload, and TestFlight/internal review. The
       app record, bundle IDs, capability switches, Developer Program agreement,
       signed package, processed build 60000, and initial screenshot are in
-      place; the final build-selection save and TestFlight review remain.
+      place. Build 60000 is superseded by the login-contract fix; build 60001,
+      final build selection, and TestFlight review remain.
 - [x] Install a Mac Installer Distribution certificate, produce the signed
       `.pkg`, validate it, and upload build 60000 to App Store Connect.
 - [x] Complete the Digital Services Act trader declaration in App Store
@@ -122,7 +123,7 @@ flavor. Runtime branching in JavaScript is not a sufficient boundary.
 - XcodeGen is the source of truth for extension Info.plist and entitlements, so
   regeneration no longer erases `NSExtension`, App Sandbox, Network Extension,
   or App Group declarations.
-- The host and extension carry matching version `6.0.0` / build `60000`, exact
+- The host and extension carry matching version `6.0.0` / build `60001`, exact
   application/team entitlements derived from installed provisioning profiles,
   and universal `arm64` + `x86_64` executables.
 - App Store frontend and Rust build channels are both baked at compile time;
@@ -136,8 +137,8 @@ flavor. Runtime branching in JavaScript is not a sufficient boundary.
 - Direct-only controls that are not implemented by the Packet Tunnel track
   (Kill Switch, live core statistics, Windows diagnostics, and sandbox-temp
   support export) are not shown in the Store UI.
-- The host reads the macOS product version through `sysctl` instead of spawning
-  `sw_vers`, and the bundle includes a valid tracking-free
+- The activation payload matches the strict backend device schema without
+  speculative fields, and the bundle includes a valid tracking-free
   `PrivacyInfo.xcprivacy` matching the v6 API data inventory.
 - The Packet Tunnel distribution target disables Xcode's base-entitlement
   injection, preventing the debug-only `get-task-allow` entitlement from
@@ -199,7 +200,8 @@ submission.” TestFlight and the real-device VPN matrix remain mandatory.
 - Xcode validation accepted build 60000 and uploaded it to App Store Connect on
   2026-07-17. App Store Connect reports the binary as confirmed, symbols as
   included, non-exempt encryption as absent, and both `arm64` and `x86_64` as
-  supported. Saving the release build selection is the next portal gate.
+  supported. That build is superseded; fixed build 60001 must be uploaded and
+  selected before submission.
 - A real 1440x900 screenshot from the isolated macOS guest is uploaded to the
   Store version; it shows the v6 sign-in UI and pre-use VPN data disclosure.
 - Isolated Colima TUN smoke: Xray carries HTTPS and UDP DNS through a guest

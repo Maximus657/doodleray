@@ -64,15 +64,22 @@ function parseExpireSeconds(value?: string | null): number | undefined {
 function locationToServer(location: AppApiLocation): ServerConfig {
   const id = String(location.id || location.country_code || '').toLowerCase();
   const countryCode = (location.country_code || id).toUpperCase();
+  const language = useAppStore.getState().language;
+  const localizedCountry = language === 'ru' && countryCode === 'US'
+    ? 'США'
+    : /^[A-Z]{2}$/.test(countryCode)
+      ? new Intl.DisplayNames([language], { type: 'region' }).of(countryCode)
+      : undefined;
+  const name = localizedCountry || location.title || countryCode || id;
   return {
     id: `${LOCATION_ID_PREFIX}${id}`,
-    name: location.title || countryCode || id,
+    name,
     protocol: 'vless',
     address: 'app-control-plane',
     port: 443,
     transport: 'reality',
     security: 'reality',
-    country: location.title,
+    country: name,
     countryCode,
     subscriptionId: CLOSED_SUBSCRIPTION_ID,
     rawLink: '',
@@ -125,11 +132,11 @@ function localPreviewSession(loggedIn = localPreviewLoggedIn): AppApiSessionStat
 function localPreviewLocations(): AppApiLocationsResponse {
   return {
     locations: [
-      { id: 'auto', country_code: 'AUTO', title: 'Авто-Выбор', available: true, sort: 0, healthy_nodes_count: 5 },
-      { id: 'bypass', country_code: 'AUTO', title: 'Обход БС', available: true, sort: 1, healthy_nodes_count: 2 },
-      { id: 'nl', country_code: 'NL', title: 'Нидерланды', available: true, sort: 2, healthy_nodes_count: 1 },
-      { id: 'de', country_code: 'DE', title: 'Германия', available: true, sort: 3, healthy_nodes_count: 1 },
-      { id: 'us', country_code: 'US', title: 'США', available: true, sort: 4, healthy_nodes_count: 1 },
+      { id: 'bypass', country_code: 'AUTO', title: '📡 Обход БС', available: true, sort: 1, healthy_nodes_count: 2 },
+      { id: 'reserve', country_code: 'AUTO', title: '🔁 Резерв', available: true, sort: 2, healthy_nodes_count: 1 },
+      { id: 'nl', country_code: 'NL', title: 'Нидерланды', available: true, sort: 10, healthy_nodes_count: 1 },
+      { id: 'de', country_code: 'DE', title: 'Германия', available: true, sort: 20, healthy_nodes_count: 1 },
+      { id: 'us', country_code: 'US', title: 'США', available: true, sort: 30, healthy_nodes_count: 1 },
     ],
   };
 }

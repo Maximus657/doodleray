@@ -3,6 +3,23 @@
   "productName": "DoodleRay VPN",
   "identifier": "com.doodleray.doodleray",
   "app": {
+    "windows": [
+      {
+        "title": "DoodleRay VPN",
+        "width": 1204,
+        "height": 764,
+        "minWidth": 940,
+        "minHeight": 660,
+        "center": true,
+        "decorations": true,
+        "transparent": false,
+        "shadow": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": { "x": 20, "y": 26 },
+        "backgroundColor": "#170D12"
+      }
+    ],
     "security": {
       "capabilities": ["appstore"]
     }
@@ -16,7 +33,7 @@
       "resources/third-party-notices.txt": "resources/third-party-notices.txt"
     },
     "macOS": {
-      "bundleVersion": "60000",
+      "bundleVersion": "60001",
       "entitlements": "macos/profiles/DoodleRayHost.entitlements",
       "infoPlist": "Info.appstore.plist",
       "minimumSystemVersion": "12.0",

@@ -35,6 +35,7 @@ src-tauri/.tauri/
 .build/
 src-tauri/macos/LibXray.xcframework/
 src-tauri/macos/DerivedData/
+src-tauri/macos/DerivedData-*/
 src-tauri/macos/profiles/
 
 # Binaries (bundled separately)

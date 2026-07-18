@@ -40,10 +40,13 @@ function getDisplayRank(label: string): number {
   const normalized = label.toLowerCase();
   if (/авто|самый быстрый|auto|entry-pool|fastest/.test(normalized)) return 0;
   if (/обход|блокиров|white|whitelist|bypass/.test(normalized)) return 1;
-  if (/нидерланд|netherlands/.test(normalized)) return 2;
-  if (/герман|germany/.test(normalized)) return 3;
-  if (/польш|poland/.test(normalized)) return 4;
-  if (/росси|russia/.test(normalized)) return 5;
+  if (/резерв|reserve/.test(normalized)) return 2;
+  if (/нидерланд|netherlands/.test(normalized)) return 10;
+  if (/герман|germany/.test(normalized)) return 11;
+  if (/польш|poland/.test(normalized)) return 12;
+  if (/росси|russia/.test(normalized)) return 13;
+  if (/казах|kazakhstan/.test(normalized)) return 14;
+  if (/сша|united states/.test(normalized)) return 15;
   return 50;
 }
 

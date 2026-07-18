@@ -334,6 +334,16 @@
     background: transparent;
   }
 
+  /* The App Store build uses the native decorated macOS window. AppKit owns
+     the real outer corner mask; the web content fills that mask completely. */
+  .v6-native-mac-window {
+    background: #170d12;
+  }
+  .v6-native-mac-window .v6-panel {
+    border-radius: 0;
+    border: 0;
+  }
+
   /* Main glass panel = window body: glass gradient layered over the warm
      plum radial design background. */
   .v6-panel {
