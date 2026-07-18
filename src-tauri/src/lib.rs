@@ -31,7 +31,7 @@ use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 #[cfg(windows)]
 use std::sync::atomic::{AtomicIsize, Ordering};
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
@@ -59,9 +59,8 @@ static CONNECT_LOG: Mutex<Vec<String>> = Mutex::new(Vec::new());
 #[cfg(windows)]
 static QA_FRONTEND_SNAPSHOT: Mutex<Option<serde_json::Value>> = Mutex::new(None);
 
-lazy_static::lazy_static! {
-    static ref RUNTIME_OP_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
-}
+static RUNTIME_OP_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 const WORKSHOP_API_HOSTS: &[&str] = &[
     "doodleraydb-doodleray-ic3y6k-c7350f-94-241-172-101.traefik.me",
@@ -12147,7 +12146,6 @@ pub fn run() {
 
     builder
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_http::init())
         .invoke_handler(tauri::generate_handler![
             vpn_connect,
             vpn_disconnect,

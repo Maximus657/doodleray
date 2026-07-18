@@ -91,11 +91,11 @@ flavor. Runtime branching in JavaScript is not a sufficient boundary.
 - [ ] Complete App Store Connect tax/banking, metadata, privacy answers,
       provisioning profiles, build upload, and TestFlight/internal review. The
       app record, bundle IDs, capability switches, Developer Program agreement,
-      signed package, processed build 60000, and initial screenshot are in
-      place. Build 60000 is superseded by the login-contract fix; build 60001,
-      final build selection, and TestFlight review remain.
+      signed package, uploaded build 60002, and initial screenshot are in
+      place. Builds 60000–60001 are superseded; processing and selecting build
+      60002 plus TestFlight review remain.
 - [x] Install a Mac Installer Distribution certificate, produce the signed
-      `.pkg`, validate it, and upload build 60000 to App Store Connect.
+      `.pkg`, validate it, and upload final build 60002 to App Store Connect.
 - [x] Complete the Digital Services Act trader declaration in App Store
       Connect. The free-app agreement is active; a paid-app agreement is not
       required while the app has no paid download or in-app purchases.
@@ -123,7 +123,7 @@ flavor. Runtime branching in JavaScript is not a sufficient boundary.
 - XcodeGen is the source of truth for extension Info.plist and entitlements, so
   regeneration no longer erases `NSExtension`, App Sandbox, Network Extension,
   or App Group declarations.
-- The host and extension carry matching version `6.0.0` / build `60001`, exact
+- The host and extension carry matching version `6.0.0` / build `60002`, exact
   application/team entitlements derived from installed provisioning profiles,
   and universal `arm64` + `x86_64` executables.
 - App Store frontend and Rust build channels are both baked at compile time;
@@ -197,11 +197,9 @@ submission.” TestFlight and the real-device VPN matrix remain mandatory.
   needs a dedicated reusable reviewer subscription code.
 - Host-safe libXray loopback smoke: the exact embedded 26.7.11 framework starts,
   proxies TCP, and stops without creating a TUN device.
-- Xcode validation accepted build 60000 and uploaded it to App Store Connect on
-  2026-07-17. App Store Connect reports the binary as confirmed, symbols as
-  included, non-exempt encryption as absent, and both `arm64` and `x86_64` as
-  supported. That build is superseded; fixed build 60001 must be uploaded and
-  selected before submission.
+- Xcode validated and uploaded final build 60002 to App Store Connect on
+  2026-07-18. The universal signed archive includes both `arm64` and `x86_64`;
+  App Store processing and final build selection remain before submission.
 - A real 1440x900 screenshot from the isolated macOS guest is uploaded to the
   Store version; it shows the v6 sign-in UI and pre-use VPN data disclosure.
 - Isolated Colima TUN smoke: Xray carries HTTPS and UDP DNS through a guest
@@ -209,7 +207,8 @@ submission.” TestFlight and the real-device VPN matrix remain mandatory.
 - App Store Connect: English and Russian metadata, 4+ age rating, privacy
   labels, free pricing, manual release, and 173-market availability are saved;
   the privacy inventory is published.
-- App Store preflight: 32 checks pass; only the installer identity fails.
+- App Store bundle verification passes, including the installer identity,
+  distribution signatures, provisioning, sandbox, and Packet Tunnel extension.
 
 ## Primary references
 

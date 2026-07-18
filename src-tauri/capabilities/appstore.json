@@ -12,13 +12,6 @@
     "core:window:allow-is-maximized",
     "core:window:allow-close",
     "core:window:allow-start-dragging",
-    "opener:default",
-    {
-      "identifier": "http:default",
-      "allow": [
-        { "url": "https://doodleraydb-doodleray-ic3y6k-c7350f-94-241-172-101.traefik.me/**" },
-        { "url": "https://94-241-172-101.sslip.io/doodleray-api/**" }
-      ]
-    }
+    "opener:default"
   ]
 }

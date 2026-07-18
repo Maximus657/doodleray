@@ -1,4 +1,3 @@
-use lazy_static::lazy_static;
 use libloading::{Library, Symbol};
 use serde_json::Value;
 use std::ffi::CString;
@@ -7,12 +6,10 @@ use std::os::raw::{c_char, c_int};
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
-lazy_static! {
-    static ref SINGBOX_LIB: Mutex<Option<Library>> = Mutex::new(None);
-    static ref SINGBOX_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
-}
+static SINGBOX_LIB: LazyLock<Mutex<Option<Library>>> = LazyLock::new(|| Mutex::new(None));
+static SINGBOX_PROCESS: LazyLock<Mutex<Option<Child>>> = LazyLock::new(|| Mutex::new(None));
 
 pub fn start_singbox(config_json: &Value) -> Result<(), String> {
     if singbox_exe_path().is_some() {

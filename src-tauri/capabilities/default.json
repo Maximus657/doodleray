@@ -18,13 +18,6 @@
     "updater:allow-download",
     "updater:allow-download-and-install",
     "process:allow-restart",
-    "autostart:default",
-    {
-      "identifier": "http:default",
-      "allow": [
-        { "url": "https://doodleraydb-doodleray-ic3y6k-c7350f-94-241-172-101.traefik.me/**" },
-        { "url": "https://94-241-172-101.sslip.io/doodleray-api/**" }
-      ]
-    }
+    "autostart:default"
   ]
 }
