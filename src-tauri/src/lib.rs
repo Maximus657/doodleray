@@ -3112,13 +3112,7 @@ fn app_api_connection_result_body(
         "error_code": if success { "" } else { "pc_connect_failed" },
         "latency_ms": latency_ms.max(0),
         "transport": lease.route_kind,
-        "route_kind": lease.route_kind,
-        "protocol_variant": lease.entry_role,
-        "readiness": {
-            "message": redact_support_line(message),
-            "first_hop": lease.first_hop,
-            "target_country_id": lease.target_country_id
-        }
+        "last_error": if success { String::new() } else { redact_support_line(message) }
     })
 }
 
@@ -3163,58 +3157,22 @@ fn app_api_client_capabilities() -> serde_json::Value {
     })
 }
 
-#[cfg(target_os = "macos")]
-fn macos_product_version() -> Option<String> {
-    use std::ffi::CString;
-    use std::ptr;
-
-    let name = CString::new("kern.osproductversion").ok()?;
-    let mut length = 0usize;
-    let size_result = unsafe {
-        libc::sysctlbyname(
-            name.as_ptr(),
-            ptr::null_mut(),
-            &mut length,
-            ptr::null_mut(),
-            0,
-        )
-    };
-    if size_result != 0 || length <= 1 {
-        return None;
-    }
-
-    let mut value = vec![0u8; length];
-    let read_result = unsafe {
-        libc::sysctlbyname(
-            name.as_ptr(),
-            value.as_mut_ptr().cast(),
-            &mut length,
-            ptr::null_mut(),
-            0,
-        )
-    };
-    if read_result != 0 {
-        return None;
-    }
-
-    value.truncate(length);
-    if let Some(nul) = value.iter().position(|byte| *byte == 0) {
-        value.truncate(nul);
-    }
-    let version = String::from_utf8(value).ok()?.trim().to_string();
-    (!version.is_empty()).then_some(version)
-}
-
-fn app_api_os_version() -> String {
-    #[cfg(target_os = "macos")]
-    {
-        macos_product_version().unwrap_or_else(|| "unknown".into())
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        std::env::var("OS").unwrap_or_else(|_| "unknown".into())
-    }
+fn app_api_exchange_code_body(
+    code: &str,
+    device: &AppApiDeviceState,
+    computer_name: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "code": code,
+        "device": {
+            "device_id": device.client_device_id,
+            "platform": app_api_platform(),
+            "model": computer_name,
+            "app_version": env!("CARGO_PKG_VERSION"),
+            "hwid": device.hwid,
+            "public_key": device.public_key
+        }
+    })
 }
 
 #[tauri::command]
@@ -3238,25 +3196,7 @@ async fn app_api_exchange_code(
     let computer_name = std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
         .unwrap_or_else(|_| APP_PRODUCT_NAME.into());
-    let body = serde_json::json!({
-        "code": code,
-        "device": {
-            "device_id": device.client_device_id,
-            "platform": app_api_platform(),
-            "model": computer_name,
-            "os_version": app_api_os_version(),
-            "app_version": env!("CARGO_PKG_VERSION"),
-            "core_version": app_api_core_version(),
-            "service_version": env!("CARGO_PKG_VERSION"),
-            "package_identity": APP_IDENTIFIER,
-            "channel": option_env!("DOODLERAY_BUILD_CHANNEL").unwrap_or("direct"),
-            "hwid": device.hwid,
-            "hwid_hash": device.hwid,
-            "public_key_jwk": device.public_key_jwk,
-            "public_key": device.public_key,
-            "device_public_key": device.public_key
-        }
-    });
+    let body = app_api_exchange_code_body(code, &device, &computer_name);
     let session = app_api_send_json::<AppApiTokenResponse>(
         reqwest::Method::POST,
         "/auth/code/exchange",
@@ -3333,13 +3273,19 @@ async fn app_connect_location(
             };
         }
     };
+    if session.subscription.device_allowed == Some(false) {
+        return ConnectResult {
+            success: false,
+            message: "DoodleVPN device limit reached. Manage devices in the Telegram bot, then sign in again.".into(),
+            health: None,
+        };
+    }
 
     let lease_body = serde_json::json!({
         "location_id": request.location_id,
         "device_id": session.device_id,
         "network_class": "normal",
         "selection_mode": "manual",
-        "profile_delivery": "consume",
         "app_version": env!("CARGO_PKG_VERSION"),
         "core_version": app_api_core_version(),
         "client_capabilities": app_api_client_capabilities()
@@ -5031,11 +4977,33 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
-    fn app_api_reads_macos_version_without_spawning_a_process() {
-        let version = macos_product_version().expect("macOS product version should be readable");
-        assert!(version.split('.').all(|part| part.parse::<u32>().is_ok()));
+    fn app_api_exchange_code_body_matches_backend_contract() {
+        let device = app_api_generate_device_state().expect("device state");
+        let body = app_api_exchange_code_body("1234-5678", &device, "QA Mac");
+        let mut keys = body["device"]
+            .as_object()
+            .expect("device object")
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        keys.sort_unstable();
+
+        assert_eq!(
+            keys,
+            [
+                "app_version",
+                "device_id",
+                "hwid",
+                "model",
+                "platform",
+                "public_key"
+            ]
+        );
+        assert_eq!(body["code"], "1234-5678");
+        assert_eq!(body["device"]["device_id"], device.client_device_id);
+        assert_eq!(body["device"]["hwid"], device.hwid);
+        assert_eq!(body["device"]["public_key"], device.public_key);
     }
 
     #[test]

@@ -171,6 +171,8 @@ export async function appApiLogout(): Promise<void> {
       speedHistory: [],
       totalDown: 0,
       totalUp: 0,
+      appSessionLoggedIn: false,
+      appSessionDeviceAllowed: null,
     });
     return;
   }
@@ -189,6 +191,8 @@ export async function appApiLogout(): Promise<void> {
       speedHistory: [],
       totalDown: 0,
       totalUp: 0,
+      appSessionLoggedIn: false,
+      appSessionDeviceAllowed: null,
     });
   }
 }

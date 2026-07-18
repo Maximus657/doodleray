@@ -358,6 +358,7 @@ function App() {
     async function autoConnectIfEnabled() {
       const state = useAppStore.getState();
       if (!state.autoConnectOnStartup) return;
+      if (isClosedControlPlaneEnabled() && state.appSessionDeviceAllowed !== true) return;
       if (state.status === 'connected' || state.status === 'connecting') return;
       
       const srv = resolveConnectServer(state.activeServer, state.servers, state.autoSelectFastest);

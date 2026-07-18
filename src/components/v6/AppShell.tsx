@@ -19,10 +19,11 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const activeServer = useAppStore((s) => s.activeServer);
   const serversCount = useAppStore((s) => s.servers.length);
   const status = useAppStore((s) => s.status);
+  const appSessionLoggedIn = useAppStore((s) => s.appSessionLoggedIn);
   const { t } = useTranslation();
   const [supportOpen, setSupportOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const hasMainContent = serversCount > 0 || status !== 'disconnected';
+  const hasMainContent = appSessionLoggedIn || serversCount > 0 || status !== 'disconnected';
 
   // Traffic chip: real quota of the active subscription (design: "X.X GB left").
   const activeSub = getSubscriptionById(subscriptions, activeServer?.subscriptionId) ?? subscriptions[0] ?? null;

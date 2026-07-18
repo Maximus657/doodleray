@@ -134,6 +134,7 @@ export interface AppState {
   updateProgress: number | null;
   showStats: boolean; // Hide/show statistics on dashboard
   appSessionLoggedIn: boolean;
+  appSessionDeviceAllowed: boolean | null;
 
   setStatus: (status: ConnectionStatus) => void;
   setActiveServer: (server: ServerConfig | null) => void;
@@ -384,6 +385,7 @@ function compactStateForPersist(state: AppState): Partial<AppState> {
     'updateStatus',
     'updateProgress',
     'appSessionLoggedIn',
+    'appSessionDeviceAllowed',
   ]);
 
   return Object.fromEntries(
@@ -471,6 +473,7 @@ export const useAppStore = create<AppState>()(
       updateProgress: null,
       showStats: false,
       appSessionLoggedIn: false,
+      appSessionDeviceAllowed: null,
 
       setStatus: (status) => set({ status }),
       setActiveServer: (server) => set({

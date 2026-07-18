@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
-import { Plus, Loader2, ClipboardPaste } from 'lucide-react';
+import { AlertTriangle, ClipboardPaste, ExternalLink, Loader2, Plus } from 'lucide-react';
 import { useAppStore } from '../stores/app-store';
 import { formatTime } from '../lib/utils';
 import { refreshSubscription, fetchSubscription } from '../lib/subscription';
 import { parseProxyLink } from '../lib/parser';
 import { useTranslation } from '../locales';
+import { useToastStore } from '../stores/toast-store';
 import { reportConnectionError } from '../lib/workshop-api';
 import {
   buildConnectRequestFromState,
@@ -57,6 +58,7 @@ const TRAFFIC_LIMIT_EOF_THRESHOLD = 4;
 const TRAFFIC_LIMIT_NOTICE_COOLDOWN_MS = 60_000;
 const CONNECT_TIMEOUT_MS = 45_000;
 const TUN_CONNECT_TIMEOUT_MS = 120_000;
+const DOODLEVPN_BOT_URL = 'https://t.me/doodlevpn_bot';
 const TUN_LIMITED_FALLBACK_RE =
   /could not create the Windows tunnel adapter|IPv4 readiness failed|adapter is missing|adapter did not become ready|route is not preferred|route did not become ready|routes are missing|sing-box exited|sing-box process is not running|Tunnel Service failed to start TUN|Tunnel Service stopped before TUN|Tunnel Service did not become ready|timed out while starting VPN engines/i;
 
@@ -170,6 +172,15 @@ function isTauriRuntime() {
   return typeof tauriInternals?.invoke === 'function';
 }
 
+async function openDoodleVpnBot() {
+  try {
+    const { openUrl } = await import('@tauri-apps/plugin-opener');
+    await openUrl(DOODLEVPN_BOT_URL);
+  } catch {
+    window.open(DOODLEVPN_BOT_URL, '_blank', 'noopener,noreferrer');
+  }
+}
+
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
@@ -216,6 +227,8 @@ export default function Dashboard() {
   const networkExtensionOnly = isNetworkExtensionOnlyBuild();
   const appLoginDigits = normalizeAppLoginCode(appLoginCode);
   const canSubmitAppLoginCode = appLoginDigits.length === 8 && !appLoginBusy;
+  const hasDeviceLimit = closedControlPlane && appSession?.logged_in === true && appSession.subscription?.device_allowed === false;
+  const deviceLimitNoticeShownRef = useRef(false);
 
   useLayoutEffect(() => {
     document.body.classList.toggle('v6-login-transition-active', postLoginFlight);
@@ -255,7 +268,10 @@ export default function Dashboard() {
     try {
       const session = sessionOverride ?? await appApiSessionStatus();
       setAppSession(session);
-      useAppStore.setState({ appSessionLoggedIn: session.logged_in });
+      useAppStore.setState({
+        appSessionLoggedIn: session.logged_in,
+        appSessionDeviceAllowed: session.logged_in ? session.subscription?.device_allowed !== false : null,
+      });
       if (!session.logged_in) {
         syncClosedLocationsToStore(session, []);
         return;
@@ -281,7 +297,7 @@ export default function Dashboard() {
     if (!closedControlPlane) return;
     const handleAppLogout = () => {
       setAppSession(null);
-      useAppStore.setState({ appSessionLoggedIn: false });
+      useAppStore.setState({ appSessionLoggedIn: false, appSessionDeviceAllowed: null });
       setAppLoginCode('');
       setAppLoginError(null);
       setAppLocationsLoading(false);
@@ -300,7 +316,10 @@ export default function Dashboard() {
         const session = await appApiSessionStatus();
         if (disposed) return;
         setAppSession(session);
-        useAppStore.setState({ appSessionLoggedIn: session.logged_in });
+        useAppStore.setState({
+          appSessionLoggedIn: session.logged_in,
+          appSessionDeviceAllowed: session.logged_in ? session.subscription?.device_allowed !== false : null,
+        });
         if (session.logged_in) {
           const locations = await appApiLocations();
           if (disposed) return;
@@ -467,6 +486,18 @@ export default function Dashboard() {
   useEffect(() => {
     tRef.current = t;
   }, [t]);
+
+  useEffect(() => {
+    if (!hasDeviceLimit) {
+      deviceLimitNoticeShownRef.current = false;
+      return;
+    }
+    if (deviceLimitNoticeShownRef.current) return;
+    deviceLimitNoticeShownRef.current = true;
+    const message = t('v6DeviceLimitToast' as never);
+    useToastStore.getState().addToast(message, 'error');
+    addLog('warning', message);
+  }, [hasDeviceLimit, addLog, t]);
 
   useEffect(() => () => {
     if (loginFlightTimerRef.current !== null) {
@@ -963,7 +994,10 @@ export default function Dashboard() {
     try {
       const session = await appApiExchangeCode(code);
       setAppSession(session);
-      useAppStore.setState({ appSessionLoggedIn: session.logged_in });
+      useAppStore.setState({
+        appSessionLoggedIn: session.logged_in,
+        appSessionDeviceAllowed: session.logged_in ? session.subscription?.device_allowed !== false : null,
+      });
       setAppLoginCode('');
       if (loginFlightTimerRef.current !== null) {
         window.clearTimeout(loginFlightTimerRef.current);
@@ -991,6 +1025,10 @@ export default function Dashboard() {
   }, [appLoginCode, appLoginBusy, addLog, refreshClosedControlPlane, t]);
 
   const handleConnect = useCallback(async () => {
+    if (status === 'disconnected' && hasDeviceLimit) {
+      useToastStore.getState().addToast(t('v6DeviceLimitToast' as never), 'error');
+      return;
+    }
     if (status === 'disconnected') {
       const opId = ++connectionOpRef.current;
       const activeRoutingRules = await getActiveRoutingRules();
@@ -1171,7 +1209,7 @@ export default function Dashboard() {
       } catch { addLog('info', '[SIM] Disconnected'); }
       setStatus('disconnected'); setActiveSystemProxyMode(null); setConnectionStep(null); setConnectedAt(null); setCurrentSpeed(0, 0); resetTraffic();
     }
-  }, [status, setStatus, setCurrentSpeed, resetTraffic, activeServer, servers, setActiveServer, addLog, proxyMode, socksPort, httpPort, autoSelectFastest, setConnectedAt, t, setProxyMode, setSystemProxyMode, refreshTunnelServiceHealth, setSocksPort, setHttpPort, markConnectedIfHealthy, attemptLimitedBrowsersFallback, closedControlPlane]);
+  }, [status, setStatus, setCurrentSpeed, resetTraffic, activeServer, servers, setActiveServer, addLog, proxyMode, socksPort, httpPort, autoSelectFastest, setConnectedAt, t, setProxyMode, setSystemProxyMode, refreshTunnelServiceHealth, setSocksPort, setHttpPort, markConnectedIfHealthy, attemptLimitedBrowsersFallback, closedControlPlane, hasDeviceLimit]);
 
   const handleModeSwitch = useCallback(async (mode: 'system-proxy' | 'tun', nextSystemProxyMode = systemProxyMode) => {
     const normalizedSystemProxyMode = nextSystemProxyMode === 'clear'
@@ -1492,8 +1530,8 @@ export default function Dashboard() {
     finally { setPingingServerIds(new Set()); }
   }, [servers, closedControlPlane, refreshClosedControlPlane, appSession]);
 
-  const canConnect = !!activeServer || servers.length > 0;
-  const hasDashboardContent = servers.length > 0 || status !== 'disconnected';
+  const canConnect = !hasDeviceLimit && (!!activeServer || servers.length > 0);
+  const hasDashboardContent = appSession?.logged_in === true || servers.length > 0 || status !== 'disconnected';
   const trimmedQuickInput = quickInput.trim();
   const quickInputKind = trimmedQuickInput.startsWith('http://') || trimmedQuickInput.startsWith('https://')
     ? 'subscription'
@@ -1542,6 +1580,24 @@ export default function Dashboard() {
     <div className="relative flex min-h-0 flex-1 flex-col">
       {postLoginFlight && (
         <LoginFlightOverlay />
+      )}
+
+      {hasDeviceLimit && (
+        <div role="alert" className="mb-4 flex shrink-0 items-center gap-3 rounded-[18px] border border-[#ff6b5a]/55 bg-[#681d21]/90 px-4 py-3 text-white shadow-[0_10px_28px_rgba(87,12,18,0.28)]">
+          <AlertTriangle className="h-5 w-5 shrink-0 text-[#ff9b91]" strokeWidth={2.2} />
+          <div className="min-w-0 flex-1">
+            <p className="text-[13px] font-semibold">{t('v6DeviceLimitTitle' as never)}</p>
+            <p className="mt-0.5 text-[11.5px] leading-relaxed text-white/70">{t('v6DeviceLimitBody' as never)}</p>
+          </div>
+          <button
+            type="button"
+            onClick={openDoodleVpnBot}
+            className="v6-focus flex shrink-0 items-center gap-1.5 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-[11.5px] font-semibold text-white transition-colors hover:bg-white/15"
+          >
+            {t('v6DeviceLimitAction' as never)}
+            <ExternalLink className="h-3.5 w-3.5" strokeWidth={2.2} />
+          </button>
+        </div>
       )}
 
       {showAddModal && legacyImportEnabled && (
