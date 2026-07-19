@@ -251,11 +251,12 @@ export async function buildAppConnectLocationRequestFromState(
   systemProxyModeOverride?: SystemProxyMode,
 ) {
   const state = useAppStore.getState();
-  const resolvedServer = isClosedAutoLocationServer(server)
+  const autoCandidates = isClosedAutoLocationServer(server)
     ? state.servers
         .filter((candidate) => isClosedLocationServer(candidate) && !isClosedAutoLocationServer(candidate) && /^[A-Z]{2}$/.test(candidate.countryCode || ''))
-        .sort((a, b) => (a.ping && a.ping > 0 ? a.ping : Number.MAX_SAFE_INTEGER) - (b.ping && b.ping > 0 ? b.ping : Number.MAX_SAFE_INTEGER))[0]
-    : server;
+        .sort((a, b) => (a.ping && a.ping > 0 ? a.ping : Number.MAX_SAFE_INTEGER) - (b.ping && b.ping > 0 ? b.ping : Number.MAX_SAFE_INTEGER))
+    : [server];
+  const resolvedServer = autoCandidates[0];
   if (!resolvedServer) throw new Error('Нет доступных VPN-локаций для автовыбора');
   const proxyMode = proxyModeOverride ?? state.proxyMode;
   const routingRules = proxyMode === 'tun' ? await getActiveRoutingRules() : [];
@@ -267,6 +268,7 @@ export async function buildAppConnectLocationRequestFromState(
 
   return {
     location_id: closedLocationIdFromServer(resolvedServer),
+    fallback_location_ids: autoCandidates.slice(1).map(closedLocationIdFromServer),
     proxy_mode: proxyMode,
     system_proxy_mode: systemProxyMode,
     socks_port: state.socksPort,

@@ -2656,6 +2656,8 @@ struct AppApiProfileLeaseResponse {
 #[derive(Debug, Deserialize)]
 pub struct AppConnectLocationRequest {
     pub location_id: String,
+    #[serde(default)]
+    pub fallback_location_ids: Vec<String>,
     #[serde(default = "default_app_proxy_mode")]
     pub proxy_mode: String,
     #[serde(default = "default_system_proxy_mode")]
@@ -2674,6 +2676,20 @@ pub struct AppConnectLocationRequest {
     pub kill_switch: bool,
     #[serde(default)]
     pub routing_rules: Vec<RoutingRuleRequest>,
+}
+
+fn app_connection_location_ids(request: &AppConnectLocationRequest) -> Vec<String> {
+    let mut ids = Vec::new();
+    for location_id in std::iter::once(&request.location_id).chain(&request.fallback_location_ids) {
+        let location_id = location_id.trim().to_ascii_lowercase();
+        if !location_id.is_empty() && !ids.contains(&location_id) {
+            ids.push(location_id);
+        }
+        if ids.len() == 3 {
+            break;
+        }
+    }
+    ids
 }
 
 #[derive(Debug)]
@@ -3425,7 +3441,6 @@ async fn app_connect_location(
             health: None,
         };
     }
-    let started = Instant::now();
     let session = match app_api_load_session() {
         Ok(Some(session)) => session,
         Ok(None) => {
@@ -3451,45 +3466,64 @@ async fn app_connect_location(
         };
     }
 
-    let lease = match app_api_connection_profile(&session, &request.location_id, "manual").await {
-        Ok(lease) => lease,
-        Err(e) => {
-            return ConnectResult {
-                success: false,
-                message: format!("DoodleVPN connection profile failed: {}", e),
-                health: None,
-            };
-        }
-    };
+    let location_ids = app_connection_location_ids(&request);
 
-    let connect_request = match app_api_profile_to_connect_request(&lease.native_profile, &request)
-    {
-        Ok(request) => request,
-        Err(e) => {
-            return ConnectResult {
-                success: false,
-                message: e,
-                health: None,
-            };
-        }
+    let selection_mode = if location_ids.len() > 1 {
+        "auto"
+    } else {
+        "manual"
     };
+    let mut last_failure = None;
+    for location_id in location_ids {
+        let started = Instant::now();
+        let lease = match app_api_connection_profile(&session, &location_id, selection_mode).await {
+            Ok(lease) => lease,
+            Err(e) => {
+                last_failure = Some(ConnectResult {
+                    success: false,
+                    message: format!("DoodleVPN connection profile failed: {}", e),
+                    health: None,
+                });
+                continue;
+            }
+        };
+        let connect_request =
+            match app_api_profile_to_connect_request(&lease.native_profile, &request) {
+                Ok(request) => request,
+                Err(e) => {
+                    last_failure = Some(ConnectResult {
+                        success: false,
+                        message: e,
+                        health: None,
+                    });
+                    continue;
+                }
+            };
+        let result = vpn_connect(connect_request, app.clone()).await;
+        let result_body = app_api_connection_result_body(
+            &lease,
+            &session,
+            result.success,
+            started.elapsed().as_millis() as i64,
+            &result.message,
+        );
+        let _ = app_api_authorized_json::<serde_json::Value>(
+            reqwest::Method::POST,
+            "/connection-result",
+            Some(result_body),
+        )
+        .await;
+        if result.success {
+            return result;
+        }
+        last_failure = Some(result);
+    }
 
-    let result = vpn_connect(connect_request, app).await;
-    let elapsed_ms = started.elapsed().as_millis() as i64;
-    let result_body = app_api_connection_result_body(
-        &lease,
-        &session,
-        result.success,
-        elapsed_ms,
-        &result.message,
-    );
-    let _ = app_api_authorized_json::<serde_json::Value>(
-        reqwest::Method::POST,
-        "/connection-result",
-        Some(result_body),
-    )
-    .await;
-    result
+    last_failure.unwrap_or(ConnectResult {
+        success: false,
+        message: "No VPN location is available.".into(),
+        health: None,
+    })
 }
 
 #[tauri::command]
@@ -3503,6 +3537,7 @@ async fn app_ping_location(location_id: String, server_id: String) -> Result<Pin
     let lease = app_api_connection_profile(&session, &location_id, "probe").await?;
     let request = AppConnectLocationRequest {
         location_id,
+        fallback_location_ids: Vec::new(),
         proxy_mode: default_app_proxy_mode(),
         system_proxy_mode: default_system_proxy_mode(),
         socks_port: default_app_socks_port(),
@@ -4745,6 +4780,14 @@ mod tests {
         );
     }
 
+    #[test]
+    fn auto_location_fallbacks_are_normalized_deduplicated_and_bounded() {
+        let mut request = sample_app_connect_request();
+        request.location_id = " RU ".into();
+        request.fallback_location_ids = vec!["ru".into(), "DE".into(), "nl".into(), "us".into()];
+        assert_eq!(app_connection_location_ids(&request), ["ru", "de", "nl"]);
+    }
+
     fn diag_health(
         verdict: &str,
         fatal: Vec<&str>,
@@ -5037,6 +5080,7 @@ mod tests {
     fn sample_app_connect_request() -> AppConnectLocationRequest {
         AppConnectLocationRequest {
             location_id: "de".into(),
+            fallback_location_ids: Vec::new(),
             proxy_mode: "tun".into(),
             system_proxy_mode: "set".into(),
             socks_port: 21080,
@@ -8369,7 +8413,7 @@ async fn fetch_http_response_with_fallback(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn vpn_status() -> bool {
     #[cfg(all(target_os = "macos", feature = "app-store"))]
     {
@@ -9846,14 +9890,14 @@ async fn prepare_for_app_update() -> Result<String, String> {
 }
 
 /// Check connection health by testing if SOCKS port is alive
-#[tauri::command]
+#[tauri::command(async)]
 fn check_connection_health(socks_port: u16) -> bool {
     use std::net::SocketAddr;
     let addr: SocketAddr = format!("127.0.0.1:{}", socks_port).parse().unwrap();
     TcpStream::connect_timeout(&addr, Duration::from_millis(2000)).is_ok()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_connection_health(
     proxy_mode: Option<String>,
     system_proxy_mode: Option<String>,
@@ -9876,7 +9920,7 @@ fn get_connection_health(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_connection_health_full(
     proxy_mode: Option<String>,
     system_proxy_mode: Option<String>,

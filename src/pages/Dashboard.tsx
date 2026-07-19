@@ -798,7 +798,8 @@ export default function Dashboard() {
     if (status !== 'connected' || proxyMode !== 'tun') return;
     let disposed = false;
     const checkFatal = async () => {
-      if (disposed || fatalWatchdogRef.current) return;
+      if (disposed || fatalWatchdogRef.current || healthInFlightRef.current) return;
+      healthInFlightRef.current = true;
       try {
         const { invoke } = await import('@tauri-apps/api/core');
         const effectiveSystemProxyMode = await getEffectiveHealthSystemProxyMode();
@@ -827,6 +828,8 @@ export default function Dashboard() {
         toastStoreModule.useToastStore.getState().addToast('Whole computer mode stopped; reconnect to repair it.', 'error');
       } catch {
         // The slower monitor handles repeated timeouts. Avoid noisy duplicate logs here.
+      } finally {
+        healthInFlightRef.current = false;
       }
     };
     const first = window.setTimeout(checkFatal, 1500);

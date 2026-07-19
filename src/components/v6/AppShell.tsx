@@ -60,7 +60,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <div data-tauri-drag-region className="absolute inset-x-0 top-0 z-[5] h-[68px]" />
 
         {/* HEADER */}
-        <div data-tauri-drag-region className={`relative z-10 flex shrink-0 select-none items-center justify-between pr-2.5 pb-4 pt-1.5 ${nativeMacWindow ? 'pl-[80px]' : 'pl-2.5'}`}>
+        <div data-tauri-drag-region className={`relative z-10 flex shrink-0 select-none items-center justify-between pr-2.5 pb-4 pt-1.5 ${nativeMacWindow ? 'pl-[60px]' : 'pl-2.5'}`}>
           <div
             data-tauri-drag-region
             className={`pointer-events-none flex items-center gap-[11px] ${hasMainContent ? 'v6-brand-enter' : 'v6-brand-hidden'}`}

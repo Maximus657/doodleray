@@ -8,6 +8,7 @@
 static NSString *const DoodleRayProviderBundleIdentifier = @"com.doodleray.doodleray.DoodleRayVPN";
 static NSString *const DoodleRayManagerDescription = @"DoodleRay VPN";
 static NSTimeInterval const DoodleRayPreferenceTimeout = 60.0;
+static NETunnelProviderManager *DoodleRayCachedManager = nil;
 
 static char *DoodleRayCopyJSON(BOOL success, NSString *status, NSString *message) {
     NSDictionary *payload = @{
@@ -33,28 +34,34 @@ static NSString *DoodleRayStatusName(NEVPNStatus status) {
 }
 
 static NETunnelProviderManager *DoodleRayLoadManager(NSString **failure) {
-    dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
-    __block NSArray<NETunnelProviderManager *> *loadedManagers = nil;
-    __block NSError *loadError = nil;
-    [NETunnelProviderManager loadAllFromPreferencesWithCompletionHandler:^(NSArray<NETunnelProviderManager *> *managers, NSError *error) {
-        loadedManagers = managers;
-        loadError = error;
-        dispatch_semaphore_signal(semaphore);
-    }];
-    if (dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(DoodleRayPreferenceTimeout * NSEC_PER_SEC))) != 0) {
-        if (failure) *failure = @"Timed out while loading VPN preferences.";
-        return nil;
-    }
-    if (loadError) {
-        if (failure) *failure = loadError.localizedDescription;
-        return nil;
-    }
-    for (NETunnelProviderManager *manager in loadedManagers) {
-        NETunnelProviderProtocol *protocol = (NETunnelProviderProtocol *)manager.protocolConfiguration;
-        if ([protocol isKindOfClass:[NETunnelProviderProtocol class]] &&
-            [protocol.providerBundleIdentifier isEqualToString:DoodleRayProviderBundleIdentifier]) {
-            return manager;
+    @synchronized ([NETunnelProviderManager class]) {
+        if (DoodleRayCachedManager) return DoodleRayCachedManager;
+
+        dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+        __block NSArray<NETunnelProviderManager *> *loadedManagers = nil;
+        __block NSError *loadError = nil;
+        [NETunnelProviderManager loadAllFromPreferencesWithCompletionHandler:^(NSArray<NETunnelProviderManager *> *managers, NSError *error) {
+            loadedManagers = managers;
+            loadError = error;
+            dispatch_semaphore_signal(semaphore);
+        }];
+        if (dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(DoodleRayPreferenceTimeout * NSEC_PER_SEC))) != 0) {
+            if (failure) *failure = @"Timed out while loading VPN preferences.";
+            return nil;
         }
+        if (loadError) {
+            if (failure) *failure = loadError.localizedDescription;
+            return nil;
+        }
+        for (NETunnelProviderManager *manager in loadedManagers) {
+            NETunnelProviderProtocol *protocol = (NETunnelProviderProtocol *)manager.protocolConfiguration;
+            if ([protocol isKindOfClass:[NETunnelProviderProtocol class]] &&
+                [protocol.providerBundleIdentifier isEqualToString:DoodleRayProviderBundleIdentifier]) {
+                DoodleRayCachedManager = manager;
+                return manager;
+            }
+        }
+        return nil;
     }
     return nil;
 }
@@ -107,7 +114,9 @@ char *doodleray_ne_start(const char *config_json) {
         if (!manager && failure) {
             return DoodleRayCopyJSON(NO, @"invalid", failure);
         }
-        if (!manager) manager = [[NETunnelProviderManager alloc] init];
+        if (!manager) {
+            manager = [[NETunnelProviderManager alloc] init];
+        }
 
         NETunnelProviderProtocol *protocol = [[NETunnelProviderProtocol alloc] init];
         protocol.providerBundleIdentifier = DoodleRayProviderBundleIdentifier;
@@ -122,6 +131,7 @@ char *doodleray_ne_start(const char *config_json) {
         if (!DoodleRaySaveManager(manager, &failure)) {
             return DoodleRayCopyJSON(NO, @"invalid", failure);
         }
+        DoodleRayCachedManager = manager;
 
         NSError *startError = nil;
         BOOL started = [(NETunnelProviderSession *)manager.connection
