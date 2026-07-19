@@ -4,12 +4,12 @@ Updated: 2026-07-19
 
 Branch: `codex/v6-macos-app-store`
 
-Candidate: `6.0.0 (60005)`
+Candidate: `6.0.0 (60006)`
 Policy: credentials, subscription tokens, device identifiers, node addresses, routes, and egress addresses are never written to this report.
 
 ## Release verdict
 
-**Build 60005 is uploaded for TestFlight processing; App Review remains blocked by a clean cold-start retest and the real system-tunnel matrix.** API, profile, UI, build, signing, archive/export, and isolated transport checks pass.
+**Build 60006 is uploaded for TestFlight processing; App Review remains blocked by a clean cold-start retest and the real system-tunnel matrix.** API, profile, UI, build, signing, archive/export, and isolated transport checks pass.
 
 ## Fixed release blockers
 
@@ -18,9 +18,9 @@ Policy: credentials, subscription tokens, device identifiers, node addresses, ro
 | P0 | Client called nonexistent `/v1/mobile/profile-leases` routes and received HTTP 404 | Moved connect and probe flows to canonical `/v1/mobile/connection-profile`; removed consume/revoke calls | Rust contract test and authenticated production profile retrieval pass |
 | P0 | Closed App API could select nodes outside the user's subscription squad | Applied the subscription renderer's inbound/squad filtering to locations, countries, Reality candidates, and CDN candidates | Backend tests pass; production deployed; every country profile matches at least one current subscription node field-for-field |
 | P0 | App Store login was lost after process restart | Moved macOS secure storage to the sandbox-compatible Data Protection Keychain with one-way legacy migration | Login survived repeated QA bundle restarts; subscription and device state remained available |
-| P0 | TestFlight 60003 could beachball on a white window for about two minutes during first launch | Marked renderer secure-storage commands and startup session lookup as asynchronous Tauri commands so Keychain work cannot block the main thread | App Store compile, clippy, and Rust tests pass; clean-device TestFlight retest is pending on 60005 |
-| P0 | TestFlight 60003 froze its timer and entire UI one second after a successful tunnel connection | Moved all blocking status/health commands off the UI thread, cached the loaded Network Extension manager, and prevented overlapping watchdog checks | Signed universal 60005 compiles the host bridge and extension; clean-device TestFlight retest is pending |
-| P0 | `Автовыбор` could stop after choosing one reachable endpoint whose VPN traffic check failed | Send ping-ranked country fallbacks and try at most three distinct locations before returning failure | Production telemetry confirmed the failed auto attempt was followed by a successful Germany tunnel; fallback normalization/bounds test passes |
+| P0 | TestFlight 60003 could beachball on a white window for about two minutes during first launch | Marked renderer secure-storage commands and startup session lookup as asynchronous Tauri commands so Keychain work cannot block the main thread | App Store compile, clippy, and Rust tests pass; clean-device TestFlight retest is pending on 60006 |
+| P0 | TestFlight 60003 froze its timer and entire UI one second after a successful tunnel connection | Moved all blocking status/health commands off the UI thread, cached the loaded Network Extension manager, and prevented overlapping watchdog checks | Signed universal 60005 compiles the host bridge and extension; clean-device TestFlight retest is pending on 60006 |
+| P0 | `Автовыбор` could stop after choosing one reachable endpoint whose VPN traffic check failed | Send ping-ranked country fallbacks, wait for Network Extension to fully stop between attempts, and try at most three distinct locations | Production telemetry confirmed the failed auto attempt was followed by a successful Germany tunnel; fallback and stopped-state tests pass |
 | P0 | Nested router VPN could cause the packet tunnel to route its own uplink back into itself | Resolve remote endpoints before installing tunnel routes and add exact IPv4/IPv6 uplink exclusions | All current endpoints resolve; signed extension build and unit tests pass; real NE test pending |
 | P0 | A tunnel could report connected while carrying no usable traffic | Added an HTTPS post-connect verifier; a failure automatically stops the extension and restores disconnected state | Verifier uses the first-party health endpoint that passed through all current profile families; real NE test pending |
 | P1 | First Network Extension preference save could exceed the bridge timeout | Increased preference operation timeout from 20 to 60 seconds | Signed QA setup no longer hits the earlier 20-second failure |
@@ -50,14 +50,14 @@ Policy: credentials, subscription tokens, device identifiers, node addresses, ro
 - Host and extension are sandboxed, signed by the same Apple team, provisioned, and contain the required App Group and Packet Tunnel entitlements.
 - Clean TestFlight build `6.0.0 (60003)` reproduced the cold-start stall, post-connect UI freeze, and one failed auto-selected tunnel; explicit Germany carried real VPN traffic.
 - UI smoke: session persists, normal rounded macOS window, no white corners, 8 locations, visible ping action/results, no protocol labels.
-- Apple Distribution build, archive/export, and App Store Connect upload: pass; build 60005 is processing.
-- Internal TestFlight group `Mac QA` exists with two internal testers and build 60003; build 60005 will replace it after Apple processing completes.
+- Apple Distribution build, archive/export, and App Store Connect upload: pass for 60006; 60005 was intentionally not distributed.
+- Internal TestFlight group `Mac QA` exists with two internal testers and build 60003; build 60006 will replace it after Apple processing completes.
 
 ## Final real Network Extension matrix
 
 - [x] Login, kill app, relaunch, confirm session and device identity persist.
 - [x] Retrieve every current location and complete profile-backed pings.
-- [ ] Install 60005 on the clean TestFlight Mac and verify a responsive first frame without a beachball.
+- [ ] Install 60006 on the clean TestFlight Mac and verify a responsive first frame without a beachball.
 - [ ] Connect using `Автовыбор`; verify Packet Tunnel reaches `connected` and first-party health passes.
 - [ ] Keep the connected app open for at least two minutes; verify the timer advances and every control remains responsive.
 - [ ] Verify DNS over UDP and TCP, HTTPS traffic, large/MTU-sensitive transfer, and explicit IPv4/IPv6 behavior.
@@ -65,4 +65,4 @@ Policy: credentials, subscription tokens, device identifiers, node addresses, ro
 - [ ] Repeat connect/disconnect cycles and verify routes, DNS, and network state return to the captured baseline.
 - [ ] Kill/relaunch while disconnected and verify no stale Network Extension state.
 - [ ] Re-run full frontend/Rust/static/bundle gates after any E2E fix.
-- [x] Build with Apple Distribution, validate archive/export, then upload build 60005.
+- [x] Build with Apple Distribution, validate archive/export, then upload build 60006.

@@ -53,9 +53,13 @@ pub fn is_connected_status(status: &str) -> bool {
     status == "connected"
 }
 
+pub fn is_stopped_status(status: &str) -> bool {
+    matches!(status, "disconnected" | "invalid")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{is_active_status, is_connected_status};
+    use super::{is_active_status, is_connected_status, is_stopped_status};
 
     #[test]
     fn only_live_network_extension_states_are_active() {
@@ -68,6 +72,12 @@ mod tests {
         assert!(is_connected_status("connected"));
         for status in ["connecting", "reasserting", "disconnected", "invalid"] {
             assert!(!is_connected_status(status));
+        }
+        for status in ["disconnected", "invalid"] {
+            assert!(is_stopped_status(status));
+        }
+        for status in ["connecting", "connected", "reasserting", "disconnecting"] {
+            assert!(!is_stopped_status(status));
         }
     }
 }

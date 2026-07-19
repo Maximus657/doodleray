@@ -7056,7 +7056,7 @@ async fn vpn_connect_app_store(request: ConnectRequest, app: tauri::AppHandle) -
         Ok(response) => {
             if let Err(error) = verify_app_store_tunnel_traffic().await {
                 vpn_log("App Store tunnel failed end-to-end traffic verification; disconnecting");
-                let _ = app_store_tunnel::stop();
+                let _ = wait_for_app_store_tunnel_disconnected().await;
                 if let Ok(mut state) = CONNECTION_STATE.lock() {
                     *state = false;
                 }
@@ -7087,7 +7087,7 @@ async fn vpn_connect_app_store(request: ConnectRequest, app: tauri::AppHandle) -
             }
         }
         Err(error) => {
-            let _ = app_store_tunnel::stop();
+            let _ = wait_for_app_store_tunnel_disconnected().await;
             vpn_log("App Store Network Extension did not reach connected state");
             ConnectResult {
                 success: false,
@@ -7120,6 +7120,27 @@ async fn wait_for_app_store_tunnel_connected(
         response = app_store_tunnel::status()?;
     }
     Err("Network Extension timed out while connecting".into())
+}
+
+#[cfg(all(target_os = "macos", feature = "app-store"))]
+async fn wait_for_app_store_tunnel_disconnected() -> Result<app_store_tunnel::TunnelResponse, String>
+{
+    let mut response = app_store_tunnel::stop()?;
+    for _ in 0..20 {
+        if !response.success {
+            return Err(if response.message.is_empty() {
+                "Network Extension could not stop the VPN".into()
+            } else {
+                response.message
+            });
+        }
+        if app_store_tunnel::is_stopped_status(&response.status) {
+            return Ok(response);
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        response = app_store_tunnel::status()?;
+    }
+    Err("Network Extension timed out while disconnecting".into())
 }
 
 #[cfg(all(target_os = "macos", feature = "app-store"))]
@@ -8124,7 +8145,7 @@ async fn vpn_disconnect_app_store(app: tauri::AppHandle) -> ConnectResult {
     let _runtime_guard = RUNTIME_OP_LOCK.lock().await;
     let was_connected = CONNECTION_STATE.lock().map(|state| *state).unwrap_or(false);
 
-    match app_store_tunnel::stop() {
+    match wait_for_app_store_tunnel_disconnected().await {
         Ok(response) if response.success => {
             if let Ok(mut state) = CONNECTION_STATE.lock() {
                 *state = false;
