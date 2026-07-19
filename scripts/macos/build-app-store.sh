@@ -111,12 +111,10 @@ signing_args=(
   DEVELOPMENT_TEAM="$team_id"
   CODE_SIGN_STYLE="$CODE_SIGN_STYLE"
 )
-provisioning_args=()
 if [ "$CODE_SIGN_STYLE" = "Manual" ]; then
   signing_args+=(CODE_SIGN_IDENTITY="$identity" PROVISIONING_PROFILE_SPECIFIER="$extension_profile_name")
 elif [ "$CODE_SIGN_STYLE" = "Automatic" ]; then
-  signing_args+=(CODE_SIGN_IDENTITY="$SIGNING_IDENTITY_NAME")
-  provisioning_args+=(-allowProvisioningUpdates)
+  signing_args+=(CODE_SIGN_IDENTITY="$SIGNING_IDENTITY_NAME" -allowProvisioningUpdates)
 elif [ "$CODE_SIGN_STYLE" != "Automatic" ]; then
   printf 'Unsupported code signing style: %s\n' "$CODE_SIGN_STYLE" >&2
   exit 1
@@ -131,7 +129,6 @@ if ! xcodebuild \
   ARCHS="arm64 x86_64" \
   ONLY_ACTIVE_ARCH=NO \
   "${signing_args[@]}" \
-  "${provisioning_args[@]}" \
   build > /tmp/doodleray-app-store-extension-build.log 2>&1; then
   tail -n 160 /tmp/doodleray-app-store-extension-build.log >&2
   exit 1

@@ -9,7 +9,7 @@ Policy: credentials, subscription tokens, device identifiers, node addresses, ro
 
 ## Release verdict
 
-**Ready for the final system-tunnel matrix; not ready to upload yet.** API, profile, UI, build, signing, and isolated transport checks pass. Upload remains blocked only until the signed QA candidate completes the real macOS Network Extension connect/disconnect matrix on this Mac.
+**Build 60003 is uploaded for TestFlight processing; App Review remains blocked by the real system-tunnel matrix.** API, profile, UI, build, signing, archive/export, and isolated transport checks pass.
 
 ## Fixed release blockers
 
@@ -46,6 +46,8 @@ Policy: credentials, subscription tokens, device identifiers, node addresses, ro
 - Host and extension are sandboxed, signed by the same Apple team, provisioned, and contain the required App Group and Packet Tunnel entitlements.
 - QA18 version/build: `6.0.0 (60003)`.
 - UI smoke: session persists, normal rounded macOS window, no white corners, 8 locations, visible ping action/results, no protocol labels.
+- Apple Distribution build, symbol-bearing archive/export, and App Store Connect upload: pass; build 60003 is ready for testing.
+- Internal TestFlight group `Mac QA` exists with build 60003 and one invited internal tester; automatic distribution is disabled.
 
 ## Final real Network Extension matrix
 
@@ -57,4 +59,4 @@ Policy: credentials, subscription tokens, device identifiers, node addresses, ro
 - [ ] Repeat connect/disconnect cycles and verify routes, DNS, and network state return to the captured baseline.
 - [ ] Kill/relaunch while disconnected and verify no stale Network Extension state.
 - [ ] Re-run full frontend/Rust/static/bundle gates after any E2E fix.
-- [ ] Build with Apple Distribution, validate archive/export, then upload build 60003.
+- [x] Build with Apple Distribution, validate archive/export, then upload build 60003.
