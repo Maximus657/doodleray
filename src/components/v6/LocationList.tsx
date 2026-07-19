@@ -83,9 +83,10 @@ export default function LocationList({
             disabled={pingingServerIds.size > 0}
             title={t('v6PingAll' as never)}
             aria-label={t('v6PingAll' as never)}
-            className="v6-hover-bright flex h-6 w-6 items-center justify-center rounded-lg border border-white/[0.12] bg-white/[0.07] text-white/70 v6-focus disabled:opacity-50"
+            className="v6-hover-bright flex h-6 items-center justify-center gap-1.5 rounded-lg border border-white/[0.12] bg-white/[0.07] px-2 text-[11px] font-medium text-white/70 v6-focus disabled:opacity-50"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${pingingServerIds.size > 0 ? 'v6-orb-spin' : ''}`} strokeWidth={2.2} />
+            {t('v6PingButton' as never)}
           </button>
           {canAdd && (
             <button

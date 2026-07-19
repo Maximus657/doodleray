@@ -7,7 +7,7 @@
 
 static NSString *const DoodleRayProviderBundleIdentifier = @"com.doodleray.doodleray.DoodleRayVPN";
 static NSString *const DoodleRayManagerDescription = @"DoodleRay VPN";
-static NSTimeInterval const DoodleRayPreferenceTimeout = 20.0;
+static NSTimeInterval const DoodleRayPreferenceTimeout = 60.0;
 
 static char *DoodleRayCopyJSON(BOOL success, NSString *status, NSString *message) {
     NSDictionary *payload = @{

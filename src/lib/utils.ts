@@ -1,4 +1,5 @@
 import { buildPingProbeRequest } from './connect-helpers';
+import { closedLocationIdFromServer, isClosedAutoLocationServer, isClosedLocationServer } from './app-control-plane';
 import type { ServerConfig } from '../stores/app-store';
 
 // Country code to flag emoji
@@ -91,6 +92,14 @@ async function pingAddress(
   invoke: (cmd: string, args: any) => Promise<any>
 ): Promise<number> {
   if (isTauriRuntime()) {
+    if (isClosedAutoLocationServer(server)) return -1;
+    if (isClosedLocationServer(server)) {
+      const result: any = await invoke('app_ping_location', {
+        locationId: closedLocationIdFromServer(server),
+        serverId: server.id,
+      });
+      return Number.isFinite(result.ping_ms) ? result.ping_ms : -1;
+    }
     const result: any = await invoke('ping_server_profile', {
       request: buildPingProbeRequest(server),
       serverId: server.id,

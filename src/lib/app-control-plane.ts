@@ -7,6 +7,7 @@ import { getServerSelectionKey } from './server-selection';
 
 const CLOSED_SUBSCRIPTION_ID = 'doodlevpn-app';
 const LOCATION_ID_PREFIX = 'app-location:';
+const AUTO_LOCATION_ID = 'auto';
 let localPreviewLoggedIn = false;
 
 export interface AppApiSubscriptionSummary {
@@ -48,6 +49,10 @@ export function isClosedLocationServer(server: ServerConfig | null | undefined):
   return !!server?.id?.startsWith(LOCATION_ID_PREFIX);
 }
 
+export function isClosedAutoLocationServer(server: ServerConfig | null | undefined): boolean {
+  return server?.id === `${LOCATION_ID_PREFIX}${AUTO_LOCATION_ID}`;
+}
+
 export function closedLocationIdFromServer(server: ServerConfig): string {
   return server.id.startsWith(LOCATION_ID_PREFIX)
     ? server.id.slice(LOCATION_ID_PREFIX.length)
@@ -70,7 +75,10 @@ function locationToServer(location: AppApiLocation): ServerConfig {
     : /^[A-Z]{2}$/.test(countryCode)
       ? new Intl.DisplayNames([language], { type: 'region' }).of(countryCode)
       : undefined;
-  const name = localizedCountry || location.title || countryCode || id;
+  const autoName = id === AUTO_LOCATION_ID
+    ? language === 'ru' ? '⚡ Автовыбор' : language === 'zh' ? '⚡ 自动选择' : '⚡ Auto select'
+    : undefined;
+  const name = autoName || localizedCountry || location.title || countryCode || id;
   return {
     id: `${LOCATION_ID_PREFIX}${id}`,
     name,
@@ -215,12 +223,17 @@ export function syncClosedLocationsToStore(
 ) {
   if (!isClosedControlPlaneEnabled()) return;
 
-  const servers = locations
+  const state = useAppStore.getState();
+  const previousPings = new Map(state.servers.map((server) => [server.id, server.ping]));
+  const locationServers = locations
     .filter((location) => location.available !== false)
     .sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0) || a.title.localeCompare(b.title))
-    .map(locationToServer);
+    .map(locationToServer)
+    .map((server) => ({ ...server, ping: previousPings.get(server.id) }));
+  const servers = locationServers.length === 0
+    ? []
+    : [locationToServer({ id: AUTO_LOCATION_ID, country_code: 'AUTO', title: 'Auto', available: true }), ...locationServers];
   const subscription = subscriptionFromSession(session);
-  const state = useAppStore.getState();
   const activeId = state.activeServer?.id;
   const activeServer = servers.find((server) => server.id === activeId) || servers[0] || null;
 
@@ -238,6 +251,12 @@ export async function buildAppConnectLocationRequestFromState(
   systemProxyModeOverride?: SystemProxyMode,
 ) {
   const state = useAppStore.getState();
+  const resolvedServer = isClosedAutoLocationServer(server)
+    ? state.servers
+        .filter((candidate) => isClosedLocationServer(candidate) && !isClosedAutoLocationServer(candidate) && /^[A-Z]{2}$/.test(candidate.countryCode || ''))
+        .sort((a, b) => (a.ping && a.ping > 0 ? a.ping : Number.MAX_SAFE_INTEGER) - (b.ping && b.ping > 0 ? b.ping : Number.MAX_SAFE_INTEGER))[0]
+    : server;
+  if (!resolvedServer) throw new Error('Нет доступных VPN-локаций для автовыбора');
   const proxyMode = proxyModeOverride ?? state.proxyMode;
   const routingRules = proxyMode === 'tun' ? await getActiveRoutingRules() : [];
   const systemProxyMode = resolveSystemProxyModeForRouting(
@@ -247,7 +266,7 @@ export async function buildAppConnectLocationRequestFromState(
   );
 
   return {
-    location_id: closedLocationIdFromServer(server),
+    location_id: closedLocationIdFromServer(resolvedServer),
     proxy_mode: proxyMode,
     system_proxy_mode: systemProxyMode,
     socks_port: state.socksPort,

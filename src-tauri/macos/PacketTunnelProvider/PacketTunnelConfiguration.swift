@@ -1,8 +1,16 @@
+import Darwin
 import Foundation
+
+struct PreparedPacketTunnelConfiguration {
+    let xrayConfig: [String: Any]
+    let excludedIPv4Addresses: [String]
+    let excludedIPv6Addresses: [String]
+}
 
 enum PacketTunnelConfigurationError: LocalizedError {
     case missingConfiguration
     case invalidConfiguration
+    case unresolvedUplink
 
     var errorDescription: String? {
         switch self {
@@ -10,6 +18,8 @@ enum PacketTunnelConfigurationError: LocalizedError {
             return "DoodleRay VPN configuration is missing. Start the tunnel from the app."
         case .invalidConfiguration:
             return "DoodleRay VPN configuration is invalid."
+        case .unresolvedUplink:
+            return "DoodleRay VPN could not resolve the selected server before starting the tunnel."
         }
     }
 }
@@ -41,7 +51,115 @@ enum PacketTunnelConfiguration {
         return object
     }
 
-    static func injectingTunnelFileDescriptor(_ descriptor: Int32, into config: [String: Any]) throws -> String {
+    static func resolvingUplinks(in config: [String: Any]) throws -> PreparedPacketTunnelConfiguration {
+        var result = config
+        guard var outbounds = result["outbounds"] as? [[String: Any]] else {
+            throw PacketTunnelConfigurationError.invalidConfiguration
+        }
+
+        let remoteProtocols = Set(["vless", "vmess", "trojan", "shadowsocks"])
+        var excludedIPv4 = Set<String>()
+        var excludedIPv6 = Set<String>()
+        var resolvedEndpointCount = 0
+
+        for outboundIndex in outbounds.indices {
+            guard let protocolName = outbounds[outboundIndex]["protocol"] as? String,
+                  remoteProtocols.contains(protocolName.lowercased()),
+                  var settings = outbounds[outboundIndex]["settings"] as? [String: Any]
+            else {
+                continue
+            }
+
+            for endpointKey in ["vnext", "servers"] {
+                guard var endpoints = settings[endpointKey] as? [[String: Any]] else {
+                    continue
+                }
+                for endpointIndex in endpoints.indices {
+                    guard let host = endpoints[endpointIndex]["address"] as? String,
+                          !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    else {
+                        continue
+                    }
+
+                    let addresses = resolveNumericAddresses(host)
+                    guard let selectedAddress = addresses.first else {
+                        throw PacketTunnelConfigurationError.unresolvedUplink
+                    }
+                    endpoints[endpointIndex]["address"] = selectedAddress
+                    resolvedEndpointCount += 1
+                    if selectedAddress.contains(":") {
+                        excludedIPv6.insert(selectedAddress)
+                    } else {
+                        excludedIPv4.insert(selectedAddress)
+                    }
+                }
+                settings[endpointKey] = endpoints
+            }
+            outbounds[outboundIndex]["settings"] = settings
+        }
+
+        guard resolvedEndpointCount > 0 else {
+            throw PacketTunnelConfigurationError.invalidConfiguration
+        }
+        result["outbounds"] = outbounds
+        return PreparedPacketTunnelConfiguration(
+            xrayConfig: result,
+            excludedIPv4Addresses: excludedIPv4.sorted(),
+            excludedIPv6Addresses: excludedIPv6.sorted()
+        )
+    }
+
+    private static func resolveNumericAddresses(_ host: String) -> [String] {
+        var hints = addrinfo()
+        hints.ai_flags = AI_ADDRCONFIG
+        hints.ai_family = AF_UNSPEC
+        hints.ai_socktype = SOCK_STREAM
+        hints.ai_protocol = IPPROTO_TCP
+
+        var result: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, nil, &hints, &result) == 0, let first = result else {
+            return []
+        }
+        defer { freeaddrinfo(first) }
+
+        var ipv4: [String] = []
+        var ipv6: [String] = []
+        var cursor: UnsafeMutablePointer<addrinfo>? = first
+        while let entry = cursor {
+            defer { cursor = entry.pointee.ai_next }
+            guard entry.pointee.ai_family == AF_INET || entry.pointee.ai_family == AF_INET6,
+                  let socketAddress = entry.pointee.ai_addr
+            else {
+                continue
+            }
+
+            var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            guard getnameinfo(
+                socketAddress,
+                entry.pointee.ai_addrlen,
+                &buffer,
+                socklen_t(buffer.count),
+                nil,
+                0,
+                NI_NUMERICHOST
+            ) == 0 else {
+                continue
+            }
+            let address = String(cString: buffer).split(separator: "%", maxSplits: 1).first.map(String.init) ?? ""
+            guard !address.isEmpty else { continue }
+            if entry.pointee.ai_family == AF_INET {
+                if !ipv4.contains(address) { ipv4.append(address) }
+            } else if !ipv6.contains(address) {
+                ipv6.append(address)
+            }
+        }
+        return ipv4 + ipv6
+    }
+
+    static func injectingTunnelFileDescriptor(
+        _ descriptor: Int32,
+        into config: [String: Any]
+    ) throws -> String {
         guard descriptor >= 3 else {
             throw PacketTunnelConfigurationError.invalidConfiguration
         }
@@ -86,5 +204,40 @@ enum PacketTunnelConfiguration {
             return false
         }
         return object["success"] as? Bool == true
+    }
+
+    static func invocationFailureSummary(_ response: String) -> String {
+        guard let data = response.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return "invalid libXray response"
+        }
+        var summary = (object["error"] as? String)
+            ?? (object["message"] as? String)
+            ?? "unknown libXray error"
+        let redactions: [(String, String)] = [
+            (#"https?://[^\s]+"#, "[url]"),
+            (#"\b(?:\d{1,3}\.){3}\d{1,3}\b"#, "[address]"),
+            (#"\b[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\b"#, "[id]"),
+            (#"\b(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}\b"#, "[host]"),
+            (#"\b[A-Za-z0-9_+/=-]{24,}\b"#, "[value]"),
+            (#"(?i)\b(?:password|token|uuid|public_key|short_id|private_key|key)\s*[:=]\s*[^,\s]+"#, "[credential]"),
+        ]
+        for (pattern, replacement) in redactions {
+            summary = summary.replacingOccurrences(
+                of: pattern,
+                with: replacement,
+                options: .regularExpression
+            )
+        }
+        summary = summary.replacingOccurrences(
+            of: #"[\u0000-\u001F\u007F]+"#,
+            with: " ",
+            options: .regularExpression
+        )
+        if summary.count > 320 {
+            summary = String(summary.prefix(320)) + "…"
+        }
+        return summary
     }
 }

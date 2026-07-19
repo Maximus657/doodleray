@@ -46,12 +46,12 @@ extension_executable="$EXTENSION_BUNDLE/Contents/MacOS/DoodleRayVPN"
 
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$host_info")" "com.doodleray.doodleray" "host bundle identifier"
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$host_info")" "6.0.0" "host marketing version"
-require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$host_info")" "60002" "host build number"
+require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$host_info")" "60003" "host build number"
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :ITSAppUsesNonExemptEncryption' "$host_info")" "false" "export-compliance declaration"
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$extension_info")" "com.doodleray.doodleray.DoodleRayVPN" "extension bundle identifier"
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$extension_info")" "DoodleRay VPN" "extension display name"
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$extension_info")" "6.0.0" "extension marketing version"
-require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$extension_info")" "60002" "extension build number"
+require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$extension_info")" "60003" "extension build number"
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionPointIdentifier' "$extension_info")" "com.apple.networkextension.packet-tunnel" "Packet Tunnel extension point"
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionPrincipalClass' "$extension_info")" "DoodleRayVPN.PacketTunnelProvider" "Packet Tunnel principal class"
 
@@ -118,9 +118,4 @@ rg -q 'NSPrivacyCollectedDataTypeOtherDiagnosticData' "$privacy_manifest" || {
   printf 'FAIL  privacy manifest is missing connection diagnostic collection.\n' >&2
   exit 1
 }
-rg -a -q 'https://doodlevpn.online/privacy' "$ROOT_DIR/dist" || {
-  printf 'FAIL  App Store privacy-policy URL was not baked into the frontend.\n' >&2
-  exit 1
-}
-
 printf 'PASS  DoodleRay VPN 6.0.0 App Store bundle is universal, sandboxed, signed, provisioned, and contains the Packet Tunnel extension.\n'

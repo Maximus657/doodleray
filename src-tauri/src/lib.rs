@@ -77,6 +77,9 @@ const APP_IDENTIFIER: &str = match option_env!("DOODLERAY_APP_IDENTIFIER") {
 const APP_PRODUCT_NAME: &str = "DoodleRay";
 const PROFILE_PING_URL: &str = "https://captive.apple.com/hotspot-detect.html";
 const APP_API_DEFAULT_BASE_URL: &str = "https://ddlvpn.lol/v1/mobile";
+const APP_API_CONNECTION_PROFILE_PATH: &str = "/connection-profile";
+#[cfg(all(target_os = "macos", feature = "app-store"))]
+const APP_STORE_TRAFFIC_VERIFY_URL: &str = "https://ddlvpn.lol/healthz";
 const APP_API_SESSION_KEY: &str = "app-api-session-v1";
 const APP_API_DEVICE_KEY: &str = "app-api-device-v1";
 
@@ -2253,9 +2256,97 @@ fn validate_renderer_secure_store_key(key: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(target_os = "macos"))]
 fn secure_store_entry(key: &str) -> Result<keyring::Entry, String> {
     keyring::Entry::new(SECURE_STORE_SERVICE, key)
         .map_err(|e| format!("Secure storage unavailable: {}", e))
+}
+
+#[cfg(target_os = "macos")]
+fn secure_store_macos_options(key: &str) -> security_framework::passwords::PasswordOptions {
+    let mut options = security_framework::passwords::PasswordOptions::new_generic_password(
+        SECURE_STORE_SERVICE,
+        key,
+    );
+    options.use_protected_keychain();
+    options.set_access_synchronized(Some(false));
+    options
+}
+
+#[cfg(target_os = "macos")]
+fn secure_store_native_get(key: &str) -> Result<Option<String>, String> {
+    use security_framework::passwords::generic_password;
+
+    match generic_password(secure_store_macos_options(key)) {
+        Ok(bytes) => String::from_utf8(bytes)
+            .map(Some)
+            .map_err(|_| "Secure storage entry is not valid UTF-8".to_string()),
+        Err(error) if error.code() == -25300 => {
+            // One-way migration from the legacy SecKeychain backend used by
+            // early macOS builds. App Store builds use the sandbox-compatible
+            // Data Protection Keychain above.
+            let legacy = keyring::Entry::new(SECURE_STORE_SERVICE, key)
+                .map_err(|e| format!("Secure storage unavailable: {}", e))?;
+            match legacy.get_password() {
+                Ok(value) => {
+                    secure_store_native_set(key, &value)?;
+                    let _ = legacy.delete_credential();
+                    Ok(Some(value))
+                }
+                Err(keyring::Error::NoEntry) => Ok(None),
+                Err(e) => Err(format!("Legacy secure storage read failed: {}", e)),
+            }
+        }
+        Err(error) => Err(format!("Secure storage read failed: {}", error)),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn secure_store_native_get(key: &str) -> Result<Option<String>, String> {
+    match secure_store_entry(key)?.get_password() {
+        Ok(value) => Ok(Some(value)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(format!("Secure storage read failed: {}", e)),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn secure_store_native_set(key: &str, value: &str) -> Result<(), String> {
+    security_framework::passwords::set_generic_password_options(
+        value.as_bytes(),
+        secure_store_macos_options(key),
+    )
+    .map_err(|e| format!("Secure storage write failed: {}", e))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn secure_store_native_set(key: &str, value: &str) -> Result<(), String> {
+    secure_store_entry(key)?
+        .set_password(value)
+        .map_err(|e| format!("Secure storage write failed: {}", e))
+}
+
+#[cfg(target_os = "macos")]
+fn secure_store_native_delete(key: &str) -> Result<(), String> {
+    use security_framework::passwords::delete_generic_password_options;
+
+    let modern_result = match delete_generic_password_options(secure_store_macos_options(key)) {
+        Ok(()) => Ok(()),
+        Err(error) if error.code() == -25300 => Ok(()),
+        Err(error) => Err(format!("Secure storage delete failed: {}", error)),
+    };
+    if let Ok(legacy) = keyring::Entry::new(SECURE_STORE_SERVICE, key) {
+        let _ = legacy.delete_credential();
+    }
+    modern_result
+}
+
+#[cfg(not(target_os = "macos"))]
+fn secure_store_native_delete(key: &str) -> Result<(), String> {
+    match secure_store_entry(key)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(format!("Secure storage delete failed: {}", e)),
+    }
 }
 
 fn secure_store_chunk_key(key: &str, index: usize) -> String {
@@ -2288,11 +2379,7 @@ fn secure_store_chunks(value: &str) -> Vec<String> {
 }
 
 fn delete_secure_store_entry(key: &str) -> Result<(), String> {
-    let entry = secure_store_entry(key)?;
-    match entry.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(format!("Secure storage delete failed: {}", e)),
-    }
+    secure_store_native_delete(key)
 }
 
 fn delete_secure_store_chunks(key: &str, manifest: &str) {
@@ -2347,55 +2434,47 @@ fn secure_store_fallback_delete(app: &tauri::AppHandle, key: &str) -> Result<(),
 }
 
 fn secure_store_keyring_get(key: &str) -> Result<Option<String>, String> {
-    let entry = secure_store_entry(key)?;
-    match entry.get_password() {
-        Ok(value) => {
+    match secure_store_native_get(key)? {
+        Some(value) => {
             let Some(count) = secure_store_chunk_count(&value) else {
                 return Ok(Some(value));
             };
 
             let mut restored = String::new();
             for index in 0..count {
-                let chunk_entry = secure_store_entry(&secure_store_chunk_key(key, index))?;
-                let chunk = chunk_entry
-                    .get_password()
-                    .map_err(|e| format!("Secure storage chunk read failed: {}", e))?;
+                let chunk = secure_store_native_get(&secure_store_chunk_key(key, index))?
+                    .ok_or_else(|| "Secure storage chunk is missing".to_string())?;
                 restored.push_str(&chunk);
             }
             Ok(Some(restored))
         }
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(format!("Secure storage read failed: {}", e)),
+        None => Ok(None),
     }
 }
 
 fn secure_store_keyring_set(key: &str, value: &str) -> Result<(), String> {
-    let entry = secure_store_entry(key)?;
-    if let Ok(old_value) = entry.get_password() {
+    if let Some(old_value) = secure_store_native_get(key)? {
         delete_secure_store_chunks(key, &old_value);
     }
 
     if value.len() > SECURE_STORE_CHUNK_BYTES {
         let chunks = secure_store_chunks(value);
         for (index, chunk) in chunks.iter().enumerate() {
-            let chunk_entry = secure_store_entry(&secure_store_chunk_key(key, index))?;
-            chunk_entry
-                .set_password(chunk)
+            secure_store_native_set(&secure_store_chunk_key(key, index), chunk)
                 .map_err(|e| format!("Secure storage chunk write failed: {}", e))?;
         }
 
-        return entry
-            .set_password(&format!("{}{}", SECURE_STORE_CHUNK_PREFIX, chunks.len()))
-            .map_err(|e| format!("Secure storage write failed: {}", e));
+        return secure_store_native_set(
+            key,
+            &format!("{}{}", SECURE_STORE_CHUNK_PREFIX, chunks.len()),
+        );
     }
 
-    entry
-        .set_password(value)
-        .map_err(|e| format!("Secure storage write failed: {}", e))
+    secure_store_native_set(key, value)
 }
 
 fn secure_store_keyring_delete(key: &str) -> Result<(), String> {
-    if let Ok(value) = secure_store_entry(key)?.get_password() {
+    if let Some(value) = secure_store_native_get(key)? {
         delete_secure_store_chunks(key, &value);
     }
     delete_secure_store_entry(key)
@@ -2572,19 +2651,6 @@ struct AppApiProfileLeaseResponse {
     profile: Option<serde_json::Value>,
     #[serde(default)]
     transport_capability: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Default)]
-struct AppApiProfileLeaseState {
-    lease_id: String,
-    status: String,
-    expires_at: String,
-    #[serde(default)]
-    consumed_at: Option<String>,
-    #[serde(default)]
-    revoked_at: Option<String>,
-    #[serde(default)]
-    native_profile: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3325,6 +3391,28 @@ async fn app_api_subscription_status() -> Result<AppApiSubscriptionSummary, Stri
     .await
 }
 
+async fn app_api_connection_profile(
+    session: &AppApiTokenResponse,
+    location_id: &str,
+    selection_mode: &str,
+) -> Result<AppApiProfileLeaseResponse, String> {
+    let body = serde_json::json!({
+        "location_id": location_id,
+        "device_id": session.device_id,
+        "network_class": "normal",
+        "selection_mode": selection_mode,
+        "app_version": env!("CARGO_PKG_VERSION"),
+        "core_version": app_api_core_version(),
+        "client_capabilities": app_api_client_capabilities()
+    });
+    app_api_authorized_json(
+        reqwest::Method::POST,
+        APP_API_CONNECTION_PROFILE_PATH,
+        Some(body),
+    )
+    .await
+}
+
 #[tauri::command]
 async fn app_connect_location(
     request: AppConnectLocationRequest,
@@ -3363,72 +3451,21 @@ async fn app_connect_location(
         };
     }
 
-    let lease_body = serde_json::json!({
-        "location_id": request.location_id,
-        "device_id": session.device_id,
-        "network_class": "normal",
-        "selection_mode": "manual",
-        "app_version": env!("CARGO_PKG_VERSION"),
-        "core_version": app_api_core_version(),
-        "client_capabilities": app_api_client_capabilities()
-    });
-    let lease = match app_api_authorized_json::<AppApiProfileLeaseResponse>(
-        reqwest::Method::POST,
-        "/profile-leases",
-        Some(lease_body),
-    )
-    .await
-    {
+    let lease = match app_api_connection_profile(&session, &request.location_id, "manual").await {
         Ok(lease) => lease,
         Err(e) => {
             return ConnectResult {
                 success: false,
-                message: format!("DoodleVPN profile lease failed: {}", e),
+                message: format!("DoodleVPN connection profile failed: {}", e),
                 health: None,
             };
         }
     };
 
-    let consume_path = format!("/profile-leases/{}/consume", lease.lease_id);
-    let consumed = match app_api_authorized_json::<AppApiProfileLeaseState>(
-        reqwest::Method::POST,
-        &consume_path,
-        None,
-    )
-    .await
+    let connect_request = match app_api_profile_to_connect_request(&lease.native_profile, &request)
     {
-        Ok(consumed) => consumed,
-        Err(e) => {
-            return ConnectResult {
-                success: false,
-                message: format!("DoodleVPN profile lease could not be consumed: {}", e),
-                health: None,
-            };
-        }
-    };
-
-    let native_profile = if consumed.native_profile.is_object()
-        && consumed
-            .native_profile
-            .as_object()
-            .map(|m| !m.is_empty())
-            .unwrap_or(false)
-    {
-        &consumed.native_profile
-    } else {
-        &lease.native_profile
-    };
-
-    let connect_request = match app_api_profile_to_connect_request(native_profile, &request) {
         Ok(request) => request,
         Err(e) => {
-            let revoke_path = format!("/profile-leases/{}/revoke", lease.lease_id);
-            let _ = app_api_authorized_json::<AppApiProfileLeaseState>(
-                reqwest::Method::POST,
-                &revoke_path,
-                None,
-            )
-            .await;
             return ConnectResult {
                 success: false,
                 message: e,
@@ -3452,16 +3489,32 @@ async fn app_connect_location(
         Some(result_body),
     )
     .await;
-    if !result.success {
-        let revoke_path = format!("/profile-leases/{}/revoke", lease.lease_id);
-        let _ = app_api_authorized_json::<AppApiProfileLeaseState>(
-            reqwest::Method::POST,
-            &revoke_path,
-            None,
-        )
-        .await;
-    }
     result
+}
+
+#[tauri::command]
+async fn app_ping_location(location_id: String, server_id: String) -> Result<PingResult, String> {
+    ensure_closed_control_plane_enabled()?;
+    let session =
+        app_api_load_session()?.ok_or_else(|| "DoodleVPN sign-in is required.".to_string())?;
+    if session.subscription.device_allowed == Some(false) {
+        return Err("DoodleVPN device limit reached.".into());
+    }
+    let lease = app_api_connection_profile(&session, &location_id, "probe").await?;
+    let request = AppConnectLocationRequest {
+        location_id,
+        proxy_mode: default_app_proxy_mode(),
+        system_proxy_mode: default_system_proxy_mode(),
+        socks_port: default_app_socks_port(),
+        http_port: default_app_http_port(),
+        network_stack: default_app_network_stack(),
+        dns_mode: default_app_dns_mode(),
+        strict_route: false,
+        kill_switch: false,
+        routing_rules: Vec::new(),
+    };
+    let connect_request = app_api_profile_to_connect_request(&lease.native_profile, &request)?;
+    Ok(ping_server_profile(connect_request, server_id).await)
 }
 
 #[tauri::command]
@@ -4683,6 +4736,13 @@ mod tests {
     #[test]
     fn app_api_default_uses_the_canonical_mobile_contract() {
         assert_eq!(APP_API_DEFAULT_BASE_URL, "https://ddlvpn.lol/v1/mobile");
+        assert_eq!(APP_API_CONNECTION_PROFILE_PATH, "/connection-profile");
+        assert_eq!(
+            app_api_endpoint(APP_API_CONNECTION_PROFILE_PATH)
+                .expect("connection-profile URL")
+                .as_str(),
+            "https://ddlvpn.lol/v1/mobile/connection-profile"
+        );
     }
 
     fn diag_health(
@@ -6662,12 +6722,79 @@ fn build_xray_config(req: &ConnectRequest) -> serde_json::Value {
 }
 
 #[cfg(all(target_os = "macos", feature = "app-store"))]
+const APP_STORE_PRIVATE_IP_RANGES: &[&str] = &[
+    "10.0.0.0/8",
+    "100.64.0.0/10",
+    "127.0.0.0/8",
+    "169.254.0.0/16",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "::1/128",
+    "fc00::/7",
+    "fe80::/10",
+];
+
+#[cfg(all(target_os = "macos", feature = "app-store"))]
+fn remove_app_store_geodata_dependencies(config: &mut serde_json::Value) {
+    let Some(rules) = config
+        .get_mut("routing")
+        .and_then(|routing| routing.get_mut("rules"))
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return;
+    };
+
+    for rule in rules.iter_mut() {
+        if let Some(domains) = rule
+            .get_mut("domain")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            domains.retain(|value| {
+                !value
+                    .as_str()
+                    .is_some_and(|value| value.to_ascii_lowercase().starts_with("geosite:"))
+            });
+        }
+
+        if let Some(ip_values) = rule.get_mut("ip").and_then(serde_json::Value::as_array_mut) {
+            let mut rewritten = Vec::with_capacity(ip_values.len());
+            for value in std::mem::take(ip_values) {
+                let Some(selector) = value.as_str() else {
+                    rewritten.push(value);
+                    continue;
+                };
+                if selector.eq_ignore_ascii_case("geoip:private") {
+                    rewritten.extend(
+                        APP_STORE_PRIVATE_IP_RANGES
+                            .iter()
+                            .map(|range| serde_json::Value::String((*range).to_owned())),
+                    );
+                } else if !selector.to_ascii_lowercase().starts_with("geoip:") {
+                    rewritten.push(value);
+                }
+            }
+            *ip_values = rewritten;
+        }
+
+        remove_empty_xray_rule_array(rule, "domain");
+        remove_empty_xray_rule_array(rule, "ip");
+    }
+
+    rules.retain(has_effective_xray_rule_fields);
+}
+
+#[cfg(all(target_os = "macos", feature = "app-store"))]
 fn prepare_app_store_xray_config(mut config: serde_json::Value) -> serde_json::Value {
     if let Some(root) = config.as_object_mut() {
         root.remove("api");
         root.remove("stats");
         root.remove("policy");
         root.remove("metrics");
+        // The packet tunnel already receives the system's DNS packets. Let
+        // those packets follow normal routing through the selected VPN
+        // outbound instead of invoking Xray's UDP DNS outbound, which cannot
+        // open its listener inside a sandboxed Network Extension.
+        root.remove("dns");
     }
 
     config["log"] = serde_json::json!({ "loglevel": "warning" });
@@ -6691,7 +6818,10 @@ fn prepare_app_store_xray_config(mut config: serde_json::Value) -> serde_json::V
         .and_then(serde_json::Value::as_array_mut)
     {
         outbounds.retain(|outbound| {
-            outbound.get("tag").and_then(serde_json::Value::as_str) != Some("api")
+            !matches!(
+                outbound.get("tag").and_then(serde_json::Value::as_str),
+                Some("api" | "dns-out")
+            )
         });
     }
     if let Some(rules) = config
@@ -6700,15 +6830,21 @@ fn prepare_app_store_xray_config(mut config: serde_json::Value) -> serde_json::V
         .and_then(serde_json::Value::as_array_mut)
     {
         rules.retain(|rule| {
-            let targets_api =
-                rule.get("outboundTag").and_then(serde_json::Value::as_str) == Some("api");
+            let targets_removed_outbound = matches!(
+                rule.get("outboundTag").and_then(serde_json::Value::as_str),
+                Some("api" | "dns-out")
+            );
             let has_stale_inbound = rule
                 .get("inboundTag")
                 .and_then(serde_json::Value::as_array)
                 .is_some_and(|tags| !tags.iter().any(|tag| tag.as_str() == Some("tun-in")));
-            !targets_api && !has_stale_inbound
+            !targets_removed_outbound && !has_stale_inbound
         });
     }
+    // LibXray's macOS framework does not embed geoip.dat/geosite.dat. Keep the
+    // Network Extension deterministic and sandbox-safe: express private ranges
+    // directly and drop subscription selectors that require external geo data.
+    remove_app_store_geodata_dependencies(&mut config);
 
     config
 }
@@ -6733,26 +6869,72 @@ mod app_store_config_tests {
     fn network_extension_config_removes_local_api_and_proxy_inbounds() {
         let config = prepare_app_store_xray_config(json!({
             "api": { "tag": "api" },
+            "dns": { "servers": ["localhost", "1.1.1.1"] },
             "stats": {},
             "policy": {},
             "metrics": {},
             "inbounds": [{ "tag": "socks-in", "protocol": "socks" }],
             "outbounds": [
                 { "tag": "proxy", "protocol": "vless" },
-                { "tag": "api", "protocol": "freedom" }
+                { "tag": "api", "protocol": "freedom" },
+                { "tag": "dns-out", "protocol": "dns" }
             ],
             "routing": { "rules": [
                 { "inboundTag": ["api"], "outboundTag": "api" },
+                { "port": "53", "outboundTag": "dns-out" },
                 { "domain": ["domain:example.com"], "outboundTag": "proxy" }
             ] }
         }));
 
         assert!(config.get("api").is_none());
+        assert!(config.get("dns").is_none());
         assert!(config.get("stats").is_none());
         assert_eq!(config["inbounds"][0]["protocol"], "tun");
         assert_eq!(config["inbounds"][0]["settings"]["mtu"], 1408);
         assert_eq!(config["outbounds"].as_array().unwrap().len(), 1);
         assert_eq!(config["routing"]["rules"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn network_extension_config_does_not_require_external_geodata() {
+        let config = prepare_app_store_xray_config(json!({
+            "inbounds": [],
+            "outbounds": [{ "tag": "proxy", "protocol": "freedom" }],
+            "routing": { "rules": [
+                {
+                    "type": "field",
+                    "ip": ["geoip:private", "geoip:ru", "203.0.113.0/24"],
+                    "outboundTag": "direct"
+                },
+                {
+                    "type": "field",
+                    "domain": ["geosite:ru", "domain:example.com"],
+                    "outboundTag": "direct"
+                },
+                {
+                    "type": "field",
+                    "domain": ["geosite:category-ads-all"],
+                    "outboundTag": "block"
+                }
+            ] }
+        }));
+
+        let rules = config["routing"]["rules"].as_array().unwrap();
+        assert_eq!(rules.len(), 2);
+        assert!(rules[0]["ip"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value == "10.0.0.0/8"));
+        assert!(rules[0]["ip"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value == "203.0.113.0/24"));
+        assert!(!rules[0]["ip"].as_array().unwrap().iter().any(|value| value
+            .as_str()
+            .is_some_and(|value| value.starts_with("geoip:"))));
+        assert_eq!(rules[1]["domain"], json!(["domain:example.com"]));
     }
 
     #[test]
@@ -6788,6 +6970,36 @@ mod app_store_config_tests {
 }
 
 #[cfg(all(target_os = "macos", feature = "app-store"))]
+async fn verify_app_store_tunnel_traffic() -> Result<(), String> {
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(8))
+        .redirect(reqwest::redirect::Policy::limited(2))
+        .build()
+        .map_err(|_| "could not initialize the traffic verifier".to_string())?;
+    let response = client
+        .get(APP_STORE_TRAFFIC_VERIFY_URL)
+        .header("User-Agent", "DoodleRay-VPN-Connectivity-Check/1.0")
+        .send()
+        .await
+        .map_err(|error| {
+            if error.is_timeout() {
+                "traffic verification timed out".to_string()
+            } else if error.is_connect() {
+                "traffic verification could not connect".to_string()
+            } else {
+                "traffic verification failed".to_string()
+            }
+        })?;
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err("traffic verification returned an unexpected response".into())
+    }
+}
+
+#[cfg(all(target_os = "macos", feature = "app-store"))]
 async fn vpn_connect_app_store(request: ConnectRequest, app: tauri::AppHandle) -> ConnectResult {
     let _runtime_guard = RUNTIME_OP_LOCK.lock().await;
     if let Ok(mut logs) = CONNECT_LOG.lock() {
@@ -6798,6 +7010,24 @@ async fn vpn_connect_app_store(request: ConnectRequest, app: tauri::AppHandle) -
     let config = build_app_store_xray_config(&request);
     match wait_for_app_store_tunnel_connected(app_store_tunnel::start(&config)).await {
         Ok(response) => {
+            if let Err(error) = verify_app_store_tunnel_traffic().await {
+                vpn_log("App Store tunnel failed end-to-end traffic verification; disconnecting");
+                let _ = app_store_tunnel::stop();
+                if let Ok(mut state) = CONNECTION_STATE.lock() {
+                    *state = false;
+                }
+                if let Ok(mut engine) = ACTIVE_ENGINE.lock() {
+                    *engine = None;
+                }
+                update_tray_disconnected(&app);
+                return ConnectResult {
+                    success: false,
+                    message: format!(
+                        "VPN traffic did not become usable ({error}). DoodleRay disconnected automatically to restore internet."
+                    ),
+                    health: None,
+                };
+            }
             if let Ok(mut state) = CONNECTION_STATE.lock() {
                 *state = true;
             }
@@ -6805,7 +7035,7 @@ async fn vpn_connect_app_store(request: ConnectRequest, app: tauri::AppHandle) -
                 *engine = Some("xray+network-extension".into());
             }
             update_tray_connected(&app, &request.server_address);
-            vpn_log("App Store Network Extension accepted the tunnel start");
+            vpn_log("App Store Network Extension passed end-to-end traffic verification");
             ConnectResult {
                 success: true,
                 message: "DoodleRay VPN is connected through Network Extension".into(),
@@ -12196,6 +12426,7 @@ pub fn run() {
             app_api_locations,
             app_api_subscription_status,
             app_connect_location,
+            app_ping_location,
             app_disconnect,
             qa_control_enabled,
             qa_control_update_frontend_snapshot,

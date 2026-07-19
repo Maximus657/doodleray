@@ -50,7 +50,7 @@ plutil -insert ApplicationProperties.ApplicationPath -string "Applications/Doodl
 plutil -insert ApplicationProperties.Architectures -json '["arm64","x86_64"]' "$ARCHIVE/Info.plist"
 plutil -insert ApplicationProperties.CFBundleIdentifier -string "com.doodleray.doodleray" "$ARCHIVE/Info.plist"
 plutil -insert ApplicationProperties.CFBundleShortVersionString -string "6.0.0" "$ARCHIVE/Info.plist"
-plutil -insert ApplicationProperties.CFBundleVersion -string "60002" "$ARCHIVE/Info.plist"
+plutil -insert ApplicationProperties.CFBundleVersion -string "60003" "$ARCHIVE/Info.plist"
 plutil -insert ApplicationProperties.SigningIdentity -string "Apple Distribution" "$ARCHIVE/Info.plist"
 plutil -insert ApplicationProperties.Team -string "$team_id" "$ARCHIVE/Info.plist"
 

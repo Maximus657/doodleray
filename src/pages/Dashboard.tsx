@@ -33,6 +33,7 @@ import {
   appApiLocations,
   appApiSessionStatus,
   buildAppConnectLocationRequestFromState,
+  isClosedAutoLocationServer,
   isClosedLocationServer,
   syncClosedLocationsToStore,
   type AppApiSessionStatus,
@@ -436,6 +437,7 @@ export default function Dashboard() {
   const connectionOpRef = useRef(0);
   const [pingingServerIds, setPingingServerIds] = useState<Set<string>>(() => new Set());
   const serverSelectionIndex = useMemo(() => buildServerSelectionIndex(servers), [servers]);
+  const serverIdentityKey = useMemo(() => servers.map((server) => server.id).join('\0'), [servers]);
   const autoPingStartedRef = useRef<Set<string>>(new Set());
   const autoSubRefreshStartedRef = useRef(false);
   const trafficLimitNoticeKeyRef = useRef<string | null>(null);
@@ -511,9 +513,8 @@ export default function Dashboard() {
 
   // Auto-ping unpinged servers after persisted state/subscriptions are loaded.
   useEffect(() => {
-    if (closedControlPlane) return;
     const unpinged = servers.filter(
-      s => (s.ping === undefined || (s.ping > 0 && s.ping <= 5)) && !autoPingStartedRef.current.has(s.id)
+      s => !isClosedAutoLocationServer(s) && (s.ping === undefined || (s.ping > 0 && s.ping <= 5)) && !autoPingStartedRef.current.has(s.id)
     );
     if (unpinged.length === 0) return;
     for (const server of unpinged) {
@@ -532,7 +533,7 @@ export default function Dashboard() {
       finally { setPingingServerIds(new Set()); }
     })();
     return () => { cancelled = true; };
-  }, [servers, updateServerPings, closedControlPlane]);
+  }, [serverIdentityKey, updateServerPings]);
 
   // Connection time counter
   const [connectTime, setConnectTime] = useState(0);
@@ -1514,11 +1515,7 @@ export default function Dashboard() {
   }, []);
 
   const handlePingAll = useCallback(async () => {
-    if (closedControlPlane) {
-      await refreshClosedControlPlane(appSession);
-      return;
-    }
-    const toPing = servers.filter((s) => s.address);
+    const toPing = servers.filter((s) => s.address && !isClosedAutoLocationServer(s));
     if (toPing.length === 0) return;
     try {
       const { invoke } = await import('@tauri-apps/api/core');
@@ -1528,7 +1525,7 @@ export default function Dashboard() {
       });
     } catch { /* not in tauri env */ }
     finally { setPingingServerIds(new Set()); }
-  }, [servers, closedControlPlane, refreshClosedControlPlane, appSession]);
+  }, [servers]);
 
   const canConnect = !hasDeviceLimit && (!!activeServer || servers.length > 0);
   const hasDashboardContent = appSession?.logged_in === true || servers.length > 0 || status !== 'disconnected';

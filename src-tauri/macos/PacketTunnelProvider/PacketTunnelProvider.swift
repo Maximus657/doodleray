@@ -14,7 +14,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     ) {
         do {
             let config = try PacketTunnelConfiguration.decode(options: options)
-            let settings = makeNetworkSettings()
+            let prepared = try PacketTunnelConfiguration.resolvingUplinks(in: config)
+            let settings = makeNetworkSettings(
+                excludingIPv4: prepared.excludedIPv4Addresses,
+                excludingIPv6: prepared.excludedIPv6Addresses
+            )
+            logger.notice(
+                "Prepared packet tunnel with \(prepared.excludedIPv4Addresses.count, privacy: .public) IPv4 and \(prepared.excludedIPv6Addresses.count, privacy: .public) IPv6 uplink exclusions"
+            )
             setTunnelNetworkSettings(settings) { [weak self] error in
                 guard let self else {
                     completionHandler(PacketTunnelConfigurationError.invalidConfiguration)
@@ -28,11 +35,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
                 do {
                     guard let descriptor = self.tunnelFileDescriptor() else {
+                        self.logger.error("Packet tunnel file descriptor was not found")
                         throw PacketTunnelConfigurationError.invalidConfiguration
                     }
                     let xrayConfig = try PacketTunnelConfiguration.injectingTunnelFileDescriptor(
                         descriptor,
-                        into: config
+                        into: prepared.xrayConfig
                     )
                     let request = try PacketTunnelConfiguration.invocation(
                         method: "runXrayFromJson",
@@ -40,12 +48,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                     )
                     let response = LibXrayInvoke(request)
                     guard PacketTunnelConfiguration.invocationSucceeded(response) else {
+                        let summary = PacketTunnelConfiguration.invocationFailureSummary(response)
+                        self.logger.error("libXray rejected the packet tunnel configuration: \(summary, privacy: .public)")
                         throw PacketTunnelConfigurationError.invalidConfiguration
                     }
                     self.xrayRunning = true
                     self.logger.notice("Packet tunnel started")
                     completionHandler(nil)
                 } catch {
+                    self.logger.error("Packet tunnel startup failed: \(error.localizedDescription, privacy: .public)")
                     self.stopXray()
                     self.setTunnelNetworkSettings(nil) { _ in
                         completionHandler(error)
@@ -53,6 +64,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 }
             }
         } catch {
+            logger.error("Packet tunnel option decoding failed: \(error.localizedDescription, privacy: .public)")
             completionHandler(error)
         }
     }
@@ -71,13 +83,19 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         completionHandler?(try? JSONSerialization.data(withJSONObject: response, options: []))
     }
 
-    private func makeNetworkSettings() -> NEPacketTunnelNetworkSettings {
+    private func makeNetworkSettings(
+        excludingIPv4 excludedIPv4Addresses: [String],
+        excludingIPv6 excludedIPv6Addresses: [String]
+    ) -> NEPacketTunnelNetworkSettings {
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "172.30.255.1")
         settings.mtu = 1408
         settings.tunnelOverheadBytes = 80
 
         let ipv4 = NEIPv4Settings(addresses: ["172.30.255.2"], subnetMasks: ["255.255.255.252"])
         ipv4.includedRoutes = [.default()]
+        ipv4.excludedRoutes = excludedIPv4Addresses.map {
+            NEIPv4Route(destinationAddress: $0, subnetMask: "255.255.255.255")
+        }
         settings.ipv4Settings = ipv4
 
         let ipv6 = NEIPv6Settings(
@@ -85,6 +103,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             networkPrefixLengths: [126]
         )
         ipv6.includedRoutes = [.default()]
+        ipv6.excludedRoutes = excludedIPv6Addresses.map {
+            NEIPv6Route(destinationAddress: $0, networkPrefixLength: 128)
+        }
         settings.ipv6Settings = ipv6
 
         let dns = NEDNSSettings(servers: ["1.1.1.1", "9.9.9.9"])

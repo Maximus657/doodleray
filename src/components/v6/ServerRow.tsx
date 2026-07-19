@@ -2,8 +2,11 @@ import { useState } from 'react';
 import { Loader2, Globe } from 'lucide-react';
 import { getEmoji, getFluentEmojiCDN } from '@lobehub/fluent-emoji';
 import type { ServerConfig } from '../../stores/app-store';
+import { useTranslation } from '../../locales';
+import { isClosedAutoLocationServer } from '../../lib/app-control-plane';
 
 function pingColor(p?: number): string {
+  if (p === -1) return '#ff6b5a';
   if (p === undefined || p <= 0) return 'rgba(255,255,255,0.35)';
   if (p < 80) return '#3ddc84';
   if (p < 160) return '#ffb02e';
@@ -118,8 +121,10 @@ export function displayServerName(server: Pick<ServerConfig, 'name' | 'countryCo
 
 /** Design location row: flag, user-facing location name, ping dot + ms. */
 export default function ServerRow({ server, active, pinging, onSelect }: Props) {
+  const { t } = useTranslation();
   const pc = pingColor(server.ping);
   const hasPing = server.ping !== undefined && server.ping > 0;
+  const auto = isClosedAutoLocationServer(server);
   const name = displayServerName(server);
 
   return (
@@ -142,13 +147,15 @@ export default function ServerRow({ server, active, pinging, onSelect }: Props) 
         <span className="block truncate text-[14.5px] font-medium text-white" title={server.name}>{name}</span>
       </span>
       <span className="flex shrink-0 items-center justify-end gap-[7px]">
-        {pinging ? (
+        {auto ? (
+          <span className="whitespace-nowrap text-[12px] font-medium text-[#ffb02e]">{t('v6AutoBest' as never)}</span>
+        ) : pinging ? (
           <Loader2 className="h-3.5 w-3.5 v6-orb-spin text-white/50" />
         ) : (
           <>
             <span className="h-[7px] w-[7px] rounded-full" style={{ background: pc, boxShadow: hasPing ? `0 0 8px ${pc}` : 'none' }} />
-            <span className="w-[74px] whitespace-nowrap text-right text-[12.5px] tabular-nums text-white/60">
-              {hasPing ? `${server.ping}\u00a0ms` : '—'}
+            <span className="w-[86px] whitespace-nowrap text-right text-[12px] tabular-nums text-white/60">
+              {hasPing ? `${server.ping}\u00a0ms` : server.ping === -1 ? t('v6NoResponse' as never) : t('v6NotChecked' as never)}
             </span>
           </>
         )}
