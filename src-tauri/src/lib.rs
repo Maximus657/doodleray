@@ -2480,7 +2480,7 @@ fn secure_store_keyring_delete(key: &str) -> Result<(), String> {
     delete_secure_store_entry(key)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn secure_store_get(app: tauri::AppHandle, key: String) -> Result<Option<String>, String> {
     validate_renderer_secure_store_key(&key)?;
     match secure_store_keyring_get(&key) {
@@ -2510,7 +2510,7 @@ fn secure_store_get(app: tauri::AppHandle, key: String) -> Result<Option<String>
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn secure_store_set(app: tauri::AppHandle, key: String, value: String) -> Result<(), String> {
     validate_renderer_secure_store_key(&key)?;
     secure_store_keyring_set(&key, &value)?;
@@ -2523,7 +2523,7 @@ fn secure_store_set(app: tauri::AppHandle, key: String, value: String) -> Result
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn secure_store_delete(app: tauri::AppHandle, key: String) -> Result<(), String> {
     validate_renderer_secure_store_key(&key)?;
     let keyring_result = secure_store_keyring_delete(&key);
@@ -3323,7 +3323,7 @@ fn app_api_exchange_code_body(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn app_api_session_status() -> Result<AppApiSessionStatus, String> {
     if !closed_control_plane_enabled() {
         return Ok(app_api_public_session(None));

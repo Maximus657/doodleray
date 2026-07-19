@@ -40,18 +40,20 @@ plutil -lint "$HOST_ENTITLEMENTS" "$EXTENSION_ENTITLEMENTS" >/dev/null
 
 host_info="$APP_BUNDLE/Contents/Info.plist"
 extension_info="$EXTENSION_BUNDLE/Contents/Info.plist"
+expected_marketing_version="$(node -p "require('$ROOT_DIR/package.json').version")"
+expected_build_version="$(node -p "require('$ROOT_DIR/src-tauri/tauri.appstore.conf.json').bundle.macOS.bundleVersion")"
 host_executable_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$host_info")"
 host_executable="$APP_BUNDLE/Contents/MacOS/$host_executable_name"
 extension_executable="$EXTENSION_BUNDLE/Contents/MacOS/DoodleRayVPN"
 
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$host_info")" "com.doodleray.doodleray" "host bundle identifier"
-require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$host_info")" "6.0.0" "host marketing version"
-require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$host_info")" "60003" "host build number"
+require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$host_info")" "$expected_marketing_version" "host marketing version"
+require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$host_info")" "$expected_build_version" "host build number"
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :ITSAppUsesNonExemptEncryption' "$host_info")" "false" "export-compliance declaration"
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$extension_info")" "com.doodleray.doodleray.DoodleRayVPN" "extension bundle identifier"
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$extension_info")" "DoodleRay VPN" "extension display name"
-require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$extension_info")" "6.0.0" "extension marketing version"
-require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$extension_info")" "60003" "extension build number"
+require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$extension_info")" "$expected_marketing_version" "extension marketing version"
+require_equal "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$extension_info")" "$expected_build_version" "extension build number"
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionPointIdentifier' "$extension_info")" "com.apple.networkextension.packet-tunnel" "Packet Tunnel extension point"
 require_equal "$(/usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionPrincipalClass' "$extension_info")" "DoodleRayVPN.PacketTunnelProvider" "Packet Tunnel principal class"
 
@@ -118,4 +120,4 @@ rg -q 'NSPrivacyCollectedDataTypeOtherDiagnosticData' "$privacy_manifest" || {
   printf 'FAIL  privacy manifest is missing connection diagnostic collection.\n' >&2
   exit 1
 }
-printf 'PASS  DoodleRay VPN 6.0.0 App Store bundle is universal, sandboxed, signed, provisioned, and contains the Packet Tunnel extension.\n'
+printf 'PASS  DoodleRay VPN %s (%s) App Store bundle is universal, sandboxed, signed, provisioned, and contains the Packet Tunnel extension.\n' "$expected_marketing_version" "$expected_build_version"

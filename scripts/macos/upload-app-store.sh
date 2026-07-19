@@ -8,6 +8,7 @@ APP_BUNDLE="${1:-$ROOT_DIR/src-tauri/target/universal-apple-darwin/release/bundl
 OUTPUT_DIR="${2:-$ROOT_DIR/dist-app-store}"
 EXTENSION_BUNDLE="$APP_BUNDLE/Contents/PlugIns/DoodleRayVPN.appex"
 HOST_EXECUTABLE="$APP_BUNDLE/Contents/MacOS/DoodleRay"
+HOST_INFO="$APP_BUNDLE/Contents/Info.plist"
 EXTENSION_DSYM="$MACOS_DIR/DerivedData/Build/Products/Release/DoodleRayVPN.appex.dSYM"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 ARCHIVE="$OUTPUT_DIR/DoodleRay-VPN-6.0.0-$STAMP.xcarchive"
@@ -25,6 +26,8 @@ trap cleanup EXIT
 [ -d "$EXTENSION_BUNDLE" ] || { printf 'Packet Tunnel extension is missing.\n' >&2; exit 1; }
 [ -f "$HOST_EXECUTABLE" ] || { printf 'Host executable is missing.\n' >&2; exit 1; }
 [ -d "$EXTENSION_DSYM" ] || { printf 'Packet Tunnel dSYM is missing; rebuild the App Store app first.\n' >&2; exit 1; }
+marketing_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$HOST_INFO")"
+build_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$HOST_INFO")"
 
 security cms -D -i "$APP_BUNDLE/Contents/embedded.provisionprofile" > "$HOST_PROFILE_PLIST"
 team_id="$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$HOST_PROFILE_PLIST")"
@@ -49,8 +52,8 @@ plutil -insert ApplicationProperties -dictionary "$ARCHIVE/Info.plist"
 plutil -insert ApplicationProperties.ApplicationPath -string "Applications/DoodleRay VPN.app" "$ARCHIVE/Info.plist"
 plutil -insert ApplicationProperties.Architectures -json '["arm64","x86_64"]' "$ARCHIVE/Info.plist"
 plutil -insert ApplicationProperties.CFBundleIdentifier -string "com.doodleray.doodleray" "$ARCHIVE/Info.plist"
-plutil -insert ApplicationProperties.CFBundleShortVersionString -string "6.0.0" "$ARCHIVE/Info.plist"
-plutil -insert ApplicationProperties.CFBundleVersion -string "60003" "$ARCHIVE/Info.plist"
+plutil -insert ApplicationProperties.CFBundleShortVersionString -string "$marketing_version" "$ARCHIVE/Info.plist"
+plutil -insert ApplicationProperties.CFBundleVersion -string "$build_version" "$ARCHIVE/Info.plist"
 plutil -insert ApplicationProperties.SigningIdentity -string "Apple Distribution" "$ARCHIVE/Info.plist"
 plutil -insert ApplicationProperties.Team -string "$team_id" "$ARCHIVE/Info.plist"
 
