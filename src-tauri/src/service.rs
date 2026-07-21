@@ -62,7 +62,7 @@ mod windows_service_main {
         OnceLock::new();
     static STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
     static OP_GENERATION: AtomicU64 = AtomicU64::new(0);
-    const PIPE_WORKERS: usize = 4;
+    const PIPE_WORKERS: usize = 16;
     const VPN_USERS_GROUP: &str = "DoodleRay VPN Users";
 
     define_windows_service!(ffi_service_main, service_main);
@@ -841,7 +841,13 @@ mod windows_service_main {
                 TunnelResponse::Status(status_snapshot())
             }
             TunnelCommand::StopTunnel(request) => match stop_tunnel(request) {
-                Ok(status) => TunnelResponse::Status(status),
+                Ok(status) => {
+                    std::thread::spawn(|| {
+                        std::thread::sleep(Duration::from_millis(150));
+                        STOP_REQUESTED.store(true, Ordering::SeqCst);
+                    });
+                    TunnelResponse::Status(status)
+                }
                 Err(message) => TunnelResponse::Error { message },
             },
             TunnelCommand::ReportProxyCompatibility(report) => {
@@ -2910,6 +2916,18 @@ Write-Output ("DoodleRay Tunnel route preferred: shape={0}, tun={1}, best_other=
             ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE,
         )?;
         let exe_path = std::env::current_exe().map_err(windows_service::Error::Winapi)?;
+        let service_info = ServiceInfo {
+            name: OsString::from(TUNNEL_SERVICE_NAME),
+            display_name: OsString::from(TUNNEL_SERVICE_DISPLAY_NAME),
+            service_type: ServiceType::OWN_PROCESS,
+            start_type: ServiceStartType::OnDemand,
+            error_control: ServiceErrorControl::Normal,
+            executable_path: exe_path.clone(),
+            launch_arguments: vec![OsString::from("run-service")],
+            dependencies: vec![],
+            account_name: None,
+            account_password: None,
+        };
 
         // Idempotent path first: if a registration already exists and points
         // at this exact binary, adopt it instead of delete+recreate. Deleting
@@ -2921,7 +2939,7 @@ Write-Output ("DoodleRay Tunnel route preferred: shape={0}, tun={1}, best_other=
             TUNNEL_SERVICE_NAME,
             ServiceAccess::QUERY_CONFIG
                 | ServiceAccess::CHANGE_CONFIG
-                | ServiceAccess::START
+                | ServiceAccess::STOP
                 | ServiceAccess::QUERY_STATUS,
         ) {
             let matches_current_exe = service
@@ -2935,9 +2953,20 @@ Write-Output ("DoodleRay Tunnel route preferred: shape={0}, tun={1}, best_other=
                 })
                 .unwrap_or(false);
             if matches_current_exe {
-                let _ = service.set_config_service_sid_info(ServiceSidType::Unrestricted);
-                let _ = service.start(&[] as &[&str]);
-                wait_for_service_state(&service, ServiceState::Running, Duration::from_secs(10))?;
+                service.change_config(&service_info)?;
+                configure_service(&service)?;
+                if service
+                    .query_status()
+                    .map(|status| status.current_state != ServiceState::Stopped)
+                    .unwrap_or(false)
+                {
+                    let _ = service.stop();
+                    wait_for_service_state(
+                        &service,
+                        ServiceState::Stopped,
+                        Duration::from_secs(10),
+                    )?;
+                }
                 secure_runtime_dirs()
                     .map_err(|e| windows_service::Error::Winapi(std::io::Error::other(e)))?;
                 return Ok(());
@@ -2945,22 +2974,19 @@ Write-Output ("DoodleRay Tunnel route preferred: shape={0}, tun={1}, best_other=
         }
 
         repair_existing_service(&manager)?;
-        let service_info = ServiceInfo {
-            name: OsString::from(TUNNEL_SERVICE_NAME),
-            display_name: OsString::from(TUNNEL_SERVICE_DISPLAY_NAME),
-            service_type: ServiceType::OWN_PROCESS,
-            start_type: ServiceStartType::AutoStart,
-            error_control: ServiceErrorControl::Normal,
-            executable_path: exe_path,
-            launch_arguments: vec![OsString::from("run-service")],
-            dependencies: vec![],
-            account_name: None,
-            account_password: None,
-        };
         let service = manager.create_service(
             &service_info,
-            ServiceAccess::START | ServiceAccess::CHANGE_CONFIG | ServiceAccess::QUERY_STATUS,
+            ServiceAccess::CHANGE_CONFIG | ServiceAccess::QUERY_STATUS,
         )?;
+        configure_service(&service)?;
+        secure_runtime_dirs()
+            .map_err(|e| windows_service::Error::Winapi(std::io::Error::other(e)))?;
+        Ok(())
+    }
+
+    fn configure_service(
+        service: &windows_service::service::Service,
+    ) -> windows_service::Result<()> {
         service.set_config_service_sid_info(ServiceSidType::Unrestricted)?;
         service.update_failure_actions(ServiceFailureActions {
             reset_period: ServiceFailureResetPeriod::After(Duration::from_secs(24 * 60 * 60)),
@@ -2981,12 +3007,30 @@ Write-Output ("DoodleRay Tunnel route preferred: shape={0}, tun={1}, best_other=
                 },
             ]),
         })?;
-        service.set_failure_actions_on_non_crash_failures(true)?;
-        let _ = service.start(&[] as &[&str]);
-        wait_for_service_state(&service, ServiceState::Running, Duration::from_secs(10))?;
-        secure_runtime_dirs()
+        service.set_failure_actions_on_non_crash_failures(false)?;
+        grant_builtin_users_start()
             .map_err(|e| windows_service::Error::Winapi(std::io::Error::other(e)))?;
         Ok(())
+    }
+
+    fn grant_builtin_users_start() -> Result<(), String> {
+        // The service is demand-started. Standard users may only start it;
+        // pipe ACL + executable-path validation still gate every command.
+        let sddl = "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)(A;;RP;;;BU)";
+        let output = Command::new("sc.exe")
+            .args(["sdset", TUNNEL_SERVICE_NAME, sddl])
+            .creation_flags(0x08000000)
+            .output()
+            .map_err(|e| format!("Failed to configure tunnel service start access: {}", e))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "Failed to configure tunnel service start access: {}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ))
+        }
     }
 
     fn secure_runtime_dirs() -> Result<(), String> {

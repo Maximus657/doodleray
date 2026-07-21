@@ -11,9 +11,10 @@ full-device tunnel, browser proxy, and manual local proxy.
 What the installer does (perMachine NSIS, silent switch /S):
 
 1. Installs the application to C:\Program Files\DoodleRay.
-2. Installs and registers a Windows service, **DoodleRayTunnelService**
-   (DoodleRayService.exe). The service owns full-device tunnel state so that
-   networking is repaired/cleaned even if the UI crashes.
+2. Installs and registers a demand-started Windows service,
+   **DoodleRayTunnelService** (DoodleRayService.exe). Its process starts for a
+   full-device connection and stops after disconnect; while connected it owns
+   tunnel state so networking is repaired/cleaned even if the UI crashes.
 3. Ships **wintun.dll** and creates a **virtual network adapter (TUN)** named
    "DoodleRay" — only while full-device mode is connected.
 4. Bundles the WebView2 Evergreen offline installer (no network needed).

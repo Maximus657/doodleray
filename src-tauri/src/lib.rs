@@ -197,6 +197,80 @@ fn tunnel_service_reports_active() -> bool {
     }
 }
 
+#[cfg(windows)]
+fn tunnel_service_registration_state() -> Result<windows_service::service::ServiceState, String> {
+    use windows_service::service::ServiceAccess;
+    use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
+
+    let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
+        .map_err(|e| format!("Failed to open Windows service manager: {}", e))?;
+    let service = manager
+        .open_service(
+            tunnel_service::TUNNEL_SERVICE_NAME,
+            ServiceAccess::QUERY_STATUS,
+        )
+        .map_err(|e| format!("Tunnel service is not installed: {}", e))?;
+    service
+        .query_status()
+        .map(|status| status.current_state)
+        .map_err(|e| format!("Failed to query tunnel service: {}", e))
+}
+
+#[cfg(windows)]
+fn ensure_tunnel_service_running() -> Result<(), String> {
+    use windows_service::service::{ServiceAccess, ServiceState};
+    use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
+
+    let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
+        .map_err(|e| format!("Failed to open Windows service manager: {}", e))?;
+    let service = manager
+        .open_service(
+            tunnel_service::TUNNEL_SERVICE_NAME,
+            ServiceAccess::START | ServiceAccess::QUERY_STATUS,
+        )
+        .map_err(|e| format!("Tunnel service cannot be started: {}", e))?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut start_requested = false;
+    while Instant::now() < deadline {
+        let state = service
+            .query_status()
+            .map_err(|e| format!("Failed to query tunnel service: {}", e))?
+            .current_state;
+        match state {
+            ServiceState::Running => return Ok(()),
+            ServiceState::Stopped if !start_requested => {
+                service
+                    .start(&[] as &[&str])
+                    .map_err(|e| format!("Failed to start tunnel service: {}", e))?;
+                start_requested = true;
+            }
+            ServiceState::StartPending | ServiceState::StopPending | ServiceState::Stopped => {}
+            other => {
+                return Err(format!(
+                    "Tunnel service cannot start from state {:?}",
+                    other
+                ))
+            }
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Err("Tunnel service did not start within 10s".into())
+}
+
+#[cfg(windows)]
+fn wait_for_tunnel_service_stop(timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if matches!(
+            tunnel_service_registration_state(),
+            Ok(windows_service::service::ServiceState::Stopped)
+        ) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 fn validate_http_url(raw_url: &str) -> Result<Url, String> {
     let parsed = Url::parse(raw_url).map_err(|e| format!("Invalid URL: {}", e))?;
     match parsed.scheme() {
@@ -9619,6 +9693,7 @@ fn tunnel_service_start(
             }
         }
     }
+    ensure_tunnel_service_running()?;
     let _ = ipc::tunnel_service_hello(env!("CARGO_PKG_VERSION"))?;
     let response = send_start_tunnel_command(tunnel_service::StartTunnelRequest {
         op_id: tun_op_id(),
@@ -9725,7 +9800,10 @@ fn tunnel_service_stop(reason: &str) -> Result<tunnel_service::TunnelStatus, Str
         },
     ))?;
     match response {
-        tunnel_service::TunnelResponse::Status(status) => Ok(status),
+        tunnel_service::TunnelResponse::Status(status) => {
+            wait_for_tunnel_service_stop(Duration::from_secs(5));
+            Ok(status)
+        }
         tunnel_service::TunnelResponse::Error { message } => Err(message),
         tunnel_service::TunnelResponse::Diagnostics(_) => {
             Err("Tunnel Service returned diagnostics for StopTunnel".into())
@@ -9827,8 +9905,8 @@ fn install_tunnel_service() -> Result<String, String> {
 
     for _ in 0..20 {
         std::thread::sleep(Duration::from_millis(500));
-        if ipc::tunnel_service_status().is_ok() {
-            return Ok("Tunnel service installed and running".into());
+        if tunnel_service_registration_state().is_ok() {
+            return Ok("Tunnel service installed; it starts only while VPN is connecting".into());
         }
     }
     Ok("Tunnel service install started. Please try connecting again in a few seconds.".into())
@@ -9843,7 +9921,19 @@ fn install_tunnel_service() -> Result<String, String> {
 #[cfg(windows)]
 #[tauri::command]
 fn tunnel_service_health() -> Result<String, String> {
-    match ipc::tunnel_service_status()? {
+    let response = match ipc::tunnel_service_status() {
+        Ok(response) => response,
+        Err(_)
+            if matches!(
+                tunnel_service_registration_state(),
+                Ok(windows_service::service::ServiceState::Stopped)
+            ) =>
+        {
+            return Ok("Tunnel service ready: stopped while VPN is disconnected".into())
+        }
+        Err(error) => return Err(error),
+    };
+    match response {
         tunnel_service::TunnelResponse::Status(status) => Ok(format!(
             "Tunnel service ready: version={}, state={:?}, phase={:?}",
             status.service_version, status.state, status.phase
@@ -10035,12 +10125,19 @@ async fn repair_windows_runtime() -> Result<String, String> {
                         "Tunnel Service IPC failed before repair: {}",
                         error
                     ));
-                    match install_tunnel_service() {
-                        Ok(message) => actions.push(message),
-                        Err(install_error) => actions.push(format!(
-                            "Tunnel Service install repair failed: {}",
-                            install_error
-                        )),
+                    match tunnel_service_registration_state() {
+                        Ok(windows_service::service::ServiceState::Stopped) => actions.push(
+                            "Tunnel Service: registered and stopped while disconnected".into(),
+                        ),
+                        Ok(state) => actions
+                            .push(format!("Tunnel Service: registered with state {:?}", state)),
+                        Err(_) => match install_tunnel_service() {
+                            Ok(message) => actions.push(message),
+                            Err(install_error) => actions.push(format!(
+                                "Tunnel Service install repair failed: {}",
+                                install_error
+                            )),
+                        },
                     }
                 }
             }

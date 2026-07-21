@@ -103,16 +103,26 @@ foreach (`$file in `$appFiles) {
 }
 
 `$service = Get-Service DoodleRayTunnelService -ErrorAction Stop
-if (`$service.Status -ne "Running") {
-    Start-Service DoodleRayTunnelService
-    Start-Sleep -Seconds 3
+if (`$service.StartType -ne "Manual") {
+    throw "tunnel service must be demand-started, got StartType=`$(`$service.StartType)"
 }
+if (`$service.Status -ne "Stopped") {
+    throw "tunnel service must be idle after install, got Status=`$(`$service.Status)"
+}
+`$idleAfterInstall = `$service | Select-Object Name,Status,StartType
+Start-Service DoodleRayTunnelService
+Start-Sleep -Seconds 3
 
 `$status = Get-ServiceJson
 if (-not `$status) {
     throw "DoodleRayService.exe status did not return a snapshot"
 }
 Assert-NoStatsQueryOrphan
+Stop-Service DoodleRayTunnelService
+`$service.WaitForStatus("Stopped", [TimeSpan]::FromSeconds(10))
+if (Get-Process DoodleRayService -ErrorAction SilentlyContinue) {
+    throw "tunnel service process remained after clean idle stop"
+}
 
 `$after = [pscustomobject]@{
     timestampUtc = (Get-Date).ToUniversalTime().ToString("o")
@@ -124,7 +134,8 @@ Assert-NoStatsQueryOrphan
         }
     }
     serviceStatus = `$status
-    serviceWindowsStatus = Get-Service DoodleRayTunnelService | Select-Object Name,Status,StartType
+    serviceIdleAfterInstall = `$idleAfterInstall
+    serviceIdleAfterSmoke = Get-Service DoodleRayTunnelService | Select-Object Name,Status,StartType
     xrayStatsQueryCount = @(
         Get-CimInstance Win32_Process -Filter "name = 'xray.exe'" -ErrorAction SilentlyContinue |
         Where-Object { `$_.CommandLine -match "api\s+statsquery" }

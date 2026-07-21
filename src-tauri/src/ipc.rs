@@ -1,5 +1,5 @@
 #[cfg(windows)]
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 #[cfg(windows)]
 use std::io::{Read, Write};
 #[cfg(windows)]
@@ -7,12 +7,48 @@ use std::os::windows::fs::OpenOptionsExt;
 #[cfg(windows)]
 use std::sync::mpsc;
 #[cfg(windows)]
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[cfg(windows)]
 use crate::tunnel_service::{
     TunnelCommand, TunnelResponse, TUNNEL_PIPE_NAME, TUNNEL_PROTOCOL_VERSION,
 };
+
+#[cfg(windows)]
+const ERROR_PIPE_BUSY: i32 = 231;
+
+#[cfg(windows)]
+fn wait_for_pipe_slot(timeout: Duration) -> bool {
+    use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
+    let wide: Vec<u16> = TUNNEL_PIPE_NAME
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let timeout_ms = timeout.as_millis().min(u32::MAX as u128) as u32;
+    unsafe { WaitNamedPipeW(wide.as_ptr(), timeout_ms) != 0 }
+}
+
+#[cfg(windows)]
+fn open_tunnel_pipe() -> std::io::Result<File> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(0)
+            .open(TUNNEL_PIPE_NAME)
+        {
+            Ok(file) => return Ok(file),
+            Err(error) if error.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() || !wait_for_pipe_slot(remaining) {
+                    return Err(error);
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
 
 #[cfg(windows)]
 pub fn send_tunnel_command(command: &TunnelCommand) -> Result<TunnelResponse, String> {
@@ -59,17 +95,12 @@ fn send_tunnel_payload_with_timeout(
 
 #[cfg(windows)]
 fn send_tunnel_payload(payload: &[u8]) -> Result<TunnelResponse, String> {
-    let mut client = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .custom_flags(0)
-        .open(TUNNEL_PIPE_NAME)
-        .map_err(|e| {
-            format!(
-                "Failed to connect to tunnel service pipe (is the service running?): {}",
-                e
-            )
-        })?;
+    let mut client = open_tunnel_pipe().map_err(|e| {
+        format!(
+            "Failed to connect to tunnel service pipe (is the service running?): {}",
+            e
+        )
+    })?;
 
     let len = (payload.len() as u32).to_le_bytes();
     client
