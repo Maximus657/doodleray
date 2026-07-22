@@ -333,19 +333,26 @@ export default function Dashboard() {
             state.activeServer?.subscriptionId,
           );
           let restored = false;
+          let restoreFailure = '';
           for (const legacySubscriptionUrl of legacySubscriptionUrls) {
-            try {
-              const restoredSession = await appApiExchangeLegacySubscription(legacySubscriptionUrl);
-              snapshot = await appApiControlPlaneSnapshot(restoredSession);
-              restored = true;
-              addLog('success', 'DoodleVPN account restored from the previous version');
-              break;
-            } catch {
-              // A stale DoodleVPN entry must not prevent another saved subscription from restoring.
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+              try {
+                const restoredSession = await appApiExchangeLegacySubscription(legacySubscriptionUrl);
+                snapshot = await appApiControlPlaneSnapshot(restoredSession);
+                restored = true;
+                addLog('success', 'DoodleVPN account restored from the previous version');
+                break;
+              } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                restoreFailure = message.replace(/https?:\/\/\S+/gi, '[URL]').slice(0, 240);
+                if (attempt === 0) await new Promise((resolve) => window.setTimeout(resolve, 750));
+              }
             }
+            if (restored) break;
+            // A stale DoodleVPN entry must not prevent another saved subscription from restoring.
           }
           if (legacySubscriptionUrls.length > 0 && !restored) {
-            addLog('warning', 'Automatic DoodleVPN account restore was unavailable');
+            addLog('warning', `Automatic DoodleVPN account restore was unavailable${restoreFailure ? `: ${restoreFailure}` : ''}`);
           }
         }
         if (disposed) return;
