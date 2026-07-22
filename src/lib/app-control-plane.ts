@@ -3,7 +3,7 @@ import type { ServerConfig, Subscription, SystemProxyMode } from '../stores/app-
 import { useAppStore } from '../stores/app-store';
 import { isClosedControlPlaneEnabled } from './build-policy';
 import { getActiveRoutingRules, resolveSystemProxyModeForRouting } from './connect-helpers';
-import { getServerSelectionKey } from './server-selection';
+import { getServerSelectionKey, isAutoSelectCandidate } from './server-selection';
 
 const CLOSED_SUBSCRIPTION_ID = 'doodlevpn-app';
 const LOCATION_ID_PREFIX = 'app-location:';
@@ -311,7 +311,10 @@ export async function buildAppConnectLocationRequestFromState(
   const autoCandidates = isClosedAutoLocationServer(server)
     ? (() => {
         const rankedCountries = state.servers
-        .filter((candidate) => isClosedLocationServer(candidate) && !isClosedAutoLocationServer(candidate) && /^[A-Z]{2}$/.test(candidate.countryCode || ''))
+          .filter((candidate) => isClosedLocationServer(candidate)
+            && !isClosedAutoLocationServer(candidate)
+            && /^[A-Z]{2}$/.test(candidate.countryCode || '')
+            && isAutoSelectCandidate(candidate))
           .sort((a, b) => (a.ping && a.ping > 0 ? a.ping : Number.MAX_SAFE_INTEGER) - (b.ping && b.ping > 0 ? b.ping : Number.MAX_SAFE_INTEGER));
         const reserve = state.servers.find((candidate) => closedLocationIdFromServer(candidate) === 'reserve');
         return reserve ? [...rankedCountries.slice(0, 2), reserve] : rankedCountries.slice(0, 3);

@@ -163,6 +163,17 @@ export function findMatchingServer(
   return findMatchingServerInIndex(target, buildServerSelectionIndex(servers));
 }
 
+export function isAutoSelectCandidate(server: ServerConfig): boolean {
+  const countryCode = normalizeCaseInsensitivePart(server.countryCode);
+  if (countryCode === 'ru' || countryCode === 'rus') return false;
+
+  const id = normalizeCaseInsensitivePart(server.id).replace(/^app-location:/, '');
+  if (id === 'ru' || id === 'russia') return false;
+
+  const label = `${normalizeCaseInsensitivePart(server.country)} ${normalizeCaseInsensitivePart(server.name)}`;
+  return !/(^|\s)(россия|russia)(\s|$)/.test(label);
+}
+
 export function selectPreferredServer(
   servers: ServerConfig[],
   autoSelectFastest: boolean,
@@ -170,14 +181,15 @@ export function selectPreferredServer(
   if (servers.length === 0) return null;
   if (!autoSelectFastest) return servers[0];
 
+  const candidates = servers.filter(isAutoSelectCandidate);
   let fastest: ServerConfig | null = null;
-  for (const server of servers) {
+  for (const server of candidates) {
     if (server.ping !== undefined && server.ping > 0 && (!fastest || server.ping < fastest.ping!)) {
       fastest = server;
     }
   }
 
-  return fastest || servers[0];
+  return fastest || candidates[0] || null;
 }
 
 export function resolveConnectServer(

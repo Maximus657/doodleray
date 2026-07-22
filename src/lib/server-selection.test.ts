@@ -1,4 +1,4 @@
-import { getServerSelectionKey } from './server-selection.ts';
+import { getServerSelectionKey, resolveConnectServer, selectPreferredServer } from './server-selection.ts';
 import type { ServerConfig } from '../stores/app-store.ts';
 
 function server(overrides: Partial<ServerConfig>): ServerConfig {
@@ -38,3 +38,9 @@ assertNotEqual(
   getServerSelectionKey(server({ path: '/CaseSensitivePath' })),
   getServerSelectionKey(server({ path: '/casesensitivepath' })),
 );
+
+const russia = server({ id: 'app-location:ru', name: 'Россия', country: 'Россия', countryCode: 'RU', ping: 5 });
+const germany = server({ id: 'app-location:de', name: 'Германия', country: 'Германия', countryCode: 'DE', ping: 30 });
+assertEqual(selectPreferredServer([russia, germany], true)?.id, germany.id);
+assertEqual(selectPreferredServer([russia], true), null);
+assertEqual(resolveConnectServer(russia, [russia, germany], true)?.id, russia.id);
