@@ -46,6 +46,33 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Enforce publication and signing policy
+        shell: pwsh
+        run: |
+          if ('${{ inputs.publish }}' -eq 'true' -and '${{ inputs.allow_unsigned }}' -eq 'true') {
+            throw 'Unsigned RC artifacts can never be published'
+          }
+          $required = '${{ inputs.allow_unsigned }}' -ne 'true'
+          "WINDOWS_CODESIGN_REQUIRED=$($required.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Import direct-download code-signing certificate
+        if: ${{ inputs.channel == 'direct' && !inputs.allow_unsigned }}
+        shell: pwsh
+        env:
+          WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
+          WINDOWS_CODESIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PFX_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CODESIGN_PFX_BASE64) -or [string]::IsNullOrWhiteSpace($env:WINDOWS_CODESIGN_PFX_PASSWORD)) {
+            throw 'WINDOWS_CODESIGN_PFX_BASE64 and WINDOWS_CODESIGN_PFX_PASSWORD are required for signed direct downloads'
+          }
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'doodleray-codesign.pfx'
+          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:WINDOWS_CODESIGN_PFX_BASE64))
+          $securePassword = ConvertTo-SecureString $env:WINDOWS_CODESIGN_PFX_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $securePassword
+          Remove-Item $pfxPath -Force
+          if (-not $cert.Thumbprint) { throw 'Imported certificate has no thumbprint' }
+          "WINDOWS_CODESIGN_THUMBPRINT=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Import Store code-signing certificate
         if: ${{ inputs.channel == 'store-win32' && !inputs.allow_unsigned }}
         shell: pwsh
@@ -112,6 +139,11 @@ jobs:
           cargo build --release --manifest-path src-tauri/Cargo.toml --bin DoodleRayService --features windows-service
           Copy-Item 'src-tauri/target/release/DoodleRayService.exe' 'src-tauri/' -Force
 
+      - name: Sign bundled PE files
+        if: ${{ !inputs.allow_unsigned }}
+        shell: pwsh
+        run: ./scripts/sign-all-pe.ps1 -IncludeVendored
+
       - name: Clean Tauri updater signing key
         if: ${{ inputs.channel == 'direct' }}
         shell: pwsh
@@ -139,6 +171,14 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist-downloads | Out-Null
           Get-ChildItem src-tauri/target/release/bundle/nsis -File |
             Copy-Item -Destination dist-downloads -Force
+
+      - name: Verify signed application and installer
+        if: ${{ !inputs.allow_unsigned }}
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem dist-downloads -Filter '*.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'Built installer is missing' }
+          ./scripts/verify-signatures.ps1 -IncludeBuiltApp -InstallerPath $installer.FullName
 
       - name: Publish to first-party downloads host
         if: ${{ inputs.publish }}

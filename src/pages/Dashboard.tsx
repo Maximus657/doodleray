@@ -29,9 +29,8 @@ import { pingServersWithLimit } from '../lib/ping-runner';
 import { describeSubscriptionSource } from '../lib/redaction';
 import { getPrivacyPolicyUrl, isClosedControlPlaneEnabled, isLegacyImportEnabled, isNetworkExtensionOnlyBuild, legacyImportDisabledMessage } from '../lib/build-policy';
 import {
+  appApiControlPlaneSnapshot,
   appApiExchangeCode,
-  appApiLocations,
-  appApiSessionStatus,
   buildAppConnectLocationRequestFromState,
   isClosedAutoLocationServer,
   isClosedLocationServer,
@@ -268,18 +267,13 @@ export default function Dashboard() {
     if (!closedControlPlane) return;
     setAppLocationsLoading(true);
     try {
-      const session = sessionOverride ?? await appApiSessionStatus();
+      const { session, locations } = await appApiControlPlaneSnapshot(sessionOverride);
       setAppSession(session);
       useAppStore.setState({
         appSessionLoggedIn: session.logged_in,
         appSessionDeviceAllowed: session.logged_in ? session.subscription?.device_allowed !== false : null,
       });
-      if (!session.logged_in) {
-        syncClosedLocationsToStore(session, []);
-        return;
-      }
-      const locations = await appApiLocations();
-      syncClosedLocationsToStore(session, locations.locations);
+      syncClosedLocationsToStore(session, locations);
       setAppLoginError(null);
     } catch (err) {
       if (isTauriInvokeUnavailableError(err)) {
@@ -315,20 +309,14 @@ export default function Dashboard() {
     (async () => {
       setAppLocationsLoading(true);
       try {
-        const session = await appApiSessionStatus();
+        const { session, locations } = await appApiControlPlaneSnapshot();
         if (disposed) return;
         setAppSession(session);
         useAppStore.setState({
           appSessionLoggedIn: session.logged_in,
           appSessionDeviceAllowed: session.logged_in ? session.subscription?.device_allowed !== false : null,
         });
-        if (session.logged_in) {
-          const locations = await appApiLocations();
-          if (disposed) return;
-          syncClosedLocationsToStore(session, locations.locations);
-        } else {
-          syncClosedLocationsToStore(session, []);
-        }
+        syncClosedLocationsToStore(session, locations);
       } catch (err) {
         if (!disposed) {
           if (isTauriInvokeUnavailableError(err)) {
@@ -946,10 +934,11 @@ export default function Dashboard() {
   // Subscription auto-update
   useEffect(() => {
     if (closedControlPlane) {
-      if (subAutoUpdateMinutes <= 0 || !appSession?.logged_in) return;
+      if (!appSession?.logged_in) return;
+      const refreshMinutes = Math.max(5, subAutoUpdateMinutes || 5);
       const interval = setInterval(() => {
         void refreshClosedControlPlane(appSession);
-      }, subAutoUpdateMinutes * 60 * 1000);
+      }, refreshMinutes * 60 * 1000);
       return () => clearInterval(interval);
     }
     if (subAutoUpdateMinutes <= 0 || subscriptions.length === 0) return;
@@ -1456,17 +1445,30 @@ export default function Dashboard() {
     const isSameServer = findMatchingServer(activeServer, [server]) !== null;
     setActiveServer(server); setSearchQuery('');
     if (status === 'connected' && !isSameServer) {
+      const opId = ++connectionOpRef.current;
       addLog('info', `Switching to ${server.name}...`);
       setStatus('connecting');
       setConnectionStep(t('connectionCheckingServer'));
       try {
         const { invoke } = await import('@tauri-apps/api/core');
-        // Don't call vpn_disconnect — vpn_connect handles cleanup internally
-        // and preserves the TUN bridge to avoid game disconnections
+        // Network Extension and the Windows service both own OS routes. Stop
+        // the old session first so a country switch cannot reuse its profile.
+        await withTimeout(
+          invoke('vpn_disconnect'),
+          15_000,
+          'Previous VPN session did not stop in time',
+        );
+        if (opId !== connectionOpRef.current) return;
         const request = closedControlPlane && isClosedLocationServer(server)
           ? await buildAppConnectLocationRequestFromState(server)
           : await buildConnectRequestFromState(server);
-        const result: any = await invoke(closedControlPlane && isClosedLocationServer(server) ? 'app_connect_location' : 'vpn_connect', { request });
+        setConnectionStep(t('connectionSecuringTraffic'));
+        const result: any = await withTimeout(
+          invoke(closedControlPlane && isClosedLocationServer(server) ? 'app_connect_location' : 'vpn_connect', { request }),
+          proxyMode === 'tun' ? TUN_CONNECT_TIMEOUT_MS : CONNECT_TIMEOUT_MS,
+          'Connection timed out while switching VPN location',
+        );
+        if (opId !== connectionOpRef.current) return;
         if (result.success) {
           await markConnectedIfHealthy(
             result,
@@ -1477,8 +1479,20 @@ export default function Dashboard() {
             request.http_port,
           );
         }
-        else { addLog('error', result.message); setStatus('disconnected'); setActiveSystemProxyMode(null); setConnectionStep(null); }
-      } catch (err: any) { addLog('error', `Server switch failed: ${err.message || err}`); setStatus('disconnected'); setActiveSystemProxyMode(null); setConnectionStep(null); }
+        else {
+          addLog('error', result.message);
+          await invoke('vpn_disconnect').catch(() => undefined);
+          setStatus('disconnected'); setActiveSystemProxyMode(null); setConnectionStep(null); setConnectedAt(null);
+        }
+      } catch (err: any) {
+        if (opId !== connectionOpRef.current) return;
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          await invoke('vpn_disconnect');
+        } catch { /* best effort network restoration */ }
+        addLog('error', `Server switch failed: ${err.message || err}`);
+        setStatus('disconnected'); setActiveSystemProxyMode(null); setConnectionStep(null); setConnectedAt(null);
+      }
     }
   }, [status, setStatus, activeServer, setActiveServer, addLog, proxyMode, socksPort, httpPort, setConnectedAt, t, setSocksPort, setHttpPort, markConnectedIfHealthy, closedControlPlane]);
 

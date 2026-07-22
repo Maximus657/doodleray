@@ -85,6 +85,7 @@ export function isHealthFatal(mode: ProxyMode, health: ConnectionHealthReport | 
 
   return (health.checks ?? []).some(check => {
     if (check.severity !== 'error') return false;
+    if (check.code === 'network_extension' || check.code === 'vpn_dataplane') return true;
     if (check.code === 'tunnel_service_fatal_checks') return true;
     if (check.code !== 'tunnel_service') return false;
     return /state=(?:Failed|Disconnected)/.test(check.detail);

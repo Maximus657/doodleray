@@ -118,7 +118,11 @@ def verify(data):
 def updated(data):
     result = copy.deepcopy(data)
 
-    xray_release = latest_release("XTLS/Xray-core", stable_only=True)
+    # Xray marks most current calendar-version releases as GitHub prereleases;
+    # selecting only non-prereleases silently downgrades the runtime by months.
+    # These are still official signed release artifacts and are promoted only
+    # after the runtime smoke gates below this updater pass.
+    xray_release = latest_release("XTLS/Xray-core", stable_only=False)
     xray_version = xray_release["tag_name"]
     result["xray"] = {
         "version": xray_version,

@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import LibXray
 import SystemConfiguration
 
 struct PreparedPacketTunnelConfiguration {
@@ -218,10 +219,32 @@ enum PacketTunnelConfiguration {
         return json
     }
 
-    static func invocation(method: String, configJSON: String? = nil) throws -> String {
+    static func validateXrayConfig(_ configJSON: String) throws {
+        let configURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("doodleray-xray-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: configURL) }
+        guard let data = configJSON.data(using: .utf8) else {
+            throw PacketTunnelConfigurationError.invalidConfiguration
+        }
+        try data.write(to: configURL, options: [.atomic, .completeFileProtection])
+        let request = try invocation(method: "testXray", configPath: configURL.path)
+        let response = LibXrayInvoke(request)
+        guard invocationSucceeded(response) else {
+            throw PacketTunnelConfigurationError.invalidConfiguration
+        }
+    }
+
+    static func invocation(
+        method: String,
+        configJSON: String? = nil,
+        configPath: String? = nil
+    ) throws -> String {
         var payload: [String: Any] = [:]
         if let configJSON {
             payload["configJSON"] = configJSON
+        }
+        if let configPath {
+            payload["configPath"] = configPath
         }
         let request: [String: Any] = [
             "apiVersion": 1,

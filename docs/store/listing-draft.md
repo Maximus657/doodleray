@@ -28,12 +28,12 @@ Safe, certification-friendly wording. Do not improvise marketing claims.
 > degraded or limited protection, and never presents partial protection as
 > full protection.
 
-> **Diagnostics you control.** If something breaks, export a redacted support
-> bundle locally and share it with support yourself. Nothing is uploaded
-> automatically.
+> **Diagnostics you control.** If something breaks, preview and send a redacted
+> diagnostic report. Automatic serious-error reports are optional and disabled
+> until you explicitly enable them.
 
-> **Bring your own subscription.** DoodleRay is a client application; it
-> connects using a subscription URL or server configuration you provide.
+> **Your DoodleVPN account.** Sign in with the activation code issued for your
+> DoodleVPN account; server configuration is delivered securely by the service.
 
 ## Metadata
 

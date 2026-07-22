@@ -24,7 +24,7 @@ import { reportConnectionError } from '../lib/workshop-api';
 import { pingServersWithLimit } from '../lib/ping-runner';
 import { describeSubscriptionSource } from '../lib/redaction';
 import { isClosedControlPlaneEnabled, isLegacyImportEnabled, legacyImportDisabledMessage } from '../lib/build-policy';
-import { appApiLocations, appApiSessionStatus, syncClosedLocationsToStore } from '../lib/app-control-plane';
+import { appApiControlPlaneSnapshot, syncClosedLocationsToStore } from '../lib/app-control-plane';
 import { FlagIcon } from '../components/v6/ServerRow';
 
 export default function Servers() {
@@ -154,12 +154,9 @@ export default function Servers() {
     setTestingGroup(groupId);
     try {
       if (closedControlPlane) {
-        const session = await appApiSessionStatus();
-        if (session.logged_in) {
-          const locations = await appApiLocations();
-          syncClosedLocationsToStore(session, locations.locations);
-          addLog('success', 'DoodleVPN locations refreshed');
-        }
+        const { session, locations } = await appApiControlPlaneSnapshot();
+        syncClosedLocationsToStore(session, locations);
+        if (session.logged_in) addLog('success', 'DoodleVPN locations refreshed');
         return;
       }
       const { invoke } = await import('@tauri-apps/api/core');
@@ -178,11 +175,8 @@ export default function Servers() {
     setRefreshingSub(subId);
     try {
       if (closedControlPlane) {
-        const session = await appApiSessionStatus();
-        if (session.logged_in) {
-          const locations = await appApiLocations();
-          syncClosedLocationsToStore(session, locations.locations);
-        }
+        const { session, locations } = await appApiControlPlaneSnapshot();
+        syncClosedLocationsToStore(session, locations);
         addLog('success', `Refreshed ${sub.name}`);
         return;
       }

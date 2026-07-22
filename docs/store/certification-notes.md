@@ -36,24 +36,21 @@ Runtime behavior:
 - Update policy for the Store build: the app checks a signed manifest and
   shows a "new version available" banner; installation is user-initiated
   (opens the Store listing/support page; no silent self-update).
-- Diagnostics: a local, redacted support bundle can be exported by the user;
-  nothing is uploaded automatically.
+- Diagnostics: a redacted report can be previewed and submitted by the user.
+  Automatic serious-error reports are disabled by default and require an
+  explicit, revocable opt-in.
 
 Account requirement:
 
-- After installation the app requires an external subscription URL or account
-  to connect (the app is a client; servers are not part of this package).
-- Reviewer test subscription: REVIEWER_TEST_SUBSCRIPTION_URL_PLACEHOLDER
-- Reviewer test account (if portal access is needed):
-  login: REVIEWER_LOGIN_PLACEHOLDER / password: REVIEWER_PASSWORD_PLACEHOLDER
-- Steps to test: install silently (/S) → launch DoodleRay → paste the test
-  subscription URL in the Add dialog → press Connect (default "Whole computer"
-  mode; accept UAC) → verify status shows Protected → Disconnect → uninstall
-  from Apps & Features and verify no service/adapter/proxy leftovers.
+- After installation the app requires a DoodleVPN account activation code.
+- Reviewer activation code: REVIEWER_ACTIVATION_CODE_PLACEHOLDER
+- Steps to test: install silently (/S) → launch DoodleRay → enter the dedicated
+  eight-digit reviewer code → press Connect (default "Whole computer" mode;
+  accept UAC) → verify status shows Protected → Disconnect → uninstall from
+  Apps & Features and verify no service/adapter/proxy leftovers.
 
 ---
 
 Placeholders to fill before submission:
-- REVIEWER_TEST_SUBSCRIPTION_URL_PLACEHOLDER (dedicated reviewer-only
-  subscription with limited quota; never the canonical QA secret).
-- REVIEWER_LOGIN_PLACEHOLDER / REVIEWER_PASSWORD_PLACEHOLDER.
+- REVIEWER_ACTIVATION_CODE_PLACEHOLDER (dedicated, revocable, long-lived code
+  with enough device allowance; never a normal user or QA secret).

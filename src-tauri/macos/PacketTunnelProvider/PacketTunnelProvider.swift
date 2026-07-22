@@ -21,6 +21,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 into: config
             )
             let prepared = try PacketTunnelConfiguration.resolvingUplinks(in: dnsPrepared)
+            let validationJSON = try PacketTunnelConfiguration.injectingTunnelFileDescriptor(
+                3,
+                into: prepared.xrayConfig
+            )
+            try PacketTunnelConfiguration.validateXrayConfig(validationJSON)
             let settings = makeNetworkSettings(
                 excludingIPv4: prepared.excludedIPv4Addresses,
                 excludingIPv6: prepared.excludedIPv6Addresses

@@ -101,9 +101,7 @@ cp "$ROOT_DIR/src-tauri/Entitlements.appstore.plist" "$HOST_ENTITLEMENTS_STAGED"
 /usr/libexec/PlistBuddy -c 'Add :keychain-access-groups array' "$HOST_ENTITLEMENTS_STAGED"
 /usr/libexec/PlistBuddy -c "Add :keychain-access-groups:0 string $host_application_id" "$HOST_ENTITLEMENTS_STAGED"
 
-if [ ! -d "$MACOS_DIR/LibXray.xcframework" ]; then
-  "$ROOT_DIR/scripts/macos/build-libxray.sh"
-fi
+"$ROOT_DIR/scripts/macos/build-libxray.sh"
 "$ROOT_DIR/scripts/macos/generate-extension-project.sh"
 rustup target add x86_64-apple-darwin >/dev/null
 

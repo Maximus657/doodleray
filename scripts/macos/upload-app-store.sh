@@ -16,6 +16,11 @@ EXPORT_DIR="$OUTPUT_DIR/export-$STAMP"
 EXPORT_OPTIONS="$OUTPUT_DIR/ExportOptions-$STAMP.plist"
 UPLOAD_LOG="$OUTPUT_DIR/upload-$STAMP.log"
 HOST_PROFILE_PLIST="$(mktemp "${TMPDIR:-/tmp}/doodleray-upload-host-profile.XXXXXX")"
+EVIDENCE="$OUTPUT_DIR/upload-evidence-$STAMP.json"
+
+git -C "$ROOT_DIR" diff --quiet
+git -C "$ROOT_DIR" diff --cached --quiet
+git_commit="$(git -C "$ROOT_DIR" rev-parse HEAD)"
 
 cleanup() {
   rm -f "$HOST_PROFILE_PLIST"
@@ -79,4 +84,22 @@ if ! xcodebuild \
   exit 1
 fi
 
-printf 'App Store Connect upload completed.\nArchive: %s\nLog: %s\n' "$ARCHIVE" "$UPLOAD_LOG"
+python3 - "$EVIDENCE" "$git_commit" "$marketing_version" "$build_version" "$ARCHIVE" "$UPLOAD_LOG" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+
+path, commit, version, build, archive, log = sys.argv[1:]
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump({
+        "uploaded_at": datetime.now(timezone.utc).isoformat(),
+        "git_commit": commit,
+        "marketing_version": version,
+        "build_version": build,
+        "archive": archive,
+        "upload_log": log,
+    }, handle, indent=2)
+    handle.write("\n")
+PY
+
+printf 'App Store Connect upload completed.\nCommit: %s\nArchive: %s\nLog: %s\nEvidence: %s\n' "$git_commit" "$ARCHIVE" "$UPLOAD_LOG" "$EVIDENCE"

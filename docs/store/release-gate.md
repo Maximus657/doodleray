@@ -6,7 +6,8 @@ docs/release-gate.md (reliability gate) — both must be green.
 
 ## 1. Build provenance
 
-- [ ] Built by signed CI (workflow `store-win32`), not a local machine.
+- [ ] Built by signed CI (`publish-downloads`, channel `store-win32`,
+      `allow_unsigned=false`), not a local machine.
 - [ ] Built from a tagged commit on the v6 release branch; commit recorded.
 - [ ] `scripts/build-store.ps1` used (channel store-win32 baked; verified in
       bundle: no direct latest.json endpoint).
@@ -36,8 +37,8 @@ docs/release-gate.md (reliability gate) — both must be green.
 ## 5. Listing & policy
 
 - [ ] Listing text taken from listing-draft.md; banned-phrase scan done.
-- [ ] certification-notes.md pasted with real reviewer credentials
-      (dedicated reviewer subscription, not QA secrets).
+- [ ] certification-notes.md pasted with a dedicated revocable reviewer
+      activation code and sufficient device allowance.
 - [ ] privacy-checklist.md fully checked; privacy policy URL live.
 - [ ] Telemetry decision documented (disclosed or stripped).
 

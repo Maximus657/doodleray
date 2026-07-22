@@ -11,6 +11,10 @@ CACHE_DIR="${LIBXRAY_CACHE_DIR:-$ROOT_DIR/.build/libxray-$TAG}"
 OUTPUT="$ROOT_DIR/src-tauri/macos/LibXray.xcframework"
 ARTIFACT_DIR="$ROOT_DIR/.build/libxray-artifacts/$COMMIT"
 ARTIFACT="$ARTIFACT_DIR/LibXray.xcframework"
+PROVENANCE="$ARTIFACT/.doodleray-provenance"
+EXPECTED_PROVENANCE="tag=$TAG
+commit=$COMMIT
+gomobile=$GOMOBILE_VERSION"
 
 if [ ! -d "$CACHE_DIR/.git" ]; then
   git clone --branch "$TAG" --depth 1 https://github.com/XTLS/libXray.git "$CACHE_DIR"
@@ -30,7 +34,10 @@ export PATH="$PATH:$(go env GOPATH)/bin"
 go install "golang.org/x/mobile/cmd/gomobile@$GOMOBILE_VERSION"
 gomobile init
 
-if [ ! -f "$ARTIFACT/Info.plist" ]; then
+if [ ! -f "$ARTIFACT/Info.plist" ] || [ ! -f "$PROVENANCE" ] || [ "$(cat "$PROVENANCE")" != "$EXPECTED_PROVENANCE" ]; then
+  if [ -e "$ARTIFACT" ]; then
+    find "$ARTIFACT" -depth -delete
+  fi
   BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/doodleray-libxray.XXXXXX")"
   cleanup_build_dir() {
     case "$BUILD_DIR" in
@@ -57,12 +64,14 @@ if [ ! -f "$ARTIFACT/Info.plist" ]; then
   test -f "$BUILD_DIR/LibXray.xcframework/Info.plist"
   mkdir -p "$ARTIFACT_DIR"
   ditto "$BUILD_DIR/LibXray.xcframework" "$ARTIFACT"
+  printf '%s\n' "$EXPECTED_PROVENANCE" > "$PROVENANCE"
 fi
 
 if ! /usr/libexec/PlistBuddy -c 'Print :AvailableLibraries:0:SupportedPlatform' "$ARTIFACT/Info.plist" | rg -q '^macos$'; then
   printf 'libXray build did not produce a macOS slice\n' >&2
   exit 1
 fi
+[ "$(cat "$PROVENANCE")" = "$EXPECTED_PROVENANCE" ] || { printf 'libXray provenance mismatch\n' >&2; exit 1; }
 
 if [ -e "$OUTPUT" ] && [ ! -L "$OUTPUT" ]; then
   preserved="$ROOT_DIR/.build/libxray-artifacts/preserved-$(date +%Y%m%d%H%M%S)"
