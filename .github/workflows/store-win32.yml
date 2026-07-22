@@ -35,6 +35,10 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
       - name: Install frontend deps
         run: npm ci
 
@@ -80,8 +84,8 @@ jobs:
           if (-not (Test-Path 'src-tauri/DoodleRayService.exe')) {
             New-Item -ItemType File -Path 'src-tauri/DoodleRayService.exe' -Force | Out-Null
           }
-          cargo test --manifest-path src-tauri/Cargo.toml --all-targets
-          cargo test --manifest-path src-tauri/Cargo.toml --features windows-service --bin DoodleRayService
+          cargo test --release --manifest-path src-tauri/Cargo.toml --all-targets
+          cargo test --release --manifest-path src-tauri/Cargo.toml --features windows-service --bin DoodleRayService
 
       - name: Build tunnel service
         shell: pwsh
@@ -127,10 +131,12 @@ jobs:
       - name: Build store flavor
         shell: pwsh
         run: |
-          $extra = @()
-          if ('${{ steps.signing.outputs.available }}' -ne 'true') { $extra += '-AllowUnsigned' }
-          if ('${{ inputs.enable_self_update }}' -eq 'true') { $extra += @('-EnableSelfUpdate', '-WithUpdaterArtifacts') }
-          ./scripts/build-store.ps1 @extra
+          $allowUnsigned = '${{ steps.signing.outputs.available }}' -ne 'true'
+          $enableSelfUpdate = '${{ inputs.enable_self_update }}' -eq 'true'
+          ./scripts/build-store.ps1 `
+            -AllowUnsigned:$allowUnsigned `
+            -EnableSelfUpdate:$enableSelfUpdate `
+            -WithUpdaterArtifacts:$enableSelfUpdate
 
       - name: Verify signatures (gate)
         if: ${{ steps.signing.outputs.available == 'true' }}
@@ -149,6 +155,6 @@ jobs:
           retention-days: 14
 
       - name: Require production signing for release
-        if: ${{ always() && !cancelled() && steps.signing.outputs.available != 'true' && inputs.allow_unsigned != true }}
+        if: ${{ success() && steps.signing.outputs.available != 'true' && inputs.allow_unsigned != true }}
         shell: pwsh
         run: throw 'Unsigned RC was tested and archived, but STORE_CODESIGN_PFX_B64 and STORE_CODESIGN_PFX_PASSWORD are required for a releasable Windows build.'
