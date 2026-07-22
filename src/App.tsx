@@ -484,10 +484,8 @@ function App() {
       });
     }
     
-    // Analytics — report launch, update event, and heartbeat
-    import('./lib/workshop-api').then(async ({ reportLaunch, startHeartbeat, reportAppUpdated }) => {
-      reportLaunch();
-      startHeartbeat();
+    // Report version changes only after the user explicitly enables diagnostics.
+    import('./lib/workshop-api').then(async ({ reportAppUpdated }) => {
       try {
         const { getVersion } = await import('@tauri-apps/api/app');
         const currentVersion = await getVersion();

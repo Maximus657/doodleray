@@ -18,6 +18,14 @@ export interface AppApiSubscriptionSummary {
   reason?: string | null;
   user_uuid?: string | null;
   username?: string | null;
+  anti_jammer?: {
+    limit_bytes: number;
+    used_bytes: number;
+    remaining_bytes: number;
+    low_balance: boolean;
+    exhausted: boolean;
+    state?: string;
+  } | null;
 }
 
 export interface AppApiSessionStatus {
@@ -96,6 +104,7 @@ function locationToServer(location: AppApiLocation): ServerConfig {
 
 function subscriptionFromSession(session: AppApiSessionStatus | null): Subscription {
   const summary = session?.subscription ?? null;
+  const antiJammer = summary?.anti_jammer;
   return {
     id: CLOSED_SUBSCRIPTION_ID,
     name: 'DoodleVPN',
@@ -107,6 +116,16 @@ function subscriptionFromSession(session: AppApiSessionStatus | null): Subscript
       download: 0,
       expire: parseExpireSeconds(summary?.expires_at),
     },
+    antiJammer: antiJammer
+      ? {
+          limitBytes: antiJammer.limit_bytes,
+          usedBytes: antiJammer.used_bytes,
+          remainingBytes: antiJammer.remaining_bytes,
+          lowBalance: antiJammer.low_balance,
+          exhausted: antiJammer.exhausted,
+          state: antiJammer.state,
+        }
+      : undefined,
   };
 }
 
@@ -132,6 +151,14 @@ function localPreviewSession(loggedIn = localPreviewLoggedIn): AppApiSessionStat
           remnawave_status: 'ACTIVE',
           expires_at: new Date(now + 262 * 24 * 60 * 60 * 1000).toISOString(),
           username: 'local-preview',
+          anti_jammer: {
+            limit_bytes: 30 * 1024 ** 3,
+            used_bytes: 21.4 * 1024 ** 3,
+            remaining_bytes: 8.6 * 1024 ** 3,
+            low_balance: false,
+            exhausted: false,
+            state: 'active',
+          },
         }
       : null,
   };

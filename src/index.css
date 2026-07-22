@@ -344,6 +344,58 @@
     border: 0;
   }
 
+  .v6-compact-mode .v6-panel {
+    padding: 14px;
+  }
+  .v6-compact-mode .v6-brand-enter,
+  .v6-compact-mode .v6-brand-hidden {
+    display: none;
+  }
+  .v6-compact-mode .v6-mode-selector {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .v6-compact-mode .v6-mode-card {
+    align-items: center;
+    gap: 6px;
+    padding: 10px 6px;
+  }
+  .v6-compact-mode .v6-mode-card-head {
+    justify-content: center;
+  }
+  .v6-compact-mode .v6-mode-card-badges,
+  .v6-compact-mode .v6-mode-card-description {
+    display: none;
+  }
+  .v6-compact-mode .v6-mode-card-title {
+    width: 100%;
+    white-space: normal;
+    text-align: center;
+    font-size: 11.5px;
+  }
+  .v6-compact-mode .v6-dashboard-layout {
+    flex-direction: column;
+    gap: 14px;
+    overflow-y: auto;
+    padding-right: 2px;
+  }
+  .v6-compact-mode .v6-dashboard-main {
+    order: 1;
+    flex: none;
+    overflow: visible;
+  }
+  .v6-compact-mode .v6-connect-orb {
+    min-height: 340px;
+    flex: none;
+  }
+  .v6-compact-mode .v6-location-list {
+    order: 2;
+    min-height: 460px;
+    width: 100%;
+    flex: none;
+  }
+
   /* Main glass panel = window body: glass gradient layered over the warm
      plum radial design background. */
   .v6-panel {

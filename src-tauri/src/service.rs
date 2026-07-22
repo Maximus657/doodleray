@@ -1502,13 +1502,10 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             let xray_config_path = runtime_dir.join("xray_config.json");
             write_json_file(&xray_config_path, xray_config)?;
             let xray_log_path = runtime_dir.join("xray.log");
+            let xray_exe = xray_exe_path()?;
+            check_xray_config(&xray_exe, &xray_config_path)?;
             let spawn_started = Instant::now();
-            let child = spawn_engine(
-                xray_exe_path()?,
-                &["run", "-c"],
-                &xray_config_path,
-                &xray_log_path,
-            )?;
+            let child = spawn_engine(xray_exe, &["run", "-c"], &xray_config_path, &xray_log_path)?;
             set_xray_spawn_ms(elapsed_ms(spawn_started));
             assign_child_to_job(&child)?;
             state().lock().unwrap().xray = Some(child);
@@ -2023,6 +2020,23 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             "sing-box config check failed: {}{}",
             redact(&stdout),
             redact(&stderr)
+        ))
+    }
+
+    fn check_xray_config(exe: &Path, config_path: &Path) -> Result<(), String> {
+        let output = Command::new(exe)
+            .args(["run", "-test", "-c"])
+            .arg(config_path)
+            .creation_flags(0x08000000)
+            .output()
+            .map_err(|error| format!("xray config check failed to run: {error}"))?;
+        if output.status.success() {
+            return Ok(());
+        }
+        Err(format!(
+            "xray config check failed: {}{}",
+            redact(&String::from_utf8_lossy(&output.stdout)),
+            redact(&String::from_utf8_lossy(&output.stderr))
         ))
     }
 

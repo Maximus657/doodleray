@@ -59,17 +59,25 @@ jobs:
       # Download xray-core for Windows
       - name: Download xray-core
         run: |
-          $xrayVersion = "v26.6.1"
-          $url = "https://github.com/XTLS/Xray-core/releases/download/$xrayVersion/Xray-windows-64.zip"
+          $runtime = Get-Content runtime-versions.json -Raw | ConvertFrom-Json
+          $xrayVersion = $runtime.xray.version
+          $xrayAsset = $runtime.xray.assets.windows_amd64
+          $url = "https://github.com/XTLS/Xray-core/releases/download/$xrayVersion/$($xrayAsset.name)"
           Invoke-WebRequest -Uri $url -OutFile xray.zip
+          if ((Get-FileHash xray.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $xrayAsset.sha256) {
+            throw "Xray archive checksum mismatch"
+          }
           Expand-Archive -Path xray.zip -DestinationPath xray-core-tmp
           New-Item -ItemType Directory -Force -Path "src-tauri/xray-core"
           Copy-Item "xray-core-tmp/xray.exe" "src-tauri/xray-core/"
           Copy-Item "xray-core-tmp/geoip.dat" "src-tauri/xray-core/"
           Copy-Item "xray-core-tmp/geosite.dat" "src-tauri/xray-core/"
           # Download wintun.dll for TUN
-          $wintunUrl = "https://www.wintun.net/builds/wintun-0.14.1.zip"
+          $wintunUrl = "https://www.wintun.net/builds/$($runtime.wintun.asset)"
           Invoke-WebRequest -Uri $wintunUrl -OutFile wintun.zip
+          if ((Get-FileHash wintun.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $runtime.wintun.sha256) {
+            throw "Wintun archive checksum mismatch"
+          }
           Expand-Archive -Path wintun.zip -DestinationPath wintun-tmp
           Copy-Item "wintun-tmp/wintun/bin/amd64/wintun.dll" "src-tauri/xray-core/"
           Copy-Item "wintun-tmp/wintun/bin/amd64/wintun.dll" "src-tauri/"
@@ -77,10 +85,15 @@ jobs:
 
       - name: Download sing-box
         run: |
-          $singBoxVersion = "1.13.13"
+          $runtime = Get-Content runtime-versions.json -Raw | ConvertFrom-Json
+          $singBoxVersion = $runtime.sing_box.version
+          $singBoxAsset = $runtime.sing_box.assets.windows_amd64
           $singBoxZip = Join-Path $env:RUNNER_TEMP "sing-box-windows-amd64.zip"
           $singBoxExtract = Join-Path $env:RUNNER_TEMP "sing-box-windows-amd64"
-          Invoke-WebRequest "https://github.com/SagerNet/sing-box/releases/download/v$singBoxVersion/sing-box-$singBoxVersion-windows-amd64.zip" -OutFile $singBoxZip
+          Invoke-WebRequest "https://github.com/SagerNet/sing-box/releases/download/v$singBoxVersion/$($singBoxAsset.name)" -OutFile $singBoxZip
+          if ((Get-FileHash $singBoxZip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $singBoxAsset.sha256) {
+            throw "sing-box archive checksum mismatch"
+          }
           Expand-Archive -Path $singBoxZip -DestinationPath $singBoxExtract -Force
           $singBoxExe = Get-ChildItem $singBoxExtract -Recurse -Filter "sing-box.exe" | Select-Object -First 1
           if (-not $singBoxExe) { throw "sing-box.exe not found in downloaded archive" }
@@ -278,13 +291,16 @@ jobs:
       # Download xray-core for macOS
       - name: Download xray-core
         run: |
-          XRAY_VERSION="v26.6.1"
+          XRAY_VERSION="$(node -p "require('./runtime-versions.json').xray.version")"
           if [ "${{ matrix.arch }}" = "arm64" ]; then
-            XRAY_ARCH="macos-arm64-v8a"
+            XRAY_KEY="darwin_arm64"
           else
-            XRAY_ARCH="macos-64"
+            XRAY_KEY="darwin_amd64"
           fi
-          curl -L "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-${XRAY_ARCH}.zip" -o xray.zip
+          XRAY_ASSET="$(node -p "require('./runtime-versions.json').xray.assets.${XRAY_KEY}.name")"
+          XRAY_SHA256="$(node -p "require('./runtime-versions.json').xray.assets.${XRAY_KEY}.sha256")"
+          curl --fail --location "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/${XRAY_ASSET}" -o xray.zip
+          printf '%s  %s\n' "$XRAY_SHA256" xray.zip | shasum -a 256 -c -
           unzip xray.zip -d xray-core-tmp
           mkdir -p src-tauri/xray-core
           cp xray-core-tmp/xray src-tauri/xray-core/
@@ -295,15 +311,18 @@ jobs:
       # Download sing-box for macOS
       - name: Download sing-box
         run: |
-          SB_VERSION="1.13.13"
+          SB_VERSION="$(node -p "require('./runtime-versions.json').sing_box.version")"
           if [ "${{ matrix.arch }}" = "arm64" ]; then
-            SB_ARCH="darwin-arm64"
+            SB_KEY="darwin_arm64"
           else
-            SB_ARCH="darwin-amd64"
+            SB_KEY="darwin_amd64"
           fi
-          curl -L "https://github.com/SagerNet/sing-box/releases/download/v${SB_VERSION}/sing-box-${SB_VERSION}-${SB_ARCH}.tar.gz" -o singbox.tar.gz
+          SB_ASSET="$(node -p "require('./runtime-versions.json').sing_box.assets.${SB_KEY}.name")"
+          SB_SHA256="$(node -p "require('./runtime-versions.json').sing_box.assets.${SB_KEY}.sha256")"
+          curl --fail --location "https://github.com/SagerNet/sing-box/releases/download/v${SB_VERSION}/${SB_ASSET}" -o singbox.tar.gz
+          printf '%s  %s\n' "$SB_SHA256" singbox.tar.gz | shasum -a 256 -c -
           tar xzf singbox.tar.gz
-          cp sing-box-${SB_VERSION}-${SB_ARCH}/sing-box src-tauri/
+          cp "${SB_ASSET%.tar.gz}/sing-box" src-tauri/
           chmod +x src-tauri/sing-box
 
       - name: Sign macOS runtime binaries

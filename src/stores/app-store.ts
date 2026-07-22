@@ -21,6 +21,15 @@ export type ProxyMode = 'system-proxy' | 'tun';
 export type SystemProxyMode = 'set' | 'clear' | 'unchanged';
 export type SupportedLanguage = 'ru' | 'en' | 'zh';
 
+export interface AntiJammerStatus {
+  limitBytes: number;
+  usedBytes: number;
+  remainingBytes: number;
+  lowBalance: boolean;
+  exhausted: boolean;
+  state?: string;
+}
+
 export interface ServerConfig {
   id: string;
   name: string;
@@ -84,6 +93,7 @@ export interface Subscription {
     total?: number;
     expire?: number;
   };
+  antiJammer?: AntiJammerStatus;
 }
 
 export interface SpeedPoint {
@@ -133,6 +143,7 @@ export interface AppState {
   updateStatus: string;
   updateProgress: number | null;
   showStats: boolean; // Hide/show statistics on dashboard
+  diagnosticsConsent: boolean;
   appSessionLoggedIn: boolean;
   appSessionDeviceAllowed: boolean | null;
 
@@ -153,6 +164,7 @@ export interface AppState {
   setAutoConnectOnStartup: (on: boolean) => void;
   setSilentAdminAutostart: (on: boolean) => void;
   setShowStats: (show: boolean) => void;
+  setDiagnosticsConsent: (enabled: boolean) => void;
 
   addServer: (server: ServerConfig) => void;
   removeServer: (id: string) => void;
@@ -472,6 +484,7 @@ export const useAppStore = create<AppState>()(
       updateStatus: '',
       updateProgress: null,
       showStats: false,
+      diagnosticsConsent: false,
       appSessionLoggedIn: false,
       appSessionDeviceAllowed: null,
 
@@ -508,6 +521,7 @@ export const useAppStore = create<AppState>()(
       setAutoConnectOnStartup: (on) => set({ autoConnectOnStartup: on }),
       setSilentAdminAutostart: (on) => set({ silentAdminAutostart: on }),
       setShowStats: (show) => set({ showStats: show }),
+      setDiagnosticsConsent: (enabled) => set({ diagnosticsConsent: enabled }),
 
 
 
@@ -595,7 +609,13 @@ export const useAppStore = create<AppState>()(
         };
       }),
       clearLogs: () => set({ logs: [] }),
-      wipeData: () => set({ servers: [], subscriptions: [], activeServer: null, lastSelectedServerKey: null }),
+      wipeData: () => set({
+        servers: [],
+        subscriptions: [],
+        activeServer: null,
+        lastSelectedServerKey: null,
+        diagnosticsConsent: false,
+      }),
       setAvailableUpdate: (version) => set({ availableUpdate: version }),
       setUpdateState: (state) => set(state),
       addTraffic: (dl, ul) => set((s) => ({ totalDown: s.totalDown + dl, totalUp: s.totalUp + ul })),

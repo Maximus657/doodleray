@@ -4,7 +4,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 CONFIG="$ROOT_DIR/scripts/vpn-qa/xray-freedom-tun.json"
-XRAY_IMAGE="ghcr.io/xtls/xray-core:26.7.11"
+XRAY_VERSION="$(plutil -extract xray.version raw -o - "$ROOT_DIR/runtime-versions.json")"
+XRAY_IMAGE="ghcr.io/xtls/xray-core:${XRAY_VERSION#v}"
 CURL_IMAGE="curlimages/curl:8.16.0"
 DNS_IMAGE="busybox:1.37"
 CONTAINER="doodleray-xray-tun-$$"

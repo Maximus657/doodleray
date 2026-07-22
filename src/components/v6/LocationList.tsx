@@ -1,8 +1,9 @@
 import { useMemo } from 'react';
 import { Search, Plus, RefreshCw } from 'lucide-react';
 import type { ServerConfig, Subscription } from '../../stores/app-store';
+import { useAppStore } from '../../stores/app-store';
 import { buildServerDisplayGroups, serverMatchesGroupQuery } from '../../lib/server-groups';
-import { isNetworkExtensionOnlyBuild } from '../../lib/build-policy';
+import { antiJammerQuotaView, formatQuotaBytes } from '../../lib/ui-format';
 import ServerRow from './ServerRow';
 
 type T = (key: never) => string;
@@ -15,16 +16,6 @@ function dayColor(d: number): string {
   if (d <= 14) return '#ffb02e';
   if (d <= 30) return '#9fd457';
   return '#3ddc84';
-}
-
-async function openRenew() {
-  const url = 'https://t.me/doodlevpn_support';
-  try {
-    const { openUrl } = await import('@tauri-apps/plugin-opener');
-    await openUrl(url);
-  } catch {
-    window.open(url, '_blank');
-  }
 }
 
 interface Props {
@@ -64,14 +55,16 @@ export default function LocationList({
 
   const activeId = activeServer?.id;
   const activeSubId = activeServer?.subscriptionId;
+  const language = useAppStore((state) => state.language);
 
   const expire = activeSub?.traffic?.expire;
   const days = expire && expire > 0 ? Math.max(0, Math.ceil((expire * 1000 - Date.now()) / 86_400_000)) : null;
   const dCol = days !== null ? dayColor(days) : null;
-  const externalRenewalAvailable = !isNetworkExtensionOnlyBuild();
+  const quota = activeSub?.antiJammer ? antiJammerQuotaView(activeSub.antiJammer) : null;
+  const quotaColor = quota?.tone === 'exhausted' ? '#ff6b5a' : quota?.tone === 'low' ? '#ffb02e' : '#3ddc84';
 
   return (
-    <div className="flex min-h-0 w-[clamp(280px,32%,392px)] shrink-0 flex-col rounded-[26px] border border-white/[0.09] bg-white/[0.05] p-5">
+    <div className="v6-location-list flex min-h-0 w-[clamp(280px,32%,392px)] shrink-0 flex-col rounded-[26px] border border-white/[0.09] bg-white/[0.05] p-5">
       {/* Header */}
       <div className="flex items-baseline justify-between px-1 pb-4 pt-0.5">
         <span className="text-[15px] font-semibold text-white">{t('v6Locations' as never)}</span>
@@ -134,28 +127,48 @@ export default function LocationList({
         )}
       </div>
 
-      {/* Subscription block (design) */}
-      {days !== null && dCol && (
+      {/* Quota and subscription status */}
+      {(quota || (days !== null && dCol)) && (
         <div className="mt-3.5 border-t border-white/[0.08] pt-4">
-          {externalRenewalAvailable && (
-            <div className="mb-[9px] flex items-center justify-end">
-              <button type="button" onClick={openRenew} className="text-[12px] font-semibold text-[#FF9E38] v6-focus">
-                {t('v6Renew' as never)}
-              </button>
+          {quota && (
+            <div className={days !== null ? 'mb-4' : ''}>
+              <div className="mb-2 flex items-baseline justify-between gap-3">
+                <span className="text-[12.5px] font-semibold text-white">{t('v6AntiJammer' as never)}</span>
+                <span className="text-right text-[11.5px] tabular-nums text-white/65">
+                  {formatQuotaBytes(quota.remaining, language)} {t('v6QuotaOf' as never)} {formatQuotaBytes(quota.limit, language)}
+                </span>
+              </div>
+              <div className="h-[7px] overflow-hidden rounded-md bg-white/10">
+                <div
+                  className="h-full rounded-md transition-[width] duration-500"
+                  style={{ width: `${(quota.ratio * 100).toFixed(1)}%`, background: quotaColor, boxShadow: `0 0 10px ${quotaColor}66` }}
+                />
+              </div>
+              <p className="mt-2 text-[11px] leading-snug text-white/45">{t('v6RegularTrafficUnlimited' as never)}</p>
+              {quota.tone !== 'normal' && (
+                <p className={`mt-1 text-[11px] leading-snug ${quota.tone === 'exhausted' ? 'text-[#ff9b91]' : 'text-[#ffd28a]'}`}>
+                  {t((quota.tone === 'exhausted' ? 'v6AntiJammerExhausted' : 'v6AntiJammerLow') as never)}
+                </p>
+              )}
             </div>
           )}
-          <div className="mb-[11px] flex items-baseline gap-1.5">
-            <span className="text-[24px] font-semibold leading-none tabular-nums text-white">{days}</span>
-            <span className="text-[12.5px] text-white/45">
-              {days <= 0 ? t('subscriptionExpired' as never) : t('v6DaysLeft' as never)}
-            </span>
-          </div>
-          <div className="h-[7px] overflow-hidden rounded-md bg-white/10">
-            <div
-              className="h-full rounded-md transition-[width] duration-500"
-              style={{ width: `${(Math.min(1, days / 30) * 100).toFixed(1)}%`, background: dCol, boxShadow: `0 0 10px ${dCol}66` }}
-            />
-          </div>
+
+          {days !== null && dCol && (
+            <div className={quota ? 'border-t border-white/[0.08] pt-4' : ''}>
+              <div className="mb-[11px] flex items-baseline gap-1.5">
+                <span className="text-[24px] font-semibold leading-none tabular-nums text-white">{days}</span>
+                <span className="text-[12.5px] text-white/45">
+                  {days <= 0 ? t('subscriptionExpired' as never) : t('v6DaysLeft' as never)}
+                </span>
+              </div>
+              <div className="h-[7px] overflow-hidden rounded-md bg-white/10">
+                <div
+                  className="h-full rounded-md transition-[width] duration-500"
+                  style={{ width: `${(Math.min(1, days / 30) * 100).toFixed(1)}%`, background: dCol, boxShadow: `0 0 10px ${dCol}66` }}
+                />
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

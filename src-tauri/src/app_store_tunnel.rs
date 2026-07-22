@@ -2,6 +2,7 @@ use serde::Deserialize;
 use std::ffi::c_void;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
+use std::path::PathBuf;
 use tokio::sync::oneshot;
 
 #[derive(Debug, Deserialize)]
@@ -22,7 +23,21 @@ extern "C" {
     fn doodleray_ne_stop_async(context: *mut c_void, completion: DoodleRayNECompletion);
     fn doodleray_ne_status_async(context: *mut c_void, completion: DoodleRayNECompletion);
     fn doodleray_ne_stop_cached();
+    fn doodleray_app_group_container_path() -> *mut c_char;
     fn doodleray_ne_free(value: *mut c_char);
+}
+
+pub fn app_group_container_path() -> Result<PathBuf, String> {
+    let value = unsafe { doodleray_app_group_container_path() };
+    if value.is_null() {
+        return Err("DoodleRay App Group container is unavailable".into());
+    }
+    let path = unsafe { CStr::from_ptr(value) }
+        .to_str()
+        .map(PathBuf::from)
+        .map_err(|_| "DoodleRay App Group path is invalid UTF-8".to_string());
+    unsafe { doodleray_ne_free(value) };
+    path
 }
 
 fn decode_response(value: *mut c_char) -> Result<TunnelResponse, String> {

@@ -28,7 +28,7 @@ interface Props {
 /** Row of three design mode cards; selection reconfigures the real transport. */
 export default function ModeSelector({ current, onSelect, disabled, t }: Props) {
   return (
-    <div className="flex gap-3" role="radiogroup" aria-label={t('connectionControls' as never)}>
+    <div className="v6-mode-selector flex gap-3" role="radiogroup" aria-label={t('connectionControls' as never)}>
       {MODES.map((m) => {
         const sel = current === m.mode;
         const Icon = m.icon;
@@ -40,14 +40,14 @@ export default function ModeSelector({ current, onSelect, disabled, t }: Props) 
             aria-checked={sel}
             disabled={disabled}
             onClick={() => onSelect(m.mode)}
-            className="flex flex-1 flex-col gap-[9px] rounded-[19px] p-4 text-left transition-[background,border-color] duration-150 disabled:cursor-not-allowed disabled:opacity-50 v6-focus"
+            className="v6-mode-card flex min-w-0 flex-1 flex-col gap-[9px] rounded-[19px] p-4 text-left transition-[background,border-color] duration-150 disabled:cursor-not-allowed disabled:opacity-50 v6-focus"
             style={{
               background: sel ? 'linear-gradient(150deg, rgba(249,127,22,0.2), rgba(249,127,22,0.06))' : 'rgba(255,255,255,0.04)',
               border: sel ? '1px solid rgba(255,158,56,0.5)' : '1px solid rgba(255,255,255,0.08)',
               boxShadow: sel ? '0 8px 26px rgba(234,109,6,0.2)' : 'none',
             }}
           >
-            <div className="flex items-center justify-between gap-1">
+            <div className="v6-mode-card-head flex items-center justify-between gap-1">
               <span
                 className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-xl"
                 style={{
@@ -58,7 +58,7 @@ export default function ModeSelector({ current, onSelect, disabled, t }: Props) 
               >
                 <Icon className="h-[19px] w-[19px]" strokeWidth={1.9} />
               </span>
-              <span className="flex min-w-0 items-center gap-1">
+              <span className="v6-mode-card-badges flex min-w-0 items-center gap-1">
                 {m.mode === 'protected' && (
                   <span className="truncate rounded-[20px] px-2 py-[3px] text-[9px] font-semibold uppercase tracking-[0.06em]" style={{ background: 'rgba(249,127,22,0.18)', color: '#FFA84E' }}>
                     {t('v6BadgeRecommended' as never)}
@@ -69,10 +69,10 @@ export default function ModeSelector({ current, onSelect, disabled, t }: Props) 
                 </span>
               </span>
             </div>
-            <div className="truncate text-[14.5px] font-semibold leading-tight text-white" title={t(m.titleKey as never)}>
+            <div className="v6-mode-card-title truncate text-[14.5px] font-semibold leading-tight text-white" title={t(m.titleKey as never)}>
               {t(m.titleKey as never)}
             </div>
-            <div className="line-clamp-2 text-[11.5px] leading-[1.45] text-white/50" title={t(m.descKey as never)}>
+            <div className="v6-mode-card-description line-clamp-2 text-[11.5px] leading-[1.45] text-white/50" title={t(m.descKey as never)}>
               {t(m.descKey as never)}
             </div>
           </button>

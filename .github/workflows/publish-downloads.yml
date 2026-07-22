@@ -70,22 +70,34 @@ jobs:
       - name: Download Windows runtime dependencies
         shell: pwsh
         run: |
-          $xrayVersion = 'v26.6.1'
-          Invoke-WebRequest "https://github.com/XTLS/Xray-core/releases/download/$xrayVersion/Xray-windows-64.zip" -OutFile xray.zip
+          $runtime = Get-Content runtime-versions.json -Raw | ConvertFrom-Json
+          $xrayVersion = $runtime.xray.version
+          $xrayAsset = $runtime.xray.assets.windows_amd64
+          Invoke-WebRequest "https://github.com/XTLS/Xray-core/releases/download/$xrayVersion/$($xrayAsset.name)" -OutFile xray.zip
+          if ((Get-FileHash xray.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $xrayAsset.sha256) {
+            throw 'Xray archive checksum mismatch'
+          }
           Expand-Archive -Path xray.zip -DestinationPath xray-core-tmp
           New-Item -ItemType Directory -Force -Path 'src-tauri/xray-core'
           Copy-Item 'xray-core-tmp/xray.exe' 'src-tauri/xray-core/'
           Copy-Item 'xray-core-tmp/geoip.dat' 'src-tauri/xray-core/'
           Copy-Item 'xray-core-tmp/geosite.dat' 'src-tauri/xray-core/'
-          Invoke-WebRequest 'https://www.wintun.net/builds/wintun-0.14.1.zip' -OutFile wintun.zip
+          Invoke-WebRequest "https://www.wintun.net/builds/$($runtime.wintun.asset)" -OutFile wintun.zip
+          if ((Get-FileHash wintun.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $runtime.wintun.sha256) {
+            throw 'Wintun archive checksum mismatch'
+          }
           Expand-Archive -Path wintun.zip -DestinationPath wintun-tmp
           Copy-Item 'wintun-tmp/wintun/bin/amd64/wintun.dll' 'src-tauri/xray-core/'
           Copy-Item 'wintun-tmp/wintun/bin/amd64/wintun.dll' 'src-tauri/'
 
-          $singBoxVersion = '1.13.13'
+          $singBoxVersion = $runtime.sing_box.version
+          $singBoxAsset = $runtime.sing_box.assets.windows_amd64
           $singBoxZip = Join-Path $env:RUNNER_TEMP 'sing-box-windows-amd64.zip'
           $singBoxExtract = Join-Path $env:RUNNER_TEMP 'sing-box-windows-amd64'
-          Invoke-WebRequest "https://github.com/SagerNet/sing-box/releases/download/v$singBoxVersion/sing-box-$singBoxVersion-windows-amd64.zip" -OutFile $singBoxZip
+          Invoke-WebRequest "https://github.com/SagerNet/sing-box/releases/download/v$singBoxVersion/$($singBoxAsset.name)" -OutFile $singBoxZip
+          if ((Get-FileHash $singBoxZip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $singBoxAsset.sha256) {
+            throw 'sing-box archive checksum mismatch'
+          }
           Expand-Archive -Path $singBoxZip -DestinationPath $singBoxExtract -Force
           $singBoxExe = Get-ChildItem $singBoxExtract -Recurse -Filter 'sing-box.exe' | Select-Object -First 1
           if (-not $singBoxExe) { throw 'sing-box.exe not found' }

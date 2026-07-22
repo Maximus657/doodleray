@@ -7,6 +7,7 @@ void doodleray_ne_start_async(const char *config_json, void *context, DoodleRayN
 void doodleray_ne_stop_async(void *context, DoodleRayNECompletion completion);
 void doodleray_ne_status_async(void *context, DoodleRayNECompletion completion);
 void doodleray_ne_stop_cached(void);
+char *doodleray_app_group_container_path(void);
 void doodleray_ne_free(char *value);
 
 #endif

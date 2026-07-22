@@ -203,6 +203,7 @@ export default function Dashboard() {
     subAutoUpdateMinutes, connectedAt, setConnectedAt,
     addSubscription, addServer,
     updateServerPings, setSocksPort, setHttpPort, showStats,
+    appSessionDeviceAllowed,
   } = useAppStore();
   const { t } = useTranslation();
 
@@ -228,7 +229,7 @@ export default function Dashboard() {
   const networkExtensionOnly = isNetworkExtensionOnlyBuild();
   const appLoginDigits = normalizeAppLoginCode(appLoginCode);
   const canSubmitAppLoginCode = appLoginDigits.length === 8 && !appLoginBusy;
-  const hasDeviceLimit = closedControlPlane && appSession?.logged_in === true && appSession.subscription?.device_allowed === false;
+  const hasDeviceLimit = closedControlPlane && (appSession?.subscription?.device_allowed === false || appSessionDeviceAllowed === false);
   const deviceLimitNoticeShownRef = useRef(false);
 
   useLayoutEffect(() => {
@@ -1589,14 +1590,16 @@ export default function Dashboard() {
             <p className="text-[13px] font-semibold">{t('v6DeviceLimitTitle' as never)}</p>
             <p className="mt-0.5 text-[11.5px] leading-relaxed text-white/70">{t('v6DeviceLimitBody' as never)}</p>
           </div>
-          <button
-            type="button"
-            onClick={openDoodleVpnBot}
-            className="v6-focus flex shrink-0 items-center gap-1.5 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-[11.5px] font-semibold text-white transition-colors hover:bg-white/15"
-          >
-            {t('v6DeviceLimitAction' as never)}
-            <ExternalLink className="h-3.5 w-3.5" strokeWidth={2.2} />
-          </button>
+          {!networkExtensionOnly && (
+            <button
+              type="button"
+              onClick={openDoodleVpnBot}
+              className="v6-focus flex shrink-0 items-center gap-1.5 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-[11.5px] font-semibold text-white transition-colors hover:bg-white/15"
+            >
+              {t('v6DeviceLimitAction' as never)}
+              <ExternalLink className="h-3.5 w-3.5" strokeWidth={2.2} />
+            </button>
+          )}
         </div>
       )}
 
@@ -1719,7 +1722,7 @@ export default function Dashboard() {
           </div>
         </div>
       ) : (
-        <div className={`flex min-h-0 flex-1 gap-[22px] ${postLoginFlight ? 'v6-dashboard-reveal' : 'v6-dashboard-enter'}`}>
+        <div className={`v6-dashboard-layout flex min-h-0 flex-1 gap-[22px] ${postLoginFlight ? 'v6-dashboard-reveal' : 'v6-dashboard-enter'}`}>
           <LocationList
             servers={servers}
             activeServer={activeServer}
@@ -1735,7 +1738,7 @@ export default function Dashboard() {
           />
 
           {/* RIGHT: modes, connect core, bottom row */}
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
+          <div className="v6-dashboard-main flex min-h-0 min-w-0 flex-1 flex-col gap-4">
             {!networkExtensionOnly && (
               <ModeSelector current={productMode} onSelect={handleModeSelect} disabled={busy} t={t} />
             )}

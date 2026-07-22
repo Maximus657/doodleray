@@ -1,10 +1,12 @@
 import { useState } from 'react';
-import { X, LogOut, RefreshCw, Trash2, DownloadCloud, Wrench, Loader2 } from 'lucide-react';
+import { X, LogOut, RefreshCw, Trash2, DownloadCloud, Wrench, Loader2, Send } from 'lucide-react';
 import { useAppStore, type SupportedLanguage } from '../../stores/app-store';
 import { refreshSubscription } from '../../lib/subscription';
 import { isClosedControlPlaneEnabled, isDesktopAutostartAvailable, isNetworkExtensionOnlyBuild } from '../../lib/build-policy';
 import { appApiLogout } from '../../lib/app-control-plane';
 import { isUpdateManagedByStore, openStoreUpdatePage } from '../../lib/update-channel';
+import { diagnosticsReportToText, runNetworkDiagnostics } from '../../lib/diagnostics';
+import { reportConnectionError } from '../../lib/workshop-api';
 import Toggle from './Toggle';
 
 type T = (key: never) => string;
@@ -69,6 +71,7 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
     subAutoUpdateMinutes, setSubAutoUpdateMinutes,
     subscriptions, updateSubscription, removeSubscription,
     wipeData, addLog, appSessionLoggedIn,
+    diagnosticsConsent, setDiagnosticsConsent,
   } = useAppStore();
 
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
@@ -77,6 +80,9 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
   const [repairing, setRepairing] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [wipeArmed, setWipeArmed] = useState(false);
+  const [diagnosticsBusy, setDiagnosticsBusy] = useState(false);
+  const [diagnosticsStatus, setDiagnosticsStatus] = useState<string | null>(null);
+  const [diagnosticsPreview, setDiagnosticsPreview] = useState<{ text: string; details: Record<string, unknown> } | null>(null);
   const closedControlPlane = isClosedControlPlaneEnabled();
   const desktopAutostartAvailable = isDesktopAutostartAvailable();
   const networkExtensionOnly = isNetworkExtensionOnlyBuild();
@@ -188,6 +194,47 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
     } catch {
       window.close();
     }
+  };
+
+  const prepareDiagnostics = async () => {
+    if (diagnosticsBusy) return;
+    setDiagnosticsBusy(true);
+    setDiagnosticsStatus(null);
+    try {
+      const report = await runNetworkDiagnostics(closedControlPlane ? null : subscriptions[0]?.url);
+      setDiagnosticsPreview({
+        text: diagnosticsReportToText(report),
+        details: {
+          source: 'manual_diagnostics',
+          summary: report.summary,
+          duration_ms: report.durationMs ?? null,
+          checks: report.checks.map(({ code, severity }) => ({ code, severity })),
+          conflicts: report.conflicts.map(({ name }) => name),
+        },
+      });
+    } catch {
+      const state = useAppStore.getState();
+      setDiagnosticsPreview({
+        text: [`Status: ${state.status}`, `Mode: ${state.proxyMode}`, '', ...state.logs.slice(-20).map((log) => `[${log.level.toUpperCase()}] ${log.message}`)].join('\n'),
+        details: { source: 'manual_diagnostics_fallback', status: state.status, proxy_mode: state.proxyMode },
+      });
+    } finally {
+      setDiagnosticsBusy(false);
+    }
+  };
+
+  const sendDiagnostics = async () => {
+    if (!diagnosticsPreview || diagnosticsBusy) return;
+    setDiagnosticsBusy(true);
+    const sent = await reportConnectionError({
+      eventType: 'app_error',
+      errorMessage: 'User-submitted diagnostics',
+      details: diagnosticsPreview.details,
+      force: true,
+    });
+    setDiagnosticsStatus(t((sent ? 'v6DiagnosticsSent' : 'v6DiagnosticsSendFailed') as never));
+    if (sent) setDiagnosticsPreview(null);
+    setDiagnosticsBusy(false);
   };
 
   return (
@@ -311,6 +358,38 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
                 </div>
               ))}
             </>
+          )}
+
+          {/* Diagnostics */}
+          <SectionTitle>{t('v6SecDiagnostics' as never)}</SectionTitle>
+          <Row
+            title={t('v6DiagnosticsConsent' as never)}
+            sub={t('v6DiagnosticsConsentSub' as never)}
+            onClick={() => setDiagnosticsConsent(!diagnosticsConsent)}
+            right={<Toggle on={diagnosticsConsent} label={t('v6DiagnosticsConsent' as never)} />}
+          />
+          <Row
+            title={t('v6SendDiagnostics' as never)}
+            sub={diagnosticsStatus ?? t('v6SendDiagnosticsSub' as never)}
+            onClick={prepareDiagnostics}
+            right={diagnosticsBusy
+              ? <Loader2 className="h-[18px] w-[18px] shrink-0 v6-orb-spin text-[#FF9E38]" strokeWidth={2} />
+              : <Send className="h-[18px] w-[18px] shrink-0 text-white/50" strokeWidth={1.9} />}
+          />
+          {diagnosticsPreview && (
+            <div className="mt-3 rounded-[16px] border border-white/[0.1] bg-black/20 p-3.5">
+              <p className="mb-2 text-[12px] font-semibold text-white">{t('v6DiagnosticsPreview' as never)}</p>
+              <pre className="max-h-44 overflow-auto whitespace-pre-wrap break-words text-[10.5px] leading-relaxed text-white/55">{diagnosticsPreview.text}</pre>
+              <p className="mt-2 text-[10.5px] leading-relaxed text-white/40">{t('v6DiagnosticsPrivacy' as never)}</p>
+              <div className="mt-3 flex justify-end gap-2">
+                <button type="button" onClick={() => setDiagnosticsPreview(null)} className="v6-focus rounded-xl px-3 py-2 text-[12px] font-medium text-white/60 hover:bg-white/[0.06]">
+                  {t('cancel' as never)}
+                </button>
+                <button type="button" onClick={sendDiagnostics} disabled={diagnosticsBusy} className="v6-focus rounded-xl bg-[#F97F16] px-3.5 py-2 text-[12px] font-semibold text-white disabled:opacity-50">
+                  {t('v6ConfirmSendDiagnostics' as never)}
+                </button>
+              </div>
+            </div>
           )}
 
           {/* Maintenance */}

@@ -2,7 +2,7 @@
 // Uses Tauri invoke to bypass SSL — all HTTP goes through Rust reqwest
 
 import { invoke } from '@tauri-apps/api/core';
-import { sanitizeSensitiveText } from './redaction';
+import { sanitizeDiagnosticText } from './redaction';
 import { isDiagnosticsTelemetryEnabled } from './build-policy';
 
 const API_BASE = 'https://94-241-172-101.sslip.io/doodleray-api/api';
@@ -198,9 +198,19 @@ function sanitizeLogLines(lines: Array<{ level?: string; message?: string }>): s
     .slice(-20)
     .map((line) => {
       const level = line.level ? `${line.level}: ` : '';
-      return sanitizeSensitiveText(`${level}${line.message || ''}`) || '';
+      return sanitizeDiagnosticText(`${level}${line.message || ''}`) || '';
     })
     .filter(Boolean);
+}
+
+function sanitizeDiagnosticValue(value: unknown, key = ''): unknown {
+  if (/token|password|secret|private|uuid|address|\bip\b|host|domain|url|config/i.test(key)) return '[redacted]';
+  if (typeof value === 'string') return sanitizeDiagnosticText(value);
+  if (Array.isArray(value)) return value.slice(0, 50).map((item) => sanitizeDiagnosticValue(item));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).slice(0, 50).map(([childKey, child]) => [childKey, sanitizeDiagnosticValue(child, childKey)]));
+  }
+  return value;
 }
 
 export type UserIssueEventType =
@@ -216,6 +226,24 @@ export type UserIssueEventType =
   | 'app_error'
   | 'app_updated'
   | 'error';
+
+const AUTO_DIAGNOSTIC_EVENTS = new Set<UserIssueEventType>([
+  'connect_fail',
+  'health_fatal',
+  'tun_start_fail',
+  'core_crash',
+]);
+
+function automaticDiagnosticSignature(eventType: UserIssueEventType, errorMessage?: string): string | null {
+  if (!AUTO_DIAGNOSTIC_EVENTS.has(eventType)) return null;
+  const signature = `${eventType}:${sanitizeDiagnosticText(errorMessage) || ''}`.slice(0, 500);
+  const now = Date.now();
+  try {
+    const previous = JSON.parse(localStorage.getItem('doodleray_last_diagnostic') || 'null') as { signature?: string; at?: number } | null;
+    if (previous?.signature === signature && now - (previous.at || 0) < 10 * 60_000) return null;
+  } catch { /* storage is best-effort; backend still rate-limits */ }
+  return signature;
+}
 
 // Report app launch (called once on startup)
 export async function reportLaunch(): Promise<void> {
@@ -283,33 +311,47 @@ export async function reportConnectionError(opts: {
   protocol?: string;
   errorMessage?: string;
   details?: Record<string, unknown>;
-}): Promise<void> {
-  if (!isDiagnosticsTelemetryEnabled()) return;
+  force?: boolean;
+}): Promise<boolean> {
+  let automaticSignature: string | null = null;
   try {
-    const version = await getAppVersion();
     let state: any = null;
     try {
       state = await ensureAppState();
     } catch { /* ignore */ }
+    if (!opts.force && state?.diagnosticsConsent !== true) return false;
+    if (!opts.force) {
+      automaticSignature = automaticDiagnosticSignature(opts.eventType, opts.errorMessage);
+      if (!automaticSignature) return false;
+    }
+    if (!isTauriRuntime()) return opts.force === true;
 
-    await apiPost('/analytics/connection-error', {
-      device_id: getFingerprint(),
-      event_type: opts.eventType,
-      app_version: version,
-      os: getOS(),
-      proxy_mode: state?.proxyMode || null,
-      dns_mode: state?.dnsMode || null,
-      network_stack: state?.networkStack || null,
-      server_name: sanitizeSensitiveText(opts.serverName) || null,
-      server_address: sanitizeSensitiveText(opts.serverAddress) || null,
-      server_port: opts.serverPort || null,
-      protocol: opts.protocol || null,
-      error_message: sanitizeSensitiveText(opts.errorMessage) || null,
-      recent_logs: sanitizeLogLines(state?.logs || []),
-      details: opts.details || null,
+    await invoke('app_api_submit_diagnostics', {
+      submission: {
+        manual: opts.force === true,
+        events: [{
+          event_type: opts.eventType,
+          error_code: opts.eventType,
+          phase: state?.status || null,
+          proxy_mode: state?.proxyMode || null,
+          dns_mode: state?.dnsMode || null,
+          network_stack: state?.networkStack || null,
+          location_label: sanitizeDiagnosticText(opts.serverName) || null,
+          error_message: sanitizeDiagnosticText(opts.errorMessage) || null,
+          recent_logs: sanitizeLogLines(state?.logs || []),
+          details: sanitizeDiagnosticValue(opts.details || null),
+        }],
+      },
     });
+    if (automaticSignature) {
+      try {
+        localStorage.setItem('doodleray_last_diagnostic', JSON.stringify({ signature: automaticSignature, at: Date.now() }));
+      } catch { /* backend rate limiting is the fallback */ }
+    }
+    return true;
   } catch {
     // silent — error reporting should never break the app
+    return false;
   }
 }
 

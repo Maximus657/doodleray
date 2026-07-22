@@ -14,13 +14,19 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     ) {
         do {
             let config = try PacketTunnelConfiguration.decode(options: options)
-            let prepared = try PacketTunnelConfiguration.resolvingUplinks(in: config)
+            let directDNS = PacketTunnelConfiguration.physicalDNSServers().first
+                ?? PacketTunnelConfiguration.fallbackDirectDNSServer
+            let dnsPrepared = PacketTunnelConfiguration.injectingLocalDNSResolver(
+                directDNS,
+                into: config
+            )
+            let prepared = try PacketTunnelConfiguration.resolvingUplinks(in: dnsPrepared)
             let settings = makeNetworkSettings(
                 excludingIPv4: prepared.excludedIPv4Addresses,
                 excludingIPv6: prepared.excludedIPv6Addresses
             )
             logger.notice(
-                "Prepared packet tunnel with \(prepared.excludedIPv4Addresses.count, privacy: .public) IPv4 and \(prepared.excludedIPv6Addresses.count, privacy: .public) IPv6 uplink exclusions"
+                "Prepared packet tunnel with local DNS and \(prepared.excludedIPv4Addresses.count, privacy: .public) IPv4 and \(prepared.excludedIPv6Addresses.count, privacy: .public) IPv6 uplink exclusions"
             )
             setTunnelNetworkSettings(settings) { [weak self] error in
                 guard let self else {

@@ -3,9 +3,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-TAG="v26.7.11"
-COMMIT="294fb37343205b9b0cb7b7b1b423d3d4b60d9998"
-GOMOBILE_VERSION="v0.0.0-20260709172247-6129f5bee9d5"
+VERSIONS="$ROOT_DIR/runtime-versions.json"
+TAG="$(plutil -extract libxray.tag raw -o - "$VERSIONS")"
+COMMIT="$(plutil -extract libxray.commit raw -o - "$VERSIONS")"
+GOMOBILE_VERSION="$(plutil -extract gomobile.version raw -o - "$VERSIONS")"
 CACHE_DIR="${LIBXRAY_CACHE_DIR:-$ROOT_DIR/.build/libxray-$TAG}"
 OUTPUT="$ROOT_DIR/src-tauri/macos/LibXray.xcframework"
 ARTIFACT_DIR="$ROOT_DIR/.build/libxray-artifacts/$COMMIT"

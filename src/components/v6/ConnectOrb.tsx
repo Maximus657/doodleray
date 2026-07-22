@@ -64,7 +64,7 @@ export default function ConnectOrb({
     : null;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 rounded-[26px] border border-white/[0.08] bg-white/[0.03]">
+    <div className="v6-connect-orb flex min-h-0 flex-1 flex-col items-center justify-center gap-4 rounded-[26px] border border-white/[0.08] bg-white/[0.03]">
       <div className="relative flex h-[248px] w-[248px] items-center justify-center">
         <button
           type="button"

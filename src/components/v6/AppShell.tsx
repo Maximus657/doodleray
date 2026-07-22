@@ -1,5 +1,5 @@
-import { useState, type ReactNode } from 'react';
-import { HelpCircle, SlidersHorizontal } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { HelpCircle, RectangleHorizontal, RectangleVertical, SlidersHorizontal } from 'lucide-react';
 import { useAppStore } from '../../stores/app-store';
 import { useTranslation } from '../../locales';
 import { getSubscriptionById, getSubscriptionTrafficStatus } from '../../lib/subscription-status';
@@ -24,8 +24,32 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
   const [supportOpen, setSupportOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [windowMode, setWindowMode] = useState<'wide' | 'compact'>(() => {
+    try { return localStorage.getItem('doodleray_window_mode') === 'compact' ? 'compact' : 'wide'; }
+    catch { return 'wide'; }
+  });
   const nativeMacWindow = isNetworkExtensionOnlyBuild();
   const hasMainContent = appSessionLoggedIn || serversCount > 0 || status !== 'disconnected';
+
+  useEffect(() => {
+    try { localStorage.setItem('doodleray_window_mode', windowMode); } catch { /* non-critical preference */ }
+    if (typeof (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ === 'undefined') return;
+    void Promise.all([import('@tauri-apps/api/window'), import('@tauri-apps/api/dpi')])
+      .then(async ([{ getCurrentWindow }, { LogicalSize }]) => {
+        const appWindow = getCurrentWindow();
+        const compact = windowMode === 'compact';
+        const minSize = new LogicalSize(compact ? 420 : 940, compact ? 680 : 660);
+        const targetSize = new LogicalSize(compact ? 440 : 1204, compact ? 760 : 764);
+        if (compact) {
+          await appWindow.setMinSize(minSize);
+          await appWindow.setSize(targetSize);
+        } else {
+          await appWindow.setSize(targetSize);
+          await appWindow.setMinSize(minSize);
+        }
+      })
+      .catch(() => { /* browser preview or unavailable window capability */ });
+  }, [windowMode]);
 
   // Traffic chip: real quota of the active subscription (design: "X.X GB left").
   const activeSub = getSubscriptionById(subscriptions, activeServer?.subscriptionId) ?? subscriptions[0] ?? null;
@@ -53,28 +77,30 @@ export default function AppShell({ children }: { children: ReactNode }) {
   };
 
   return (
-    <div className={`v6-app relative flex h-screen w-screen flex-col overflow-hidden${nativeMacWindow ? ' v6-native-mac-window' : ''}`}>
+    <div className={`v6-app relative flex h-screen w-screen flex-col overflow-hidden${nativeMacWindow ? ' v6-native-mac-window' : ''}${windowMode === 'compact' ? ' v6-compact-mode' : ''}`} data-window-mode={windowMode}>
       <div className="v6-panel relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[34px] p-[18px]">
         {/* Top drag strip: covers the whole header band (incl. panel padding)
             so the window drags from anywhere up top except the buttons. */}
         <div data-tauri-drag-region className="absolute inset-x-0 top-0 z-[5] h-[68px]" />
 
         {/* HEADER */}
-        <div data-tauri-drag-region className={`relative z-10 flex shrink-0 select-none items-center justify-between pr-2.5 pb-4 pt-1.5 ${nativeMacWindow ? 'pl-[60px]' : 'pl-2.5'}`}>
-          <div
-            data-tauri-drag-region
-            className={`pointer-events-none flex items-center gap-[11px] ${hasMainContent ? 'v6-brand-enter' : 'v6-brand-hidden'}`}
-          >
-            <img
-              src="/assets/mascot.png"
-              alt=""
-              draggable={false}
-              data-v6-brand-logo
-              className="v6-brand-logo h-[34px] w-[34px] rounded-[11px]"
-              style={{ boxShadow: '0 6px 18px rgba(234,109,6,0.45)' }}
-            />
-            <div className="v6-brand-word text-[19px] font-semibold tracking-[-0.01em] text-white">
-              Doodle<span className="font-light text-white/70">Ray</span>
+        <div data-tauri-drag-region className="relative z-10 flex shrink-0 select-none items-center justify-end px-2.5 pb-4 pt-1.5">
+          <div data-tauri-drag-region className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-[calc(50%+4px)]">
+            <div
+              data-tauri-drag-region
+              className={`flex items-center gap-[11px] ${hasMainContent ? 'v6-brand-enter' : 'v6-brand-hidden'}`}
+            >
+              <img
+                src="/assets/mascot.png"
+                alt=""
+                draggable={false}
+                data-v6-brand-logo
+                className="v6-brand-logo h-[34px] w-[34px] rounded-[11px]"
+                style={{ boxShadow: '0 6px 18px rgba(234,109,6,0.45)' }}
+              />
+              <div className="v6-brand-word text-[19px] font-semibold tracking-[-0.01em] text-white">
+                Doodle<span className="font-light text-white/70">Ray</span>
+              </div>
             </div>
           </div>
 
@@ -87,6 +113,14 @@ export default function AppShell({ children }: { children: ReactNode }) {
                 </span>
               </div>
             )}
+            <HeaderButton
+              label={t((windowMode === 'compact' ? 'v6WindowWide' : 'v6WindowCompact') as never)}
+              onClick={() => setWindowMode((mode) => mode === 'compact' ? 'wide' : 'compact')}
+            >
+              {windowMode === 'compact'
+                ? <RectangleHorizontal className="h-5 w-5" strokeWidth={2} />
+                : <RectangleVertical className="h-5 w-5" strokeWidth={2} />}
+            </HeaderButton>
             <HeaderButton label={t('v6SupportTitle' as never)} onClick={() => setSupportOpen(true)}>
               <HelpCircle className="h-5 w-5" strokeWidth={2} />
             </HeaderButton>

@@ -235,6 +235,12 @@ void doodleray_ne_stop_cached(void) {
     });
 }
 
+char *doodleray_app_group_container_path(void) {
+    NSURL *url = [[NSFileManager defaultManager]
+        containerURLForSecurityApplicationGroupIdentifier:@"group.com.doodleray.doodleray"];
+    return url.path.length > 0 ? strdup(url.path.UTF8String) : NULL;
+}
+
 void doodleray_ne_free(char *value) {
     free(value);
 }

@@ -4,6 +4,7 @@ import { getEmoji, getFluentEmojiCDN } from '@lobehub/fluent-emoji';
 import type { ServerConfig } from '../../stores/app-store';
 import { useTranslation } from '../../locales';
 import { isClosedAutoLocationServer } from '../../lib/app-control-plane';
+import { displayLocationTitle } from '../../lib/ui-format';
 
 function pingColor(p?: number): string {
   if (p === -1) return '#ff6b5a';
@@ -109,14 +110,9 @@ interface Props {
  * often embed an emoji flag (🇳🇱) — Windows renders regional indicators as
  * bare letters ("NL") — plus sometimes an ASCII ISO prefix. Strip both.
  */
-const FLAG_EMOJI_RE = /[\u{1F1E6}-\u{1F1FF}]{2}/gu;
-
 export function displayServerName(server: Pick<ServerConfig, 'name' | 'countryCode'>): string {
-  let name = server.name.replace(FLAG_EMOJI_RE, '').trim();
-  const cc = server.countryCode?.trim().toUpperCase();
-  if (cc) name = name.replace(new RegExp(`^${cc}[\\s·|-]+`, 'i'), '').trim();
-  if (!isValidCountryCode(server.countryCode)) name = splitLeadingEmoji(name).name;
-  return name || server.name;
+  const name = isValidCountryCode(server.countryCode) ? server.name : splitLeadingEmoji(server.name).name;
+  return displayLocationTitle(name, server.countryCode);
 }
 
 /** Design location row: flag, user-facing location name, ping dot + ms. */
@@ -144,7 +140,7 @@ export default function ServerRow({ server, active, pinging, onSelect }: Props) 
         <ServerIcon server={server} />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[14.5px] font-medium text-white" title={server.name}>{name}</span>
+        <span className="block truncate text-[14.5px] font-medium text-white" title={name}>{name}</span>
       </span>
       <span className="flex shrink-0 items-center justify-end gap-[7px]">
         {auto ? (
