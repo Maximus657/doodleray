@@ -1,10 +1,13 @@
 # Store-flavor (Win32 EXE) build + verification. NEVER publishes anywhere:
-# artifacts are archived to the workflow run only. Manual dispatch only.
+# artifacts are archived to the workflow run only.
 # Fails closed: without signing secrets the job stops before building
 # (unless allow_unsigned=true is explicitly chosen for an RC smoke build).
 name: store-win32
 
 on:
+  push:
+    branches:
+      - codex/v6-macos-app-store
   workflow_dispatch:
     inputs:
       allow_unsigned:
@@ -34,6 +37,17 @@ jobs:
 
       - name: Install frontend deps
         run: npm ci
+
+      - name: Test shared UI and Windows runtime
+        shell: pwsh
+        run: |
+          npm test
+          npm run build
+          if (-not (Test-Path 'src-tauri/DoodleRayService.exe')) {
+            New-Item -ItemType File -Path 'src-tauri/DoodleRayService.exe' -Force | Out-Null
+          }
+          cargo test --manifest-path src-tauri/Cargo.toml --all-targets
+          cargo test --manifest-path src-tauri/Cargo.toml --features windows-service --bin DoodleRayService
 
       # Fail closed: signing secrets are mandatory unless allow_unsigned.
       - name: Import code-signing certificate
