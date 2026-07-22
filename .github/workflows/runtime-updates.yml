@@ -93,6 +93,8 @@ jobs:
         run: |
           scripts/macos/build-libxray.sh
           scripts/macos/test-libxray-loopback.sh
+      - name: Install XcodeGen
+        run: brew install xcodegen
       - name: Compile universal Network Extension without signing
         run: |
           scripts/macos/generate-extension-project.sh
