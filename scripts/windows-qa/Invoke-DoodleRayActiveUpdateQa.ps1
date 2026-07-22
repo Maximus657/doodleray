@@ -1,6 +1,6 @@
 param(
     [string] $RemoteRcInstaller = "C:\DoodleRayQA\artifacts\DoodleRay-v6-rc-setup.exe",
-    [string] $ExpectedRcVersion = "6.0.0",
+    [string] $ExpectedRcVersion = "6.0.1",
     [switch] $AllowUnsignedLocalRc,
     [string] $SecretPath = (Join-Path $PSScriptRoot "..\..\secrets\doodlevpn-server-access.md")
 )

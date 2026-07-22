@@ -3,7 +3,7 @@ param(
     [string] $FromVersion = "5.9.1",
 
     [string] $RemoteRcInstaller = "C:\DoodleRayQA\artifacts\DoodleRay-v6-rc-setup.exe",
-    [string] $ExpectedRcVersion = "6.0.0",
+    [string] $ExpectedRcVersion = "6.0.1",
     [string] $EvidenceDir = "C:\DoodleRayQA\evidence",
     [switch] $InjectStaleWinInet,
     [switch] $InjectCorporatePac,
