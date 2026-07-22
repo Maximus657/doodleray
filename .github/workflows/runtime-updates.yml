@@ -74,6 +74,10 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-apple-darwin
@@ -125,8 +129,18 @@ jobs:
       - name: Run Windows config, service, TUN and rollback tests
         shell: pwsh
         run: |
-          if (-not (Test-Path 'src-tauri/DoodleRayService.exe')) {
-            New-Item -ItemType File -Path 'src-tauri/DoodleRayService.exe' -Force | Out-Null
+          $placeholders = @(
+            'src-tauri/DoodleRayService.exe',
+            'src-tauri/sing-box.exe',
+            'src-tauri/wintun.dll',
+            'src-tauri/xray-core/xray.exe',
+            'src-tauri/xray-core/geoip.dat',
+            'src-tauri/xray-core/geosite.dat'
+          )
+          foreach ($path in $placeholders) {
+            $parent = Split-Path -Parent $path
+            if ($parent) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+            if (-not (Test-Path $path)) { New-Item -ItemType File -Path $path -Force | Out-Null }
           }
           cargo test --manifest-path src-tauri/Cargo.toml --all-targets
           cargo test --manifest-path src-tauri/Cargo.toml --features windows-service --bin DoodleRayService
