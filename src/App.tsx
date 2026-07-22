@@ -1,9 +1,9 @@
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import { useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, useNavigate } from 'react-router-dom';
+import { useEffect, type ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Download, Loader2 } from 'lucide-react';
+import { Download, Loader2, ArrowLeft } from 'lucide-react';
 import { useTranslation } from './locales';
-import { Sidebar } from './components/layout/Sidebar';
+import AppShell from './components/v6/AppShell';
 import Dashboard from './pages/Dashboard';
 import Servers from './pages/Servers';
 import Workshop from './pages/Workshop';
@@ -15,6 +15,9 @@ import { buildConnectRequestFromState } from './lib/connect-helpers';
 import { isHealthAcceptable, summarizeHealthFailures, waitForConnectionHealth } from './lib/connection-health';
 import { resolveConnectServer } from './lib/server-selection';
 import { checkForAppUpdate, installAppUpdate } from './lib/app-updater';
+import { isInAppUpdateEnabled, openStoreUpdatePage } from './lib/update-channel';
+import { buildAppConnectLocationRequestFromState, isClosedLocationServer } from './lib/app-control-plane';
+import { isClosedControlPlaneEnabled, isDesktopAutostartAvailable } from './lib/build-policy';
 import './index.css';
 
 function formatMessage(template: string, values: Record<string, string | number>) {
@@ -57,6 +60,8 @@ function updateStatusLabel(
       return t('updateClosingProcesses');
     case 'updateInstallingRestarting':
       return t('updateInstallingRestarting');
+    case 'updateOpenStore':
+      return t('updateOpenStore');
     case 'updateLatest':
       return t('updateLatest');
     default:
@@ -69,17 +74,17 @@ function ToastContainer() {
   const removeToast = useToastStore(s => s.removeToast);
 
   if (toasts.length === 0) return null;
+  const accent = (type: string) =>
+    type === 'success' ? '#3ddc84' : type === 'error' ? '#ff6b5a' : type === 'warning' ? '#ffb02e' : '#F97F16';
   return (
     <div className="flex flex-col gap-2 pointer-events-none">
       {toasts.map((t) => (
-        <div key={t.id}
+        <div
+          key={t.id}
           onClick={() => removeToast(t.id)}
-          className={`pointer-events-auto px-4 py-2.5 rounded-xl border-[3px] border-black shadow-[4px_4px_0_#000] font-black text-xs uppercase tracking-tight cursor-pointer
-            animate-slide-up transition-all hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_#000]
-            ${t.type === 'success' ? 'bg-emerald-400 text-black' :
-              t.type === 'error' ? 'bg-danger text-white' :
-              t.type === 'warning' ? 'bg-amber-400 text-black' :
-              'bg-white text-black'}`}>
+          className="v6-modal v6-fadein pointer-events-auto cursor-pointer rounded-2xl px-4 py-3 text-[12.5px] font-medium leading-snug text-white/90"
+          style={{ borderLeft: `3px solid ${accent(t.type)}`, wordBreak: 'break-word' }}
+        >
           {t.message}
         </div>
       ))}
@@ -107,6 +112,13 @@ function UpdateBanner() {
 
   const handleInstall = async () => {
     if (isBusy) return;
+    // store-win32 policy: user-initiated update via Store/support page, no
+    // silent failure and no in-app download when self-update is disabled.
+    if (!isInAppUpdateEnabled()) {
+      await openStoreUpdatePage();
+      setUpdateState({ updatePhase: 'available', updateStatus: 'updateOpenStore', updateProgress: null });
+      return;
+    }
     setUpdateState({
       updatePhase: 'downloading',
       updateStatus: 'updateDownloading',
@@ -179,7 +191,7 @@ function UpdateBanner() {
         {isBusy ? (
           <><Loader2 className="h-3.5 w-3.5 animate-spin" /> {progressLabel ? `${t('updateDownloading')} ${progressLabel}` : t('updating')}</>
         ) : (
-          <><Download className="h-3.5 w-3.5 stroke-[3px]" /> {t('installRestart')}</>
+          <><Download className="h-3.5 w-3.5 stroke-[3px]" /> {isInAppUpdateEnabled() ? t('installRestart') : t('updateOpenStore')}</>
         )}
       </button>
     </div>
@@ -188,9 +200,31 @@ function UpdateBanner() {
 
 function NotificationStack() {
   return (
-    <div className="fixed right-4 top-4 z-[9999] flex w-[min(320px,calc(100vw-6.5rem))] flex-col gap-2 pointer-events-none">
+    <div className="fixed right-4 top-12 z-[9999] flex w-[min(320px,calc(100vw-6.5rem))] flex-col gap-2 pointer-events-none">
       <UpdateBanner />
       <ToastContainer />
+    </div>
+  );
+}
+
+/**
+ * Readable surface for pages that still use the retro (light-on-orange) design
+ * inside the v6 glass shell. Adds a back-to-dashboard chip since the v6 shell
+ * has no nav rail. Keeps pages fully functional until their own v6 reskin.
+ */
+function LegacySurface({ children }: { children: ReactNode }) {
+  const navigate = useNavigate();
+  return (
+    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[26px] bg-bg-primary text-text-on-orange">
+      <button
+        type="button"
+        onClick={() => navigate('/')}
+        aria-label="Back"
+        className="absolute left-4 top-4 z-40 flex h-9 items-center gap-1.5 rounded-xl border-[3px] border-black bg-white px-2.5 text-[11px] font-black uppercase tracking-widest text-black shadow-[3px_3px_0_#000] transition-all hover:-translate-y-0.5 hover:shadow-[4px_4px_0_#000] active:translate-y-0.5 active:shadow-none"
+      >
+        <ArrowLeft className="h-4 w-4 stroke-[3px]" />
+      </button>
+      {children}
     </div>
   );
 }
@@ -207,6 +241,10 @@ function App() {
 
     async function syncStartupAutostart() {
       if (!isTauriRuntime()) return;
+      if (!isDesktopAutostartAvailable()) {
+        useAppStore.setState({ autoStart: false, silentAdminAutostart: false });
+        return;
+      }
 
       let silentEnabled = false;
       try {
@@ -222,16 +260,12 @@ function App() {
       }
 
       try {
-        const { enable, isEnabled } = await import('@tauri-apps/plugin-autostart');
+        const { isEnabled } = await import('@tauri-apps/plugin-autostart');
         const enabled = await isEnabled();
-        if (!enabled) {
-          await enable();
-          useAppStore.getState().addLog('success', 'App autostart enabled');
-        }
-        useAppStore.setState({ autoStart: true });
+        useAppStore.setState({ autoStart: enabled });
       } catch (err) {
         useAppStore.setState({ autoStart: false });
-        useAppStore.getState().addLog('warning', `App autostart could not be enabled: ${err instanceof Error ? err.message : String(err)}`);
+        useAppStore.getState().addLog('warning', `App autostart status is unavailable: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 
@@ -241,10 +275,10 @@ function App() {
         const message = await invoke('repair_windows_runtime');
         const firstLine = typeof message === 'string' ? message.split('\n')[0] : null;
         if (firstLine) {
-          useAppStore.getState().addLog('info', `Startup repair: ${firstLine}`);
+          useAppStore.getState().addLog('debug', `Startup repair: ${firstLine}`);
         }
       } catch (err) {
-        useAppStore.getState().addLog('warning', `Startup repair skipped: ${err instanceof Error ? err.message : String(err)}`);
+        useAppStore.getState().addLog('debug', `Startup repair skipped: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 
@@ -324,6 +358,7 @@ function App() {
     async function autoConnectIfEnabled() {
       const state = useAppStore.getState();
       if (!state.autoConnectOnStartup) return;
+      if (isClosedControlPlaneEnabled() && state.appSessionDeviceAllowed !== true) return;
       if (state.status === 'connected' || state.status === 'connecting') return;
       
       const srv = resolveConnectServer(state.activeServer, state.servers, state.autoSelectFastest);
@@ -338,8 +373,11 @@ function App() {
         state.addLog('info', `Auto-connecting to ${srv.name}...`);
         
         const { invoke } = await import('@tauri-apps/api/core');
-        const request = await buildConnectRequestFromState(srv);
-        const result: any = await invoke('vpn_connect', { request });
+        const useClosedLocation = isClosedControlPlaneEnabled() && isClosedLocationServer(srv);
+        const request = useClosedLocation
+          ? await buildAppConnectLocationRequestFromState(srv)
+          : await buildConnectRequestFromState(srv);
+        const result: any = await invoke(useClosedLocation ? 'app_connect_location' : 'vpn_connect', { request });
         
         if (result.success) {
           const { health } = await waitForConnectionHealth(
@@ -395,9 +433,6 @@ function App() {
         if (prevState.status === 'connected' && state.status === 'disconnected') {
           useToastStore.getState().addToast('VPN Disconnected', 'warning');
         }
-        if (prevState.status === 'connecting' && state.status === 'connected') {
-          useToastStore.getState().addToast('VPN Connected ✓', 'success');
-        }
       }
     );
 
@@ -446,23 +481,6 @@ function App() {
       });
     }
     
-    // Analytics — report launch, update event, and heartbeat
-    import('./lib/workshop-api').then(async ({ reportLaunch, startHeartbeat, reportAppUpdated }) => {
-      reportLaunch();
-      startHeartbeat();
-      try {
-        const { getVersion } = await import('@tauri-apps/api/app');
-        const currentVersion = await getVersion();
-        const previousVersion = localStorage.getItem('doodleray_last_seen_version');
-        if (previousVersion && previousVersion !== currentVersion) {
-          reportAppUpdated(previousVersion, currentVersion);
-        }
-        localStorage.setItem('doodleray_last_seen_version', currentVersion);
-      } catch {
-        // Version analytics must never affect startup.
-      }
-    }).catch(() => { /* silent */ });
-
     return () => {
       unsubscribe();
       unsubscribeHydration?.();
@@ -473,18 +491,15 @@ function App() {
 
   return (
     <Router>
-      <div className="flex h-screen bg-bg-primary">
-        <Sidebar />
-        <div className="flex-1 flex flex-col relative overflow-hidden">
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/servers" element={<Servers />} />
-            <Route path="/workshop" element={<Workshop />} />
-            <Route path="/settings" element={<Settings />} />
-          </Routes>
-        </div>
-        <NotificationStack />
-      </div>
+      <AppShell>
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/servers" element={<LegacySurface><Servers /></LegacySurface>} />
+          <Route path="/workshop" element={<LegacySurface><Workshop /></LegacySurface>} />
+          <Route path="/settings" element={<LegacySurface><Settings /></LegacySurface>} />
+        </Routes>
+      </AppShell>
+      <NotificationStack />
     </Router>
   );
 }

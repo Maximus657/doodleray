@@ -1,0 +1,220 @@
+name: runtime-updates
+
+on:
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - runtime-versions.json
+      - scripts/update-runtime-versions.py
+      - scripts/update-xray-core.ps1
+      - scripts/macos/build-libxray.sh
+      - scripts/vpn-qa/test-isolated-xray-tun.sh
+      - .github/workflows/runtime-updates.yml
+      - .github/workflows/release.yml
+      - .github/workflows/publish-downloads.yml
+
+concurrency:
+  group: runtime-updates
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refresh candidate pins from official metadata
+        if: github.event_name != 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/update-runtime-versions.py
+
+      - name: Validate runtime manifest and official checksums
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 -m json.tool runtime-versions.json >/dev/null
+          python3 -m py_compile scripts/update-runtime-versions.py
+          python3 scripts/update-runtime-versions.py --check
+
+      - name: Validate shell syntax
+        run: bash -n scripts/macos/build-libxray.sh scripts/vpn-qa/test-isolated-xray-tun.sh
+
+      - name: Validate PowerShell syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path scripts/update-xray-core.ps1),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count) {
+            $errors | ForEach-Object { Write-Error $_ }
+            throw 'PowerShell syntax validation failed'
+          }
+
+  macos-smoke:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refresh candidate pins from official metadata
+        if: github.event_name != 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/update-runtime-versions.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --features app-store
+      - run: cargo check --manifest-path src-tauri/Cargo.toml --features app-store --target x86_64-apple-darwin
+      - name: Build and smoke-test pinned LibXray
+        run: |
+          scripts/macos/build-libxray.sh
+          scripts/macos/test-libxray-loopback.sh
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Compile universal Network Extension without signing
+        run: |
+          scripts/macos/generate-extension-project.sh
+          xcodebuild \
+            -project src-tauri/macos/DoodleRayAppStoreExtensions.xcodeproj \
+            -scheme DoodleRayVPN \
+            -destination 'generic/platform=macOS' \
+            -configuration Release \
+            -derivedDataPath "$RUNNER_TEMP/DoodleRayExtension" \
+            ARCHS='arm64 x86_64' ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO build
+
+  windows-smoke:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refresh candidate pins from official metadata
+        if: github.event_name != 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/update-runtime-versions.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - name: Run Windows config, service, TUN and rollback tests
+        shell: pwsh
+        run: |
+          $placeholders = @(
+            'src-tauri/DoodleRayService.exe',
+            'src-tauri/sing-box.exe',
+            'src-tauri/wintun.dll',
+            'src-tauri/xray-core/xray.exe',
+            'src-tauri/xray-core/geoip.dat',
+            'src-tauri/xray-core/geosite.dat'
+          )
+          foreach ($path in $placeholders) {
+            $parent = Split-Path -Parent $path
+            if ($parent) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+            if (-not (Test-Path $path)) { New-Item -ItemType File -Path $path -Force | Out-Null }
+          }
+          cargo test --manifest-path src-tauri/Cargo.toml --all-targets
+          cargo test --manifest-path src-tauri/Cargo.toml --features windows-service --bin DoodleRayService
+
+  update:
+    if: github.event_name != 'pull_request'
+    needs: [validate, macos-smoke, windows-smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Update from official release metadata
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/update-runtime-versions.py
+          python3 scripts/update-runtime-versions.py --check
+
+      - name: Detect changes
+        id: changes
+        run: |
+          if git diff --quiet -- runtime-versions.json; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Classify compatibility risk
+        if: steps.changes.outputs.changed == 'true'
+        id: risk
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, re, subprocess
+          old = json.loads(subprocess.check_output(['git', 'show', 'HEAD:runtime-versions.json']))
+          new = json.load(open('runtime-versions.json'))
+          def major(value):
+              match = re.match(r'^v?(\d+)', value)
+              return int(match.group(1)) if match else None
+          keys = [('xray', 'version'), ('libxray', 'tag'), ('sing_box', 'version')]
+          breaking = any(major(old[a][b]) != major(new[a][b]) for a, b in keys)
+          print(f"safe={'false' if breaking else 'true'}")
+          PY
+
+      - name: Create or refresh update PR
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_BRANCH: develop
+        run: |
+          branch='codex/runtime-updates'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin "refs/heads/$branch:refs/remotes/origin/$branch" || true
+          git checkout -B "$branch"
+          git add runtime-versions.json
+          git commit -m 'chore: update VPN runtimes'
+          git push --force-with-lease origin "HEAD:$branch"
+
+          if [ "$(gh pr list --head "$branch" --state open --json number --jq length)" = '0' ]; then
+            gh pr create \
+              --base "$BASE_BRANCH" \
+              --head "$branch" \
+              --title 'chore: update VPN runtimes' \
+              --body $'Automated update from official release metadata.\n\n- [x] Official asset digests verified\n- [x] Runtime manifest verified\n- [ ] Release/build gates\n- [ ] Manual compatibility review'
+          fi
+
+          pr_number="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number')"
+          if [ "${{ steps.risk.outputs.safe }}" = 'true' ] && [ -n "$pr_number" ]; then
+            gh pr merge "$pr_number" --auto --squash
+          fi

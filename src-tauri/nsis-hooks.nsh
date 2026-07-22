@@ -11,6 +11,17 @@
   ${EndIf}
 !macroend
 
+!macro DoodleRayExecRequired COMMAND LABEL
+  DetailPrint "${LABEL}"
+  ClearErrors
+  ExecWait '${COMMAND}' $0
+  ${If} ${Errors}
+    Abort "${LABEL} could not be started. Please reinstall DoodleRay from the official installer."
+  ${ElseIf} $0 != 0
+    Abort "${LABEL} failed (exit=$0). Please reinstall DoodleRay from the official installer."
+  ${EndIf}
+!macroend
+
 !macro DoodleRayRequireFile RELATIVE_PATH LABEL
   ${If} ${FileExists} "$INSTDIR\${RELATIVE_PATH}"
     DetailPrint "${LABEL}: found"
@@ -37,7 +48,7 @@
   !insertmacro DoodleRayRequireFile "sing-box.exe" "sing-box runtime"
   !insertmacro DoodleRayRequireFile "wintun.dll" "Wintun driver runtime"
   !insertmacro DoodleRayRequireFile "xray-core\xray.exe" "xray-core runtime"
-  !insertmacro DoodleRayExecBestEffort '"$INSTDIR\DoodleRayService.exe" install' "Installing DoodleRay Tunnel Service" 30000
+  !insertmacro DoodleRayExecRequired '"$INSTDIR\DoodleRayService.exe" install' "Installing DoodleRay Tunnel Service"
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL

@@ -8,6 +8,7 @@ import {
   getServerIdentityKey,
   getServerSelectionKey,
 } from '../lib/server-selection';
+import { sanitizeLogMessage } from '../lib/redaction';
 // Trigger HMR
 
 // ========== Types ==========
@@ -19,6 +20,15 @@ export type ProductMode = 'protected' | 'compatibility' | 'manual';
 export type ProxyMode = 'system-proxy' | 'tun';
 export type SystemProxyMode = 'set' | 'clear' | 'unchanged';
 export type SupportedLanguage = 'ru' | 'en' | 'zh';
+
+export interface AntiJammerStatus {
+  limitBytes: number;
+  usedBytes: number;
+  remainingBytes: number;
+  lowBalance: boolean;
+  exhausted: boolean;
+  state?: string;
+}
 
 export interface ServerConfig {
   id: string;
@@ -66,7 +76,8 @@ export interface ServerConfig {
 export interface LogEntry {
   id: string;
   time: string;
-  level: 'info' | 'warning' | 'error' | 'success';
+  /** 'debug' entries are kept for QA snapshots/support bundles but hidden from the user-facing events list. */
+  level: 'info' | 'warning' | 'error' | 'success' | 'debug';
   message: string;
 }
 
@@ -82,6 +93,7 @@ export interface Subscription {
     total?: number;
     expire?: number;
   };
+  antiJammer?: AntiJammerStatus;
 }
 
 export interface SpeedPoint {
@@ -131,6 +143,9 @@ export interface AppState {
   updateStatus: string;
   updateProgress: number | null;
   showStats: boolean; // Hide/show statistics on dashboard
+  diagnosticsConsent: boolean;
+  appSessionLoggedIn: boolean;
+  appSessionDeviceAllowed: boolean | null;
 
   setStatus: (status: ConnectionStatus) => void;
   setActiveServer: (server: ServerConfig | null) => void;
@@ -149,6 +164,7 @@ export interface AppState {
   setAutoConnectOnStartup: (on: boolean) => void;
   setSilentAdminAutostart: (on: boolean) => void;
   setShowStats: (show: boolean) => void;
+  setDiagnosticsConsent: (enabled: boolean) => void;
 
   addServer: (server: ServerConfig) => void;
   removeServer: (id: string) => void;
@@ -188,14 +204,6 @@ const safeLocalGet = (name: string) => {
   }
 };
 
-const safeLocalSet = (name: string, value: string) => {
-  try {
-    localStorage.setItem(name, value);
-  } catch (err) {
-    console.warn('[storage] localStorage write failed', err);
-  }
-};
-
 const safeLocalRemove = (name: string) => {
   try {
     localStorage.removeItem(name);
@@ -205,6 +213,8 @@ const safeLocalRemove = (name: string) => {
 };
 
 const persistedValueCache = new Map<string, string>();
+const volatileBrowserStorage = new Map<string, string>();
+const pendingSecureWrites = new Map<string, Promise<void>>();
 
 export function detectInitialLanguage(): SupportedLanguage {
   if (typeof navigator === 'undefined') return 'en';
@@ -224,59 +234,71 @@ export function detectInitialLanguage(): SupportedLanguage {
 
 const secureStorage: StateStorage<Promise<void> | void> = {
   async getItem(name) {
-    if (!isTauriRuntime()) return safeLocalGet(name);
+    if (!isTauriRuntime()) return volatileBrowserStorage.get(name) ?? null;
 
     const legacyValue = safeLocalGet(name);
-    if (legacyValue !== null) {
-      try {
+    try {
+      const secureValue = await invoke<string | null>('secure_store_get', { key: name });
+      if (secureValue !== null) {
+        persistedValueCache.set(name, secureValue);
+        if (legacyValue !== null) safeLocalRemove(name);
+        return secureValue;
+      }
+
+      if (legacyValue !== null) {
         await invoke('secure_store_set', { key: name, value: legacyValue });
         safeLocalRemove(name);
-      } catch (err) {
-        console.warn('[storage] secure migration failed, keeping local fallback', err);
+        persistedValueCache.set(name, legacyValue);
+        return legacyValue;
       }
-      persistedValueCache.set(name, legacyValue);
-      return legacyValue;
-    }
-
-    try {
-      const value = await invoke<string | null>('secure_store_get', { key: name });
-      if (value !== null) persistedValueCache.set(name, value);
-      return value;
+      return null;
     } catch (err) {
       console.warn('[storage] secure read failed, using local fallback', err);
-      return null;
+      if (legacyValue !== null) persistedValueCache.set(name, legacyValue);
+      return legacyValue ?? persistedValueCache.get(name) ?? null;
     }
   },
   async setItem(name, value) {
-    if (persistedValueCache.get(name) === value) return;
-    persistedValueCache.set(name, value);
-
     if (!isTauriRuntime()) {
-      safeLocalSet(name, value);
+      volatileBrowserStorage.set(name, value);
       return;
     }
 
-    // Write local first so a Keychain/IPC failure never loses newly added servers.
-    safeLocalSet(name, value);
-    try {
+    const previous = pendingSecureWrites.get(name) ?? Promise.resolve();
+    const write = previous.catch(() => { /* keep the queue moving */ }).then(async () => {
+      if (persistedValueCache.get(name) === value) return;
       await invoke('secure_store_set', { key: name, value });
+      persistedValueCache.set(name, value);
       safeLocalRemove(name);
-    } catch (err) {
-      console.warn('[storage] secure write failed, keeping local fallback', err);
+    });
+    pendingSecureWrites.set(name, write);
+    try { await write; }
+    catch (err) {
+      console.error('[storage] secure write failed', err);
+      throw err;
+    } finally {
+      if (pendingSecureWrites.get(name) === write) pendingSecureWrites.delete(name);
     }
   },
   async removeItem(name) {
-    persistedValueCache.delete(name);
     if (!isTauriRuntime()) {
-      safeLocalRemove(name);
+      volatileBrowserStorage.delete(name);
       return;
     }
 
-    safeLocalRemove(name);
-    try {
+    const previous = pendingSecureWrites.get(name) ?? Promise.resolve();
+    const remove = previous.catch(() => { /* keep the queue moving */ }).then(async () => {
       await invoke('secure_store_delete', { key: name });
+      persistedValueCache.delete(name);
+      safeLocalRemove(name);
+    });
+    pendingSecureWrites.set(name, remove);
+    try {
+      await remove;
     } catch (err) {
       console.warn('[storage] secure delete failed', err);
+    } finally {
+      if (pendingSecureWrites.get(name) === remove) pendingSecureWrites.delete(name);
     }
   },
 };
@@ -336,8 +358,7 @@ function dedupeServersByScopedIdentity(servers: ServerConfig[]): ServerConfig[] 
 }
 
 function normalizeSystemProxyMode(mode: SystemProxyMode | undefined, _proxyMode?: ProxyMode): SystemProxyMode {
-  if (mode === 'clear' || !mode) return 'unchanged';
-  return mode;
+  return mode === 'set' || mode === 'clear' ? mode : 'unchanged';
 }
 
 function transportForProductMode(mode: ProductMode): {
@@ -362,7 +383,7 @@ function productModeFromTransport(proxyMode: ProxyMode, systemProxyMode: SystemP
 }
 
 function normalizeNetworkStack(stack: unknown): AppState['networkStack'] {
-  return stack === 'gvisor' ? 'gvisor' : 'system';
+  return stack === 'gvisor' || stack === 'mixed' ? stack : 'system';
 }
 
 function compactStateForPersist(state: AppState): Partial<AppState> {
@@ -378,6 +399,8 @@ function compactStateForPersist(state: AppState): Partial<AppState> {
     'updatePhase',
     'updateStatus',
     'updateProgress',
+    'appSessionLoggedIn',
+    'appSessionDeviceAllowed',
   ]);
 
   return Object.fromEntries(
@@ -446,7 +469,7 @@ export const useAppStore = create<AppState>()(
       logs: [],
       socksPort: 10808,
       httpPort: 10809,
-      autoStart: true,
+      autoStart: false,
       silentAdminAutostart: false,
       theme: 'dark',
       language: detectInitialLanguage(),
@@ -464,6 +487,9 @@ export const useAppStore = create<AppState>()(
       updateStatus: '',
       updateProgress: null,
       showStats: false,
+      diagnosticsConsent: false,
+      appSessionLoggedIn: false,
+      appSessionDeviceAllowed: null,
 
       setStatus: (status) => set({ status }),
       setActiveServer: (server) => set({
@@ -498,6 +524,7 @@ export const useAppStore = create<AppState>()(
       setAutoConnectOnStartup: (on) => set({ autoConnectOnStartup: on }),
       setSilentAdminAutostart: (on) => set({ silentAdminAutostart: on }),
       setShowStats: (show) => set({ showStats: show }),
+      setDiagnosticsConsent: (enabled) => set({ diagnosticsConsent: enabled }),
 
 
 
@@ -574,11 +601,24 @@ export const useAppStore = create<AppState>()(
       setHttpPort: (port) => set({ httpPort: port }),
       setTheme: (theme) => set({ theme }),
       setLanguage: (lang) => set({ language: lang }),
-      addLog: (level, message) => set((s) => ({
-        logs: [...s.logs.slice(-99), { id: crypto.randomUUID(), time: new Date().toLocaleTimeString(), level, message }],
-      })),
+      addLog: (level, message) => set((s) => {
+        const sanitized = sanitizeLogMessage(message);
+        // Drop consecutive duplicates — health monitors and mount effects can
+        // emit the same diagnostic twice in a row, which reads as spam.
+        const last = s.logs[s.logs.length - 1];
+        if (last && last.level === level && last.message === sanitized) return {};
+        return {
+          logs: [...s.logs.slice(-99), { id: crypto.randomUUID(), time: new Date().toLocaleTimeString(), level, message: sanitized }],
+        };
+      }),
       clearLogs: () => set({ logs: [] }),
-      wipeData: () => set({ servers: [], subscriptions: [], activeServer: null, lastSelectedServerKey: null }),
+      wipeData: () => set({
+        servers: [],
+        subscriptions: [],
+        activeServer: null,
+        lastSelectedServerKey: null,
+        diagnosticsConsent: false,
+      }),
       setAvailableUpdate: (version) => set({ availableUpdate: version }),
       setUpdateState: (state) => set(state),
       addTraffic: (dl, ul) => set((s) => ({ totalDown: s.totalDown + dl, totalUp: s.totalUp + ul })),

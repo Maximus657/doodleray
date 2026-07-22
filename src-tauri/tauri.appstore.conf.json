@@ -1,0 +1,46 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "DoodleRay VPN",
+  "identifier": "com.doodleray.doodleray",
+  "app": {
+    "windows": [
+      {
+        "title": "DoodleRay VPN",
+        "width": 1204,
+        "height": 764,
+        "minWidth": 940,
+        "minHeight": 660,
+        "center": true,
+        "decorations": true,
+        "transparent": true,
+        "shadow": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": { "x": 20, "y": 26 },
+        "backgroundColor": "#170D12"
+      }
+    ],
+    "security": {
+      "capabilities": ["appstore"]
+    }
+  },
+  "bundle": {
+    "targets": ["app"],
+    "category": "Utility",
+    "createUpdaterArtifacts": false,
+    "resources": {
+      "resources/PrivacyInfo.xcprivacy": "PrivacyInfo.xcprivacy",
+      "resources/third-party-notices.txt": "resources/third-party-notices.txt"
+    },
+    "macOS": {
+      "bundleVersion": "60017",
+      "entitlements": "macos/profiles/DoodleRayHost.entitlements",
+      "infoPlist": "Info.appstore.plist",
+      "minimumSystemVersion": "12.0",
+      "files": {
+        "embedded.provisionprofile": "macos/profiles/DoodleRayHost.provisionprofile",
+        "PlugIns/DoodleRayVPN.appex": "macos/DerivedData/Build/Products/Release/DoodleRayVPN.appex"
+      }
+    }
+  }
+}

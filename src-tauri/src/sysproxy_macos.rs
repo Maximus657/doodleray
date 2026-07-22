@@ -207,3 +207,7 @@ pub fn unset_system_proxy() -> Result<(), String> {
         ],
     )
 }
+
+pub fn current_manual_http_proxy_for_url(_scheme: &str) -> Result<Option<String>, String> {
+    Ok(None)
+}

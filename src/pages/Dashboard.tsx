@@ -1,14 +1,24 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Plus, Loader2, ClipboardPaste } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
+import { AlertTriangle, ChevronDown, ClipboardPaste, ExternalLink, Loader2, Plus, ShieldCheck } from 'lucide-react';
 import { useAppStore } from '../stores/app-store';
 import { formatTime } from '../lib/utils';
 import { refreshSubscription, fetchSubscription } from '../lib/subscription';
 import { parseProxyLink } from '../lib/parser';
 import { useTranslation } from '../locales';
+import { useToastStore } from '../stores/toast-store';
 import { reportConnectionError } from '../lib/workshop-api';
-import { buildConnectRequestFromState, getActiveRoutingRules } from '../lib/connect-helpers';
 import {
+  buildConnectRequestFromState,
+  getActiveRoutingRules,
+  resolveSystemProxyModeForRouting,
+} from '../lib/connect-helpers';
+import {
+  extractPortsFromHealth,
+  getUserVisibleHealthVerdict,
   isHealthAcceptable,
+  isHealthFatal,
+  isNonActionableProtectedDegraded,
+  needsProtectedRuntimeRepair,
   summarizeHealthFailures,
   waitForConnectionHealth,
   type ConnectionHealthReport,
@@ -16,19 +26,79 @@ import {
 import { buildServerSelectionIndex, findMatchingServer, findMatchingServerInIndex, resolveConnectServer } from '../lib/server-selection';
 import { getSubscriptionById, getSubscriptionTrafficStatus } from '../lib/subscription-status';
 import { pingServersWithLimit } from '../lib/ping-runner';
+import { describeSubscriptionSource } from '../lib/redaction';
+import { getPrivacyPolicyUrl, isClosedControlPlaneEnabled, isLegacyImportEnabled, isNetworkExtensionOnlyBuild, legacyImportDisabledMessage } from '../lib/build-policy';
+import {
+  appApiControlPlaneSnapshot,
+  appApiExchangeCode,
+  appApiExchangeLegacySubscription,
+  appApiLogout,
+  buildAppConnectLocationRequestFromState,
+  findLegacyDoodleSubscriptionUrls,
+  isClosedAutoLocationServer,
+  isClosedLocationServer,
+  syncClosedLocationsToStore,
+  type AppApiSessionStatus,
+} from '../lib/app-control-plane';
 
-// Sub-components
-import RetroBackground from '../components/dashboard/RetroBackground';
-import OnboardingCard from '../components/dashboard/OnboardingCard';
-import ConnectionControls from '../components/dashboard/ConnectionControls';
-import DashboardControlsDrawer from '../components/dashboard/DashboardControlsDrawer';
-import ServerList from '../components/dashboard/ServerList';
-import LogsStrip from '../components/dashboard/LogsStrip';
+// v6 DoodleVPN design UI
+import type { ProductMode, SystemProxyMode } from '../stores/app-store';
+import ConnectOrb from '../components/v6/ConnectOrb';
+import { displayServerName } from '../components/v6/ServerRow';
+import ModeSelector from '../components/v6/ModeCard';
+import LocationList from '../components/v6/LocationList';
+import TrafficStats from '../components/v6/TrafficStats';
+import SplitRoutingToggle from '../components/v6/SplitRoutingToggle';
+import SplitRoutingModal from '../components/v6/SplitRoutingModal';
+import DiagnosticsDrawer from '../components/v6/DiagnosticsDrawer';
+import DiagnosticPanel from '../components/v6/DiagnosticPanel';
+import QuickAddPanel from '../components/v6/QuickAddPanel';
+import LoginFlightOverlay from '../components/v6/LoginFlightOverlay';
+import { deriveOrbState, ORB_LABEL_KEY } from '../components/v6/status';
 
 const TRAFFIC_LIMIT_EOF_WINDOW_MS = 12_000;
 const TRAFFIC_LIMIT_EOF_THRESHOLD = 4;
 const TRAFFIC_LIMIT_NOTICE_COOLDOWN_MS = 60_000;
 const CONNECT_TIMEOUT_MS = 45_000;
+const TUN_CONNECT_TIMEOUT_MS = 120_000;
+const DOODLEVPN_BOT_URL = 'https://t.me/doodlevpn_bot';
+const TUN_LIMITED_FALLBACK_RE =
+  /could not create the Windows tunnel adapter|IPv4 readiness failed|adapter is missing|adapter did not become ready|route is not preferred|route did not become ready|routes are missing|sing-box exited|sing-box process is not running|Tunnel Service failed to start TUN|Tunnel Service stopped before TUN|Tunnel Service did not become ready|timed out while starting VPN engines/i;
+
+function normalizeAppLoginCode(value: string): string {
+  return value.replace(/\D/g, '').slice(0, 8);
+}
+
+function formatAppLoginCode(value: string): string {
+  const digits = normalizeAppLoginCode(value);
+  if (digits.length <= 4) return digits;
+  return `${digits.slice(0, 4)}-${digits.slice(4)}`;
+}
+
+function waitForPersistedAppState(): Promise<void> {
+  if (useAppStore.persist.hasHydrated()) return Promise.resolve();
+  return new Promise((resolve) => {
+    const unsubscribe = useAppStore.persist.onFinishHydration(() => {
+      unsubscribe();
+      resolve();
+    });
+  });
+}
+
+function isTunLimitedFallbackCandidate(message?: string | null) {
+  return !!message && TUN_LIMITED_FALLBACK_RE.test(message);
+}
+
+function isTauriInvokeUnavailableError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /cannot read properties of undefined.*invoke|__tauri_internals__|desktop runtime is not available/i.test(message);
+}
+
+function hasWinInetCompatibilityWarning(health: ConnectionHealthReport | null | undefined): boolean {
+  return (health?.checks ?? []).some(check =>
+    check.code === 'wininet_proxy' && (check.severity === 'warning' || check.severity === 'error')
+  );
+}
 
 function isProxyResponseEofLine(line: string): boolean {
   const lower = line.toLowerCase();
@@ -115,6 +185,15 @@ function isTauriRuntime() {
   return typeof tauriInternals?.invoke === 'function';
 }
 
+async function openDoodleVpnBot() {
+  try {
+    const { openUrl } = await import('@tauri-apps/plugin-opener');
+    await openUrl(DOODLEVPN_BOT_URL);
+  } catch {
+    window.open(DOODLEVPN_BOT_URL, '_blank', 'noopener,noreferrer');
+  }
+}
+
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
@@ -126,37 +205,60 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
   });
 }
 
-function extractLocalProxyPorts(message: string): { socksPort: number; httpPort: number } | null {
-  const match = message.match(/SOCKS5:\s*127\.0\.0\.1:(\d+),\s*HTTP:\s*127\.0\.0\.1:(\d+)/i);
-  if (!match) return null;
-  const parsedSocks = Number(match[1]);
-  const parsedHttp = Number(match[2]);
-  if (!Number.isInteger(parsedSocks) || !Number.isInteger(parsedHttp)) return null;
-  if (parsedSocks <= 0 || parsedSocks > 65535 || parsedHttp <= 0 || parsedHttp > 65535) return null;
-  return { socksPort: parsedSocks, httpPort: parsedHttp };
-}
-
 export default function Dashboard() {
   const {
     status, setStatus, activeServer, servers, setActiveServer,
-    proxyMode, setProxyMode, systemProxyMode, setSystemProxyMode, speedHistory, currentDownload, currentUpload,
-    totalDown, totalUp, addTraffic, resetTraffic, addSpeedPoint, setCurrentSpeed,
+    proxyMode, setProxyMode, systemProxyMode, setSystemProxyMode, productMode, currentDownload, currentUpload,
+    addTraffic, resetTraffic, addSpeedPoint, setCurrentSpeed,
     logs, addLog, clearLogs, socksPort, httpPort, subscriptions,
-    updateSubscription, removeSubscription, autoSelectFastest,
+    updateSubscription, autoSelectFastest,
     subAutoUpdateMinutes, connectedAt, setConnectedAt,
-    addSubscription, addServer, removeServer, removeAllManualServers,
-    updateServerPings, showStats, setSocksPort, setHttpPort,
+    addSubscription, addServer,
+    updateServerPings, setSocksPort, setHttpPort, showStats,
+    appSessionDeviceAllowed,
   } = useAppStore();
   const { t } = useTranslation();
 
-  const [showLogs, setShowLogs] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
-  const logsEndRef = useRef<HTMLDivElement>(null);
+  const [healthVerdict, setHealthVerdict] = useState<string | null>(null);
   const [quickInput, setQuickInput] = useState('');
   const [quickImporting, setQuickImporting] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showSplitModal, setShowSplitModal] = useState(false);
+  const [showDiagModal, setShowDiagModal] = useState(false);
   const [connectionStep, setConnectionStep] = useState<string | null>(null);
+  const [activeSystemProxyMode, setActiveSystemProxyMode] = useState<SystemProxyMode | null>(null);
+  const [appSession, setAppSession] = useState<AppApiSessionStatus | null>(null);
+  const [appLoginCode, setAppLoginCode] = useState('');
+  const [appLoginBusy, setAppLoginBusy] = useState(false);
+  const [appLoginError, setAppLoginError] = useState<string | null>(null);
+  const [appLocationsLoading, setAppLocationsLoading] = useState(isClosedControlPlaneEnabled());
+  const [privacyDetailsOpen, setPrivacyDetailsOpen] = useState(false);
+  const [postLoginFlight, setPostLoginFlight] = useState(false);
+  const [postLoginFlightSettled, setPostLoginFlightSettled] = useState(false);
+  const legacyImportEnabled = isLegacyImportEnabled();
+  const closedControlPlane = isClosedControlPlaneEnabled();
+  const privacyPolicyUrl = getPrivacyPolicyUrl();
+  const networkExtensionOnly = isNetworkExtensionOnlyBuild();
+  const appLoginDigits = normalizeAppLoginCode(appLoginCode);
+  const canSubmitAppLoginCode = appLoginDigits.length === 8 && !appLoginBusy;
+  const hasDeviceLimit = closedControlPlane && (appSession?.subscription?.device_allowed === false || appSessionDeviceAllowed === false);
+  const deviceLimitNoticeShownRef = useRef(false);
+
+  useLayoutEffect(() => {
+    document.body.classList.toggle('v6-login-transition-active', postLoginFlight);
+    document.body.classList.toggle('v6-login-transition-settled', postLoginFlightSettled);
+    return () => {
+      document.body.classList.remove('v6-login-transition-active');
+      document.body.classList.remove('v6-login-transition-settled');
+    };
+  }, [postLoginFlight, postLoginFlightSettled]);
+
+  useEffect(() => {
+    if (!networkExtensionOnly || productMode === 'protected') return;
+    setProxyMode('tun');
+    setSystemProxyMode('set');
+  }, [networkExtensionOnly, productMode, setProxyMode, setSystemProxyMode]);
 
   const refreshTunnelServiceHealth = useCallback(async () => {
     if (!isTauriRuntime()) return false;
@@ -169,6 +271,112 @@ export default function Dashboard() {
     }
   }, []);
 
+  const getEffectiveHealthSystemProxyMode = useCallback(async (): Promise<SystemProxyMode> => {
+    if (activeSystemProxyMode) return activeSystemProxyMode;
+    const routingRules = proxyMode === 'tun' ? await getActiveRoutingRules() : [];
+    return resolveSystemProxyModeForRouting(proxyMode, systemProxyMode, routingRules);
+  }, [activeSystemProxyMode, proxyMode, systemProxyMode]);
+
+  const refreshClosedControlPlane = useCallback(async (sessionOverride?: AppApiSessionStatus | null) => {
+    if (!closedControlPlane) return;
+    setAppLocationsLoading(true);
+    try {
+      const { session, locations } = await appApiControlPlaneSnapshot(sessionOverride);
+      setAppSession(session);
+      useAppStore.setState({
+        appSessionLoggedIn: session.logged_in,
+        appSessionDeviceAllowed: session.logged_in ? session.subscription?.device_allowed !== false : null,
+      });
+      syncClosedLocationsToStore(session, locations);
+      setAppLoginError(null);
+    } catch (err) {
+      if (isTauriInvokeUnavailableError(err)) {
+        setAppLoginError(null);
+        syncClosedLocationsToStore(null, []);
+        return;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      setAppLoginError(message);
+      addLog('warning', `DoodleVPN account sync failed: ${message}`);
+    } finally {
+      setAppLocationsLoading(false);
+    }
+  }, [closedControlPlane, addLog]);
+
+  useEffect(() => {
+    if (!closedControlPlane) return;
+    const handleAppLogout = () => {
+      setAppSession(null);
+      useAppStore.setState({ appSessionLoggedIn: false, appSessionDeviceAllowed: null });
+      setAppLoginCode('');
+      setAppLoginError(null);
+      setAppLocationsLoading(false);
+      setPostLoginFlight(false);
+      setPostLoginFlightSettled(false);
+      if (loginFlightTimerRef.current !== null) {
+        window.clearTimeout(loginFlightTimerRef.current);
+        loginFlightTimerRef.current = null;
+      }
+    };
+    window.addEventListener('doodleray:app-logout', handleAppLogout);
+    let disposed = false;
+    (async () => {
+      setAppLocationsLoading(true);
+      try {
+        await waitForPersistedAppState();
+        if (disposed) return;
+        let snapshot = await appApiControlPlaneSnapshot();
+        if (!snapshot.session.logged_in) {
+          const state = useAppStore.getState();
+          const legacySubscriptionUrls = findLegacyDoodleSubscriptionUrls(
+            state.subscriptions,
+            state.activeServer?.subscriptionId,
+          );
+          let restored = false;
+          for (const legacySubscriptionUrl of legacySubscriptionUrls) {
+            try {
+              const restoredSession = await appApiExchangeLegacySubscription(legacySubscriptionUrl);
+              snapshot = await appApiControlPlaneSnapshot(restoredSession);
+              restored = true;
+              addLog('success', 'DoodleVPN account restored from the previous version');
+              break;
+            } catch {
+              // A stale DoodleVPN entry must not prevent another saved subscription from restoring.
+            }
+          }
+          if (legacySubscriptionUrls.length > 0 && !restored) {
+            addLog('warning', 'Automatic DoodleVPN account restore was unavailable');
+          }
+        }
+        if (disposed) return;
+        const { session, locations } = snapshot;
+        setAppSession(session);
+        useAppStore.setState({
+          appSessionLoggedIn: session.logged_in,
+          appSessionDeviceAllowed: session.logged_in ? session.subscription?.device_allowed !== false : null,
+        });
+        syncClosedLocationsToStore(session, locations);
+      } catch (err) {
+        if (!disposed) {
+          if (isTauriInvokeUnavailableError(err)) {
+            setAppLoginError(null);
+            syncClosedLocationsToStore(null, []);
+            return;
+          }
+          const message = err instanceof Error ? err.message : String(err);
+          setAppLoginError(message);
+          addLog('warning', `DoodleVPN sign-in check failed: ${message}`);
+        }
+      } finally {
+        if (!disposed) setAppLocationsLoading(false);
+      }
+    })();
+    return () => {
+      disposed = true;
+      window.removeEventListener('doodleray:app-logout', handleAppLogout);
+    };
+  }, [closedControlPlane, addLog]);
+
   const markConnectedIfHealthy = useCallback(async (
     result: any,
     invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>,
@@ -177,13 +385,8 @@ export default function Dashboard() {
     fallbackSocksPort: number,
     fallbackHttpPort: number,
   ) => {
-    const actualPorts = extractLocalProxyPorts(result.message || '');
-    let effectiveSocksPort = actualPorts?.socksPort ?? fallbackSocksPort;
-    let effectiveHttpPort = actualPorts?.httpPort ?? fallbackHttpPort;
-    if (actualPorts && mode !== 'tun') {
-      setSocksPort(actualPorts.socksPort);
-      setHttpPort(actualPorts.httpPort);
-    }
+    let effectiveSocksPort = fallbackSocksPort;
+    let effectiveHttpPort = fallbackHttpPort;
 
     let { health, socksPort: waitedSocksPort, httpPort: waitedHttpPort } = await waitForConnectionHealth(
       invoke,
@@ -195,6 +398,8 @@ export default function Dashboard() {
     );
     effectiveSocksPort = waitedSocksPort;
     effectiveHttpPort = waitedHttpPort;
+    setSocksPort(effectiveSocksPort);
+    setHttpPort(effectiveHttpPort);
 
     if (!isHealthAcceptable(mode, health) && mode === 'tun') {
       addLog('warning', `Protected mode health is ${health?.verdict ?? 'missing'}; running automatic repair once...`);
@@ -217,48 +422,118 @@ export default function Dashboard() {
       health = repaired.health;
       effectiveSocksPort = repaired.socksPort;
       effectiveHttpPort = repaired.httpPort;
+      setSocksPort(effectiveSocksPort);
+      setHttpPort(effectiveHttpPort);
     }
 
     if (!isHealthAcceptable(mode, health)) {
-      addLog('error', `Connection started but health quorum failed: ${summarizeHealthFailures(health)}`);
+      const failureSummary = summarizeHealthFailures(health);
+      addLog('error', `Connection started but health quorum failed: ${failureSummary}`);
+      try {
+        const bundlePath = await invoke('export_support_bundle', {
+          proxyMode: mode,
+          systemProxyMode: nextSystemProxyMode,
+          socksPort: effectiveSocksPort,
+          httpPort: effectiveHttpPort,
+          failureMarker: `connect_health_failed: ${failureSummary}`,
+        }) as string;
+        addLog('info', `${t('supportBundleExported')}: ${bundlePath}`);
+      } catch (bundleErr: any) {
+        addLog('warning', `${t('supportBundleExportFailed')}: ${bundleErr?.message || bundleErr}`);
+      }
       try { await invoke('vpn_disconnect'); } catch { /* best effort cleanup */ }
       setStatus('disconnected');
+      setActiveSystemProxyMode(null);
       setConnectionStep(null);
       setConnectedAt(null);
       return false;
     }
 
+    if (mode === 'tun' && health?.verdict === 'protected_degraded' && !isNonActionableProtectedDegraded(health)) {
+      addLog('warning', `Весь компьютер подключен, совместимость браузеров восстанавливается: ${summarizeHealthFailures(health)}`);
+    }
     addLog('success', result.message);
     addLog('success', t('connectionActive'));
     setConnectionStep(t('connectionReady'));
+    setHealthVerdict(getUserVisibleHealthVerdict(health));
+    setActiveSystemProxyMode(nextSystemProxyMode);
     setStatus('connected');
     setConnectedAt(Date.now());
     return true;
   }, [addLog, setConnectedAt, setConnectionStep, setHttpPort, setSocksPort, setStatus, t]);
 
   const connectionOpRef = useRef(0);
-  const [testingSubId, setTestingSubId] = useState<string | null>(null);
-  const [refreshingSubId, setRefreshingSubId] = useState<string | null>(null);
   const [pingingServerIds, setPingingServerIds] = useState<Set<string>>(() => new Set());
   const serverSelectionIndex = useMemo(() => buildServerSelectionIndex(servers), [servers]);
+  const serverIdentityKey = useMemo(() => servers.map((server) => server.id).join('\0'), [servers]);
   const autoPingStartedRef = useRef<Set<string>>(new Set());
   const autoSubRefreshStartedRef = useRef(false);
   const trafficLimitNoticeKeyRef = useRef<string | null>(null);
   const eofBurstRef = useRef({ count: 0, windowStartedAt: 0, lastNoticeAt: 0 });
   const tRef = useRef(t);
+  const loginFlightTimerRef = useRef<number | null>(null);
+
+  const attemptLimitedBrowsersFallback = useCallback(async (
+    srv: NonNullable<typeof activeServer>,
+    invoke: any,
+    opId: number,
+    reason: string,
+  ) => {
+    if (proxyMode !== 'tun' || !isTunLimitedFallbackCandidate(reason)) return false;
+    addLog('warning', t('limitedFallbackAttempt'));
+    try {
+      // Force the failed protected generation to clean up before starting the
+      // lightweight browser compatibility path. This avoids reusing a failed
+      // service/TUN state as the fallback substrate.
+      await invoke('vpn_disconnect').catch(() => undefined);
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      setProxyMode('system-proxy');
+      setSystemProxyMode('set');
+      const fbReq = await buildConnectRequestFromState(srv, 'system-proxy', 'set');
+      const fb: any = await invoke('vpn_connect', { request: fbReq });
+      if (opId !== connectionOpRef.current) return true;
+      if (fb.success) {
+        await markConnectedIfHealthy(
+          fb,
+          invoke,
+          'system-proxy',
+          fbReq.system_proxy_mode,
+          fbReq.socks_port,
+          fbReq.http_port,
+        );
+        addLog('warning', t('limitedFallbackActive'));
+        const { useToastStore } = await import('../stores/toast-store');
+        useToastStore.getState().addToast(t('limitedFallbackActive'), 'warning');
+        return true;
+      }
+      addLog('error', fb.message);
+    } catch (fbErr: any) {
+      addLog('error', `Browsers fallback failed: ${fbErr?.message || fbErr}`);
+    }
+    return false;
+  }, [addLog, markConnectedIfHealthy, proxyMode, setProxyMode, setSystemProxyMode, t]);
 
   useEffect(() => {
     tRef.current = t;
   }, [t]);
 
-  const [confirmModal, setConfirmModal] = useState<{
-    show: boolean;
-    title: string;
-    message: string;
-    onConfirm: () => void;
-    confirmLabel?: string;
-    danger?: boolean;
-  }>({ show: false, title: '', message: '', onConfirm: () => {} });
+  useEffect(() => {
+    if (!hasDeviceLimit) {
+      deviceLimitNoticeShownRef.current = false;
+      return;
+    }
+    if (deviceLimitNoticeShownRef.current) return;
+    deviceLimitNoticeShownRef.current = true;
+    const message = t('v6DeviceLimitToast' as never);
+    useToastStore.getState().addToast(message, 'error');
+    addLog('warning', message);
+  }, [hasDeviceLimit, addLog, t]);
+
+  useEffect(() => () => {
+    if (loginFlightTimerRef.current !== null) {
+      window.clearTimeout(loginFlightTimerRef.current);
+    }
+  }, []);
 
   // ═══════════════════════════════════════════════════
   //  Effects
@@ -267,7 +542,7 @@ export default function Dashboard() {
   // Auto-ping unpinged servers after persisted state/subscriptions are loaded.
   useEffect(() => {
     const unpinged = servers.filter(
-      s => (s.ping === undefined || (s.ping > 0 && s.ping <= 5)) && !autoPingStartedRef.current.has(s.id)
+      s => !isClosedAutoLocationServer(s) && (s.ping === undefined || (s.ping > 0 && s.ping <= 5)) && !autoPingStartedRef.current.has(s.id)
     );
     if (unpinged.length === 0) return;
     for (const server of unpinged) {
@@ -279,12 +554,14 @@ export default function Dashboard() {
         const { invoke } = await import('@tauri-apps/api/core');
         await pingServersWithLimit(unpinged, invoke, {
           isCancelled: () => cancelled,
+          onActiveIdsChange: setPingingServerIds,
           onBatch: (updates) => updateServerPings(updates),
         });
       } catch { /* not in tauri env */ }
+      finally { setPingingServerIds(new Set()); }
     })();
     return () => { cancelled = true; };
-  }, [servers, updateServerPings]);
+  }, [serverIdentityKey, updateServerPings]);
 
   // Connection time counter
   const [connectTime, setConnectTime] = useState(0);
@@ -313,18 +590,52 @@ export default function Dashboard() {
         const { invoke } = await import('@tauri-apps/api/core');
         const running: boolean = await invoke('vpn_status');
         if (running && status !== 'connected') {
-          const health = await invoke('get_connection_health', {
+          const effectiveSystemProxyMode = await getEffectiveHealthSystemProxyMode();
+          let health = await invoke('get_connection_health', {
             proxyMode,
-            systemProxyMode,
+            systemProxyMode: effectiveSystemProxyMode,
             socksPort,
             httpPort,
           }) as ConnectionHealthReport;
           if (isHealthAcceptable(proxyMode, health)) {
+            const healthPorts = extractPortsFromHealth(health);
+            const effectiveSocksPort = healthPorts.socksPort ?? socksPort;
+            const effectiveHttpPort = healthPorts.httpPort ?? httpPort;
+            if (healthPorts.socksPort) setSocksPort(healthPorts.socksPort);
+            if (healthPorts.httpPort) setHttpPort(healthPorts.httpPort);
+
+            if (
+              proxyMode === 'tun' &&
+              effectiveSystemProxyMode === 'set'
+            ) {
+              try {
+                const repairMessage = await invoke('repair_active_tunnel_compatibility_proxy', {
+                  systemProxyMode: effectiveSystemProxyMode,
+                }) as string;
+                addLog('debug', `Browser compatibility repaired after UI reload: ${repairMessage}`);
+                health = await invoke('get_connection_health', {
+                  proxyMode,
+                  systemProxyMode: effectiveSystemProxyMode,
+                  socksPort: effectiveSocksPort,
+                  httpPort: effectiveHttpPort,
+                }) as ConnectionHealthReport;
+              } catch (repairError) {
+                addLog('warning', `Browser compatibility repair after UI reload failed: ${repairError instanceof Error ? repairError.message : String(repairError)}`);
+              }
+            }
+
             setStatus('connected');
-            addLog('info', 'VPN is still active (reconnected after UI reload)');
+            setActiveSystemProxyMode(effectiveSystemProxyMode);
+            addLog(
+              'debug',
+              hasWinInetCompatibilityWarning(health)
+                ? `VPN is still active after UI reload, but browser compatibility is degraded: ${summarizeHealthFailures(health)}`
+                : 'VPN is still active (reconnected after UI reload)',
+            );
           } else {
             setStatus('disconnected');
-            addLog('warning', `Backend reported VPN active, but health is not acceptable: ${summarizeHealthFailures(health)}`);
+            setActiveSystemProxyMode(null);
+            addLog('debug', `Backend reported VPN active, but health is not acceptable: ${summarizeHealthFailures(health)}`);
           }
         }
       } catch { /* not in tauri env */ }
@@ -333,19 +644,145 @@ export default function Dashboard() {
 
   // Connection health monitor
   const healthFailRef = useRef(0);
+  const healthInFlightRef = useRef(false);
+  const runtimeRepairRef = useRef({ inFlight: false, lastAt: 0 });
+  const compatRepairRef = useRef({ inFlight: false, lastAt: 0 });
+  const fatalWatchdogRef = useRef(false);
   useEffect(() => {
-    if (status !== 'connected') { healthFailRef.current = 0; return; }
+    if (status !== 'connected') {
+      healthFailRef.current = 0;
+      healthInFlightRef.current = false;
+      runtimeRepairRef.current = { inFlight: false, lastAt: 0 };
+      compatRepairRef.current = { inFlight: false, lastAt: 0 };
+      fatalWatchdogRef.current = false;
+      return;
+    }
     const healthCheck = setInterval(async () => {
+      if (healthInFlightRef.current) return;
+      healthInFlightRef.current = true;
       try {
         const { invoke } = await import('@tauri-apps/api/core');
-        const health = await invoke('get_connection_health', {
-          proxyMode,
-          systemProxyMode,
-          socksPort,
-          httpPort,
-        }) as ConnectionHealthReport;
+        const effectiveSystemProxyMode = await getEffectiveHealthSystemProxyMode();
+        let health = await withTimeout(
+          invoke('get_connection_health', {
+            proxyMode,
+            systemProxyMode: effectiveSystemProxyMode,
+            socksPort,
+            httpPort,
+          }) as Promise<ConnectionHealthReport>,
+          proxyMode === 'tun' ? 12000 : 6000,
+          'Connection health check timed out',
+        );
+        const healthPorts = extractPortsFromHealth(health);
+        if (healthPorts.socksPort) setSocksPort(healthPorts.socksPort);
+        if (healthPorts.httpPort) setHttpPort(healthPorts.httpPort);
+
+        if (
+          proxyMode === 'tun' &&
+          needsProtectedRuntimeRepair(health) &&
+          !runtimeRepairRef.current.inFlight &&
+          Date.now() - runtimeRepairRef.current.lastAt > 20_000
+        ) {
+          runtimeRepairRef.current.inFlight = true;
+          runtimeRepairRef.current.lastAt = Date.now();
+          try {
+            const repairMessage = await invoke('repair_active_tunnel_runtime', {
+              reason: 'ui_health_monitor',
+            }) as string;
+            addLog('info', repairMessage);
+            if (effectiveSystemProxyMode === 'set') {
+              try {
+                const compatMessage = await invoke('repair_active_tunnel_compatibility_proxy', {
+                  systemProxyMode: effectiveSystemProxyMode,
+                }) as string;
+                addLog('info', compatMessage);
+              } catch (compatErr: any) {
+                addLog('warning', `Browser compatibility repair is still pending: ${compatErr?.message || compatErr}`);
+              }
+            }
+            health = await invoke('get_connection_health', {
+              proxyMode,
+              systemProxyMode: effectiveSystemProxyMode,
+              socksPort: healthPorts.socksPort ?? socksPort,
+              httpPort: healthPorts.httpPort ?? httpPort,
+            }) as ConnectionHealthReport;
+            const repairedPorts = extractPortsFromHealth(health);
+            if (repairedPorts.socksPort) setSocksPort(repairedPorts.socksPort);
+            if (repairedPorts.httpPort) setHttpPort(repairedPorts.httpPort);
+          } catch (repairErr: any) {
+            addLog('warning', `Runtime repair did not complete: ${repairErr?.message || repairErr}`);
+          } finally {
+            runtimeRepairRef.current.inFlight = false;
+          }
+        }
+
+        const compatibilityNeedsRepair = proxyMode === 'tun' &&
+          effectiveSystemProxyMode === 'set' &&
+          (hasWinInetCompatibilityWarning(health) ||
+            (health.service_degraded_checks ?? []).some(check => /Windows proxy compatibility/i.test(check)));
+        if (
+          compatibilityNeedsRepair &&
+          !compatRepairRef.current.inFlight &&
+          Date.now() - compatRepairRef.current.lastAt > 20_000
+        ) {
+          compatRepairRef.current.inFlight = true;
+          compatRepairRef.current.lastAt = Date.now();
+          try {
+            const compatMessage = await invoke('repair_active_tunnel_compatibility_proxy', {
+              systemProxyMode: effectiveSystemProxyMode,
+            }) as string;
+            addLog('info', compatMessage);
+            health = await invoke('get_connection_health', {
+              proxyMode,
+              systemProxyMode: effectiveSystemProxyMode,
+              socksPort: healthPorts.socksPort ?? socksPort,
+              httpPort: healthPorts.httpPort ?? httpPort,
+            }) as ConnectionHealthReport;
+            const repairedPorts = extractPortsFromHealth(health);
+            if (repairedPorts.socksPort) setSocksPort(repairedPorts.socksPort);
+            if (repairedPorts.httpPort) setHttpPort(repairedPorts.httpPort);
+          } catch (compatErr: any) {
+            addLog('warning', `Browser compatibility repair is still pending: ${compatErr?.message || compatErr}`);
+          } finally {
+            compatRepairRef.current.inFlight = false;
+          }
+        }
+
         const healthy = isHealthAcceptable(proxyMode, health);
+        setHealthVerdict(getUserVisibleHealthVerdict(health));
         if (healthy) { healthFailRef.current = 0; }
+        else if (isHealthFatal(proxyMode, health)) {
+          const failureSummary = summarizeHealthFailures(health);
+          healthFailRef.current = 0;
+          addLog('error', `Whole computer mode stopped: ${failureSummary}`);
+          try {
+            const bundlePath = await invoke('export_support_bundle', {
+              proxyMode,
+              systemProxyMode: effectiveSystemProxyMode,
+              socksPort,
+              httpPort,
+              failureMarker: `health_fatal: ${failureSummary}`,
+            }) as string;
+            addLog('info', `${t('supportBundleExported')}: ${bundlePath}`);
+          } catch (bundleErr: any) {
+            addLog('warning', `${t('supportBundleExportFailed')}: ${bundleErr?.message || bundleErr}`);
+          }
+          try { await invoke('vpn_disconnect'); } catch { /* best effort cleanup */ }
+          setStatus('disconnected');
+          setActiveSystemProxyMode(null);
+          setConnectionStep(null);
+          setConnectedAt(null);
+          const toastStoreModule = await import('../stores/toast-store');
+          toastStoreModule.useToastStore.getState().addToast('Whole computer mode stopped; reconnect to repair it.', 'error');
+          const activeHealthServer = useAppStore.getState().activeServer;
+          reportConnectionError({
+            eventType: 'health_fatal', serverName: activeHealthServer?.name,
+            serverAddress: activeHealthServer?.address, serverPort: activeHealthServer?.port,
+            protocol: activeHealthServer?.protocol,
+            errorMessage: `Protected health fatal: ${failureSummary}`,
+          });
+          return;
+        }
         else {
           healthFailRef.current++;
           if (healthFailRef.current >= 3) {
@@ -368,15 +805,77 @@ export default function Dashboard() {
             return;
           }
         }
-      } catch { /* not in tauri env */ }
+      } catch {
+        healthFailRef.current++;
+        if (healthFailRef.current >= 3) {
+          addLog('warning', 'Connection health check is delayed; keeping the connection up and monitoring...');
+          healthFailRef.current = 0;
+        }
+      } finally {
+        healthInFlightRef.current = false;
+      }
     }, 30000);
     return () => clearInterval(healthCheck);
-  }, [status, socksPort, httpPort, proxyMode, systemProxyMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [status, socksPort, httpPort, proxyMode, systemProxyMode, getEffectiveHealthSystemProxyMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-scroll logs
+  // Fast protected-mode fatal watchdog. The normal health monitor is broader
+  // and intentionally gentle; this one only consumes service-owned runtime
+  // truth so a crashed TUN core cannot leave the UI green for a full monitor
+  // interval.
   useEffect(() => {
-    if (showLogs) logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [logs.length, showLogs]);
+    if (status !== 'connected' || proxyMode !== 'tun') return;
+    let disposed = false;
+    const checkFatal = async () => {
+      if (disposed || fatalWatchdogRef.current || healthInFlightRef.current) return;
+      healthInFlightRef.current = true;
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const effectiveSystemProxyMode = await getEffectiveHealthSystemProxyMode();
+        const health = await withTimeout(
+          invoke('get_connection_health', {
+            proxyMode,
+            systemProxyMode: effectiveSystemProxyMode,
+            socksPort,
+            httpPort,
+          }) as Promise<ConnectionHealthReport>,
+          6000,
+          'Protected watchdog timed out',
+        );
+        setHealthVerdict(getUserVisibleHealthVerdict(health));
+        if (!isHealthFatal('tun', health)) return;
+
+        fatalWatchdogRef.current = true;
+        const failureSummary = summarizeHealthFailures(health);
+        addLog('error', `Whole computer mode stopped: ${failureSummary}`);
+        try { await invoke('vpn_disconnect'); } catch { /* best effort cleanup */ }
+        setStatus('disconnected');
+        setActiveSystemProxyMode(null);
+        setConnectionStep(null);
+        setConnectedAt(null);
+        const toastStoreModule = await import('../stores/toast-store');
+        toastStoreModule.useToastStore.getState().addToast('Whole computer mode stopped; reconnect to repair it.', 'error');
+      } catch {
+        // The slower monitor handles repeated timeouts. Avoid noisy duplicate logs here.
+      } finally {
+        healthInFlightRef.current = false;
+      }
+    };
+    const first = window.setTimeout(checkFatal, 1500);
+    const timer = window.setInterval(checkFatal, 4000);
+    return () => {
+      disposed = true;
+      window.clearTimeout(first);
+      window.clearInterval(timer);
+    };
+  }, [status, proxyMode, systemProxyMode, socksPort, httpPort, addLog, setStatus, setConnectionStep, setConnectedAt, getEffectiveHealthSystemProxyMode]);
+
+  // Reset the orb health verdict whenever the tunnel is fully down.
+  useEffect(() => {
+    if (status === 'disconnected') {
+      setHealthVerdict(null);
+      setActiveSystemProxyMode(null);
+    }
+  }, [status]);
 
   // Poll xray-core proxy logs
   useEffect(() => {
@@ -473,6 +972,14 @@ export default function Dashboard() {
   // Auto-detect clipboard links removed to prevent macOS permission spam
   // Subscription auto-update
   useEffect(() => {
+    if (closedControlPlane) {
+      if (!appSession?.logged_in) return;
+      const refreshMinutes = Math.max(5, subAutoUpdateMinutes || 5);
+      const interval = setInterval(() => {
+        void refreshClosedControlPlane(appSession);
+      }, refreshMinutes * 60 * 1000);
+      return () => clearInterval(interval);
+    }
     if (subAutoUpdateMinutes <= 0 || subscriptions.length === 0) return;
 
     const refreshAllSubscriptions = async (logSuccess: boolean) => {
@@ -506,13 +1013,55 @@ export default function Dashboard() {
       refreshAllSubscriptions(true);
     }, subAutoUpdateMinutes * 60 * 1000);
     return () => clearInterval(interval);
-  }, [subAutoUpdateMinutes, subscriptions, updateSubscription, addLog]);
+  }, [subAutoUpdateMinutes, subscriptions, updateSubscription, addLog, closedControlPlane, appSession, refreshClosedControlPlane]);
 
   // ═══════════════════════════════════════════════════
   //  Handlers
   // ═══════════════════════════════════════════════════
 
+  const handleAppLogin = useCallback(async () => {
+    const code = normalizeAppLoginCode(appLoginCode);
+    if (code.length !== 8 || appLoginBusy) return;
+    setAppLoginBusy(true);
+    setAppLoginError(null);
+    try {
+      const session = await appApiExchangeCode(code);
+      setAppSession(session);
+      useAppStore.setState({
+        appSessionLoggedIn: session.logged_in,
+        appSessionDeviceAllowed: session.logged_in ? session.subscription?.device_allowed !== false : null,
+      });
+      setAppLoginCode('');
+      if (loginFlightTimerRef.current !== null) {
+        window.clearTimeout(loginFlightTimerRef.current);
+      }
+      setPostLoginFlightSettled(false);
+      setPostLoginFlight(true);
+      loginFlightTimerRef.current = window.setTimeout(() => {
+        setPostLoginFlightSettled(true);
+        setPostLoginFlight(false);
+        loginFlightTimerRef.current = null;
+      }, 2400);
+      addLog('success', t('v6AppLoginSuccess' as never));
+      await refreshClosedControlPlane(session);
+    } catch (err) {
+      if (isTauriInvokeUnavailableError(err)) {
+        setAppLoginError(null);
+        return;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      setAppLoginError(message);
+      addLog('error', `DoodleVPN sign-in failed: ${message}`);
+    } finally {
+      setAppLoginBusy(false);
+    }
+  }, [appLoginCode, appLoginBusy, addLog, refreshClosedControlPlane, t]);
+
   const handleConnect = useCallback(async () => {
+    if (status === 'disconnected' && hasDeviceLimit) {
+      useToastStore.getState().addToast(t('v6DeviceLimitToast' as never), 'error');
+      return;
+    }
     if (status === 'disconnected') {
       const opId = ++connectionOpRef.current;
       const activeRoutingRules = await getActiveRoutingRules();
@@ -545,7 +1094,7 @@ export default function Dashboard() {
       setConnectionStep(t('connectionStarting'));
 
       if (proxyMode === 'tun') {
-        addLog('info', 'Режим «Весь компьютер»: DoodleRay управляет сетевым адаптером через свой сервис.');
+        addLog('debug', 'Режим «Весь компьютер»: DoodleRay управляет сетевым адаптером через свой сервис.');
         void refreshTunnelServiceHealth();
       }
 
@@ -555,11 +1104,14 @@ export default function Dashboard() {
       try {
         const { invoke } = await import('@tauri-apps/api/core');
         setConnectionStep(t('connectionCheckingServer'));
-        const request = await buildConnectRequestFromState(srv);
+        const request = closedControlPlane && isClosedLocationServer(srv)
+          ? await buildAppConnectLocationRequestFromState(srv)
+          : await buildConnectRequestFromState(srv);
         setConnectionStep(t('connectionSecuringTraffic'));
+        const connectTimeoutMs = proxyMode === 'tun' ? TUN_CONNECT_TIMEOUT_MS : CONNECT_TIMEOUT_MS;
         const result: any = await withTimeout(
-          invoke('vpn_connect', { request }),
-          CONNECT_TIMEOUT_MS,
+          invoke(closedControlPlane && isClosedLocationServer(srv) ? 'app_connect_location' : 'vpn_connect', { request }),
+          connectTimeoutMs,
           'Connection timed out while starting VPN engines'
         );
 
@@ -581,11 +1133,14 @@ export default function Dashboard() {
             try {
               const portInfo: any = await invoke('check_port', { port: socksPort });
               if (portInfo.busy && portInfo.doodleray_owned) {
-                addLog('warning', 'Fixing connection route automatically...');
+                addLog('info', 'Fixing connection route automatically...');
                 await invoke('force_free_port', { port: socksPort });
                 await new Promise(r => setTimeout(r, 1000));
-                const retryReq = await buildConnectRequestFromState(srv!);
-                const retry: any = await invoke('vpn_connect', { request: retryReq });
+                const retryClosedLocation = closedControlPlane && isClosedLocationServer(srv);
+                const retryReq = retryClosedLocation
+                  ? await buildAppConnectLocationRequestFromState(srv!)
+                  : await buildConnectRequestFromState(srv!);
+                const retry: any = await invoke(retryClosedLocation ? 'app_connect_location' : 'vpn_connect', { request: retryReq });
                 if (opId !== connectionOpRef.current) return;
                 if (retry.success) {
                   await markConnectedIfHealthy(
@@ -604,6 +1159,14 @@ export default function Dashboard() {
             } catch {}
           }
           addLog('error', result.message);
+          // Honest automatic fallback: a TUN adapter/route bring-up failure
+          // (already past the service-side bounded repair) degrades to
+          // Browsers compatibility with explicit limited-protection messaging.
+          // Manual mode is never entered automatically; WinINet is only
+          // touched by the Browsers connect path itself.
+          if (!closedControlPlane && await attemptLimitedBrowsersFallback(srv!, invoke, opId, result.message)) {
+            return;
+          }
           if (result.message.toLowerCase().includes('full computer components')) {
             const serviceHealthy = await refreshTunnelServiceHealth();
             if (!serviceHealthy) {
@@ -612,6 +1175,7 @@ export default function Dashboard() {
           }
           reportConnectionError({ eventType: 'connect_fail', serverName: srv!.name, serverAddress: srv!.address, serverPort: srv!.port, protocol: srv!.protocol, errorMessage: result.message });
           setStatus('disconnected');
+          setActiveSystemProxyMode(null);
           setConnectionStep(null);
         }
       } catch (err: any) {
@@ -621,6 +1185,19 @@ export default function Dashboard() {
           addLog('error', `Connection failed: ${message}`);
           try {
             const { invoke: cleanupInvoke } = await import('@tauri-apps/api/core');
+            let fallbackReason = message;
+            try {
+              const health = await cleanupInvoke('get_connection_health', {
+                proxyMode: 'tun',
+                systemProxyMode,
+                socksPort,
+                httpPort,
+              }) as ConnectionHealthReport;
+              fallbackReason = `${fallbackReason}; ${summarizeHealthFailures(health)}`;
+            } catch { /* best effort */ }
+            if (!closedControlPlane && srv && await attemptLimitedBrowsersFallback(srv, cleanupInvoke, opId, fallbackReason)) {
+              return;
+            }
             await cleanupInvoke('vpn_disconnect');
           } catch { /* best effort cleanup */ }
           reportConnectionError({
@@ -632,18 +1209,19 @@ export default function Dashboard() {
             errorMessage: message,
           });
           setStatus('disconnected');
+          setActiveSystemProxyMode(null);
           setConnectionStep(null);
           setCurrentSpeed(0, 0);
           resetTraffic();
         } else {
-          addLog('warning', `Dev mode - simulating connection: ${err.message || err}`);
+          addLog('info', `Dev mode - simulating connection: ${err.message || err}`);
           setConnectionStep(t('connectionSecuringTraffic'));
           setTimeout(() => { addLog('success', `[SIM] Connected via ${srv!.protocol.toUpperCase()}+${srv!.transport}`); setConnectionStep(t('connectionReady')); setStatus('connected'); setConnectedAt(Date.now()); }, 1500);
         }
       }
     } else if (status === 'connecting') {
       ++connectionOpRef.current;
-      addLog('warning', 'Cancelling connection start...');
+      addLog('info', 'Cancelling connection start...');
       setStatus('disconnecting');
       setConnectionStep(t('connectionDisconnecting'));
       try {
@@ -651,9 +1229,9 @@ export default function Dashboard() {
         const result: any = await invoke('vpn_disconnect');
         addLog(result.success ? 'info' : 'error', result.message);
       } catch { addLog('info', '[SIM] Disconnected'); }
-      setStatus('disconnected'); setConnectionStep(null); setConnectedAt(null); setCurrentSpeed(0, 0); resetTraffic();
+      setStatus('disconnected'); setActiveSystemProxyMode(null); setConnectionStep(null); setConnectedAt(null); setCurrentSpeed(0, 0); resetTraffic();
     } else if (status === 'connected') {
-      addLog('warning', 'Disconnecting...');
+      addLog('info', 'Disconnecting...');
       ++connectionOpRef.current;
       setStatus('disconnecting');
       setConnectionStep(t('connectionDisconnecting'));
@@ -662,9 +1240,9 @@ export default function Dashboard() {
         const result: any = await invoke('vpn_disconnect');
         addLog(result.success ? 'info' : 'error', result.message);
       } catch { addLog('info', '[SIM] Disconnected'); }
-      setStatus('disconnected'); setConnectionStep(null); setConnectedAt(null); setCurrentSpeed(0, 0); resetTraffic();
+      setStatus('disconnected'); setActiveSystemProxyMode(null); setConnectionStep(null); setConnectedAt(null); setCurrentSpeed(0, 0); resetTraffic();
     }
-  }, [status, setStatus, setCurrentSpeed, resetTraffic, activeServer, servers, setActiveServer, addLog, proxyMode, socksPort, httpPort, autoSelectFastest, setConnectedAt, t, setProxyMode, refreshTunnelServiceHealth, setSocksPort, setHttpPort, markConnectedIfHealthy]);
+  }, [status, setStatus, setCurrentSpeed, resetTraffic, activeServer, servers, setActiveServer, addLog, proxyMode, socksPort, httpPort, autoSelectFastest, setConnectedAt, t, setProxyMode, setSystemProxyMode, refreshTunnelServiceHealth, setSocksPort, setHttpPort, markConnectedIfHealthy, attemptLimitedBrowsersFallback, closedControlPlane, hasDeviceLimit]);
 
   const handleModeSwitch = useCallback(async (mode: 'system-proxy' | 'tun', nextSystemProxyMode = systemProxyMode) => {
     const normalizedSystemProxyMode = nextSystemProxyMode === 'clear'
@@ -674,14 +1252,14 @@ export default function Dashboard() {
     const systemProxyChanged = systemProxyMode !== normalizedSystemProxyMode;
     if (!modeChanged && !systemProxyChanged) return;
     if (mode === 'tun') {
-      addLog('info', 'Режим «Весь компьютер» будет использовать сервис DoodleRay для сетевого адаптера.');
+      addLog('debug', 'Режим «Весь компьютер» будет использовать сервис DoodleRay для сетевого адаптера.');
       await refreshTunnelServiceHealth();
     }
     setProxyMode(mode);
     if (systemProxyChanged) setSystemProxyMode(normalizedSystemProxyMode);
-    addLog('info', `Режим подключения: ${mode === 'tun' ? t('fullDeviceMode') : t('systemProxy')}`);
+    addLog('debug', `Режим подключения: ${mode === 'tun' ? t('fullDeviceMode') : t('systemProxy')}`);
     if (status === 'connected') {
-      addLog('warning', 'Reconnecting to apply new routing mode...');
+      addLog('info', 'Reconnecting to apply new routing mode...');
       setStatus('connecting');
       setConnectionStep(t('connectionSecuringTraffic'));
       try {
@@ -690,8 +1268,16 @@ export default function Dashboard() {
         await new Promise(r => setTimeout(r, 2000));
         const srv = activeServer;
         if (srv) {
-          const request = await buildConnectRequestFromState(srv, mode, normalizedSystemProxyMode);
-          const result: any = await invoke('vpn_connect', { request });
+          const reconnectClosedLocation = closedControlPlane && isClosedLocationServer(srv);
+          const request = reconnectClosedLocation
+            ? await buildAppConnectLocationRequestFromState(srv, mode, normalizedSystemProxyMode)
+            : await buildConnectRequestFromState(srv, mode, normalizedSystemProxyMode);
+          const connectTimeoutMs = mode === 'tun' ? TUN_CONNECT_TIMEOUT_MS : CONNECT_TIMEOUT_MS;
+          const result: any = await withTimeout(
+            invoke(reconnectClosedLocation ? 'app_connect_location' : 'vpn_connect', { request }),
+            connectTimeoutMs,
+            'Connection timed out while starting VPN engines',
+          );
           if (result.success) {
             await markConnectedIfHealthy(
               result,
@@ -702,26 +1288,231 @@ export default function Dashboard() {
               request.http_port,
             );
           }
-          else { addLog('error', result.message); setStatus('disconnected'); setConnectionStep(null); }
-        } else { setStatus('disconnected'); setConnectionStep(null); }
-      } catch (err: any) { addLog('error', `Reconnect failed: ${err.message || err}`); setStatus('disconnected'); setConnectionStep(null); }
+          else {
+            addLog('error', result.message);
+            if (!closedControlPlane && mode === 'tun' && await attemptLimitedBrowsersFallback(srv, invoke, connectionOpRef.current, result.message)) {
+              return;
+            }
+            setStatus('disconnected');
+            setActiveSystemProxyMode(null);
+            setConnectionStep(null);
+          }
+        } else { setStatus('disconnected'); setActiveSystemProxyMode(null); setConnectionStep(null); }
+      } catch (err: any) {
+        const message = err.message || String(err);
+        addLog('error', `Reconnect failed: ${message}`);
+        if (!closedControlPlane && mode === 'tun' && activeServer) {
+          try {
+            const { invoke: cleanupInvoke } = await import('@tauri-apps/api/core');
+            if (await attemptLimitedBrowsersFallback(activeServer, cleanupInvoke, connectionOpRef.current, message)) {
+              return;
+            }
+          } catch { /* best effort fallback */ }
+        }
+        setStatus('disconnected');
+        setActiveSystemProxyMode(null);
+        setConnectionStep(null);
+      }
     }
-  }, [proxyMode, systemProxyMode, setProxyMode, setSystemProxyMode, status, setStatus, addLog, activeServer, socksPort, httpPort, setConnectedAt, t, refreshTunnelServiceHealth, setSocksPort, setHttpPort, markConnectedIfHealthy]);
+  }, [proxyMode, systemProxyMode, setProxyMode, setSystemProxyMode, status, setStatus, addLog, activeServer, socksPort, httpPort, setConnectedAt, t, refreshTunnelServiceHealth, setSocksPort, setHttpPort, markConnectedIfHealthy, attemptLimitedBrowsersFallback, closedControlPlane]);
+
+  const handleExportSupportBundle = useCallback(async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const effectiveSystemProxyMode = await getEffectiveHealthSystemProxyMode();
+      const path = await invoke('export_support_bundle', {
+        proxyMode,
+        systemProxyMode: effectiveSystemProxyMode,
+        socksPort,
+        httpPort,
+      }) as string;
+      addLog('success', `${t('supportBundleExported')}: ${path}`);
+      const { useToastStore } = await import('../stores/toast-store');
+      useToastStore.getState().addToast(`${t('supportBundleExported')}: ${path}`, 'success');
+    } catch (err: any) {
+      addLog('error', `${t('supportBundleExportFailed')}: ${err?.message || err}`);
+      const { useToastStore } = await import('../stores/toast-store');
+      useToastStore.getState().addToast(`${t('supportBundleExportFailed')}: ${err?.message || err}`, 'error');
+    }
+  }, [addLog, getEffectiveHealthSystemProxyMode, httpPort, proxyMode, socksPort, t]);
+
+  const handleQaSimulatedTunFailure = useCallback(async (reason: string) => {
+    const srv = activeServer || resolveConnectServer(activeServer, servers, false);
+    if (!srv) {
+      addLog('error', '[QA-control] simulate-tun-failure failed: no active server');
+      return;
+    }
+    const { invoke } = await import('@tauri-apps/api/core');
+    await attemptLimitedBrowsersFallback(srv, invoke, connectionOpRef.current, reason);
+  }, [activeServer, addLog, attemptLimitedBrowsersFallback, servers]);
+
+  // QA-only control surface consumer (backend gates it behind
+  // DOODLERAY_QA_CONTROL=1; production launches never enable it). Actions are
+  // executed through the exact same handlers the UI buttons use.
+  const qaControlRef = useRef({ status, handleConnect, handleModeSwitch, handleQaSimulatedTunFailure });
+  useEffect(() => {
+    qaControlRef.current = { status, handleConnect, handleModeSwitch, handleQaSimulatedTunFailure };
+  });
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const enabled = await invoke<boolean>('qa_control_enabled').catch(() => false);
+        if (!enabled || disposed) return;
+        const publishFrontendSnapshot = async () => {
+          const state = useAppStore.getState();
+          await invoke('qa_control_update_frontend_snapshot', {
+            snapshot: {
+              status: state.status,
+              product_mode: state.productMode,
+              proxy_mode: state.proxyMode,
+              system_proxy_mode: state.systemProxyMode,
+              subscriptions_count: state.subscriptions.length,
+              servers_count: state.servers.length,
+              app_session_logged_in: state.appSessionLoggedIn,
+              app_session_device_allowed: state.appSessionDeviceAllowed,
+              active_server_present: !!state.activeServer,
+              active_server_name: state.activeServer?.name ?? null,
+              active_server_protocol: state.activeServer?.protocol ?? null,
+              socks_port: state.socksPort,
+              http_port: state.httpPort,
+              recent_logs: state.logs.slice(-25).map(log => ({
+                level: log.level,
+                message: log.message,
+              })),
+            },
+          }).catch(() => undefined);
+        };
+        await publishFrontendSnapshot();
+        const snapshotTimer = window.setInterval(publishFrontendSnapshot, 1000);
+        const { listen } = await import('@tauri-apps/api/event');
+        const un = await listen<{ action?: string; query?: string }>('doodleray-qa-control', async (event) => {
+          const current = qaControlRef.current;
+          const action = event.payload?.action;
+          const query = new URLSearchParams(event.payload?.query || '');
+          const loggableQuery = action === 'import-subscription' ? '' : (event.payload?.query || '');
+          addLog('info', `[QA-control] ${action}${loggableQuery ? `?${loggableQuery}` : ''}`);
+          try {
+            if (action === 'connect') {
+              if (current.status !== 'disconnected') {
+                await current.handleConnect();
+                await new Promise(resolve => setTimeout(resolve, 5000));
+              }
+              if (qaControlRef.current.status === 'disconnected') {
+                await qaControlRef.current.handleConnect();
+              }
+            } else if (action === 'disconnect') {
+              if (current.status !== 'disconnected') {
+                await current.handleConnect();
+              }
+            } else if (action === 'logout') {
+              await appApiLogout();
+              window.dispatchEvent(new CustomEvent('doodleray:app-logout'));
+            } else if (action === 'switch-mode') {
+              const mode = query.get('mode');
+              if (mode === 'tun') await current.handleModeSwitch('tun', 'set');
+              else if (mode === 'browsers') await current.handleModeSwitch('system-proxy', 'set');
+              else if (mode === 'manual') await current.handleModeSwitch('system-proxy', 'unchanged');
+            } else if (action === 'refresh-subscription') {
+              const { refreshSubscription } = await import('../lib/subscription');
+              const storeModule = await import('../stores/app-store');
+              const state = storeModule.useAppStore.getState();
+              for (const sub of state.subscriptions) {
+                const updated = await refreshSubscription(sub);
+                state.updateSubscription(sub.id, updated);
+              }
+              addLog('success', '[QA-control] subscriptions refreshed');
+            } else if (action === 'import-subscription') {
+              const url = query.get('url');
+              if (url) {
+                const { fetchSubscription } = await import('../lib/subscription');
+                const storeModule = await import('../stores/app-store');
+                const state = storeModule.useAppStore.getState();
+                const existing = state.subscriptions.find((sub) => sub.url === url);
+                if (existing) {
+                  const { refreshSubscription } = await import('../lib/subscription');
+                  state.updateSubscription(existing.id, await refreshSubscription(existing));
+                  addLog('success', '[QA-control] existing subscription refreshed');
+                } else {
+                  state.addSubscription(await fetchSubscription(url));
+                  addLog('success', '[QA-control] subscription imported');
+                }
+              }
+            } else if (action === 'add-routing-rule') {
+              const value = (query.get('value') || '').trim();
+              const ruleType = query.get('type') === 'domain' ? 'domain' : 'exe';
+              const routeAction = query.get('routeAction') === 'proxy'
+                ? 'proxy'
+                : query.get('routeAction') === 'block'
+                  ? 'block'
+                  : 'direct';
+              if (value) {
+                const { useWorkshopStore } = await import('../stores/workshop-store');
+                useWorkshopStore.getState().addRule({
+                  id: crypto.randomUUID(),
+                  type: ruleType,
+                  value: ruleType === 'exe' ? value.replace(/^.*[\\/]/, '') : value,
+                  action: routeAction,
+                  enabled: true,
+                });
+                addLog('success', `[QA-control] routing rule added: ${ruleType}:${value}:${routeAction}`);
+              }
+            } else if (action === 'clear-custom-routing-rules') {
+              const { useWorkshopStore } = await import('../stores/workshop-store');
+              const state = useWorkshopStore.getState();
+              for (const rule of state.myRules) state.removeRule(rule.id);
+              addLog('success', '[QA-control] custom routing rules cleared');
+            } else if (action === 'simulate-tun-failure') {
+              await current.handleQaSimulatedTunFailure(
+                query.get('reason') || 'DoodleRay could not create the Windows tunnel adapter: sing-box exited',
+              );
+            }
+          } catch (err: any) {
+            addLog('error', `[QA-control] ${action} failed: ${err?.message || err}`);
+          }
+        });
+        if (disposed) {
+          window.clearInterval(snapshotTimer);
+          un();
+        }
+        else unlisten = () => { window.clearInterval(snapshotTimer); un(); };
+      } catch { /* QA surface unavailable */ }
+    })();
+    return () => { disposed = true; unlisten?.(); };
+  }, [addLog]);
 
   const handleServerSelect = useCallback(async (server: typeof activeServer) => {
     if (!server) return;
     const isSameServer = findMatchingServer(activeServer, [server]) !== null;
     setActiveServer(server); setSearchQuery('');
     if (status === 'connected' && !isSameServer) {
-      addLog('warning', `Switching to ${server.name}...`);
+      const opId = ++connectionOpRef.current;
+      addLog('info', `Switching to ${server.name}...`);
       setStatus('connecting');
       setConnectionStep(t('connectionCheckingServer'));
       try {
         const { invoke } = await import('@tauri-apps/api/core');
-        // Don't call vpn_disconnect — vpn_connect handles cleanup internally
-        // and preserves the TUN bridge to avoid game disconnections
-        const request = await buildConnectRequestFromState(server);
-        const result: any = await invoke('vpn_connect', { request });
+        // Network Extension and the Windows service both own OS routes. Stop
+        // the old session first so a country switch cannot reuse its profile.
+        await withTimeout(
+          invoke('vpn_disconnect'),
+          15_000,
+          'Previous VPN session did not stop in time',
+        );
+        if (opId !== connectionOpRef.current) return;
+        const request = closedControlPlane && isClosedLocationServer(server)
+          ? await buildAppConnectLocationRequestFromState(server)
+          : await buildConnectRequestFromState(server);
+        setConnectionStep(t('connectionSecuringTraffic'));
+        const result: any = await withTimeout(
+          invoke(closedControlPlane && isClosedLocationServer(server) ? 'app_connect_location' : 'vpn_connect', { request }),
+          proxyMode === 'tun' ? TUN_CONNECT_TIMEOUT_MS : CONNECT_TIMEOUT_MS,
+          'Connection timed out while switching VPN location',
+        );
+        if (opId !== connectionOpRef.current) return;
         if (result.success) {
           await markConnectedIfHealthy(
             result,
@@ -732,27 +1523,49 @@ export default function Dashboard() {
             request.http_port,
           );
         }
-        else { addLog('error', result.message); setStatus('disconnected'); setConnectionStep(null); }
-      } catch (err: any) { addLog('error', `Server switch failed: ${err.message || err}`); setStatus('disconnected'); setConnectionStep(null); }
+        else {
+          addLog('error', result.message);
+          await invoke('vpn_disconnect').catch(() => undefined);
+          setStatus('disconnected'); setActiveSystemProxyMode(null); setConnectionStep(null); setConnectedAt(null);
+        }
+      } catch (err: any) {
+        if (opId !== connectionOpRef.current) return;
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          await invoke('vpn_disconnect');
+        } catch { /* best effort network restoration */ }
+        addLog('error', `Server switch failed: ${err.message || err}`);
+        setStatus('disconnected'); setActiveSystemProxyMode(null); setConnectionStep(null); setConnectedAt(null);
+      }
     }
-  }, [status, setStatus, activeServer, setActiveServer, addLog, proxyMode, socksPort, httpPort, setConnectedAt, t, setSocksPort, setHttpPort, markConnectedIfHealthy]);
+  }, [status, setStatus, activeServer, setActiveServer, addLog, proxyMode, socksPort, httpPort, setConnectedAt, t, setSocksPort, setHttpPort, markConnectedIfHealthy, closedControlPlane]);
 
-  const handleQuickAdd = useCallback(async () => {
+  const handleQuickAdd = useCallback(async (): Promise<boolean> => {
     const trimmed = quickInput.trim();
-    if (!trimmed) return;
+    if (!trimmed) return false;
+    if (!isLegacyImportEnabled()) {
+      addLog('error', legacyImportDisabledMessage());
+      return false;
+    }
     setQuickImporting(true);
     try {
-      if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-        addLog('info', `Fetching subscription: ${trimmed}`);
+      if (trimmed.startsWith('https://')) {
+        addLog('info', `Fetching subscription: ${describeSubscriptionSource(trimmed)}`);
         const sub = await fetchSubscription(trimmed);
         addSubscription(sub);
         addLog('success', `Loaded ${sub.servers.length} servers from ${sub.name}`);
         setQuickInput('');
+        return true;
       } else if (/^(vless|vmess|trojan|ss|hy2|tuic|wg):\/\//.test(trimmed)) {
         const server = parseProxyLink(trimmed);
-        if (server) { addServer(server); addLog('success', `Added server: ${server.name}`); setQuickInput(''); }
-        else { addLog('error', 'Invalid proxy link format'); }
-      } else { addLog('error', 'Paste a subscription URL (https://...) or proxy link (vless://, vmess://, etc.)'); }
+        if (server) {
+          addServer(server);
+          addLog('success', `Added server: ${server.name}`);
+          setQuickInput('');
+          return true;
+        }
+        addLog('error', 'Invalid proxy link format');
+      } else { addLog('error', 'Paste a secure subscription URL (https://...) or proxy link (vless://, vmess://, etc.)'); }
     } catch (err: any) {
       const message = err.message || String(err);
       addLog('error', `Error: ${message}`);
@@ -761,113 +1574,35 @@ export default function Dashboard() {
         errorMessage: message,
         details: { action: 'quick_add' },
       });
+      return false;
     }
     finally { setQuickImporting(false); }
+    return false;
   }, [quickInput, addLog, addSubscription, addServer]);
 
   const handleQuickPaste = useCallback(async () => {
     try { const text = await navigator.clipboard.readText(); setQuickInput(text); } catch { /* */ }
   }, []);
 
-  const handleTestSubscription = async (sub: any) => {
-    setTestingSubId(sub.id);
+  const handlePingAll = useCallback(async () => {
+    const toPing = servers.filter((s) => s.address && !isClosedAutoLocationServer(s));
+    if (toPing.length === 0) return;
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      const toUpdate = servers.filter(s => s.subscriptionId === sub.id);
-      addLog('warning', `Testing ${toUpdate.length} servers...`);
-      await pingServersWithLimit(toUpdate.filter((s) => s.address), invoke, {
+      await pingServersWithLimit(toPing, invoke, {
         onActiveIdsChange: setPingingServerIds,
         onBatch: (updates) => useAppStore.getState().updateServerPings(updates),
       });
-      addLog('success', 'Ping test complete');
-    } catch (err: any) { addLog('error', `Ping test failed: ${err?.message || err}`); }
-    finally { setPingingServerIds(new Set()); setTestingSubId(null); }
-  };
+    } catch { /* not in tauri env */ }
+    finally { setPingingServerIds(new Set()); }
+  }, [servers]);
 
-  const handleUpdateSubscription = async (sub: any) => {
-    setRefreshingSubId(sub.id);
-    try {
-      addLog('info', `Updating subscription: ${sub.name}...`);
-      const updated = await refreshSubscription(sub);
-      updateSubscription(sub.id, updated);
-      addLog('success', `Updated ${sub.name}: ${updated.servers.length} servers`);
-    } catch (err: any) {
-      const message = err.message || String(err);
-      addLog('error', `Failed to update ${sub.name}: ${message}`);
-      reportConnectionError({
-        eventType: subscriptionErrorEventType(message),
-        errorMessage: message,
-        details: { action: 'manual_update_subscription', subscription: sub.name },
-      });
-    }
-    finally { setRefreshingSubId(null); }
-  };
-
-  const handleTestCustomServers = async () => {
-    setTestingSubId('__custom__');
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      const custom = servers.filter(s => !s.subscriptionId);
-      addLog('warning', `Testing ${custom.length} custom servers...`);
-      await pingServersWithLimit(custom.filter((s) => s.address), invoke, {
-        onActiveIdsChange: setPingingServerIds,
-        onBatch: (updates) => useAppStore.getState().updateServerPings(updates),
-      });
-      addLog('success', 'Custom servers ping test complete');
-    } catch (err: any) { addLog('error', `Custom ping test failed: ${err?.message || err}`); }
-    finally { setPingingServerIds(new Set()); setTestingSubId(null); }
-  };
-
-  const handleRemoveServer = useCallback((serverId: string, serverName: string) => {
-    setConfirmModal({
-      show: true,
-      title: t('deleteServer'),
-      message: `Delete custom server "${serverName}"?`,
-      confirmLabel: t('deleteServer').split(' ')[0],
-      danger: true,
-      onConfirm: () => {
-        if (activeServer?.id === serverId) { handleConnect(); setActiveServer(null); }
-        removeServer(serverId);
-        setConfirmModal(prev => ({ ...prev, show: false }));
-      }
-    });
-  }, [activeServer, handleConnect, setActiveServer, removeServer, t]);
-
-  const handleRemoveAllCustom = useCallback(() => {
-    setConfirmModal({
-      show: true,
-      title: t('deleteAllProfiles'),
-      message: 'Delete all manual profiles?',
-      confirmLabel: t('deleteServer').split(' ')[0],
-      danger: true,
-      onConfirm: () => {
-        removeAllManualServers();
-        addLog('info', 'Removed all custom servers');
-        setConfirmModal(prev => ({ ...prev, show: false }));
-      }
-    });
-  }, [removeAllManualServers, addLog, t]);
-
-  const handleRemoveSubscription = useCallback((subId: string) => {
-    const sub = subscriptions.find(s => s.id === subId);
-    if (!sub) return;
-    setConfirmModal({
-      show: true,
-      title: t('deleteSub'),
-      message: `Delete subscription "${sub.name}" and all its servers?`,
-      confirmLabel: t('deleteServer').split(' ')[0],
-      danger: true,
-      onConfirm: () => {
-        removeSubscription(subId);
-        setConfirmModal(prev => ({ ...prev, show: false }));
-      }
-    });
-  }, [subscriptions, removeSubscription, t]);
-
-  const canConnect = !!activeServer || servers.length > 0;
-  const hasDashboardContent = servers.length > 0 || status !== 'disconnected';
+  const canConnect = !hasDeviceLimit && (!!activeServer || servers.length > 0);
+  const hasDashboardContent = closedControlPlane
+    ? appSession?.logged_in === true
+    : servers.length > 0 || status !== 'disconnected';
   const trimmedQuickInput = quickInput.trim();
-  const quickInputKind = trimmedQuickInput.startsWith('http://') || trimmedQuickInput.startsWith('https://')
+  const quickInputKind = trimmedQuickInput.startsWith('https://')
     ? 'subscription'
     : /^(vless|vmess|trojan|ss|hy2|tuic|wg):\/\//.test(trimmedQuickInput)
       ? 'link'
@@ -882,149 +1617,278 @@ export default function Dashboard() {
   const connectionStepLabel = status === 'connecting' || status === 'disconnecting' ? connectionStep : null;
 
   // ═══════════════════════════════════════════════════
-  //  Render
+  //  Render (DoodleVPN design)
   // ═══════════════════════════════════════════════════
+  const busy = status === 'connecting' || status === 'disconnecting';
+  const connected = status === 'connected';
+  const orbState = deriveOrbState(status, productMode, healthVerdict);
+  const fmtTimer = (s: number) => {
+    const h = Math.floor(s / 3600);
+    const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+    const sec = String(s % 60).padStart(2, '0');
+    return h > 0 ? `${h}:${m}:${sec}` : `${m}:${sec}`;
+  };
+  const orbPrimary = connected ? t('disconnect') : busy ? '···' : t('connect');
+  const orbSub = busy
+    ? (connectionStepLabel || t('connecting'))
+    : connected
+      ? fmtTimer(connectTime)
+      : null;
+  const orbStatusLabel = orbState === 'protected'
+    ? t('v6Encrypted' as never)
+    : t(ORB_LABEL_KEY[orbState] as never);
+  const activeSub = getSubscriptionById(subscriptions, activeServer?.subscriptionId) ?? subscriptions[0] ?? null;
+
+  const handleModeSelect = (mode: ProductMode) => {
+    if (mode === 'protected') handleModeSwitch('tun', 'set');
+    else if (mode === 'compatibility') handleModeSwitch('system-proxy', 'set');
+    else handleModeSwitch('system-proxy', 'unchanged');
+  };
+
   return (
-    <div className="relative flex-1 flex flex-col overflow-hidden animate-fade-in">
-      <RetroBackground />
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      {postLoginFlight && (
+        <LoginFlightOverlay />
+      )}
 
-      <div className="relative z-10 flex-1 flex flex-col items-center gap-3 px-4 overflow-y-auto py-4">
-        {/* + Add button */}
-        <button
-          onClick={() => setShowAddModal(!showAddModal)}
-          disabled={quickImporting}
-          className="absolute top-4 right-4 z-30 w-10 h-10 flex items-center justify-center bg-white border-[3px] border-black rounded-xl shadow-[3px_3px_0_#000] cursor-pointer hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-[4px_4px_0_#000] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none transition-all disabled:opacity-50"
-          title={t('addSubOrServer')}
-        >
-          {quickImporting ? <Loader2 className="w-5 h-5 text-black animate-spin stroke-[3px]" /> : <Plus className="w-5 h-5 text-black stroke-[3px]" />}
-        </button>
-
-        {showAddModal && (
-          <>
-            <div
-              className="fixed inset-0 z-30 bg-black/20 backdrop-blur-[1px]"
-              onClick={() => setShowAddModal(false)}
-            />
-            <div className="fixed left-1/2 top-16 z-40 w-[min(360px,calc(100vw-32px))] -translate-x-1/2 bg-white border-[3px] border-black rounded-2xl p-4 shadow-[6px_6px_0_#000] animate-slide-up space-y-3">
-              <div>
-                <p className="text-[11px] font-black text-black uppercase tracking-widest">{t('pasteToAddTitle')}</p>
-                <p className="mt-1 text-[10px] font-bold leading-relaxed text-black/55 uppercase tracking-widest">{t('pasteToAddDesc')}</p>
-              </div>
-              <div className="rounded-xl border-[3px] border-black bg-bg-primary p-2 shadow-inner">
-                <div className="flex gap-2">
-                  <input type="text" value={quickInput} onChange={(e) => setQuickInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' && quickInputKind !== 'unknown') { handleQuickAdd(); setShowAddModal(false); } }}
-                    autoFocus placeholder={t('pasteHint')}
-                    className="flex-1 min-w-0 bg-white border-[2px] border-black rounded-lg px-3 py-2.5 text-xs text-black placeholder:text-black/30 focus:outline-none font-bold tracking-tight" />
-                  <button onClick={handleQuickPaste}
-                    className="w-10 h-10 flex items-center justify-center bg-white border-[2px] border-black rounded-lg cursor-pointer hover:bg-black hover:text-white transition-colors shrink-0">
-                    <ClipboardPaste className="w-4 h-4 stroke-[2.5px]" />
-                  </button>
-                </div>
-                <p className={`mt-2 inline-flex rounded-lg border-[2px] border-black px-2 py-1 text-[9px] font-black uppercase tracking-widest ${
-                  quickInputKind === 'subscription'
-                    ? 'bg-emerald-300 text-black'
-                    : quickInputKind === 'link'
-                      ? 'bg-amber-300 text-black'
-                      : 'bg-white/70 text-black/45'
-                }`}>
-                  {quickInputHint}
-                </p>
-              </div>
-              <button onClick={() => { handleQuickAdd(); setShowAddModal(false); }}
-                disabled={quickImporting || !trimmedQuickInput || quickInputKind === 'unknown'}
-                className="w-full py-2.5 bg-black text-white border-[2px] border-black rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer shadow-[3px_3px_0_#000] hover:-translate-y-0.5 hover:shadow-[4px_4px_0_#000] active:translate-y-1 active:shadow-none transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-                {quickImporting ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> {t('adding')}</> : <><Plus className="w-3.5 h-3.5 stroke-[3px]" /> {t('add')}</>}
-              </button>
-            </div>
-          </>
-        )}
-
-        {/* ═══ MAIN CONTENT ═══ */}
-        {!hasDashboardContent ? (
-          <OnboardingCard
-            quickInput={quickInput} setQuickInput={setQuickInput}
-            onQuickAdd={handleQuickAdd} onQuickPaste={handleQuickPaste}
-            importing={quickImporting} t={t}
-          />
-        ) : (
-          <div className="contents">
-            <ConnectionControls
-              status={status} canConnect={canConnect}
-              connectionStepLabel={connectionStepLabel}
-              onConnect={handleConnect}
-              t={t}
-            />
-
-            <ServerList
-              status={status}
-              servers={servers} subscriptions={subscriptions} activeServer={activeServer}
-              searchQuery={searchQuery} onSearchChange={setSearchQuery}
-              collapsedGroups={collapsedGroups}
-              onToggleGroup={(id) => setCollapsedGroups(prev => ({ ...prev, [id]: !prev[id] }))}
-              onServerSelect={handleServerSelect}
-              onTestSubscription={handleTestSubscription}
-              onUpdateSubscription={handleUpdateSubscription}
-              onRemoveSubscription={handleRemoveSubscription}
-              onTestCustomServers={handleTestCustomServers}
-              onRemoveAllCustomServers={handleRemoveAllCustom}
-              onRemoveServer={handleRemoveServer}
-              testingSubId={testingSubId} refreshingSubId={refreshingSubId}
-              pingingServerIds={pingingServerIds}
-              subAutoUpdateMinutes={subAutoUpdateMinutes}
-              t={t}
-            />
+      {hasDeviceLimit && (
+        <div role="alert" className="mb-4 flex shrink-0 items-center gap-3 rounded-[18px] border border-[#ff6b5a]/55 bg-[#681d21]/90 px-4 py-3 text-white shadow-[0_10px_28px_rgba(87,12,18,0.28)]">
+          <AlertTriangle className="h-5 w-5 shrink-0 text-[#ff9b91]" strokeWidth={2.2} />
+          <div className="min-w-0 flex-1">
+            <p className="text-[13px] font-semibold">{t('v6DeviceLimitTitle' as never)}</p>
+            <p className="mt-0.5 text-[11.5px] leading-relaxed text-white/70">{t('v6DeviceLimitBody' as never)}</p>
           </div>
-        )}
-      </div>
-
-      {hasDashboardContent && (
-        <div className="relative z-20 flex shrink-0 justify-center px-4 pb-2 pt-2">
-          <DashboardControlsDrawer
-            status={status} proxyMode={proxyMode} systemProxyMode={systemProxyMode}
-            connectTime={connectTime}
-            currentDownload={currentDownload} currentUpload={currentUpload}
-            totalDown={totalDown} totalUp={totalUp}
-            socksPort={socksPort} httpPort={httpPort}
-            speedHistory={speedHistory} showStats={showStats}
-            onModeSwitch={handleModeSwitch}
-            t={t}
-          />
+          {!networkExtensionOnly && (
+            <button
+              type="button"
+              onClick={openDoodleVpnBot}
+              className="v6-focus flex shrink-0 items-center gap-1.5 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-[11.5px] font-semibold text-white transition-colors hover:bg-white/15"
+            >
+              {t('v6DeviceLimitAction' as never)}
+              <ExternalLink className="h-3.5 w-3.5" strokeWidth={2.2} />
+            </button>
+          )}
         </div>
       )}
 
-      <LogsStrip
-        logs={logs} showLogs={showLogs}
-        onToggleLogs={() => setShowLogs(!showLogs)}
-        onClearLogs={clearLogs} logsEndRef={logsEndRef} t={t}
-      />
+      {showAddModal && legacyImportEnabled && (
+        <QuickAddPanel
+          value={quickInput}
+          onChange={setQuickInput}
+          onAdd={async () => {
+            if (await handleQuickAdd()) setShowAddModal(false);
+          }}
+          onPaste={handleQuickPaste}
+          onClose={() => setShowAddModal(false)}
+          importing={quickImporting}
+          kind={quickInputKind}
+          hint={quickInputHint}
+          t={t}
+        />
+      )}
 
-      {/* ── CUSTOM CONFIRM MODAL ── */}
-      {confirmModal.show && (
-        <>
-          <div className="fixed inset-0 z-[60] bg-black/40 backdrop-blur-sm"
-            onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))} />
-          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[70] w-72 bg-white border-[3px] border-black rounded-2xl p-5 shadow-[6px_6px_0_#000] animate-slide-up flex flex-col gap-4">
-            <div>
-              <h3 className="text-xs font-black uppercase tracking-widest leading-tight">{confirmModal.title}</h3>
-              <p className="text-xs text-black/60 font-bold mt-2 leading-relaxed">{confirmModal.message}</p>
+      {!hasDashboardContent ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center p-6">
+          <div className={`v6-glass v6-onboarding-card w-full max-w-[480px] rounded-[30px] px-8 py-9 text-center ${postLoginFlight ? 'v6-onboarding-card-exit' : ''}`}>
+            <div className="mx-auto mb-5 flex items-center justify-center">
+              <img
+                src="/assets/mascot.png"
+                alt="DoodleRay"
+                draggable={false}
+                className="h-[72px] w-[72px] rounded-[20px]"
+                style={{ boxShadow: '0 12px 36px rgba(234,109,6,0.42)' }}
+              />
             </div>
-            <div className="flex gap-2 mt-2">
-              <button 
-                onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
-                className="flex-1 py-2 bg-white text-black border-[2px] border-black rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer hover:bg-black/5 hover:-translate-y-0.5 active:translate-y-0 transition-all">
-                {t('cancel')}
-              </button>
-              <button 
-                onClick={confirmModal.onConfirm}
-                className={`flex-1 py-2 border-[2px] border-black rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer shadow-[2px_2px_0_#000] hover:shadow-[3px_3px_0_#000] hover:-translate-y-0.5 active:translate-y-1 active:shadow-none transition-all ${
-                  confirmModal.danger ? 'bg-danger text-white' : 'bg-black text-white'
-                }`}>
-                {confirmModal.confirmLabel || 'OK'}
-              </button>
-            </div>
+            <h2 className="text-[23px] font-semibold tracking-[-0.015em] text-white">
+              {legacyImportEnabled ? t('welcome') : t('v6AppLoginTitle' as never)}
+            </h2>
+            <p className="mx-auto mt-2 max-w-[360px] text-[14px] leading-relaxed text-white/60">
+              {legacyImportEnabled ? t('welcomeHint') : t('v6AppLoginHint' as never)}
+            </p>
+            {legacyImportEnabled && (
+              <>
+                <div className="mt-6 flex gap-2.5">
+                  <input
+                    type="text"
+                    value={quickInput}
+                    onChange={(e) => setQuickInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && quickInputKind !== 'unknown') handleQuickAdd(); }}
+                    placeholder={t('pasteHint')}
+                    className="v6-glass-inset min-w-0 flex-1 rounded-[17px] px-4 py-3.5 text-[15px] text-white outline-none placeholder:text-white/40 v6-focus"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleQuickPaste}
+                    aria-label="Paste"
+                    className="v6-hover-bright grid h-[50px] w-[50px] shrink-0 place-items-center rounded-[16px] border border-white/[0.12] bg-white/[0.07] text-white/70 v6-focus"
+                  >
+                    <ClipboardPaste className="h-4 w-4" strokeWidth={2.2} />
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleQuickAdd}
+                  disabled={quickImporting || !trimmedQuickInput || quickInputKind === 'unknown'}
+                  className="mt-3 flex w-full items-center justify-center gap-2 rounded-[17px] py-3.5 text-[15px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 v6-focus"
+                  style={{ background: 'linear-gradient(140deg, #FF9E38, #EA6D06)', boxShadow: '0 6px 18px rgba(234,109,6,0.35)' }}
+                >
+                  {quickImporting ? <><Loader2 className="h-4 w-4 v6-orb-spin" /> {t('adding')}</> : <><Plus className="h-4 w-4" strokeWidth={2.6} /> {t('add')}</>}
+                </button>
+              </>
+            )}
+            {!legacyImportEnabled && appLocationsLoading && (
+              <div className="mt-6 flex min-h-[154px] flex-col items-center justify-center gap-3 text-white/55">
+                <Loader2 className="h-5 w-5 v6-orb-spin" aria-hidden="true" />
+                <p className="text-[12px] leading-relaxed">{t('v6RestoringSession' as never)}</p>
+              </div>
+            )}
+            {!legacyImportEnabled && !appLocationsLoading && (
+              <div className="mt-6 text-left">
+                <label className="mb-2.5 block text-[13px] font-medium text-white/72">
+                  {t('v6AppLoginCode' as never)}
+                </label>
+                <input
+                  type="text"
+                  value={appLoginCode}
+                  onChange={(e) => setAppLoginCode(formatAppLoginCode(e.target.value))}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && canSubmitAppLoginCode) handleAppLogin(); }}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={9}
+                  placeholder="3614-4311"
+                  aria-label={t('v6AppLoginCode' as never)}
+                  className="v6-glass-inset min-h-[56px] w-full rounded-[18px] px-4 text-center text-[18px] font-semibold tracking-[0.09em] text-white outline-none placeholder:text-white/26 v6-focus"
+                />
+                <p className="mt-2 px-1 text-[11.5px] leading-relaxed text-white/43">
+                  {t('v6AppLoginCodeHelp' as never)}
+                </p>
+                <button
+                  type="button"
+                  onClick={handleAppLogin}
+                  disabled={!canSubmitAppLoginCode}
+                  className="mt-4 min-h-[54px] w-full rounded-[18px] px-5 text-[15px] font-semibold text-white transition-[opacity,transform] hover:-translate-y-px hover:opacity-95 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-40 v6-focus"
+                  style={{ background: 'linear-gradient(140deg, #FF9E38, #EA6D06)', boxShadow: '0 6px 18px rgba(234,109,6,0.35)' }}
+                >
+                  {appLoginBusy ? t('loading') : t('v6AppSignIn' as never)}
+                </button>
+                {appLoginError && (
+                  <p className="mt-3 text-center text-[12px] leading-relaxed text-[#ff8b7d]">
+                    {appLoginError}
+                  </p>
+                )}
+                <div className="mt-6 border-t border-white/[0.08] pt-4">
+                  <button
+                    type="button"
+                    aria-expanded={privacyDetailsOpen}
+                    onClick={() => setPrivacyDetailsOpen((open) => !open)}
+                    className="v6-focus flex w-full items-center gap-2 rounded-xl py-1 text-left text-[12px] font-medium text-white/48 transition-colors hover:text-white/70"
+                  >
+                    <ShieldCheck className="h-4 w-4 text-[#FFAE57]/75" strokeWidth={2} />
+                    <span className="flex-1">{t('v6PrivacyDetails' as never)}</span>
+                    <ChevronDown className={`h-4 w-4 transition-transform duration-200 ${privacyDetailsOpen ? 'rotate-180' : ''}`} strokeWidth={2} />
+                  </button>
+                  {privacyDetailsOpen && (
+                    <div className="mt-3 rounded-[15px] bg-white/[0.035] px-4 py-3.5">
+                      <p className="text-[11.5px] leading-relaxed text-white/52">
+                        {t('v6VpnDataDisclosure' as never)}
+                      </p>
+                      {privacyPolicyUrl && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              const { openUrl } = await import('@tauri-apps/plugin-opener');
+                              await openUrl(privacyPolicyUrl);
+                            } catch {
+                              window.open(privacyPolicyUrl, '_blank', 'noopener,noreferrer');
+                            }
+                          }}
+                          className="mt-2.5 text-[11.5px] font-medium text-[#FFAE57] underline decoration-[#FFAE57]/45 underline-offset-4 v6-focus"
+                        >
+                          {t('v6PrivacyPolicy' as never)}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
-        </>
+        </div>
+      ) : (
+        <div className={`v6-dashboard-layout flex min-h-0 flex-1 gap-[22px] ${postLoginFlight ? 'v6-dashboard-reveal' : 'v6-dashboard-enter'}`}>
+          <LocationList
+            servers={servers}
+            activeServer={activeServer}
+            activeSub={activeSub}
+            pingingServerIds={pingingServerIds}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            onSelect={handleServerSelect}
+            onAdd={() => { if (legacyImportEnabled) setShowAddModal(true); }}
+            canAdd={legacyImportEnabled}
+            onPingAll={handlePingAll}
+            t={t}
+          />
+
+          {/* RIGHT: modes, connect core, bottom row */}
+          <div className="v6-dashboard-main flex min-h-0 min-w-0 flex-1 flex-col gap-4">
+            {!networkExtensionOnly && (
+              <ModeSelector current={productMode} onSelect={handleModeSelect} disabled={busy} t={t} />
+            )}
+
+            <ConnectOrb
+              state={orbState}
+              primaryLabel={orbPrimary}
+              subLabel={orbSub}
+              statusLabel={orbStatusLabel}
+              serverName={activeServer ? displayServerName(activeServer) : null}
+              serverRawName={activeServer?.name ?? null}
+              serverCountryCode={activeServer?.countryCode ?? null}
+              disabled={status === 'disconnected' && !canConnect}
+              onClick={handleConnect}
+              onDiagnose={networkExtensionOnly ? undefined : () => setShowDiagModal(true)}
+              diagnoseLabel={t('v6DiagIssueCta' as never)}
+            />
+
+            <div className="flex shrink-0 gap-3.5">
+              {!networkExtensionOnly && (
+                <SplitRoutingToggle protectedMode={productMode === 'protected'} onOpen={() => setShowSplitModal(true)} t={t} />
+              )}
+              {!networkExtensionOnly && showStats && (
+                <TrafficStats
+                  connected={connected}
+                  currentDownload={currentDownload}
+                  currentUpload={currentUpload}
+                  t={t}
+                />
+              )}
+            </div>
+
+            <DiagnosticsDrawer
+              logs={logs}
+              onClear={clearLogs}
+              onOpenDiagnostics={networkExtensionOnly ? undefined : () => setShowDiagModal(true)}
+              t={t}
+            />
+          </div>
+        </div>
+      )}
+
+      {!networkExtensionOnly && showDiagModal && (
+        <DiagnosticPanel
+          onClose={() => setShowDiagModal(false)}
+          onExportSupportBundle={handleExportSupportBundle}
+          t={t}
+        />
+      )}
+
+      {!networkExtensionOnly && showSplitModal && (
+        <SplitRoutingModal
+          protectedMode={productMode === 'protected'}
+          onClose={() => setShowSplitModal(false)}
+          t={t}
+        />
       )}
     </div>
   );

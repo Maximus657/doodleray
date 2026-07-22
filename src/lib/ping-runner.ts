@@ -3,6 +3,21 @@ import { pingServerSmart } from './utils';
 
 const DEFAULT_PING_CONCURRENCY = 4;
 
+function isUnsafeProbeHost(rawHost: string): boolean {
+  const host = rawHost.trim().replace(/^\[|\]$/g, '').toLowerCase();
+  if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return true;
+
+  const ipv4 = host.split('.').map(Number);
+  if (ipv4.length === 4 && ipv4.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)) {
+    const [a, b] = ipv4;
+    return a === 0 || a === 10 || a === 127 || a >= 224 ||
+      (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168);
+  }
+
+  return host === '::' || host === '::1' || host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe8') || host.startsWith('fe9') || host.startsWith('fea') || host.startsWith('feb');
+}
+
 type InvokeFn = (cmd: string, args: any) => Promise<any>;
 
 interface PingServersOptions {
@@ -47,7 +62,7 @@ export async function pingServersWithLimit(
       emitActiveIds();
 
       try {
-        const ping = await pingServerSmart(server, invoke);
+        const ping = isUnsafeProbeHost(server.address) ? -1 : await pingServerSmart(server, invoke);
         if (!isCancelled()) pendingUpdates.push({ id: server.id, ping });
       } catch {
         if (!isCancelled()) pendingUpdates.push({ id: server.id, ping: -1 });

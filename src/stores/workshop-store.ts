@@ -49,7 +49,7 @@ const BUILTIN_PRESETS: RoutingPreset[] = [
   {
     id: 'builtin-gaming-min-ping',
     title: '🎮 Геймерский — минимальный пинг',
-    description: 'Игры, лаунчеры, PUBG и античит идут напрямую. Discord, Twitch и YouTube остаются через VPN.',
+    description: 'Игры, лаунчеры, PUBG и античит идут напрямую — всё остальное через VPN как обычно.',
     author: 'DoodleRay',
     rules: [
       { id: 'builtin-gaming-steam-domain', type: 'domain', value: 'steampowered.com', action: 'direct', enabled: true, comment: 'Steam' },
@@ -75,12 +75,8 @@ const BUILTIN_PRESETS: RoutingPreset[] = [
       { id: 'builtin-gaming-pubg-be', type: 'exe', value: 'TslGame_BE.exe', action: 'direct', enabled: true, comment: 'PUBG BattlEye launcher' },
       { id: 'builtin-gaming-pubg-exec', type: 'exe', value: 'ExecPubg.exe', action: 'direct', enabled: true, comment: 'PUBG Steam launcher' },
       { id: 'builtin-gaming-battleye', type: 'exe', value: 'BEService.exe', action: 'direct', enabled: true, comment: 'BattlEye service' },
-      { id: 'builtin-gaming-discord-domain', type: 'domain', value: 'discord.com', action: 'proxy', enabled: true, comment: 'Discord voice' },
-      { id: 'builtin-gaming-discord-cdn', type: 'domain', value: 'discordapp.com', action: 'proxy', enabled: true, comment: 'Discord CDN' },
-      { id: 'builtin-gaming-discord-exe', type: 'exe', value: 'Discord.exe', action: 'proxy', enabled: true, comment: 'Discord клиент' },
-      { id: 'builtin-gaming-twitch', type: 'domain', value: 'twitch.tv', action: 'proxy', enabled: true, comment: 'стримы' },
-      { id: 'builtin-gaming-youtube', type: 'domain', value: 'youtube.com', action: 'proxy', enabled: true, comment: 'гайды/ролики' },
-      { id: 'builtin-gaming-googlevideo', type: 'domain', value: 'googlevideo.com', action: 'proxy', enabled: true, comment: 'YouTube CDN' },
+      // No explicit 'proxy' rules here: in whole-computer mode everything not
+      // listed goes through the VPN anyway, so they only add noise.
     ],
     stars: 5,
     totalRatings: 1,
@@ -91,12 +87,10 @@ const BUILTIN_PRESETS: RoutingPreset[] = [
   },
 ];
 
-function isGamingMinPingPreset(preset: { id?: string; presetId?: string; title: string }) {
+export function isGamingMinPingPreset(preset: { id?: string; presetId?: string; title: string }) {
   const id = preset.id ?? preset.presetId;
-  const title = preset.title.toLowerCase();
   return id === 'builtin-gaming-direct' ||
-    id === 'builtin-gaming-min-ping' ||
-    (title.includes('геймер') && title.includes('пинг'));
+    id === 'builtin-gaming-min-ping';
 }
 
 function routingRuleKey(rule: Pick<RoutingRule, 'type' | 'value'>) {
@@ -116,27 +110,12 @@ function mergeRoutingRules(primary: RoutingRule[], additions: RoutingRule[]) {
 }
 
 function mergeBuiltinPresets(apiPresets: RoutingPreset[]): RoutingPreset[] {
-  let mergedIntoApiGamingPreset = false;
-  const mergedApiPresets = apiPresets.map((preset) => {
-    if (!isGamingMinPingPreset(preset)) return preset;
-    mergedIntoApiGamingPreset = true;
-    return {
-      ...preset,
-      description: 'Игры, лаунчеры, PUBG и античит идут напрямую. Discord, Twitch и YouTube остаются через VPN.',
-      rules: mergeRoutingRules(preset.rules, BUILTIN_PRESETS[0].rules),
-    };
-  });
-
-  if (mergedIntoApiGamingPreset) {
-    return mergedApiPresets;
-  }
-
-  const apiIds = new Set(apiPresets.map((preset) => preset.id));
-  return [...BUILTIN_PRESETS.filter((preset) => !apiIds.has(preset.id)), ...apiPresets];
+  const reservedIds = new Set(BUILTIN_PRESETS.map((preset) => preset.id));
+  return [...BUILTIN_PRESETS, ...apiPresets.filter((preset) => !reservedIds.has(preset.id))];
 }
 
 function appliedPresetMatchesPreset(applied: AppliedPreset, preset: RoutingPreset) {
-  return applied.presetId === preset.id || (isGamingMinPingPreset(applied) && isGamingMinPingPreset(preset));
+  return applied.presetId === preset.id;
 }
 
 function normalizeAppliedPreset(applied: AppliedPreset): AppliedPreset {
@@ -148,7 +127,7 @@ function normalizeAppliedPreset(applied: AppliedPreset): AppliedPreset {
     ...applied,
     presetId: 'builtin-gaming-min-ping',
     title: '🎮 Геймерский — минимальный пинг',
-    description: 'Игры, лаунчеры, PUBG и античит идут напрямую. Discord, Twitch и YouTube остаются через VPN.',
+    description: 'Игры, лаунчеры, PUBG и античит идут напрямую — всё остальное через VPN как обычно.',
     rules: mergeRoutingRules(applied.rules, BUILTIN_PRESETS[0].rules),
   };
 }
@@ -178,6 +157,8 @@ function normalizeAppliedPresets(appliedPresets: AppliedPreset[]) {
     return merged;
   }, []);
 }
+
+let latestPresetRequest = 0;
 
 interface WorkshopState {
   myRules: RoutingRule[];
@@ -250,6 +231,7 @@ export const useWorkshopStore = create<WorkshopState>()(persist((set, get) => ({
 
   // ── Load presets from API ──
   loadPresets: async () => {
+    const request = ++latestPresetRequest;
     set({ loading: true });
     try {
       const data = await api.fetchPresets(get().sortBy);
@@ -266,9 +248,9 @@ export const useWorkshopStore = create<WorkshopState>()(persist((set, get) => ({
         hasUpvoted: p.hasUpvoted,
         createdAt: p.createdAt,
       }));
-      set({ presets: mergeBuiltinPresets(presets), loading: false });
+      if (request === latestPresetRequest) set({ presets: mergeBuiltinPresets(presets), loading: false });
     } catch {
-      set({ presets: mergeBuiltinPresets([]), loading: false });
+      if (request === latestPresetRequest) set({ presets: mergeBuiltinPresets([]), loading: false });
     }
   },
 
@@ -326,18 +308,6 @@ export const useWorkshopStore = create<WorkshopState>()(persist((set, get) => ({
 
   // ── Rate preset via API ──
   ratePreset: async (id, rating) => {
-    // Optimistic update
-    set((s) => ({
-      presets: s.presets.map((p) => {
-        if (p.id !== id) return p;
-        const wasRated = p.myRating !== undefined;
-        const newTotal = wasRated ? p.totalRatings : p.totalRatings + 1;
-        const oldSum = p.stars * p.totalRatings;
-        const newSum = wasRated ? oldSum - (p.myRating || 0) + rating : oldSum + rating;
-        return { ...p, stars: Math.round((newSum / newTotal) * 10) / 10, totalRatings: newTotal, myRating: rating };
-      }),
-    }));
-    // Send to API
     const result = await api.ratePreset(id, rating);
     if (result) {
       set((s) => ({
@@ -348,10 +318,6 @@ export const useWorkshopStore = create<WorkshopState>()(persist((set, get) => ({
 
   // ── Upvote via API ──
   upvotePreset: async (id) => {
-    // Optimistic
-    set((s) => ({
-      presets: s.presets.map((p) => p.id === id ? { ...p, upvotes: p.hasUpvoted ? p.upvotes - 1 : p.upvotes + 1, hasUpvoted: !p.hasUpvoted } : p),
-    }));
     const result = await api.toggleUpvote(id);
     if (result) {
       set((s) => ({

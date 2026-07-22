@@ -134,6 +134,41 @@ fn applescript_quote(value: &str) -> String {
     format!("\"{}\"", escaped)
 }
 
+#[cfg(not(windows))]
+fn singbox_pid_path() -> PathBuf {
+    std::env::temp_dir()
+        .join("DoodleRay")
+        .join("singbox_tun.pid")
+}
+
+#[cfg(not(windows))]
+fn read_singbox_pid() -> Option<u32> {
+    let raw = std::fs::read_to_string(singbox_pid_path()).ok()?;
+    let pid = raw.trim().parse::<u32>().ok()?;
+    (pid > 1).then_some(pid)
+}
+
+#[cfg(not(windows))]
+fn command_matches_owned_singbox(command: &str) -> bool {
+    let expected_config = std::env::temp_dir()
+        .join("DoodleRay")
+        .join("tun_config.json");
+    command.contains("sing-box") && command.contains(&expected_config.to_string_lossy().to_string())
+}
+
+#[cfg(not(windows))]
+fn is_owned_singbox_process(pid: u32) -> bool {
+    let output = Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "command="])
+        .output();
+    match output {
+        Ok(output) if output.status.success() => {
+            command_matches_owned_singbox(&String::from_utf8_lossy(&output.stdout))
+        }
+        _ => false,
+    }
+}
+
 /// Start sing-box TUN as an elevated (admin/root) subprocess
 pub fn start_tun_elevated(config_json: &serde_json::Value) -> Result<(), String> {
     let _ = stop_tun();
@@ -242,11 +277,14 @@ pub fn start_tun_elevated(config_json: &serde_json::Value) -> Result<(), String>
     #[cfg(target_os = "macos")]
     {
         let sh_path = temp_dir.join("launch_singbox.sh");
+        let pid_path = singbox_pid_path();
+        let _ = std::fs::remove_file(&pid_path);
         let sh_content = format!(
-            "#!/bin/bash\nset -e\n{} run -c {} > {} 2>&1 < /dev/null &\n",
+            "#!/bin/bash\nset -e\n{} run -c {} > {} 2>&1 < /dev/null &\necho $! > {}\n",
             shell_quote(&singbox_exe.to_string_lossy()),
             shell_quote(&config_path.to_string_lossy()),
             shell_quote(&log_path.to_string_lossy()),
+            shell_quote(&pid_path.to_string_lossy()),
         );
         write_private_file(&sh_path, &sh_content, true)?;
 
@@ -328,7 +366,7 @@ pub fn is_singbox_running() -> bool {
     #[cfg(windows)]
     {
         if let Ok(output) = Command::new("tasklist")
-            .args(&["/FI", "IMAGENAME eq sing-box.exe", "/NH"])
+            .args(["/FI", "IMAGENAME eq sing-box.exe", "/NH"])
             .creation_flags(0x08000000)
             .output()
         {
@@ -339,10 +377,7 @@ pub fn is_singbox_running() -> bool {
     }
     #[cfg(not(windows))]
     {
-        if let Ok(output) = Command::new("pgrep").args(["-f", "sing-box"]).output() {
-            return output.status.success();
-        }
-        false
+        read_singbox_pid().is_some_and(is_owned_singbox_process)
     }
 }
 
@@ -352,25 +387,58 @@ pub fn stop_tun() -> Result<(), String> {
         // Production Windows TUN is owned by DoodleRayTunnelService. Do not kill by
         // image name here: that can hit unrelated sing-box users and can surface
         // taskkill/UAC dialogs during shutdown.
+        return Ok(());
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     {
-        // Kill via sudo (may prompt for password)
-        let _ = Command::new("pkill").args(["-f", "sing-box"]).output();
+        let pid_path = singbox_pid_path();
+        let Some(pid) = read_singbox_pid() else {
+            let _ = std::fs::remove_file(pid_path);
+            return Ok(());
+        };
 
-        // If regular kill fails, try with sudo
-        if is_singbox_running() {
-            let _ = Command::new("osascript")
-                .args([
-                    "-e",
-                    "do shell script \"pkill -f sing-box\" with administrator privileges",
-                ])
-                .output();
-            std::thread::sleep(std::time::Duration::from_millis(500));
+        if !is_owned_singbox_process(pid) {
+            let _ = std::fs::remove_file(pid_path);
+            return Ok(());
         }
+
+        // The direct-distribution macOS runtime is elevated, so the ordinary
+        // signal normally fails. Try it first to avoid an unnecessary prompt,
+        // then authorize a kill for this exact, verified PID only.
+        let _ = Command::new("kill").arg(pid.to_string()).output();
+        if is_owned_singbox_process(pid) {
+            let shell_command = format!("/bin/kill {}", pid);
+            let script = format!(
+                "do shell script {} with administrator privileges",
+                applescript_quote(&shell_command)
+            );
+            let output = Command::new("osascript")
+                .args(["-e", &script])
+                .output()
+                .map_err(|e| format!("Failed to stop DoodleRay sing-box process: {}", e))?;
+            if !output.status.success() {
+                return Err(
+                    "Administrator permission is required to stop the DoodleRay tunnel".into(),
+                );
+            }
+        }
+
+        for _ in 0..10 {
+            if !is_owned_singbox_process(pid) {
+                let _ = std::fs::remove_file(&pid_path);
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+
+        Err(format!(
+            "DoodleRay sing-box process {} did not stop cleanly",
+            pid
+        ))
     }
 
+    #[cfg(all(not(windows), not(target_os = "macos")))]
     Ok(())
 }
 
@@ -384,4 +452,26 @@ pub fn stop_tun_for_update() -> Result<(), String> {
 #[cfg(not(windows))]
 pub fn stop_tun_for_update() -> Result<(), String> {
     stop_tun()
+}
+
+#[cfg(all(test, not(windows)))]
+mod tests {
+    use super::command_matches_owned_singbox;
+
+    #[test]
+    fn singbox_process_ownership_requires_doodleray_config() {
+        let expected = std::env::temp_dir()
+            .join("DoodleRay")
+            .join("tun_config.json");
+        let owned = format!(
+            "/Applications/DoodleRay.app/sing-box run -c {}",
+            expected.display()
+        );
+
+        assert!(command_matches_owned_singbox(&owned));
+        assert!(!command_matches_owned_singbox(
+            "/usr/local/bin/sing-box run -c /tmp/another-vpn.json"
+        ));
+        assert!(!command_matches_owned_singbox("/usr/bin/unrelated"));
+    }
 }

@@ -1,0 +1,49 @@
+{
+  "xray": {
+    "version": "v26.7.11",
+    "assets": {
+      "windows_amd64": {
+        "name": "Xray-windows-64.zip",
+        "sha256": "af801b62c4d41d248d3db8016d4c6e2a7ccfb7ed443e3738aeb6f9e062321512"
+      },
+      "darwin_arm64": {
+        "name": "Xray-macos-arm64-v8a.zip",
+        "sha256": "61f8f74d099098af710fa43613d9934d97b901dee909801d34f496cd463956d1"
+      },
+      "darwin_amd64": {
+        "name": "Xray-macos-64.zip",
+        "sha256": "d8c116756d3a88a38a833a94bdf8bc801f69243ee888befcb56df8b4f1ec4878"
+      }
+    }
+  },
+  "libxray": {
+    "tag": "v26.7.11",
+    "commit": "294fb37343205b9b0cb7b7b1b423d3d4b60d9998"
+  },
+  "sing_box": {
+    "version": "1.13.14",
+    "assets": {
+      "windows_amd64": {
+        "name": "sing-box-1.13.14-windows-amd64.zip",
+        "sha256": "f580782c6dd10f7691c66cea1d7c421813c5fbf7e305d1ee7ce0c3a40d196341"
+      },
+      "darwin_arm64": {
+        "name": "sing-box-1.13.14-darwin-arm64.tar.gz",
+        "sha256": "73e8967b0fc08e17bce4263ca56ebc394822401a16497a1c4e02316c888202ab"
+      },
+      "darwin_amd64": {
+        "name": "sing-box-1.13.14-darwin-amd64.tar.gz",
+        "sha256": "5245d645e847f90bb708da74bc020ae078c28489690756419685c04f56b4e3bb"
+      }
+    }
+  },
+  "gomobile": {
+    "version": "v0.0.0-20260709172247-6129f5bee9d5",
+    "sum": "h1:Mn1OzFmF0ZKX/ZayHz/UdnWHufPp1wlD9lZ5U8LRDFY="
+  },
+  "wintun": {
+    "version": "0.14.1",
+    "asset": "wintun-0.14.1.zip",
+    "sha256": "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51"
+  }
+}

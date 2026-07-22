@@ -1,0 +1,121 @@
+name: Windows v6 RC gate
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-v6-rc-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    env:
+      DOODLERAY_CLOSED_CONTROL_PLANE: "1"
+      VITE_DOODLERAY_CLOSED_CONTROL_PLANE: "1"
+      VITE_DOODLERAY_BUILD_CHANNEL: "direct"
+      VITE_DOODLERAY_UPDATE_CHANNEL: "direct"
+      VITE_DOODLERAY_DIAGNOSTICS_TELEMETRY: "0"
+      WINDOWS_CODESIGN_REQUIRED: "false"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Test shared frontend
+        shell: pwsh
+        run: |
+          npm ci
+          npm test
+          npm run build
+
+      - name: Verify Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+
+      - name: Download verified Windows runtimes
+        shell: pwsh
+        run: |
+          $runtime = Get-Content runtime-versions.json -Raw | ConvertFrom-Json
+
+          $xray = $runtime.xray.assets.windows_amd64
+          Invoke-WebRequest "https://github.com/XTLS/Xray-core/releases/download/$($runtime.xray.version)/$($xray.name)" -OutFile xray.zip
+          if ((Get-FileHash xray.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $xray.sha256) {
+            throw 'Xray archive checksum mismatch'
+          }
+          Expand-Archive xray.zip xray-core-tmp
+          New-Item -ItemType Directory -Force src-tauri/xray-core | Out-Null
+          Copy-Item xray-core-tmp/xray.exe, xray-core-tmp/geoip.dat, xray-core-tmp/geosite.dat src-tauri/xray-core/
+
+          Invoke-WebRequest "https://www.wintun.net/builds/$($runtime.wintun.asset)" -OutFile wintun.zip
+          if ((Get-FileHash wintun.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $runtime.wintun.sha256) {
+            throw 'Wintun archive checksum mismatch'
+          }
+          Expand-Archive wintun.zip wintun-tmp
+          Copy-Item wintun-tmp/wintun/bin/amd64/wintun.dll src-tauri/xray-core/
+          Copy-Item wintun-tmp/wintun/bin/amd64/wintun.dll src-tauri/
+
+          $singBox = $runtime.sing_box.assets.windows_amd64
+          Invoke-WebRequest "https://github.com/SagerNet/sing-box/releases/download/v$($runtime.sing_box.version)/$($singBox.name)" -OutFile sing-box.zip
+          if ((Get-FileHash sing-box.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $singBox.sha256) {
+            throw 'sing-box archive checksum mismatch'
+          }
+          Expand-Archive sing-box.zip sing-box-tmp
+          $singBoxExe = Get-ChildItem sing-box-tmp -Recurse -Filter sing-box.exe | Select-Object -First 1
+          if (-not $singBoxExe) { throw 'sing-box.exe not found' }
+          Copy-Item $singBoxExe.FullName src-tauri/sing-box.exe
+
+      - name: Test Windows Rust paths
+        shell: pwsh
+        run: |
+          if (-not (Test-Path src-tauri/DoodleRayService.exe)) {
+            New-Item -ItemType File src-tauri/DoodleRayService.exe | Out-Null
+          }
+          cargo test --manifest-path src-tauri/Cargo.toml --lib --features windows-service
+          cargo build --release --manifest-path src-tauri/Cargo.toml --bin DoodleRayService --features windows-service
+          Copy-Item src-tauri/target/release/DoodleRayService.exe src-tauri/ -Force
+
+      - name: Build unsigned NSIS candidate
+        shell: pwsh
+        run: npx tauri build --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: Verify candidate contents
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem src-tauri/target/release/bundle/nsis -Filter '*.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'NSIS installer is missing' }
+          $required = @(
+            'src-tauri/target/release/DoodleRay.exe',
+            'src-tauri/DoodleRayService.exe',
+            'src-tauri/sing-box.exe',
+            'src-tauri/wintun.dll',
+            'src-tauri/xray-core/xray.exe'
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path $path)) { throw "Required candidate file is missing: $path" }
+          }
+          "INSTALLER=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Upload QA installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: doodleray-v6-windows-unsigned-rc
+          path: ${{ env.INSTALLER }}
+          retention-days: 7
+

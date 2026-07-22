@@ -1,27 +1,30 @@
 {
   "name": "doodleray",
   "private": true,
-  "version": "5.4.4",
+  "version": "6.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "node --experimental-strip-types src/lib/redaction.test.ts && node --experimental-strip-types src/lib/ui-format.test.ts && node --experimental-strip-types src/lib/raw-xray-sanitizer.test.ts && node --experimental-strip-types src/lib/parser.test.ts && node --experimental-strip-types src/lib/connection-health.test.ts && node --experimental-strip-types src/lib/server-groups.test.ts && node --experimental-strip-types src/lib/server-selection.test.ts && node --experimental-strip-types src/lib/app-control-plane.test.ts && node --experimental-strip-types src/components/v6/status.test.ts",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri"
   },
   "dependencies": {
+    "@gsap/react": "^2.1.2",
+    "@lobehub/fluent-emoji-3d": "^1.1.0",
     "@tailwindcss/vite": "^4.2.1",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-autostart": "^2.5.1",
-    "@tauri-apps/plugin-http": "^2.5.7",
     "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.0",
+    "flag-icons": "^7.5.0",
+    "gsap": "^3.15.0",
     "lucide-react": "^0.577.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-router-dom": "^7.13.1",
-    "recharts": "^3.8.0",
     "tailwindcss": "^4.2.1",
     "zustand": "^5.0.11"
   },

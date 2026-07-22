@@ -6,6 +6,7 @@ import { useAppStore } from '../stores/app-store';
 import { checkForAppUpdate, getCachedUpdate, installAppUpdate } from '../lib/app-updater';
 import { clearAppCache, diagnosticsReportToText, getStorageReport, runNetworkDiagnostics, type DiagnosticCheck, type NetworkDiagnosticsReport, type StorageReport } from '../lib/diagnostics';
 import { reportConnectionError } from '../lib/workshop-api';
+import { isDesktopAutostartAvailable } from '../lib/build-policy';
 
 function Toggle({ checked, onChange, label, description, warning }: { checked: boolean; onChange: (v: boolean) => void; label: string; description?: string; warning?: string }) {
   return (
@@ -63,6 +64,8 @@ function updateStatusLabel(
       return t('updateClosingProcesses');
     case 'updateInstallingRestarting':
       return t('updateInstallingRestarting');
+    case 'updateOpenStore':
+      return t('updateOpenStore');
     case 'updateLatest':
       return t('updateLatest');
     default:
@@ -169,6 +172,7 @@ function diagnosticSeverity(severity: DiagnosticCheck['severity'], language: str
 }
 
 export default function Settings() {
+  const desktopAutostartAvailable = isDesktopAutostartAvailable();
   const {
     socksPort, setSocksPort,
     httpPort, setHttpPort,
@@ -207,7 +211,7 @@ export default function Settings() {
       message: 'Are you absolutely sure you want to delete ALL servers and subscriptions? This cannot be undone.',
       onConfirm: () => {
         wipeData();
-        addLog('warning', 'All server configurations have been wiped from the device.');
+        addLog('info', 'All server configurations have been wiped from the device.');
         setConfirmModal(prev => ({ ...prev, show: false }));
       }
     });
@@ -364,11 +368,36 @@ export default function Settings() {
       updateProgress: null,
     });
     try {
+      const { isUpdateManagedByStore, openStoreUpdatePage } = await import('../lib/update-channel');
+      if (isUpdateManagedByStore()) {
+        await openStoreUpdatePage();
+        setUpdateState({
+          availableUpdate: null,
+          updatePhase: 'idle',
+          updateStatus: 'updateOpenStore',
+          updateProgress: null,
+        });
+        return;
+      }
+
       let update = getCachedUpdate();
       if (!update) {
         update = await checkForAppUpdate();
       }
       if (update) {
+        // store-win32 policy: show availability, open Store/support page,
+        // never silently download in-app when self-update is disabled.
+        const { isInAppUpdateEnabled, openStoreUpdatePage } = await import('../lib/update-channel');
+        if (!isInAppUpdateEnabled()) {
+          await openStoreUpdatePage();
+          setUpdateState({
+            availableUpdate: update.version,
+            updatePhase: 'available',
+            updateStatus: 'updateOpenStore',
+            updateProgress: null,
+          });
+          return;
+        }
         setUpdateState({
           availableUpdate: update.version,
           updatePhase: 'downloading',
@@ -499,12 +528,14 @@ export default function Settings() {
               <Monitor className="w-5 h-5 text-black stroke-[3px]" /> {t('basicSettings')}
             </h2>
             <div className="space-y-2">
-              <Toggle
-                checked={silentAdminAutostart}
-                onChange={handleAdminAutostartToggle}
-                label={t('launchStartup')}
-                description={t('launchStartupDesc')}
-              />
+              {desktopAutostartAvailable && (
+                <Toggle
+                  checked={silentAdminAutostart}
+                  onChange={handleAdminAutostartToggle}
+                  label={t('launchStartup')}
+                  description={t('launchStartupDesc')}
+                />
+              )}
               <Toggle
                 checked={autoConnectOnStartup}
                 onChange={setAutoConnectOnStartup}
@@ -561,12 +592,18 @@ export default function Settings() {
                 <>
               <div className="flex items-center justify-between py-3 px-4 bg-white border-[3px] border-black shadow-[2px_2px_0_#000] rounded-xl">
                 <span className="text-sm font-black text-black uppercase tracking-tight">{t('socksPort')}</span>
-                <input type="number" value={socksPort} onChange={(e) => setSocksPort(parseInt(e.target.value) || 10808)}
+                <input type="number" min={1024} max={65535} value={socksPort} onChange={(e) => {
+                  const value = Number(e.target.value);
+                  setSocksPort(Number.isInteger(value) ? Math.min(65535, Math.max(1024, value)) : 10808);
+                }}
                   className="w-24 bg-white border-[3px] border-black shadow-inner rounded-lg px-3 py-1.5 text-sm font-black text-black focus:outline-none text-center" />
               </div>
               <div className="flex items-center justify-between py-3 px-4 bg-white border-[3px] border-black shadow-[2px_2px_0_#000] rounded-xl">
                 <span className="text-sm font-black text-black uppercase tracking-tight">{t('httpPort')}</span>
-                <input type="number" value={httpPort} onChange={(e) => setHttpPort(parseInt(e.target.value) || 10809)}
+                <input type="number" min={1024} max={65535} value={httpPort} onChange={(e) => {
+                  const value = Number(e.target.value);
+                  setHttpPort(Number.isInteger(value) ? Math.min(65535, Math.max(1024, value)) : 10809);
+                }}
                   className="w-24 bg-white border-[3px] border-black shadow-inner rounded-lg px-3 py-1.5 text-sm font-black text-black focus:outline-none text-center" />
               </div>
               <div className="py-3 px-4 bg-white border-[3px] border-black shadow-[2px_2px_0_#000] rounded-xl space-y-2">

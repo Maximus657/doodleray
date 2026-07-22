@@ -1,14 +1,18 @@
 import type { ServerConfig } from '../stores/app-store';
 
-function normalizePart(value: unknown): string {
+function normalizeCaseInsensitivePart(value: unknown): string {
   return String(value ?? '').trim().toLowerCase();
 }
 
+function normalizeOpaquePart(value: unknown): string {
+  return String(value ?? '').trim();
+}
+
 function normalizeTransportPath(server: ServerConfig): string {
-  const path = normalizePart(server.path);
+  const path = normalizeOpaquePart(server.path);
   if (path) return path;
 
-  const transport = normalizePart(server.transport);
+  const transport = normalizeCaseInsensitivePart(server.transport);
   if (transport === 'ws' || transport === 'httpupgrade' || transport === 'http' || transport === 'h2') {
     return '/';
   }
@@ -17,12 +21,9 @@ function normalizeTransportPath(server: ServerConfig): string {
 }
 
 function getCredentialPart(server: ServerConfig): string {
-  return normalizePart(
-    server.uuid ||
-    server.password ||
-    server.peerPublicKey ||
-    server.publicKey ||
-    server.rawLink
+  if (server.uuid) return normalizeCaseInsensitivePart(server.uuid);
+  return normalizeOpaquePart(
+    server.password || server.peerPublicKey || server.publicKey || server.rawLink
   );
 }
 
@@ -47,23 +48,39 @@ export interface ServerSelectionIndex {
 export function getServerIdentityKey(server: ServerConfig): string {
   return [
     getServerSelectionKey(server),
-    normalizePart(server.name),
+    normalizeCaseInsensitivePart(server.name),
   ].join('|');
 }
 
 export function getServerSelectionKey(server: ServerConfig): string {
   return [
-    normalizePart(server.protocol),
-    normalizePart(server.address),
-    normalizePart(server.port),
+    normalizeCaseInsensitivePart(server.protocol),
+    normalizeCaseInsensitivePart(server.address),
+    normalizeCaseInsensitivePart(server.port),
     getCredentialPart(server),
-    normalizePart(server.transport),
-    normalizePart(server.security),
-    normalizePart(server.host),
+    normalizeCaseInsensitivePart(server.transport),
+    normalizeCaseInsensitivePart(server.security),
+    normalizeCaseInsensitivePart(server.host),
     normalizeTransportPath(server),
-    normalizePart(server.sni),
-    normalizePart(server.flow),
+    normalizeCaseInsensitivePart(server.sni),
+    normalizeCaseInsensitivePart(server.flow),
   ].join('|');
+}
+
+/// Deterministic profile id: subscription id + normalized outbound identity
+/// (+ name as tiebreaker inside getServerIdentityKey). Stable across
+/// refreshes so selection, ping maps, and React keys survive; old persisted
+/// selections with random ids still migrate through the identity index.
+export function stableServerId(subscriptionId: string, server: ServerConfig): string {
+  const key = `${subscriptionId}|${getServerIdentityKey(server)}`;
+  let h1 = 5381;
+  let h2 = 52711;
+  for (let i = 0; i < key.length; i++) {
+    const code = key.charCodeAt(i);
+    h1 = ((h1 * 33) ^ code) >>> 0;
+    h2 = ((h2 * 31) ^ code) >>> 0;
+  }
+  return `sub-${h1.toString(16).padStart(8, '0')}${h2.toString(16).padStart(8, '0')}`;
 }
 
 export function buildServerSelectionIndex(servers: ServerConfig[]): ServerSelectionIndex {
@@ -116,6 +133,10 @@ export function findMatchingServerInIndex(
   const byId = index.byId.get(target.id);
   if (byId) return byId;
 
+  // Closed-control-plane locations intentionally share a placeholder endpoint;
+  // only their opaque location id identifies the selected country.
+  if (target.id.startsWith('app-location:')) return null;
+
   if (target.rawLink) {
     const byRawLink = index.byRawLink.get(target.rawLink);
     if (byRawLink) return byRawLink;
@@ -146,6 +167,17 @@ export function findMatchingServer(
   return findMatchingServerInIndex(target, buildServerSelectionIndex(servers));
 }
 
+export function isAutoSelectCandidate(server: ServerConfig): boolean {
+  const countryCode = normalizeCaseInsensitivePart(server.countryCode);
+  if (countryCode === 'ru' || countryCode === 'rus') return false;
+
+  const id = normalizeCaseInsensitivePart(server.id).replace(/^app-location:/, '');
+  if (id === 'ru' || id === 'russia') return false;
+
+  const label = `${normalizeCaseInsensitivePart(server.country)} ${normalizeCaseInsensitivePart(server.name)}`;
+  return !/(^|\s)(россия|russia)(\s|$)/.test(label);
+}
+
 export function selectPreferredServer(
   servers: ServerConfig[],
   autoSelectFastest: boolean,
@@ -153,14 +185,15 @@ export function selectPreferredServer(
   if (servers.length === 0) return null;
   if (!autoSelectFastest) return servers[0];
 
+  const candidates = servers.filter(isAutoSelectCandidate);
   let fastest: ServerConfig | null = null;
-  for (const server of servers) {
+  for (const server of candidates) {
     if (server.ping !== undefined && server.ping > 0 && (!fastest || server.ping < fastest.ping!)) {
       fastest = server;
     }
   }
 
-  return fastest || servers[0];
+  return fastest || candidates[0] || null;
 }
 
 export function resolveConnectServer(

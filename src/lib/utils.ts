@@ -1,4 +1,5 @@
 import { buildPingProbeRequest } from './connect-helpers';
+import { closedLocationIdFromServer, isClosedAutoLocationServer, isClosedLocationServer } from './app-control-plane';
 import type { ServerConfig } from '../stores/app-store';
 
 // Country code to flag emoji
@@ -91,6 +92,14 @@ async function pingAddress(
   invoke: (cmd: string, args: any) => Promise<any>
 ): Promise<number> {
   if (isTauriRuntime()) {
+    if (isClosedAutoLocationServer(server)) return -1;
+    if (isClosedLocationServer(server)) {
+      const result: any = await invoke('app_ping_location', {
+        locationId: closedLocationIdFromServer(server),
+        serverId: server.id,
+      });
+      return Number.isFinite(result.ping_ms) ? result.ping_ms : -1;
+    }
     const result: any = await invoke('ping_server_profile', {
       request: buildPingProbeRequest(server),
       serverId: server.id,
@@ -101,16 +110,6 @@ async function pingAddress(
   const response = await fetch(`/api/ping?address=${encodeURIComponent(server.address)}&port=${encodeURIComponent(String(server.port))}`);
   if (!response.ok) return -1;
   const result = await response.json();
-  return Number.isFinite(result.ping_ms) ? result.ping_ms : -1;
-}
-
-async function legacyPingAddress(
-  address: string,
-  port: number,
-  serverId: string,
-  invoke: (cmd: string, args: any) => Promise<any>
-): Promise<number> {
-  const result: any = await invoke('ping_server', { address, port, serverId });
   return Number.isFinite(result.ping_ms) ? result.ping_ms : -1;
 }
 
@@ -179,7 +178,7 @@ export async function pingServerSmart(
   let bestPing = -1;
   for (const addr of addresses) {
     try {
-      const pingMs = await legacyPingAddress(addr.address, addr.port, server.id, invoke);
+      const pingMs = await pingAddress({ ...server, address: addr.address, port: addr.port }, invoke);
       if (pingMs > 0 && (bestPing < 0 || pingMs < bestPing)) {
         bestPing = pingMs;
         break; // Got a good ping, no need to try more

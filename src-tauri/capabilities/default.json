@@ -5,19 +5,21 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:window:allow-minimize",
+    "core:window:allow-maximize",
+    "core:window:allow-unmaximize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-is-maximized",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-size",
+    "core:window:allow-set-min-size",
     "opener:default",
     "updater:default",
     "updater:allow-check",
     "updater:allow-download",
     "updater:allow-download-and-install",
     "process:allow-restart",
-    "autostart:default",
-    {
-      "identifier": "http:default",
-      "allow": [
-        { "url": "https://doodleraydb-doodleray-ic3y6k-c7350f-94-241-172-101.traefik.me/**" },
-        { "url": "https://94-241-172-101.sslip.io/doodleray-api/**" }
-      ]
-    }
+    "autostart:default"
   ]
 }

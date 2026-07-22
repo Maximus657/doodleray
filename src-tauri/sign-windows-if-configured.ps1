@@ -11,6 +11,9 @@ if (-not (Test-Path -LiteralPath $Path)) {
 
 $thumbprint = $env:WINDOWS_CODESIGN_THUMBPRINT
 if ([string]::IsNullOrWhiteSpace($thumbprint)) {
+  if ($env:WINDOWS_CODESIGN_REQUIRED -eq "true") {
+    throw "WINDOWS_CODESIGN_THUMBPRINT is not set, but Windows code signing is required."
+  }
   Write-Host "Windows code signing skipped for $Path because WINDOWS_CODESIGN_THUMBPRINT is not set."
   exit 0
 }

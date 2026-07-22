@@ -1,4 +1,3 @@
-use lazy_static::lazy_static;
 use std::io::BufRead;
 use std::io::Write;
 #[cfg(unix)]
@@ -8,13 +7,11 @@ use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
-lazy_static! {
-    static ref XRAY_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
-    static ref XRAY_LOGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
-    static ref LOG_CURSOR: Mutex<usize> = Mutex::new(0);
-}
+static XRAY_PROCESS: LazyLock<Mutex<Option<Child>>> = LazyLock::new(|| Mutex::new(None));
+static XRAY_LOGS: LazyLock<Mutex<Vec<String>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+static LOG_CURSOR: LazyLock<Mutex<usize>> = LazyLock::new(|| Mutex::new(0));
 
 static XRAY_STOPPING: AtomicBool = AtomicBool::new(false);
 
@@ -229,15 +226,6 @@ pub fn stop_xray() -> Result<(), String> {
         let _ = child.wait();
     }
     *proc = None;
-
-    // Do not kill by image name on Windows: Full Computer mode is owned by the
-    // tunnel service/job object, and global taskkill can hit unrelated Xray users.
-    #[cfg(not(windows))]
-    {
-        let _ = std::process::Command::new("pkill")
-            .args(["-f", "xray"])
-            .output();
-    }
 
     // Brief pause to let ports release
     std::thread::sleep(std::time::Duration::from_millis(300));

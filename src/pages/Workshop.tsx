@@ -63,10 +63,8 @@ const SORT_LABELS: Record<'popular' | 'newest' | 'top-rated', string> = {
 
 function isGamingMinPingPreset(preset: Pick<RoutingPreset, 'id' | 'title'> | { presetId: string; title: string }) {
   const id = 'id' in preset ? preset.id : preset.presetId;
-  const title = preset.title.toLowerCase();
   return id === 'builtin-gaming-direct' ||
-    id === 'builtin-gaming-min-ping' ||
-    (title.includes('геймер') && title.includes('пинг'));
+    id === 'builtin-gaming-min-ping';
 }
 
 function isPresetApplied(appliedPresets: Array<{ presetId: string; title: string }>, preset: RoutingPreset) {
@@ -404,20 +402,24 @@ function MyRulesTab({ onOpenBrowse }: { onOpenBrowse: () => void }) {
       const file = (event.target as HTMLInputElement).files?.[0];
       if (!file) return;
       try {
+        if (file.size > 1024 * 1024) throw new Error('File is too large');
         const text = await file.text();
         const rules = JSON.parse(text);
-        if (!Array.isArray(rules)) throw new Error('Invalid format');
+        if (!Array.isArray(rules) || rules.length > 256) throw new Error('Invalid format');
         for (const rule of rules) {
-          if (rule.type && rule.value && rule.action) {
-            addRule({
-              id: crypto.randomUUID(),
-              type: rule.type,
-              value: rule.value,
-              action: rule.action,
-              enabled: rule.enabled !== false,
-              comment: rule.comment || undefined,
-            });
-          }
+          if (!rule || typeof rule !== 'object') throw new Error('Invalid rule');
+          if (rule.type !== 'domain' && rule.type !== 'exe') throw new Error('Invalid rule type');
+          if (rule.action !== 'proxy' && rule.action !== 'direct' && rule.action !== 'block') throw new Error('Invalid rule action');
+          if (typeof rule.value !== 'string' || !rule.value.trim() || rule.value.length > 2048) throw new Error('Invalid rule value');
+          if (rule.comment !== undefined && (typeof rule.comment !== 'string' || rule.comment.length > 500)) throw new Error('Invalid rule comment');
+          addRule({
+            id: crypto.randomUUID(),
+            type: rule.type,
+            value: rule.value.trim(),
+            action: rule.action,
+            enabled: rule.enabled !== false,
+            comment: rule.comment?.trim() || undefined,
+          });
         }
       } catch {
         alert('Invalid rules file');

@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '../stores/app-store';
-import { getActiveRoutingRules } from './connect-helpers';
+import { getActiveRoutingRules, resolveSystemProxyModeForRouting } from './connect-helpers';
+import { sanitizeDiagnosticText } from './redaction';
 
 export type DiagnosticSeverity = 'ok' | 'info' | 'warning' | 'error';
 
@@ -51,6 +52,11 @@ export interface CacheClearReport {
 export async function runNetworkDiagnostics(subscriptionUrl?: string | null) {
   const state = useAppStore.getState();
   const routingRules = await getActiveRoutingRules();
+  const systemProxyMode = resolveSystemProxyModeForRouting(
+    state.proxyMode,
+    state.systemProxyMode,
+    routingRules,
+  );
   return invoke<NetworkDiagnosticsReport>('run_network_diagnostics', {
     subscriptionUrl: subscriptionUrl || null,
     socksPort: state.socksPort,
@@ -61,7 +67,7 @@ export async function runNetworkDiagnostics(subscriptionUrl?: string | null) {
     proxyMode: state.proxyMode,
     appStatus: state.status,
     activeRoutingRuleCount: routingRules.length,
-    systemProxyMode: state.systemProxyMode,
+    systemProxyMode,
     dnsMode: state.dnsMode,
     networkStack: state.networkStack,
   });
@@ -81,7 +87,7 @@ export function diagnosticsReportToText(report: NetworkDiagnosticsReport): strin
     `Summary: ${report.summary}`,
   ];
   if (typeof report.durationMs === 'number') lines.push(`Duration: ${report.durationMs} ms`);
-  if (report.subscriptionHost) lines.push(`Subscription host: ${report.subscriptionHost}`);
+  if (report.subscriptionHost) lines.push('Subscription host: [domain]');
   if (report.resolvedIps.length > 0) lines.push(`Resolved IPs: ${report.resolvedIps.join(', ')}`);
   if (report.conflicts.length > 0) {
     lines.push(`Conflicts: ${report.conflicts.map((item) => item.name).join(', ')}`);
@@ -91,5 +97,5 @@ export function diagnosticsReportToText(report: NetworkDiagnosticsReport): strin
     lines.push(`[${check.severity.toUpperCase()}] ${check.title}`);
     lines.push(check.detail);
   }
-  return lines.join('\n');
+  return sanitizeDiagnosticText(lines.join('\n')) ?? '';
 }
