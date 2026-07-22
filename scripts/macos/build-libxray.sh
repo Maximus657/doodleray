@@ -67,7 +67,7 @@ if [ ! -f "$ARTIFACT/Info.plist" ] || [ ! -f "$PROVENANCE" ] || [ "$(cat "$PROVE
   printf '%s\n' "$EXPECTED_PROVENANCE" > "$PROVENANCE"
 fi
 
-if ! /usr/libexec/PlistBuddy -c 'Print :AvailableLibraries:0:SupportedPlatform' "$ARTIFACT/Info.plist" | rg -q '^macos$'; then
+if ! /usr/libexec/PlistBuddy -c 'Print :AvailableLibraries:0:SupportedPlatform' "$ARTIFACT/Info.plist" | grep -Eq '^macos$'; then
   printf 'libXray build did not produce a macOS slice\n' >&2
   exit 1
 fi
