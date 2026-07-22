@@ -88,6 +88,7 @@ const APP_MANAGED_PORTS: &[u16] = &[10808, 10809, 10813];
 const SECURE_STORE_SERVICE: &str = "DoodleRay";
 const SECURE_STORE_CHUNK_BYTES: usize = 1800;
 const SECURE_STORE_CHUNK_PREFIX: &str = "chunked:v1:";
+const RENDERER_STATE_KEY: &str = "doodleray-storage";
 const APP_IDENTIFIER: &str = match option_env!("DOODLERAY_APP_IDENTIFIER") {
     Some(identifier) => identifier,
     None => "com.doodlevpn.doodleray",
@@ -2985,6 +2986,20 @@ fn secure_store_fallback_delete(app: &tauri::AppHandle, key: &str) -> Result<(),
     }
 }
 
+fn legacy_renderer_state_has_doodle_subscription(value: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(value)
+        .ok()
+        .and_then(|root| root.get("state")?.get("subscriptions")?.as_array().cloned())
+        .is_some_and(|subscriptions| {
+            subscriptions.iter().any(|subscription| {
+                subscription
+                    .get("url")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|url| legacy_subscription_token(url).is_ok())
+            })
+        })
+}
+
 fn secure_store_keyring_get(key: &str) -> Result<Option<String>, String> {
     match secure_store_native_get(key)? {
         Some(value) => {
@@ -3032,9 +3047,186 @@ fn secure_store_keyring_delete(key: &str) -> Result<(), String> {
     delete_secure_store_entry(key)
 }
 
+#[cfg(windows)]
+fn app_api_dpapi_path(key: &str) -> Result<PathBuf, String> {
+    validate_secure_store_key(key)?;
+    let app_data = std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .ok_or_else(|| "Windows app-data path is unavailable".to_string())?;
+    let dir = app_data.join(APP_IDENTIFIER).join("secure-storage-native");
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| format!("Native secure storage init failed: {}", error))?;
+    Ok(dir.join(format!("{}.dpapi", key)))
+}
+
+#[cfg(windows)]
+fn app_api_dpapi_transform(key: &str, value: &[u8], protect: bool) -> Result<Vec<u8>, String> {
+    use windows_sys::Win32::Foundation::{GetLastError, LocalFree};
+    use windows_sys::Win32::Security::Cryptography::{
+        CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
+    };
+
+    let entropy = format!("{}:{}:v1", APP_IDENTIFIER, key).into_bytes();
+    let input = CRYPT_INTEGER_BLOB {
+        cbData: value.len() as u32,
+        pbData: value.as_ptr() as *mut u8,
+    };
+    let entropy_blob = CRYPT_INTEGER_BLOB {
+        cbData: entropy.len() as u32,
+        pbData: entropy.as_ptr() as *mut u8,
+    };
+    let mut output = CRYPT_INTEGER_BLOB {
+        cbData: 0,
+        pbData: std::ptr::null_mut(),
+    };
+    let ok = unsafe {
+        if protect {
+            CryptProtectData(
+                &input,
+                std::ptr::null(),
+                &entropy_blob,
+                std::ptr::null(),
+                std::ptr::null(),
+                CRYPTPROTECT_UI_FORBIDDEN,
+                &mut output,
+            )
+        } else {
+            CryptUnprotectData(
+                &input,
+                std::ptr::null_mut(),
+                &entropy_blob,
+                std::ptr::null(),
+                std::ptr::null(),
+                CRYPTPROTECT_UI_FORBIDDEN,
+                &mut output,
+            )
+        }
+    };
+    if ok == 0 {
+        return Err(format!("Windows DPAPI operation failed: {}", unsafe {
+            GetLastError()
+        }));
+    }
+    let result =
+        unsafe { std::slice::from_raw_parts(output.pbData, output.cbData as usize) }.to_vec();
+    unsafe {
+        LocalFree(output.pbData as _);
+    }
+    Ok(result)
+}
+
+#[cfg(windows)]
+fn app_api_dpapi_get(key: &str) -> Result<Option<String>, String> {
+    let path = app_api_dpapi_path(key)?;
+    let encrypted = match std::fs::read(&path) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("Native secure storage read failed: {}", error)),
+    };
+    let plaintext = app_api_dpapi_transform(key, &encrypted, false)?;
+    String::from_utf8(plaintext)
+        .map(Some)
+        .map_err(|_| "Native secure storage value is not valid UTF-8".to_string())
+}
+
+#[cfg(windows)]
+fn app_api_dpapi_set(key: &str, value: &str) -> Result<(), String> {
+    let path = app_api_dpapi_path(key)?;
+    let encrypted = app_api_dpapi_transform(key, value.as_bytes(), true)?;
+    write_private_file(&path, &encrypted)
+        .map_err(|error| format!("Native secure storage write failed: {}", error))
+}
+
+#[cfg(windows)]
+fn app_api_dpapi_delete(key: &str) -> Result<(), String> {
+    let path = app_api_dpapi_path(key)?;
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("Native secure storage delete failed: {}", error)),
+    }
+}
+
+fn app_api_native_secret_get(key: &str) -> Result<Option<String>, String> {
+    match secure_store_keyring_get(key) {
+        Ok(Some(value)) => return Ok(Some(value)),
+        Ok(None) => {}
+        Err(keyring_error) => {
+            #[cfg(not(windows))]
+            return Err(keyring_error);
+            #[cfg(windows)]
+            eprintln!(
+                "[warn] keyring read failed, trying Windows DPAPI: {}",
+                keyring_error
+            );
+        }
+    }
+    #[cfg(windows)]
+    {
+        let value = app_api_dpapi_get(key)?;
+        if let Some(value) = &value {
+            let _ = secure_store_keyring_set(key, value);
+        }
+        Ok(value)
+    }
+    #[cfg(not(windows))]
+    Ok(None)
+}
+
+fn app_api_native_secret_set(key: &str, value: &str) -> Result<(), String> {
+    let keyring_result = secure_store_keyring_set(key, value);
+    #[cfg(windows)]
+    {
+        let dpapi_result = app_api_dpapi_set(key, value);
+        match (keyring_result, dpapi_result) {
+            (Ok(()), Ok(())) | (Err(_), Ok(())) | (Ok(()), Err(_)) => Ok(()),
+            (Err(keyring_error), Err(dpapi_error)) => {
+                Err(format!("{}; {}", keyring_error, dpapi_error))
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    keyring_result
+}
+
+fn app_api_native_secret_delete(key: &str) -> Result<(), String> {
+    let keyring_result = secure_store_keyring_delete(key);
+    #[cfg(windows)]
+    {
+        let dpapi_result = app_api_dpapi_delete(key);
+        match (keyring_result, dpapi_result) {
+            (Ok(()), Ok(())) | (Err(_), Ok(())) => Ok(()),
+            (Ok(()), Err(dpapi_error)) => Err(dpapi_error),
+            (Err(keyring_error), Err(dpapi_error)) => {
+                Err(format!("{}; {}", keyring_error, dpapi_error))
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    keyring_result
+}
+
 #[tauri::command(async)]
 fn secure_store_get(app: tauri::AppHandle, key: String) -> Result<Option<String>, String> {
     validate_renderer_secure_store_key(&key)?;
+
+    // 5.x wrote a plaintext app-data fallback before updating Credential
+    // Manager. An interrupted/RC upgrade can therefore leave a newer empty
+    // credential beside the still-valid 5.x state. Consume that fallback once
+    // when it contains a real DoodleVPN subscription, then make keyring
+    // canonical. This preserves the no-code 5.x -> 6.x account migration.
+    if key == RENDERER_STATE_KEY {
+        if let Some(legacy_value) = secure_store_fallback_get(&app, &key)? {
+            if legacy_renderer_state_has_doodle_subscription(&legacy_value) {
+                secure_store_keyring_set(&key, &legacy_value).map_err(|error| {
+                    format!("Legacy renderer state migration failed: {}", error)
+                })?;
+                secure_store_fallback_delete(&app, &key)?;
+                return Ok(Some(legacy_value));
+            }
+        }
+    }
+
     match secure_store_keyring_get(&key) {
         Ok(Some(value)) => {
             // Remove the legacy plaintext mirror once Keychain/Credential
@@ -3573,7 +3765,7 @@ fn app_api_decode_session_from_disk(encoded: &str) -> Result<AppApiTokenResponse
 
 fn app_api_store_session(session: &AppApiTokenResponse) -> Result<(), String> {
     let encoded = app_api_encode_session_for_disk(session)?;
-    secure_store_keyring_set(APP_API_SESSION_KEY, &encoded)?;
+    app_api_native_secret_set(APP_API_SESSION_KEY, &encoded)?;
     if let Ok(mut memory) = APP_API_MEMORY_SESSION.lock() {
         *memory = Some(session.clone());
     }
@@ -3584,7 +3776,7 @@ fn app_api_delete_session() -> Result<(), String> {
     if let Ok(mut memory) = APP_API_MEMORY_SESSION.lock() {
         *memory = None;
     }
-    secure_store_keyring_delete(APP_API_SESSION_KEY)
+    app_api_native_secret_delete(APP_API_SESSION_KEY)
 }
 
 fn app_api_load_session() -> Result<Option<AppApiTokenResponse>, String> {
@@ -3594,12 +3786,12 @@ fn app_api_load_session() -> Result<Option<AppApiTokenResponse>, String> {
         }
     }
 
-    let Some(encoded) = secure_store_keyring_get(APP_API_SESSION_KEY)? else {
+    let Some(encoded) = app_api_native_secret_get(APP_API_SESSION_KEY)? else {
         return Ok(None);
     };
     let session = app_api_decode_session_from_disk(&encoded)?;
     if !session.access_token.is_empty() {
-        secure_store_keyring_set(
+        app_api_native_secret_set(
             APP_API_SESSION_KEY,
             &app_api_encode_session_for_disk(&session)?,
         )?;
@@ -3718,7 +3910,7 @@ fn app_api_device_proof(
 }
 
 fn app_api_load_or_create_device() -> Result<AppApiDeviceState, String> {
-    if let Some(encoded) = secure_store_keyring_get(APP_API_DEVICE_KEY)? {
+    if let Some(encoded) = app_api_native_secret_get(APP_API_DEVICE_KEY)? {
         if let Ok(device) = serde_json::from_str::<AppApiDeviceState>(&encoded) {
             if app_api_device_state_is_usable(&device) {
                 return Ok(device);
@@ -3726,12 +3918,12 @@ fn app_api_load_or_create_device() -> Result<AppApiDeviceState, String> {
         }
     }
 
-    // v6 keeps the private key below the React/Tauri renderer boundary. A later
-    // Windows-only hardening pass should move this seed into a CNG persisted key.
+    // Keep the private key below the React/Tauri renderer boundary. Windows
+    // persists it with current-user DPAPI when Credential Manager is unavailable.
     let device = app_api_generate_device_state()?;
     let encoded = serde_json::to_string(&device)
         .map_err(|e| format!("App API device serialize failed: {}", e))?;
-    secure_store_keyring_set(APP_API_DEVICE_KEY, &encoded)?;
+    app_api_native_secret_set(APP_API_DEVICE_KEY, &encoded)?;
     Ok(device)
 }
 
@@ -4335,12 +4527,105 @@ fn legacy_subscription_token(subscription_url: &str) -> Result<String, String> {
     Ok(token.to_string())
 }
 
-#[tauri::command(async)]
-fn app_api_session_status() -> Result<AppApiSessionStatus, String> {
+fn legacy_subscription_urls_from_renderer_state(value: &str) -> Vec<String> {
+    let Ok(root) = serde_json::from_str::<serde_json::Value>(value) else {
+        return Vec::new();
+    };
+    let Some(state) = root.get("state") else {
+        return Vec::new();
+    };
+    let preferred_id = state
+        .get("activeServer")
+        .and_then(|server| server.get("subscriptionId"))
+        .and_then(serde_json::Value::as_str);
+    let Some(subscriptions) = state
+        .get("subscriptions")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return Vec::new();
+    };
+
+    let mut candidates = subscriptions
+        .iter()
+        .filter_map(|subscription| {
+            let url = subscription.get("url")?.as_str()?;
+            let token = legacy_subscription_token(url).ok()?;
+            let preferred = preferred_id.is_some_and(|preferred_id| {
+                subscription.get("id").and_then(serde_json::Value::as_str) == Some(preferred_id)
+            });
+            Some((preferred, token, url.to_string()))
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|(preferred, _, _)| !*preferred);
+
+    let mut tokens = Vec::new();
+    candidates
+        .into_iter()
+        .filter_map(|(_, token, url)| {
+            if tokens.contains(&token) {
+                None
+            } else {
+                tokens.push(token);
+                Some(url)
+            }
+        })
+        .collect()
+}
+
+async fn app_api_exchange_legacy_subscription_url(
+    subscription_url: &str,
+) -> Result<AppApiSessionStatus, String> {
+    let token = legacy_subscription_token(subscription_url)?;
+    let device = app_api_load_or_create_device()?;
+    let computer_name = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| APP_PRODUCT_NAME.into());
+    let body = serde_json::json!({
+        "subscription_token": token,
+        "device": app_api_device_body(&device, &computer_name)
+    });
+    let session = app_api_send_json::<AppApiTokenResponse>(
+        reqwest::Method::POST,
+        "/auth/legacy-subscription/exchange",
+        None,
+        Some(body),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    app_api_store_session(&session)?;
+    Ok(app_api_public_session(Some(session)))
+}
+
+#[tauri::command]
+async fn app_api_session_status(app: tauri::AppHandle) -> Result<AppApiSessionStatus, String> {
     if !closed_control_plane_enabled() {
         return Ok(app_api_public_session(None));
     }
-    app_api_load_session().map(app_api_public_session)
+    if let Some(session) = app_api_load_session()? {
+        return Ok(app_api_public_session(Some(session)));
+    }
+
+    let mut legacy_urls = Vec::new();
+    if let Ok(Some(value)) = secure_store_fallback_get(&app, RENDERER_STATE_KEY) {
+        legacy_urls.extend(legacy_subscription_urls_from_renderer_state(&value));
+    }
+    if let Ok(Some(value)) = secure_store_keyring_get(RENDERER_STATE_KEY) {
+        for url in legacy_subscription_urls_from_renderer_state(&value) {
+            let token = legacy_subscription_token(&url).ok();
+            if !legacy_urls
+                .iter()
+                .any(|known| legacy_subscription_token(known).ok() == token)
+            {
+                legacy_urls.push(url);
+            }
+        }
+    }
+    for subscription_url in legacy_urls {
+        if let Ok(session) = app_api_exchange_legacy_subscription_url(&subscription_url).await {
+            return Ok(session);
+        }
+    }
+    Ok(app_api_public_session(None))
 }
 
 #[tauri::command]
@@ -4374,25 +4659,7 @@ async fn app_api_exchange_legacy_subscription(
     request: AppApiExchangeLegacySubscriptionRequest,
 ) -> Result<AppApiSessionStatus, String> {
     ensure_closed_control_plane_enabled()?;
-    let token = legacy_subscription_token(&request.subscription_url)?;
-    let device = app_api_load_or_create_device()?;
-    let computer_name = std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| APP_PRODUCT_NAME.into());
-    let body = serde_json::json!({
-        "subscription_token": token,
-        "device": app_api_device_body(&device, &computer_name)
-    });
-    let session = app_api_send_json::<AppApiTokenResponse>(
-        reqwest::Method::POST,
-        "/auth/legacy-subscription/exchange",
-        None,
-        Some(body),
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-    app_api_store_session(&session)?;
-    Ok(app_api_public_session(Some(session)))
+    app_api_exchange_legacy_subscription_url(&request.subscription_url).await
 }
 
 #[tauri::command]
@@ -6633,6 +6900,45 @@ mod tests {
     }
 
     #[test]
+    fn legacy_renderer_state_migration_requires_a_doodlevpn_subscription() {
+        let doodle = json!({
+            "state": {
+                "subscriptions": [
+                    { "id": "older", "url": "https://ddlvpn.lol/s/oldDesktopToken123" },
+                    { "id": "active", "url": "https://doodlevpn.online/sub/activeDesktopToken456" },
+                    { "url": "https://example.com/sub/external-token" }
+                ],
+                "activeServer": { "subscriptionId": "active" }
+            },
+            "version": 0
+        });
+        let external = json!({
+            "state": {
+                "subscriptions": [
+                    { "url": "https://example.com/sub/external-token" }
+                ]
+            },
+            "version": 0
+        });
+
+        assert!(legacy_renderer_state_has_doodle_subscription(
+            &doodle.to_string()
+        ));
+        assert_eq!(
+            legacy_subscription_urls_from_renderer_state(&doodle.to_string()),
+            [
+                "https://doodlevpn.online/sub/activeDesktopToken456",
+                "https://ddlvpn.lol/s/oldDesktopToken123"
+            ]
+        );
+        assert!(!legacy_renderer_state_has_doodle_subscription(
+            &external.to_string()
+        ));
+        assert!(legacy_subscription_urls_from_renderer_state(&external.to_string()).is_empty());
+        assert!(!legacy_renderer_state_has_doodle_subscription("not-json"));
+    }
+
+    #[test]
     fn renderer_secure_store_cannot_access_app_api_reserved_keys() {
         assert!(validate_renderer_secure_store_key(APP_API_SESSION_KEY).is_err());
         assert!(
@@ -6641,6 +6947,18 @@ mod tests {
         );
         assert!(validate_renderer_secure_store_key(APP_API_DEVICE_KEY).is_err());
         assert!(validate_renderer_secure_store_key("ui-preference-theme").is_ok());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_dpapi_native_secret_roundtrip() {
+        let plaintext = b"refresh-session-test";
+        let encrypted =
+            app_api_dpapi_transform("qa-session", plaintext, true).expect("DPAPI encryption");
+        assert_ne!(encrypted, plaintext);
+        let decrypted =
+            app_api_dpapi_transform("qa-session", &encrypted, false).expect("DPAPI decryption");
+        assert_eq!(decrypted, plaintext);
     }
 
     #[test]
