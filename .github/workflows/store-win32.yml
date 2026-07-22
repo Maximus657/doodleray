@@ -26,17 +26,51 @@ jobs:
   build-store:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Install frontend deps
         run: npm ci
+
+      - name: Download pinned Windows runtimes
+        shell: pwsh
+        run: |
+          $runtime = Get-Content runtime-versions.json -Raw | ConvertFrom-Json
+
+          $xray = $runtime.xray.assets.windows_amd64
+          Invoke-WebRequest "https://github.com/XTLS/Xray-core/releases/download/$($runtime.xray.version)/$($xray.name)" -OutFile xray.zip
+          if ((Get-FileHash xray.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $xray.sha256) {
+            throw 'Xray archive checksum mismatch'
+          }
+          Expand-Archive xray.zip xray-core-tmp
+          New-Item -ItemType Directory -Force src-tauri/xray-core | Out-Null
+          Copy-Item xray-core-tmp/xray.exe src-tauri/xray-core/
+          Copy-Item xray-core-tmp/geoip.dat src-tauri/xray-core/
+          Copy-Item xray-core-tmp/geosite.dat src-tauri/xray-core/
+
+          Invoke-WebRequest "https://www.wintun.net/builds/$($runtime.wintun.asset)" -OutFile wintun.zip
+          if ((Get-FileHash wintun.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $runtime.wintun.sha256) {
+            throw 'Wintun archive checksum mismatch'
+          }
+          Expand-Archive wintun.zip wintun-tmp
+          Copy-Item wintun-tmp/wintun/bin/amd64/wintun.dll src-tauri/xray-core/
+          Copy-Item wintun-tmp/wintun/bin/amd64/wintun.dll src-tauri/
+
+          $singBox = $runtime.sing_box.assets.windows_amd64
+          Invoke-WebRequest "https://github.com/SagerNet/sing-box/releases/download/v$($runtime.sing_box.version)/$($singBox.name)" -OutFile sing-box.zip
+          if ((Get-FileHash sing-box.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $singBox.sha256) {
+            throw 'sing-box archive checksum mismatch'
+          }
+          Expand-Archive sing-box.zip sing-box-tmp
+          $singBoxExe = Get-ChildItem sing-box-tmp -Recurse -Filter sing-box.exe | Select-Object -First 1
+          if (-not $singBoxExe) { throw 'sing-box.exe not found' }
+          Copy-Item $singBoxExe.FullName src-tauri/sing-box.exe
 
       - name: Test shared UI and Windows runtime
         shell: pwsh
@@ -48,6 +82,12 @@ jobs:
           }
           cargo test --manifest-path src-tauri/Cargo.toml --all-targets
           cargo test --manifest-path src-tauri/Cargo.toml --features windows-service --bin DoodleRayService
+
+      - name: Build tunnel service
+        shell: pwsh
+        run: |
+          cargo build --release --manifest-path src-tauri/Cargo.toml --features windows-service --bin DoodleRayService
+          Copy-Item src-tauri/target/release/DoodleRayService.exe src-tauri/DoodleRayService.exe -Force
 
       # Fail closed: signing secrets are mandatory unless allow_unsigned.
       - name: Import code-signing certificate
@@ -67,6 +107,11 @@ jobs:
           Remove-Item $pfx -Force
           "WINDOWS_CODESIGN_THUMBPRINT=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
+      - name: Sign bundled PE files
+        if: ${{ !inputs.allow_unsigned }}
+        shell: pwsh
+        run: ./scripts/sign-all-pe.ps1 -IncludeVendored
+
       - name: Build store flavor
         shell: pwsh
         run: |
@@ -85,7 +130,7 @@ jobs:
 
       # Archive to the run only — no release, no publishing.
       - name: Archive store artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: doodleray-store-win32
           path: dist-store/
