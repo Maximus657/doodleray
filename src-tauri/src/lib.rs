@@ -7304,8 +7304,14 @@ mod tests {
                 serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
             let permissions = capability["permissions"].as_array().unwrap();
 
-            assert!(permissions.contains(&json!("core:window:allow-set-size")));
-            assert!(permissions.contains(&json!("core:window:allow-set-min-size")));
+            for permission in [
+                "core:window:allow-set-size",
+                "core:window:allow-set-min-size",
+                "core:window:allow-is-maximized",
+                "core:window:allow-unmaximize",
+            ] {
+                assert!(permissions.contains(&json!(permission)));
+            }
         }
     }
 

@@ -33,7 +33,7 @@
       "resources/third-party-notices.txt": "resources/third-party-notices.txt"
     },
     "macOS": {
-      "bundleVersion": "60016",
+      "bundleVersion": "60017",
       "entitlements": "macos/profiles/DoodleRayHost.entitlements",
       "infoPlist": "Info.appstore.plist",
       "minimumSystemVersion": "12.0",

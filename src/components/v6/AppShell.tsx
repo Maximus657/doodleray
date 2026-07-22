@@ -26,12 +26,37 @@ async function resizeNativeWindow(mode: WindowMode): Promise<void> {
   const minSize = new LogicalSize(compact ? 420 : 940, compact ? 680 : 660);
   const targetSize = new LogicalSize(compact ? 440 : 1204, compact ? 760 : 764);
 
+  // macOS ignores explicit frame changes while the window is in its zoomed
+  // (Tauri "maximized") state. Restore it before applying compact dimensions.
+  if (await appWindow.isMaximized()) await appWindow.unmaximize();
+
   if (compact) {
     await appWindow.setMinSize(minSize);
     await appWindow.setSize(targetSize);
   } else {
     await appWindow.setSize(targetSize);
     await appWindow.setMinSize(minSize);
+  }
+
+  const scaleFactor = await appWindow.scaleFactor();
+  let actualSize = (await appWindow.innerSize()).toLogical(scaleFactor);
+  const matchesTarget = () => (
+    Math.abs(actualSize.width - targetSize.width) <= 8
+    && Math.abs(actualSize.height - targetSize.height) <= 8
+  );
+
+  // A zoom transition can finish just after unmaximize() resolves. One retry
+  // makes the switch deterministic without leaving compact CSS in a wide frame.
+  if (!matchesTarget()) {
+    if (await appWindow.isMaximized()) await appWindow.unmaximize();
+    if (compact) await appWindow.setMinSize(minSize);
+    await appWindow.setSize(targetSize);
+    if (!compact) await appWindow.setMinSize(minSize);
+    actualSize = (await appWindow.innerSize()).toLogical(scaleFactor);
+  }
+
+  if (!matchesTarget()) {
+    throw new Error(`Native window remained ${Math.round(actualSize.width)}×${Math.round(actualSize.height)}`);
   }
 }
 
@@ -85,7 +110,12 @@ export default function AppShell({ children }: { children: ReactNode }) {
   useEffect(() => {
     mountedRef.current = true;
     void resizeNativeWindow(initialWindowModeRef.current)
-      .catch(() => { /* browser preview or unavailable window capability */ });
+      .catch((error) => {
+        useAppStore.getState().addLog('warning', `Window mode restore failed: ${error instanceof Error ? error.message : String(error)}`);
+        if (initialWindowModeRef.current === 'compact') {
+          setWindowMode('wide');
+        }
+      });
     return () => { mountedRef.current = false; };
   }, []);
 
@@ -111,11 +141,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
         });
       }
 
+      await resizeNativeWindow(nextMode);
       setWindowMode(nextMode);
-      await Promise.all([
-        resizeNativeWindow(nextMode).catch(() => { /* browser preview or unavailable window capability */ }),
-        afterNextPaint(),
-      ]);
+      await afterNextPaint();
       if (!mountedRef.current) return;
 
       if (content && !reducedMotion) {
@@ -132,6 +160,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
           clearProps: 'opacity,visibility,transform',
         });
       }
+    } catch (error) {
+      useAppStore.getState().addLog('error', `Window mode switch failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       if (content) gsap.set(content, { clearProps: 'opacity,visibility,transform' });
       transitionRunningRef.current = false;
