@@ -12662,9 +12662,19 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_app_handle, event| {
+        .run(|app_handle, event| {
             // Catch ALL exit paths — OS shutdown, task manager kill, etc.
             match event {
+                #[cfg(target_os = "macos")]
+                tauri::RunEvent::Reopen { .. } => {
+                    vpn_log("macOS Dock reopen: restoring main window");
+                    let _ = app_handle.show();
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.unminimize();
+                        let _ = window.set_focus();
+                    }
+                }
                 tauri::RunEvent::ExitRequested { .. } => {
                     xray::begin_shutdown();
                 }
