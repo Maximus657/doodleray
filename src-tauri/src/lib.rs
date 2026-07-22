@@ -1921,6 +1921,25 @@ const DEFAULT_DIRECT_XRAY_DOMAIN_REGEXES: &[&str] = &[
     r"regexp:.*\.xn--80adxhks$",
 ];
 
+const STEAM_DIRECT_XRAY_DOMAINS: &[&str] = &[
+    "domain:steampowered.com",
+    "domain:steamcommunity.com",
+    "domain:steamgames.com",
+    "domain:steamusercontent.com",
+    "domain:steamcontent.com",
+    "domain:steamstatic.com",
+    "full:steamcdn-a.akamaihd.net",
+];
+
+const STEAM_DIRECT_PROCESS_NAMES: &[&str] = &[
+    "steam",
+    "steam.exe",
+    "steam_osx",
+    "steamservice.exe",
+    "steamwebhelper",
+    "steamwebhelper.exe",
+];
+
 fn default_direct_singbox_rule() -> serde_json::Value {
     serde_json::json!({
         "domain_suffix": DEFAULT_DIRECT_DOMAIN_SUFFIXES,
@@ -1939,23 +1958,34 @@ fn routing_policy_is_full_tunnel(req: &ConnectRequest) -> bool {
         .is_some_and(|policy| policy.mode == "full_tunnel")
 }
 
+fn with_steam_direct_domains(mut domains: Vec<String>) -> Vec<String> {
+    domains.extend(
+        STEAM_DIRECT_XRAY_DOMAINS
+            .iter()
+            .map(|domain| (*domain).to_string()),
+    );
+    domains.sort();
+    domains.dedup();
+    domains
+}
+
 fn routing_policy_xray_domains(req: &ConnectRequest) -> Vec<String> {
-    match req.routing_policy.as_ref() {
+    with_steam_direct_domains(match req.routing_policy.as_ref() {
         Some(policy) if policy.mode == "split" => policy.direct_domains.clone(),
         Some(_) => Vec::new(),
         None => default_direct_xray_domains(),
-    }
+    })
 }
 
 fn routing_policy_xray_dns_domains(req: &ConnectRequest) -> Vec<String> {
-    match req.routing_policy.as_ref() {
+    with_steam_direct_domains(match req.routing_policy.as_ref() {
         Some(policy) if policy.mode == "split" && !policy.local_dns_domains.is_empty() => {
             policy.local_dns_domains.clone()
         }
         Some(policy) if policy.mode == "split" => policy.direct_domains.clone(),
         Some(_) => Vec::new(),
         None => default_direct_xray_domains(),
-    }
+    })
 }
 
 fn routing_policy_singbox_domains(req: &ConnectRequest) -> (Vec<String>, Vec<String>, Vec<String>) {
@@ -2437,6 +2467,13 @@ fn process_rule_names(req: &ConnectRequest, action: &str) -> Vec<String> {
         .filter(|r| r.rule_type == "exe" && r.action == action)
         .filter_map(|r| normalize_process_name(&r.value))
         .collect();
+    if action == "direct" && req.proxy_mode == "tun" {
+        names.extend(
+            STEAM_DIRECT_PROCESS_NAMES
+                .iter()
+                .map(|name| (*name).to_string()),
+        );
+    }
     names.sort();
     names.dedup();
     names
@@ -5287,15 +5324,12 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
 
     let mut proxy_domains = Vec::new();
     let mut proxy_domain_suffixes = Vec::new();
-    let mut proxy_processes = Vec::new();
 
     let mut direct_domains = Vec::new();
     let mut direct_domain_suffixes = Vec::new();
-    let mut direct_processes = Vec::new();
 
     let mut block_domains = Vec::new();
     let mut block_domain_suffixes = Vec::new();
-    let mut block_processes = Vec::new();
 
     for rule in &req.routing_rules {
         if rule.rule_type == "domain" {
@@ -5316,25 +5350,12 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
                     _ => {}
                 }
             }
-        } else if rule.rule_type == "exe" {
-            let Some(val) = normalize_process_name(&rule.value) else {
-                continue;
-            };
-            match rule.action.as_str() {
-                "proxy" => proxy_processes.push(val),
-                "direct" => direct_processes.push(val),
-                "block" => block_processes.push(val),
-                _ => {}
-            }
         }
     }
 
-    proxy_processes.sort();
-    proxy_processes.dedup();
-    direct_processes.sort();
-    direct_processes.dedup();
-    block_processes.sort();
-    block_processes.dedup();
+    let proxy_processes = process_rule_names(req, "proxy");
+    let direct_processes = process_rule_names(req, "direct");
+    let block_processes = process_rule_names(req, "block");
 
     let (policy_direct_domains, policy_direct_suffixes, policy_direct_regexes) =
         routing_policy_singbox_domains(req);
@@ -5996,7 +6017,7 @@ mod tests {
     }
 
     #[test]
-    fn server_full_tunnel_policy_removes_direct_rules_but_keeps_tunneled_dns() {
+    fn server_full_tunnel_keeps_only_required_steam_bypass() {
         let mut request = sample_request("tun");
         request.routing_policy = Some(AppRoutingPolicy {
             mode: "full_tunnel".into(),
@@ -6015,10 +6036,41 @@ mod tests {
         let config = build_xray_config(&request);
         let rules = config["routing"]["rules"].as_array().unwrap();
         assert!(rules.iter().any(|rule| rule["outboundTag"] == "dns-out"));
-        assert!(!rules.iter().any(|rule| rule["outboundTag"] == "direct"));
+        let direct_domain_rule = rules
+            .iter()
+            .find(|rule| rule["outboundTag"] == "direct" && rule.get("domain").is_some())
+            .expect("Steam direct rule missing");
+        assert!(json_array_contains_str(
+            &direct_domain_rule["domain"],
+            "domain:steamcontent.com"
+        ));
+        assert!(json_array_contains_str(
+            &direct_domain_rule["domain"],
+            "full:steamcdn-a.akamaihd.net"
+        ));
+        assert!(!rules.iter().any(|rule| {
+            rule["outboundTag"] == "direct"
+                && (json_array_contains_str(&rule["domain"], "domain:must-not-survive.example")
+                    || json_array_contains_str(&rule["ip"], "10.0.0.0/8"))
+        }));
         let dns = config["dns"]["servers"].as_array().unwrap();
-        assert_eq!(dns.len(), 1);
-        assert_eq!(dns[0]["tag"], "dns-remote");
+        let direct_dns = dns
+            .iter()
+            .find(|server| server["tag"] == "dns-direct")
+            .expect("Steam direct DNS rule missing");
+        assert_eq!(direct_dns["domains"], direct_domain_rule["domain"]);
+        assert!(dns.iter().any(|server| server["tag"] == "dns-remote"));
+
+        let singbox = build_singbox_config(&request);
+        let singbox_rules = singbox["route"]["rules"].as_array().unwrap();
+        assert!(singbox_rules.iter().any(|rule| {
+            rule["outbound"] == "direct"
+                && json_array_contains_str(&rule["process_name"], "steam.exe")
+        }));
+        assert!(singbox_rules.iter().any(|rule| {
+            rule["outbound"] == "direct"
+                && json_array_contains_str(&rule["domain_suffix"], "steamcontent.com")
+        }));
     }
 
     #[test]
@@ -6045,8 +6097,9 @@ mod tests {
         );
 
         let (domains, suffixes, regexes) = routing_policy_singbox_domains(&request);
-        assert!(domains.is_empty());
-        assert_eq!(suffixes, ["vk.com"]);
+        assert!(domains.contains(&"steamcdn-a.akamaihd.net".to_string()));
+        assert!(suffixes.contains(&"vk.com".to_string()));
+        assert!(suffixes.contains(&"steamcontent.com".to_string()));
         assert_eq!(regexes, [".*\\.ru$"]);
     }
 
@@ -7205,7 +7258,7 @@ mod tests {
 
     #[test]
     fn process_rules_are_normalized_to_process_names() {
-        let mut req = sample_request("tun");
+        let mut req = sample_request("system-proxy");
         req.routing_rules = vec![
             RoutingRuleRequest {
                 rule_type: "exe".into(),
@@ -7262,15 +7315,19 @@ mod tests {
             })
             .expect("direct process rule missing");
 
-        assert_eq!(
-            direct_rule["process_name"],
-            json!([
-                "execpubg.exe",
-                "tslgame.exe",
-                "tslgame_be.exe",
-                "tslgame_zk.exe"
-            ])
-        );
+        for process in [
+            "execpubg.exe",
+            "tslgame.exe",
+            "tslgame_be.exe",
+            "tslgame_zk.exe",
+            "steam.exe",
+            "steamservice.exe",
+        ] {
+            assert!(json_array_contains_str(
+                &direct_rule["process_name"],
+                process
+            ));
+        }
     }
 
     #[test]
@@ -7338,25 +7395,18 @@ mod tests {
 
     #[test]
     fn tun_direct_process_exclusions_disable_wininet_compat_path() {
-        let mut req = sample_request("tun");
-        assert!(!tun_direct_process_exclusions_need_raw_tun_path(&req));
+        let req = sample_request("tun");
+        assert!(tun_direct_process_exclusions_need_raw_tun_path(&req));
 
-        req.routing_rules = vec![RoutingRuleRequest {
-            rule_type: "domain".into(),
-            value: "example.com".into(),
-            action: "direct".into(),
-        }];
-        assert!(!tun_direct_process_exclusions_need_raw_tun_path(&req));
-
-        req.routing_rules = vec![RoutingRuleRequest {
+        let mut system_proxy = sample_request("system-proxy");
+        system_proxy.routing_rules = vec![RoutingRuleRequest {
             rule_type: "exe".into(),
             value: r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe".into(),
             action: "direct".into(),
         }];
-        assert!(tun_direct_process_exclusions_need_raw_tun_path(&req));
-
-        req.routing_rules[0].action = "proxy".into();
-        assert!(!tun_direct_process_exclusions_need_raw_tun_path(&req));
+        assert!(!tun_direct_process_exclusions_need_raw_tun_path(
+            &system_proxy
+        ));
     }
 
     #[test]
