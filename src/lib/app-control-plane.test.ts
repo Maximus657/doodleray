@@ -2,6 +2,7 @@ import {
   findLegacyDoodleSubscriptionUrl,
   findLegacyDoodleSubscriptionUrls,
   isLegacyDoodleSubscriptionUrl,
+  mergeLegacyDoodleSubscriptionState,
 } from './legacy-subscription.ts';
 
 function assertEqual(actual: unknown, expected: unknown) {
@@ -43,6 +44,35 @@ assertEqual(
     { id: 'active', url: secondary },
   ], 'active')),
   JSON.stringify([secondary, canonical]),
+);
+
+const secureSnapshot = JSON.stringify({
+  state: { subscriptions: [], activeServer: null, theme: 'light' },
+  version: 0,
+});
+const legacySnapshot = JSON.stringify({
+  state: {
+    subscriptions: [
+      { id: 'stale', url: canonical },
+      { id: 'active', url: secondary },
+      { id: 'external', url: 'https://example.com/sub/external-token' },
+    ],
+    activeServer: { id: 'server-2', subscriptionId: 'active' },
+    theme: 'dark',
+  },
+  version: 0,
+});
+const reconciled = JSON.parse(
+  mergeLegacyDoodleSubscriptionState(secureSnapshot, legacySnapshot),
+);
+assertEqual(reconciled.state.theme, 'light');
+assertEqual(reconciled.state.subscriptions.length, 2);
+assertEqual(reconciled.state.subscriptions[0].url, canonical);
+assertEqual(reconciled.state.subscriptions[1].url, secondary);
+assertEqual(reconciled.state.activeServer.subscriptionId, 'active');
+assertEqual(
+  mergeLegacyDoodleSubscriptionState(secureSnapshot, '{invalid'),
+  secureSnapshot,
 );
 
 console.log('app control-plane migration tests passed');

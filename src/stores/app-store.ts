@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware';
+import { mergeLegacyDoodleSubscriptionState } from '../lib/legacy-subscription';
 import { invoke } from '@tauri-apps/api/core';
 import {
   buildServerSelectionIndex,
@@ -240,9 +241,15 @@ const secureStorage: StateStorage<Promise<void> | void> = {
     try {
       const secureValue = await invoke<string | null>('secure_store_get', { key: name });
       if (secureValue !== null) {
-        persistedValueCache.set(name, secureValue);
+        const reconciledValue = name === 'doodleray-storage' && legacyValue !== null
+          ? mergeLegacyDoodleSubscriptionState(secureValue, legacyValue)
+          : secureValue;
+        if (reconciledValue !== secureValue) {
+          await invoke('secure_store_set', { key: name, value: reconciledValue });
+        }
+        persistedValueCache.set(name, reconciledValue);
         if (legacyValue !== null) safeLocalRemove(name);
-        return secureValue;
+        return reconciledValue;
       }
 
       if (legacyValue !== null) {
