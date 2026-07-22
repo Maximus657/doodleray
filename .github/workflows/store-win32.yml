@@ -89,9 +89,21 @@ jobs:
           cargo build --release --manifest-path src-tauri/Cargo.toml --features windows-service --bin DoodleRayService
           Copy-Item src-tauri/target/release/DoodleRayService.exe src-tauri/DoodleRayService.exe -Force
 
-      # Fail closed: signing secrets are mandatory unless allow_unsigned.
+      - name: Resolve signing mode
+        id: signing
+        shell: pwsh
+        env:
+          STORE_CODESIGN_PFX_B64: ${{ secrets.STORE_CODESIGN_PFX_B64 }}
+          STORE_CODESIGN_PFX_PASSWORD: ${{ secrets.STORE_CODESIGN_PFX_PASSWORD }}
+        run: |
+          $available = -not [string]::IsNullOrWhiteSpace($env:STORE_CODESIGN_PFX_B64) -and
+            -not [string]::IsNullOrWhiteSpace($env:STORE_CODESIGN_PFX_PASSWORD)
+          "available=$($available.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      # A missing production certificate does not hide packaging failures: build
+      # the unsigned RC first, archive it, then keep the release gate closed.
       - name: Import code-signing certificate
-        if: ${{ !inputs.allow_unsigned }}
+        if: ${{ steps.signing.outputs.available == 'true' }}
         shell: pwsh
         env:
           STORE_CODESIGN_PFX_B64: ${{ secrets.STORE_CODESIGN_PFX_B64 }}
@@ -108,7 +120,7 @@ jobs:
           "WINDOWS_CODESIGN_THUMBPRINT=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Sign bundled PE files
-        if: ${{ !inputs.allow_unsigned }}
+        if: ${{ steps.signing.outputs.available == 'true' }}
         shell: pwsh
         run: ./scripts/sign-all-pe.ps1 -IncludeVendored
 
@@ -116,12 +128,12 @@ jobs:
         shell: pwsh
         run: |
           $extra = @()
-          if ('${{ inputs.allow_unsigned }}' -eq 'true') { $extra += '-AllowUnsigned' }
+          if ('${{ steps.signing.outputs.available }}' -ne 'true') { $extra += '-AllowUnsigned' }
           if ('${{ inputs.enable_self_update }}' -eq 'true') { $extra += @('-EnableSelfUpdate', '-WithUpdaterArtifacts') }
           ./scripts/build-store.ps1 @extra
 
       - name: Verify signatures (gate)
-        if: ${{ !inputs.allow_unsigned }}
+        if: ${{ steps.signing.outputs.available == 'true' }}
         shell: pwsh
         run: |
           $installer = Get-ChildItem dist-store -Filter '*.exe' | Select-Object -First 1
@@ -135,3 +147,8 @@ jobs:
           name: doodleray-store-win32
           path: dist-store/
           retention-days: 14
+
+      - name: Require production signing for release
+        if: ${{ always() && !cancelled() && steps.signing.outputs.available != 'true' && inputs.allow_unsigned != true }}
+        shell: pwsh
+        run: throw 'Unsigned RC was tested and archived, but STORE_CODESIGN_PFX_B64 and STORE_CODESIGN_PFX_PASSWORD are required for a releasable Windows build.'
