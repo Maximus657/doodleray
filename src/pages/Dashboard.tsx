@@ -61,8 +61,6 @@ const TRAFFIC_LIMIT_NOTICE_COOLDOWN_MS = 60_000;
 const CONNECT_TIMEOUT_MS = 45_000;
 const TUN_CONNECT_TIMEOUT_MS = 120_000;
 const DOODLEVPN_BOT_URL = 'https://t.me/doodlevpn_bot';
-const TUN_LIMITED_FALLBACK_RE =
-  /could not create the Windows tunnel adapter|IPv4 readiness failed|adapter is missing|adapter did not become ready|route is not preferred|route did not become ready|routes are missing|sing-box exited|sing-box process is not running|Tunnel Service failed to start TUN|Tunnel Service stopped before TUN|Tunnel Service did not become ready|timed out while starting VPN engines/i;
 
 function normalizeAppLoginCode(value: string): string {
   return value.replace(/\D/g, '').slice(0, 8);
@@ -82,10 +80,6 @@ function waitForPersistedAppState(): Promise<void> {
       resolve();
     });
   });
-}
-
-function isTunLimitedFallbackCandidate(message?: string | null) {
-  return !!message && TUN_LIMITED_FALLBACK_RE.test(message);
 }
 
 function isTauriInvokeUnavailableError(error: unknown): boolean {
@@ -461,46 +455,6 @@ export default function Dashboard() {
   const eofBurstRef = useRef({ count: 0, windowStartedAt: 0, lastNoticeAt: 0 });
   const tRef = useRef(t);
   const loginFlightTimerRef = useRef<number | null>(null);
-
-  const attemptLimitedBrowsersFallback = useCallback(async (
-    srv: NonNullable<typeof activeServer>,
-    invoke: any,
-    opId: number,
-    reason: string,
-  ) => {
-    if (proxyMode !== 'tun' || !isTunLimitedFallbackCandidate(reason)) return false;
-    addLog('warning', t('limitedFallbackAttempt'));
-    try {
-      // Force the failed protected generation to clean up before starting the
-      // lightweight browser compatibility path. This avoids reusing a failed
-      // service/TUN state as the fallback substrate.
-      await invoke('vpn_disconnect').catch(() => undefined);
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      setProxyMode('system-proxy');
-      setSystemProxyMode('set');
-      const fbReq = await buildConnectRequestFromState(srv, 'system-proxy', 'set');
-      const fb: any = await invoke('vpn_connect', { request: fbReq });
-      if (opId !== connectionOpRef.current) return true;
-      if (fb.success) {
-        await markConnectedIfHealthy(
-          fb,
-          invoke,
-          'system-proxy',
-          fbReq.system_proxy_mode,
-          fbReq.socks_port,
-          fbReq.http_port,
-        );
-        addLog('warning', t('limitedFallbackActive'));
-        const { useToastStore } = await import('../stores/toast-store');
-        useToastStore.getState().addToast(t('limitedFallbackActive'), 'warning');
-        return true;
-      }
-      addLog('error', fb.message);
-    } catch (fbErr: any) {
-      addLog('error', `Browsers fallback failed: ${fbErr?.message || fbErr}`);
-    }
-    return false;
-  }, [addLog, markConnectedIfHealthy, proxyMode, setProxyMode, setSystemProxyMode, t]);
 
   useEffect(() => {
     tRef.current = t;
@@ -1148,14 +1102,6 @@ export default function Dashboard() {
             } catch {}
           }
           addLog('error', result.message);
-          // Honest automatic fallback: a TUN adapter/route bring-up failure
-          // (already past the service-side bounded repair) degrades to
-          // Browsers compatibility with explicit limited-protection messaging.
-          // Manual mode is never entered automatically; WinINet is only
-          // touched by the Browsers connect path itself.
-          if (!closedControlPlane && await attemptLimitedBrowsersFallback(srv!, invoke, opId, result.message)) {
-            return;
-          }
           if (result.message.toLowerCase().includes('full computer components')) {
             const serviceHealthy = await refreshTunnelServiceHealth();
             if (!serviceHealthy) {
@@ -1174,19 +1120,6 @@ export default function Dashboard() {
           addLog('error', `Connection failed: ${message}`);
           try {
             const { invoke: cleanupInvoke } = await import('@tauri-apps/api/core');
-            let fallbackReason = message;
-            try {
-              const health = await cleanupInvoke('get_connection_health', {
-                proxyMode: 'tun',
-                systemProxyMode,
-                socksPort,
-                httpPort,
-              }) as ConnectionHealthReport;
-              fallbackReason = `${fallbackReason}; ${summarizeHealthFailures(health)}`;
-            } catch { /* best effort */ }
-            if (!closedControlPlane && srv && await attemptLimitedBrowsersFallback(srv, cleanupInvoke, opId, fallbackReason)) {
-              return;
-            }
             await cleanupInvoke('vpn_disconnect');
           } catch { /* best effort cleanup */ }
           reportConnectionError({
@@ -1231,7 +1164,7 @@ export default function Dashboard() {
       } catch { addLog('info', '[SIM] Disconnected'); }
       setStatus('disconnected'); setActiveSystemProxyMode(null); setConnectionStep(null); setConnectedAt(null); setCurrentSpeed(0, 0); resetTraffic();
     }
-  }, [status, setStatus, setCurrentSpeed, resetTraffic, activeServer, servers, setActiveServer, addLog, proxyMode, socksPort, httpPort, autoSelectFastest, setConnectedAt, t, setProxyMode, setSystemProxyMode, refreshTunnelServiceHealth, setSocksPort, setHttpPort, markConnectedIfHealthy, attemptLimitedBrowsersFallback, closedControlPlane, hasDeviceLimit]);
+  }, [status, setStatus, setCurrentSpeed, resetTraffic, activeServer, servers, setActiveServer, addLog, proxyMode, socksPort, httpPort, autoSelectFastest, setConnectedAt, t, setProxyMode, setSystemProxyMode, refreshTunnelServiceHealth, setSocksPort, setHttpPort, markConnectedIfHealthy, closedControlPlane, hasDeviceLimit]);
 
   const handleModeSwitch = useCallback(async (mode: 'system-proxy' | 'tun', nextSystemProxyMode = systemProxyMode) => {
     const normalizedSystemProxyMode = nextSystemProxyMode === 'clear'
@@ -1279,9 +1212,7 @@ export default function Dashboard() {
           }
           else {
             addLog('error', result.message);
-            if (!closedControlPlane && mode === 'tun' && await attemptLimitedBrowsersFallback(srv, invoke, connectionOpRef.current, result.message)) {
-              return;
-            }
+            await invoke('vpn_disconnect').catch(() => undefined);
             setStatus('disconnected');
             setActiveSystemProxyMode(null);
             setConnectionStep(null);
@@ -1290,20 +1221,16 @@ export default function Dashboard() {
       } catch (err: any) {
         const message = err.message || String(err);
         addLog('error', `Reconnect failed: ${message}`);
-        if (!closedControlPlane && mode === 'tun' && activeServer) {
-          try {
-            const { invoke: cleanupInvoke } = await import('@tauri-apps/api/core');
-            if (await attemptLimitedBrowsersFallback(activeServer, cleanupInvoke, connectionOpRef.current, message)) {
-              return;
-            }
-          } catch { /* best effort fallback */ }
-        }
+        try {
+          const { invoke: cleanupInvoke } = await import('@tauri-apps/api/core');
+          await cleanupInvoke('vpn_disconnect');
+        } catch { /* best effort cleanup */ }
         setStatus('disconnected');
         setActiveSystemProxyMode(null);
         setConnectionStep(null);
       }
     }
-  }, [proxyMode, systemProxyMode, setProxyMode, setSystemProxyMode, status, setStatus, addLog, activeServer, socksPort, httpPort, setConnectedAt, t, refreshTunnelServiceHealth, setSocksPort, setHttpPort, markConnectedIfHealthy, attemptLimitedBrowsersFallback, closedControlPlane]);
+  }, [proxyMode, systemProxyMode, setProxyMode, setSystemProxyMode, status, setStatus, addLog, activeServer, socksPort, httpPort, setConnectedAt, t, refreshTunnelServiceHealth, setSocksPort, setHttpPort, markConnectedIfHealthy, closedControlPlane]);
 
   const handleExportSupportBundle = useCallback(async () => {
     try {
@@ -1326,14 +1253,15 @@ export default function Dashboard() {
   }, [addLog, getEffectiveHealthSystemProxyMode, httpPort, proxyMode, socksPort, t]);
 
   const handleQaSimulatedTunFailure = useCallback(async (reason: string) => {
-    const srv = activeServer || resolveConnectServer(activeServer, servers, false);
-    if (!srv) {
-      addLog('error', '[QA-control] simulate-tun-failure failed: no active server');
-      return;
-    }
-    const { invoke } = await import('@tauri-apps/api/core');
-    await attemptLimitedBrowsersFallback(srv, invoke, connectionOpRef.current, reason);
-  }, [activeServer, addLog, attemptLimitedBrowsersFallback, servers]);
+    ++connectionOpRef.current;
+    addLog('error', `[QA-control] simulated TUN failure: ${reason}`);
+    setStatus('disconnected');
+    setConnectionStep(null);
+    setConnectedAt(null);
+    setActiveSystemProxyMode(null);
+    setCurrentSpeed(0, 0);
+    resetTraffic();
+  }, [addLog, resetTraffic, setConnectedAt, setConnectionStep, setCurrentSpeed, setStatus]);
 
   // QA-only control surface consumer (backend gates it behind
   // DOODLERAY_QA_CONTROL=1; production launches never enable it). Actions are
