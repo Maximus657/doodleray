@@ -202,8 +202,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <div data-tauri-drag-region className="absolute inset-x-0 top-0 z-[5] h-[68px]" />
 
         {/* HEADER */}
-        <div data-tauri-drag-region className="relative z-10 flex shrink-0 select-none items-center justify-end px-2.5 pb-4 pt-1.5">
-          <div data-tauri-drag-region className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-[calc(50%+4px)]">
+        <div data-tauri-drag-region className="v6-app-header relative z-10 flex shrink-0 select-none items-center justify-end px-2.5 pb-4 pt-1.5">
+          <div data-tauri-drag-region className="v6-brand-wrap pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-[calc(50%+4px)]">
             <div
               data-tauri-drag-region
               className={`flex items-center gap-[11px] ${hasMainContent ? 'v6-brand-enter' : 'v6-brand-hidden'}`}
@@ -222,7 +222,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             </div>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="v6-header-actions flex items-center gap-2.5">
             {gbLeft !== null && (
               <div className="flex items-center gap-[9px] rounded-[30px] border border-white/[0.12] bg-white/[0.08] px-4 py-2">
                 <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: chipColor, boxShadow: `0 0 8px ${chipColor}` }} />

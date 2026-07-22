@@ -360,9 +360,23 @@
   .v6-compact-mode .v6-panel {
     padding: 14px;
   }
-  .v6-compact-mode .v6-brand-enter,
-  .v6-compact-mode .v6-brand-hidden {
-    display: none;
+  .v6-compact-mode .v6-app-header {
+    min-height: 96px;
+    align-items: flex-start;
+    padding: 6px 2px 50px;
+  }
+  .v6-compact-mode .v6-brand-wrap {
+    top: auto;
+    bottom: 6px;
+    transform: translateX(-50%);
+  }
+  .v6-compact-mode .v6-brand-logo {
+    height: 30px;
+    width: 30px;
+    border-radius: 10px;
+  }
+  .v6-compact-mode .v6-brand-word {
+    font-size: 17px;
   }
   .v6-compact-mode .v6-mode-selector {
     display: grid;
@@ -396,11 +410,25 @@
   .v6-compact-mode .v6-dashboard-main {
     order: 1;
     flex: none;
+    gap: 10px;
     overflow: visible;
   }
   .v6-compact-mode .v6-connect-orb {
-    min-height: 340px;
+    min-height: 214px;
     flex: none;
+    gap: 2px;
+    padding-top: 2px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+  .v6-compact-mode .v6-connect-orb-stage {
+    height: 170px;
+    width: 170px;
+  }
+  .v6-compact-mode .v6-connect-button {
+    height: 146px;
+    width: 146px;
   }
   .v6-compact-mode .v6-location-list {
     order: 2;
