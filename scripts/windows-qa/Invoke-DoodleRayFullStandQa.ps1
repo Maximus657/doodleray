@@ -4,7 +4,8 @@ param(
     [string] $LocalInstaller,
     [switch] $AllowUnsignedLocalRc,
     [switch] $SkipUpdatePath,
-    [string] $SecretPath = (Join-Path $PSScriptRoot "..\..\secrets\doodlevpn-server-access.md")
+    [string] $SecretPath = (Join-Path $PSScriptRoot "..\..\secrets\doodlevpn-server-access.md"),
+    [string] $SubscriptionSecretPath = (Join-Path $PSScriptRoot "..\..\secrets\doodlevpn-test-subscription-url.txt")
 )
 
 # One-command full QA pass for a (possibly fresh) Windows QA stand.
@@ -94,13 +95,13 @@ if (-not $SkipUpdatePath) {
         & (Join-Path $PSScriptRoot "Invoke-DoodleRayUpdatePathQa.ps1") -FromVersion 5.4.5 -InjectStaleWinInet -InjectCorporatePac @unsignedArgs -SecretPath $SecretPath
     }
     Invoke-Stage "update-path-5.9.1-current-production" {
-        & (Join-Path $PSScriptRoot "Invoke-DoodleRayUpdatePathQa.ps1") -FromVersion 5.9.1 -InjectStaleWinInet -InjectCorporatePac @unsignedArgs -SecretPath $SecretPath
+        & (Join-Path $PSScriptRoot "Invoke-DoodleRayUpdatePathQa.ps1") -FromVersion 5.9.1 -InjectStaleWinInet -InjectCorporatePac @unsignedArgs -SecretPath $SecretPath -SubscriptionSecretPath $SubscriptionSecretPath
     }
 }
 
 # --- Stage 5: active-VPN-during-update ---------------------------------------
 Invoke-Stage "import-subscription-before-active-update" {
-    & (Join-Path $PSScriptRoot "Import-DoodleRayQaSubscription.ps1") -SecretPath $SecretPath
+    & (Join-Path $PSScriptRoot "Import-DoodleRayQaSubscription.ps1") -SecretPath $SecretPath -SubscriptionSecretPath $SubscriptionSecretPath
 }
 
 Invoke-Stage "active-vpn-during-update" {
@@ -109,7 +110,7 @@ Invoke-Stage "active-vpn-during-update" {
 
 # --- Stage 6: full UI pass over CDP ------------------------------------------
 Invoke-Stage "import-subscription-before-ui-pass" {
-    & (Join-Path $PSScriptRoot "Import-DoodleRayQaSubscription.ps1") -SecretPath $SecretPath
+    & (Join-Path $PSScriptRoot "Import-DoodleRayQaSubscription.ps1") -SecretPath $SecretPath -SubscriptionSecretPath $SubscriptionSecretPath
 }
 
 Invoke-Stage "rc-ui-cdp-pass" {
