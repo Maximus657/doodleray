@@ -101,6 +101,13 @@ else
   fail "NEPacketTunnelProvider plus NEVPNManager/NETunnelProviderManager integration are required"
 fi
 
+if rg -q 'doodleray_ne_start_async' src-tauri/macos/HostBridge/NetworkExtensionBridge.m src-tauri/src/app_store_tunnel.rs && \
+   ! rg -q 'dispatch_semaphore|@synchronized' src-tauri/macos/HostBridge/NetworkExtensionBridge.m; then
+  pass "Network Extension preferences use a non-blocking async bridge"
+else
+  fail "Network Extension preferences must not block the macOS main thread"
+fi
+
 if rg -q 'vpn_connect_app_store' src-tauri/src/lib.rs && \
    rg -q 'app_store_tunnel::start' src-tauri/src/lib.rs && \
    rg -q '#\[cfg\(not\(all\(target_os = "macos", feature = "app-store"\)\)\)\]' src-tauri/src/lib.rs; then

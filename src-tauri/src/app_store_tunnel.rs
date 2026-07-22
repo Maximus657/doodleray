@@ -1,6 +1,8 @@
 use serde::Deserialize;
+use std::ffi::c_void;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
+use tokio::sync::oneshot;
 
 #[derive(Debug, Deserialize)]
 pub struct TunnelResponse {
@@ -9,10 +11,16 @@ pub struct TunnelResponse {
     pub message: String,
 }
 
+type DoodleRayNECompletion = extern "C" fn(*mut c_void, *mut c_char);
+
 extern "C" {
-    fn doodleray_ne_start(config_json: *const c_char) -> *mut c_char;
-    fn doodleray_ne_stop() -> *mut c_char;
-    fn doodleray_ne_status() -> *mut c_char;
+    fn doodleray_ne_start_async(
+        config_json: *const c_char,
+        context: *mut c_void,
+        completion: DoodleRayNECompletion,
+    );
+    fn doodleray_ne_stop_async(context: *mut c_void, completion: DoodleRayNECompletion);
+    fn doodleray_ne_status_async(context: *mut c_void, completion: DoodleRayNECompletion);
     fn doodleray_ne_stop_cached();
     fn doodleray_ne_free(value: *mut c_char);
 }
@@ -30,41 +38,49 @@ fn decode_response(value: *mut c_char) -> Result<TunnelResponse, String> {
     serde_json::from_str(&text?).map_err(|_| "Network Extension returned invalid JSON".into())
 }
 
-fn start_blocking(config: &serde_json::Value) -> Result<TunnelResponse, String> {
-    let encoded = serde_json::to_string(config)
-        .map_err(|_| "Could not encode the VPN configuration".to_string())?;
-    let encoded = CString::new(encoded)
-        .map_err(|_| "VPN configuration contains an invalid character".to_string())?;
-    decode_response(unsafe { doodleray_ne_start(encoded.as_ptr()) })
+extern "C" fn complete_async_response(context: *mut c_void, value: *mut c_char) {
+    let sender = unsafe { Box::from_raw(context.cast::<oneshot::Sender<usize>>()) };
+    if sender.send(value as usize).is_err() && !value.is_null() {
+        unsafe { doodleray_ne_free(value) };
+    }
 }
 
-fn stop_blocking() -> Result<TunnelResponse, String> {
-    decode_response(unsafe { doodleray_ne_stop() })
-}
-
-fn status_blocking() -> Result<TunnelResponse, String> {
-    decode_response(unsafe { doodleray_ne_status() })
-}
-
-async fn run_blocking<F>(operation: &'static str, task: F) -> Result<TunnelResponse, String>
+async fn run_async<F>(operation: &'static str, register: F) -> Result<TunnelResponse, String>
 where
-    F: FnOnce() -> Result<TunnelResponse, String> + Send + 'static,
+    F: FnOnce(*mut c_void, DoodleRayNECompletion) + Send,
 {
-    tauri::async_runtime::spawn_blocking(task)
+    let (sender, receiver) = oneshot::channel::<usize>();
+    let context = Box::into_raw(Box::new(sender)) as usize;
+    register(context as *mut c_void, complete_async_response);
+    let value = receiver
         .await
-        .map_err(|error| format!("Network Extension {operation} task failed: {error}"))?
+        .map_err(|_| format!("Network Extension {operation} callback was dropped"))?;
+    decode_response(value as *mut c_char)
 }
 
 pub async fn start(config: serde_json::Value) -> Result<TunnelResponse, String> {
-    run_blocking("start", move || start_blocking(&config)).await
+    let encoded = serde_json::to_string(&config)
+        .map_err(|_| "Could not encode the VPN configuration".to_string())?;
+    let encoded = CString::new(encoded)
+        .map_err(|_| "VPN configuration contains an invalid character".to_string())?;
+    run_async("start", move |context, completion| unsafe {
+        doodleray_ne_start_async(encoded.as_ptr(), context, completion)
+    })
+    .await
 }
 
 pub async fn stop() -> Result<TunnelResponse, String> {
-    run_blocking("stop", stop_blocking).await
+    run_async("stop", |context, completion| unsafe {
+        doodleray_ne_stop_async(context, completion)
+    })
+    .await
 }
 
 pub async fn status() -> Result<TunnelResponse, String> {
-    run_blocking("status", status_blocking).await
+    run_async("status", |context, completion| unsafe {
+        doodleray_ne_status_async(context, completion)
+    })
+    .await
 }
 
 pub fn stop_cached() {

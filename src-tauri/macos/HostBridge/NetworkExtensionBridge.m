@@ -7,26 +7,11 @@
 
 static NSString *const DoodleRayProviderBundleIdentifier = @"com.doodleray.doodleray.DoodleRayVPN";
 static NSString *const DoodleRayManagerDescription = @"DoodleRay VPN";
-static NSTimeInterval const DoodleRayPreferenceTimeout = 15.0;
 static NETunnelProviderManager *DoodleRayCachedManager = nil;
 
-static BOOL DoodleRayRunOnMain(dispatch_block_t block, NSString **failure, NSString *timeoutMessage) {
-    if ([NSThread isMainThread]) {
-        block();
-        return YES;
-    }
-
-    dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
-    dispatch_async(dispatch_get_main_queue(), ^{
-        block();
-        dispatch_semaphore_signal(semaphore);
-    });
-    if (dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(DoodleRayPreferenceTimeout * NSEC_PER_SEC))) != 0) {
-        if (failure) *failure = timeoutMessage;
-        return NO;
-    }
-    return YES;
-}
+typedef void (^DoodleRayFinish)(BOOL success, NSString *status, NSString *message);
+typedef void (^DoodleRayArmTimeout)(NSTimeInterval seconds, NSString *message);
+typedef BOOL (^DoodleRayIsFinished)(void);
 
 static char *DoodleRayCopyJSON(BOOL success, NSString *status, NSString *message) {
     NSDictionary *payload = @{
@@ -51,209 +36,203 @@ static NSString *DoodleRayStatusName(NEVPNStatus status) {
     return @"unknown";
 }
 
-static NETunnelProviderManager *DoodleRayLoadManager(NSString **failure) {
-    @synchronized ([NETunnelProviderManager class]) {
-        if (DoodleRayCachedManager) return DoodleRayCachedManager;
+static void DoodleRayReply(void *context, DoodleRayNECompletion completion, BOOL success, NSString *status, NSString *message) {
+    char *response = DoodleRayCopyJSON(success, status, message);
+    if (completion) {
+        completion(context, response);
+    } else {
+        free(response);
+    }
+}
 
-        if ([NSThread isMainThread]) {
-            if (failure) *failure = @"VPN preferences cannot be loaded on the main thread.";
-            return nil;
+static void DoodleRayOnMain(dispatch_block_t block) {
+    if ([NSThread isMainThread]) {
+        block();
+    } else {
+        dispatch_async(dispatch_get_main_queue(), block);
+    }
+}
+
+static void DoodleRayBeginOperation(
+    void *context,
+    DoodleRayNECompletion completion,
+    void (^operation)(DoodleRayFinish finish, DoodleRayArmTimeout armTimeout, DoodleRayIsFinished isFinished)
+) {
+    DoodleRayOnMain(^{
+        __block BOOL finished = NO;
+        __block NSUInteger timeoutGeneration = 0;
+
+        DoodleRayFinish finish = ^(BOOL success, NSString *status, NSString *message) {
+            if (finished) return;
+            finished = YES;
+            timeoutGeneration += 1;
+            DoodleRayReply(context, completion, success, status, message);
+        };
+        DoodleRayArmTimeout armTimeout = ^(NSTimeInterval seconds, NSString *message) {
+            NSUInteger generation = ++timeoutGeneration;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(seconds * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                if (!finished && timeoutGeneration == generation) {
+                    NSLog(@"DoodleRay VPN: %@", message);
+                    finish(NO, @"invalid", message);
+                }
+            });
+        };
+        DoodleRayIsFinished isFinished = ^BOOL {
+            return finished;
+        };
+
+        operation(finish, armTimeout, isFinished);
+    });
+}
+
+static void DoodleRayLoadManager(void (^completion)(NETunnelProviderManager *manager, NSString *failure)) {
+    if (DoodleRayCachedManager) {
+        completion(DoodleRayCachedManager, nil);
+        return;
+    }
+
+    NSLog(@"DoodleRay VPN: loading Network Extension preferences");
+    [NETunnelProviderManager loadAllFromPreferencesWithCompletionHandler:^(NSArray<NETunnelProviderManager *> *managers, NSError *error) {
+        if (error) {
+            NSLog(@"DoodleRay VPN: failed loading Network Extension preferences: %@", error);
+            completion(nil, error.localizedDescription);
+            return;
         }
 
-        dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
-        __block NSArray<NETunnelProviderManager *> *loadedManagers = nil;
-        __block NSError *loadError = nil;
-        NSLog(@"DoodleRay VPN: loading Network Extension preferences");
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [NETunnelProviderManager loadAllFromPreferencesWithCompletionHandler:^(NSArray<NETunnelProviderManager *> *managers, NSError *error) {
-                loadedManagers = managers;
-                loadError = error;
-                dispatch_semaphore_signal(semaphore);
-            }];
-        });
-        if (dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(DoodleRayPreferenceTimeout * NSEC_PER_SEC))) != 0) {
-            NSLog(@"DoodleRay VPN: timed out loading Network Extension preferences");
-            if (failure) *failure = @"Timed out while loading VPN preferences.";
-            return nil;
-        }
-        if (loadError) {
-            NSLog(@"DoodleRay VPN: failed loading Network Extension preferences: %@", loadError);
-            if (failure) *failure = loadError.localizedDescription;
-            return nil;
-        }
-        NSLog(@"DoodleRay VPN: loaded %lu Network Extension manager(s)", (unsigned long)loadedManagers.count);
-        for (NETunnelProviderManager *manager in loadedManagers) {
+        NSLog(@"DoodleRay VPN: loaded %lu Network Extension manager(s)", (unsigned long)managers.count);
+        for (NETunnelProviderManager *manager in managers) {
             NETunnelProviderProtocol *protocol = (NETunnelProviderProtocol *)manager.protocolConfiguration;
             if ([protocol isKindOfClass:[NETunnelProviderProtocol class]] &&
                 [protocol.providerBundleIdentifier isEqualToString:DoodleRayProviderBundleIdentifier]) {
                 DoodleRayCachedManager = manager;
-                return manager;
+                completion(manager, nil);
+                return;
             }
         }
-        return nil;
-    }
-    return nil;
+        completion(nil, nil);
+    }];
 }
 
-static BOOL DoodleRaySaveManager(NETunnelProviderManager *manager, NSString **failure) {
-    if ([NSThread isMainThread]) {
-        if (failure) *failure = @"VPN preferences cannot be saved on the main thread.";
-        return NO;
-    }
-
-    dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
-    __block NSError *saveError = nil;
-    NSLog(@"DoodleRay VPN: saving Network Extension preferences");
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [manager saveToPreferencesWithCompletionHandler:^(NSError *error) {
-            saveError = error;
-            dispatch_semaphore_signal(semaphore);
-        }];
-    });
-    if (dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(DoodleRayPreferenceTimeout * NSEC_PER_SEC))) != 0) {
-        NSLog(@"DoodleRay VPN: timed out saving Network Extension preferences");
-        if (failure) *failure = @"Timed out while saving VPN preferences.";
-        return NO;
-    }
-    if (saveError) {
-        NSLog(@"DoodleRay VPN: failed saving Network Extension preferences: %@", saveError);
-        if (failure) *failure = saveError.localizedDescription;
-        return NO;
-    }
-
-    semaphore = dispatch_semaphore_create(0);
-    __block NSError *reloadError = nil;
-    NSLog(@"DoodleRay VPN: reloading Network Extension preferences");
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [manager loadFromPreferencesWithCompletionHandler:^(NSError *error) {
-            reloadError = error;
-            dispatch_semaphore_signal(semaphore);
-        }];
-    });
-    if (dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(DoodleRayPreferenceTimeout * NSEC_PER_SEC))) != 0) {
-        NSLog(@"DoodleRay VPN: timed out reloading Network Extension preferences");
-        if (failure) *failure = @"Timed out while reloading VPN preferences.";
-        return NO;
-    }
-    if (reloadError) {
-        NSLog(@"DoodleRay VPN: failed reloading Network Extension preferences: %@", reloadError);
-        if (failure) *failure = reloadError.localizedDescription;
-        return NO;
-    }
-    NSLog(@"DoodleRay VPN: Network Extension preferences are ready");
-    return YES;
-}
-
-char *doodleray_ne_start(const char *config_json) {
+void doodleray_ne_start_async(const char *config_json, void *context, DoodleRayNECompletion completion) {
     @autoreleasepool {
         if (!config_json) {
-            return DoodleRayCopyJSON(NO, @"invalid", @"VPN configuration is missing.");
+            DoodleRayReply(context, completion, NO, @"invalid", @"VPN configuration is missing.");
+            return;
         }
         NSData *configuration = [NSData dataWithBytes:config_json length:strlen(config_json)];
         if (configuration.length == 0 || configuration.length > 1024 * 1024) {
-            return DoodleRayCopyJSON(NO, @"invalid", @"VPN configuration has an invalid size.");
+            DoodleRayReply(context, completion, NO, @"invalid", @"VPN configuration has an invalid size.");
+            return;
         }
 
-        NSString *failure = nil;
-        NETunnelProviderManager *manager = DoodleRayLoadManager(&failure);
-        if (!manager && failure) {
-            return DoodleRayCopyJSON(NO, @"invalid", failure);
-        }
-        if (!manager) {
-            manager = [[NETunnelProviderManager alloc] init];
-        }
+        DoodleRayBeginOperation(context, completion, ^(DoodleRayFinish finish, DoodleRayArmTimeout armTimeout, DoodleRayIsFinished isFinished) {
+            armTimeout(20.0, @"Timed out while loading VPN preferences.");
+            DoodleRayLoadManager(^(NETunnelProviderManager *loadedManager, NSString *loadFailure) {
+                if (isFinished()) return;
+                if (loadFailure) {
+                    finish(NO, @"invalid", loadFailure);
+                    return;
+                }
 
-        if (!DoodleRayRunOnMain(^{
-            NETunnelProviderProtocol *protocol = [[NETunnelProviderProtocol alloc] init];
-            protocol.providerBundleIdentifier = DoodleRayProviderBundleIdentifier;
-            protocol.serverAddress = DoodleRayManagerDescription;
-            protocol.disconnectOnSleep = NO;
-            protocol.providerConfiguration = @{ @"configurationVersion" : @1 };
-            manager.protocolConfiguration = protocol;
-            manager.localizedDescription = DoodleRayManagerDescription;
-            manager.enabled = YES;
-            manager.onDemandEnabled = NO;
-        }, &failure, @"Timed out while configuring the VPN profile.")) {
-            return DoodleRayCopyJSON(NO, @"invalid", failure);
-        }
+                NETunnelProviderManager *manager = loadedManager ?: [[NETunnelProviderManager alloc] init];
+                armTimeout(20.0, @"Timed out while preparing the VPN profile.");
+                [manager loadFromPreferencesWithCompletionHandler:^(NSError *prepareError) {
+                    if (isFinished()) return;
+                    if (prepareError) {
+                        NSLog(@"DoodleRay VPN: failed preparing Network Extension preferences: %@", prepareError);
+                        finish(NO, @"invalid", prepareError.localizedDescription);
+                        return;
+                    }
 
-        if (!DoodleRaySaveManager(manager, &failure)) {
-            return DoodleRayCopyJSON(NO, @"invalid", failure);
-        }
-        @synchronized ([NETunnelProviderManager class]) {
-            DoodleRayCachedManager = manager;
-        }
+                    NETunnelProviderProtocol *protocol = [[NETunnelProviderProtocol alloc] init];
+                    protocol.providerBundleIdentifier = DoodleRayProviderBundleIdentifier;
+                    protocol.serverAddress = DoodleRayManagerDescription;
+                    protocol.disconnectOnSleep = NO;
+                    protocol.providerConfiguration = @{ @"configurationVersion" : @1 };
+                    manager.protocolConfiguration = protocol;
+                    manager.localizedDescription = DoodleRayManagerDescription;
+                    manager.enabled = YES;
+                    manager.onDemandEnabled = NO;
 
-        __block NSError *startError = nil;
-        __block BOOL started = NO;
-        __block NEVPNStatus status = NEVPNStatusInvalid;
-        NSLog(@"DoodleRay VPN: starting packet tunnel");
-        if (!DoodleRayRunOnMain(^{
-            started = [(NETunnelProviderSession *)manager.connection
-                startTunnelWithOptions:@{ @"xrayConfig" : configuration }
-                andReturnError:&startError];
-            status = manager.connection.status;
-        }, &failure, @"Timed out while starting the VPN tunnel.")) {
-            return DoodleRayCopyJSON(NO, @"invalid", failure);
-        }
-        if (!started || startError) {
-            NSLog(@"DoodleRay VPN: failed starting packet tunnel: %@", startError);
-            return DoodleRayCopyJSON(NO, DoodleRayStatusName(status), startError.localizedDescription);
-        }
-        NSLog(@"DoodleRay VPN: packet tunnel start requested");
-        return DoodleRayCopyJSON(YES, DoodleRayStatusName(status), @"");
+                    NSLog(@"DoodleRay VPN: saving Network Extension preferences");
+                    armTimeout(90.0, @"Timed out while saving VPN preferences.");
+                    [manager saveToPreferencesWithCompletionHandler:^(NSError *saveError) {
+                        if (isFinished()) return;
+                        if (saveError) {
+                            NSLog(@"DoodleRay VPN: failed saving Network Extension preferences: %@", saveError);
+                            finish(NO, @"invalid", saveError.localizedDescription);
+                            return;
+                        }
+
+                        NSLog(@"DoodleRay VPN: reloading Network Extension preferences");
+                        armTimeout(20.0, @"Timed out while reloading VPN preferences.");
+                        [manager loadFromPreferencesWithCompletionHandler:^(NSError *reloadError) {
+                            if (isFinished()) return;
+                            if (reloadError) {
+                                NSLog(@"DoodleRay VPN: failed reloading Network Extension preferences: %@", reloadError);
+                                finish(NO, @"invalid", reloadError.localizedDescription);
+                                return;
+                            }
+
+                            DoodleRayCachedManager = manager;
+                            NSError *startError = nil;
+                            NSLog(@"DoodleRay VPN: starting packet tunnel");
+                            BOOL started = [(NETunnelProviderSession *)manager.connection
+                                startTunnelWithOptions:@{ @"xrayConfig" : configuration }
+                                andReturnError:&startError];
+                            NEVPNStatus status = manager.connection.status;
+                            if (!started || startError) {
+                                NSLog(@"DoodleRay VPN: failed starting packet tunnel: %@", startError);
+                                finish(NO, DoodleRayStatusName(status), startError.localizedDescription);
+                                return;
+                            }
+                            NSLog(@"DoodleRay VPN: packet tunnel start requested");
+                            finish(YES, DoodleRayStatusName(status), @"");
+                        }];
+                    }];
+                }];
+            });
+        });
     }
 }
 
-char *doodleray_ne_stop(void) {
-    @autoreleasepool {
-        NSString *failure = nil;
-        NETunnelProviderManager *manager = DoodleRayLoadManager(&failure);
-        if (!manager) {
-            if (failure) return DoodleRayCopyJSON(NO, @"invalid", failure);
-            return DoodleRayCopyJSON(YES, @"disconnected", @"");
-        }
-        __block NEVPNStatus status = NEVPNStatusInvalid;
-        if (!DoodleRayRunOnMain(^{
+void doodleray_ne_stop_async(void *context, DoodleRayNECompletion completion) {
+    DoodleRayBeginOperation(context, completion, ^(DoodleRayFinish finish, DoodleRayArmTimeout armTimeout, DoodleRayIsFinished isFinished) {
+        armTimeout(20.0, @"Timed out while loading VPN preferences.");
+        DoodleRayLoadManager(^(NETunnelProviderManager *manager, NSString *failure) {
+            if (isFinished()) return;
+            if (failure) {
+                finish(NO, @"invalid", failure);
+                return;
+            }
+            if (!manager) {
+                finish(YES, @"disconnected", @"");
+                return;
+            }
             [manager.connection stopVPNTunnel];
-            status = manager.connection.status;
-        }, &failure, @"Timed out while stopping the VPN tunnel.")) {
-            return DoodleRayCopyJSON(NO, @"invalid", failure);
-        }
-        return DoodleRayCopyJSON(YES, DoodleRayStatusName(status), @"");
-    }
+            finish(YES, DoodleRayStatusName(manager.connection.status), @"");
+        });
+    });
 }
 
-char *doodleray_ne_status(void) {
-    @autoreleasepool {
-        NSString *failure = nil;
-        NETunnelProviderManager *manager = DoodleRayLoadManager(&failure);
-        if (!manager) {
-            if (failure) return DoodleRayCopyJSON(NO, @"invalid", failure);
-            return DoodleRayCopyJSON(YES, @"disconnected", @"");
-        }
-        __block NEVPNStatus status = NEVPNStatusInvalid;
-        if (!DoodleRayRunOnMain(^{
-            status = manager.connection.status;
-        }, &failure, @"Timed out while reading VPN status.")) {
-            return DoodleRayCopyJSON(NO, @"invalid", failure);
-        }
-        return DoodleRayCopyJSON(YES, DoodleRayStatusName(status), @"");
-    }
+void doodleray_ne_status_async(void *context, DoodleRayNECompletion completion) {
+    DoodleRayBeginOperation(context, completion, ^(DoodleRayFinish finish, DoodleRayArmTimeout armTimeout, DoodleRayIsFinished isFinished) {
+        armTimeout(20.0, @"Timed out while loading VPN preferences.");
+        DoodleRayLoadManager(^(NETunnelProviderManager *manager, NSString *failure) {
+            if (isFinished()) return;
+            if (failure) {
+                finish(NO, @"invalid", failure);
+                return;
+            }
+            finish(YES, manager ? DoodleRayStatusName(manager.connection.status) : @"disconnected", @"");
+        });
+    });
 }
 
 void doodleray_ne_stop_cached(void) {
-    @autoreleasepool {
-        __block NETunnelProviderManager *manager = nil;
-        @synchronized ([NETunnelProviderManager class]) {
-            manager = DoodleRayCachedManager;
-        }
-        if (manager) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [manager.connection stopVPNTunnel];
-            });
-        }
-    }
+    DoodleRayOnMain(^{
+        [DoodleRayCachedManager.connection stopVPNTunnel];
+    });
 }
 
 void doodleray_ne_free(char *value) {

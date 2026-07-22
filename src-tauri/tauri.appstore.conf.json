@@ -13,6 +13,7 @@
         "center": true,
         "decorations": true,
         "transparent": false,
+        "backgroundColor": "#170d12",
         "shadow": true,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
@@ -33,7 +34,7 @@
       "resources/third-party-notices.txt": "resources/third-party-notices.txt"
     },
     "macOS": {
-      "bundleVersion": "60008",
+      "bundleVersion": "60009",
       "entitlements": "macos/profiles/DoodleRayHost.entitlements",
       "infoPlist": "Info.appstore.plist",
       "minimumSystemVersion": "12.0",

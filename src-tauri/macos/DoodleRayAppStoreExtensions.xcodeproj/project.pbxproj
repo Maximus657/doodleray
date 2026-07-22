@@ -137,7 +137,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = PacketTunnelProvider/Entitlements.plist;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 60008;
+				CURRENT_PROJECT_VERSION = 60009;
 				ENABLE_APP_SANDBOX = YES;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -171,7 +171,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = PacketTunnelProvider/Entitlements.plist;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 60008;
+				CURRENT_PROJECT_VERSION = 60009;
 				ENABLE_APP_SANDBOX = YES;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
