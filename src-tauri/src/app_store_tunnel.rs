@@ -13,6 +13,7 @@ extern "C" {
     fn doodleray_ne_start(config_json: *const c_char) -> *mut c_char;
     fn doodleray_ne_stop() -> *mut c_char;
     fn doodleray_ne_status() -> *mut c_char;
+    fn doodleray_ne_stop_cached();
     fn doodleray_ne_free(value: *mut c_char);
 }
 
@@ -29,7 +30,7 @@ fn decode_response(value: *mut c_char) -> Result<TunnelResponse, String> {
     serde_json::from_str(&text?).map_err(|_| "Network Extension returned invalid JSON".into())
 }
 
-pub fn start(config: &serde_json::Value) -> Result<TunnelResponse, String> {
+fn start_blocking(config: &serde_json::Value) -> Result<TunnelResponse, String> {
     let encoded = serde_json::to_string(config)
         .map_err(|_| "Could not encode the VPN configuration".to_string())?;
     let encoded = CString::new(encoded)
@@ -37,12 +38,37 @@ pub fn start(config: &serde_json::Value) -> Result<TunnelResponse, String> {
     decode_response(unsafe { doodleray_ne_start(encoded.as_ptr()) })
 }
 
-pub fn stop() -> Result<TunnelResponse, String> {
+fn stop_blocking() -> Result<TunnelResponse, String> {
     decode_response(unsafe { doodleray_ne_stop() })
 }
 
-pub fn status() -> Result<TunnelResponse, String> {
+fn status_blocking() -> Result<TunnelResponse, String> {
     decode_response(unsafe { doodleray_ne_status() })
+}
+
+async fn run_blocking<F>(operation: &'static str, task: F) -> Result<TunnelResponse, String>
+where
+    F: FnOnce() -> Result<TunnelResponse, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(task)
+        .await
+        .map_err(|error| format!("Network Extension {operation} task failed: {error}"))?
+}
+
+pub async fn start(config: serde_json::Value) -> Result<TunnelResponse, String> {
+    run_blocking("start", move || start_blocking(&config)).await
+}
+
+pub async fn stop() -> Result<TunnelResponse, String> {
+    run_blocking("stop", stop_blocking).await
+}
+
+pub async fn status() -> Result<TunnelResponse, String> {
+    run_blocking("status", status_blocking).await
+}
+
+pub fn stop_cached() {
+    unsafe { doodleray_ne_stop_cached() };
 }
 
 pub fn is_active_status(status: &str) -> bool {

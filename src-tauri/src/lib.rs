@@ -7126,7 +7126,7 @@ async fn vpn_connect_app_store(request: ConnectRequest, app: tauri::AppHandle) -
     vpn_log("starting App Store Network Extension tunnel");
 
     let config = build_app_store_xray_config(&request);
-    match wait_for_app_store_tunnel_connected(app_store_tunnel::start(&config)).await {
+    match wait_for_app_store_tunnel_connected(app_store_tunnel::start(config).await).await {
         Ok(response) => {
             if let Err(error) = verify_app_store_tunnel_traffic().await {
                 vpn_log("App Store tunnel failed end-to-end traffic verification; disconnecting");
@@ -7191,7 +7191,7 @@ async fn wait_for_app_store_tunnel_connected(
             });
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
-        response = app_store_tunnel::status()?;
+        response = app_store_tunnel::status().await?;
     }
     Err("Network Extension timed out while connecting".into())
 }
@@ -7199,7 +7199,7 @@ async fn wait_for_app_store_tunnel_connected(
 #[cfg(all(target_os = "macos", feature = "app-store"))]
 async fn wait_for_app_store_tunnel_disconnected() -> Result<app_store_tunnel::TunnelResponse, String>
 {
-    let mut response = app_store_tunnel::stop()?;
+    let mut response = app_store_tunnel::stop().await?;
     for _ in 0..20 {
         if !response.success {
             return Err(if response.message.is_empty() {
@@ -7212,7 +7212,7 @@ async fn wait_for_app_store_tunnel_disconnected() -> Result<app_store_tunnel::Tu
             return Ok(response);
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
-        response = app_store_tunnel::status()?;
+        response = app_store_tunnel::status().await?;
     }
     Err("Network Extension timed out while disconnecting".into())
 }
@@ -7253,8 +7253,8 @@ fn app_store_connection_health_from_response(
 }
 
 #[cfg(all(target_os = "macos", feature = "app-store"))]
-fn app_store_connection_health() -> ConnectionHealthReport {
-    match app_store_tunnel::status() {
+async fn app_store_connection_health() -> ConnectionHealthReport {
+    match app_store_tunnel::status().await {
         Ok(response) => app_store_connection_health_from_response(&response),
         Err(error) => {
             app_store_connection_health_from_response(&app_store_tunnel::TunnelResponse {
@@ -8508,11 +8508,12 @@ async fn fetch_http_response_with_fallback(
     }
 }
 
-#[tauri::command(async)]
-fn vpn_status() -> bool {
+#[tauri::command]
+async fn vpn_status() -> bool {
     #[cfg(all(target_os = "macos", feature = "app-store"))]
     {
         let active = app_store_tunnel::status()
+            .await
             .map(|response| {
                 response.success && app_store_tunnel::is_active_status(&response.status)
             })
@@ -10008,8 +10009,8 @@ fn check_connection_health(socks_port: u16) -> bool {
     TcpStream::connect_timeout(&addr, Duration::from_millis(2000)).is_ok()
 }
 
-#[tauri::command(async)]
-fn get_connection_health(
+#[tauri::command]
+async fn get_connection_health(
     proxy_mode: Option<String>,
     system_proxy_mode: Option<String>,
     socks_port: u16,
@@ -10018,7 +10019,7 @@ fn get_connection_health(
     #[cfg(all(target_os = "macos", feature = "app-store"))]
     {
         let _ = (proxy_mode, system_proxy_mode, socks_port, http_port);
-        app_store_connection_health()
+        app_store_connection_health().await
     }
     #[cfg(not(all(target_os = "macos", feature = "app-store")))]
     {
@@ -10031,8 +10032,8 @@ fn get_connection_health(
     }
 }
 
-#[tauri::command(async)]
-fn get_connection_health_full(
+#[tauri::command]
+async fn get_connection_health_full(
     proxy_mode: Option<String>,
     system_proxy_mode: Option<String>,
     socks_port: u16,
@@ -10041,7 +10042,7 @@ fn get_connection_health_full(
     #[cfg(all(target_os = "macos", feature = "app-store"))]
     {
         let _ = (proxy_mode, system_proxy_mode, socks_port, http_port);
-        app_store_connection_health()
+        app_store_connection_health().await
     }
     #[cfg(not(all(target_os = "macos", feature = "app-store")))]
     {
@@ -12266,7 +12267,7 @@ async fn check_silent_autostart() -> bool {
 /// Safe to call multiple times (idempotent)
 fn full_cleanup() {
     #[cfg(all(target_os = "macos", feature = "app-store"))]
-    let _ = app_store_tunnel::stop();
+    app_store_tunnel::stop_cached();
 
     #[cfg(not(all(target_os = "macos", feature = "app-store")))]
     {

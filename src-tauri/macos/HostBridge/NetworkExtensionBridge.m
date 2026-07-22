@@ -7,7 +7,7 @@
 
 static NSString *const DoodleRayProviderBundleIdentifier = @"com.doodleray.doodleray.DoodleRayVPN";
 static NSString *const DoodleRayManagerDescription = @"DoodleRay VPN";
-static NSTimeInterval const DoodleRayPreferenceTimeout = 60.0;
+static NSTimeInterval const DoodleRayPreferenceTimeout = 15.0;
 static NETunnelProviderManager *DoodleRayCachedManager = nil;
 
 static char *DoodleRayCopyJSON(BOOL success, NSString *status, NSString *message) {
@@ -166,6 +166,14 @@ char *doodleray_ne_status(void) {
             return DoodleRayCopyJSON(YES, @"disconnected", @"");
         }
         return DoodleRayCopyJSON(YES, DoodleRayStatusName(manager.connection.status), @"");
+    }
+}
+
+void doodleray_ne_stop_cached(void) {
+    @autoreleasepool {
+        @synchronized ([NETunnelProviderManager class]) {
+            [DoodleRayCachedManager.connection stopVPNTunnel];
+        }
     }
 }
 
