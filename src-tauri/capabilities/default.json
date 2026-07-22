@@ -12,6 +12,8 @@
     "core:window:allow-is-maximized",
     "core:window:allow-close",
     "core:window:allow-start-dragging",
+    "core:window:allow-set-size",
+    "core:window:allow-set-min-size",
     "opener:default",
     "updater:default",
     "updater:allow-check",

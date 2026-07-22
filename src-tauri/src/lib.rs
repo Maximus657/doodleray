@@ -7195,6 +7195,21 @@ mod tests {
     }
 
     #[test]
+    fn window_capabilities_allow_compact_mode_resize() {
+        for name in ["default.json", "appstore.json"] {
+            let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("capabilities")
+                .join(name);
+            let capability: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+            let permissions = capability["permissions"].as_array().unwrap();
+
+            assert!(permissions.contains(&json!("core:window:allow-set-size")));
+            assert!(permissions.contains(&json!("core:window:allow-set-min-size")));
+        }
+    }
+
+    #[test]
     fn support_bundle_redaction_strips_urls_uuids_ips_and_keys() {
         let input = [
             "url=https://user:pass@example.com/sub",
