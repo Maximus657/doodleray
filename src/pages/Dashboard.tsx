@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
-import { AlertTriangle, ClipboardPaste, ExternalLink, Loader2, Plus } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ClipboardPaste, ExternalLink, Loader2, Plus, ShieldCheck } from 'lucide-react';
 import { useAppStore } from '../stores/app-store';
 import { formatTime } from '../lib/utils';
 import { refreshSubscription, fetchSubscription } from '../lib/subscription';
@@ -31,7 +31,9 @@ import { getPrivacyPolicyUrl, isClosedControlPlaneEnabled, isLegacyImportEnabled
 import {
   appApiControlPlaneSnapshot,
   appApiExchangeCode,
+  appApiExchangeLegacySubscription,
   buildAppConnectLocationRequestFromState,
+  findLegacyDoodleSubscriptionUrl,
   isClosedAutoLocationServer,
   isClosedLocationServer,
   syncClosedLocationsToStore,
@@ -70,6 +72,16 @@ function formatAppLoginCode(value: string): string {
   const digits = normalizeAppLoginCode(value);
   if (digits.length <= 4) return digits;
   return `${digits.slice(0, 4)}-${digits.slice(4)}`;
+}
+
+function waitForPersistedAppState(): Promise<void> {
+  if (useAppStore.persist.hasHydrated()) return Promise.resolve();
+  return new Promise((resolve) => {
+    const unsubscribe = useAppStore.persist.onFinishHydration(() => {
+      unsubscribe();
+      resolve();
+    });
+  });
 }
 
 function isTunLimitedFallbackCandidate(message?: string | null) {
@@ -220,6 +232,7 @@ export default function Dashboard() {
   const [appLoginBusy, setAppLoginBusy] = useState(false);
   const [appLoginError, setAppLoginError] = useState<string | null>(null);
   const [appLocationsLoading, setAppLocationsLoading] = useState(false);
+  const [privacyDetailsOpen, setPrivacyDetailsOpen] = useState(false);
   const [postLoginFlight, setPostLoginFlight] = useState(false);
   const [postLoginFlightSettled, setPostLoginFlightSettled] = useState(false);
   const legacyImportEnabled = isLegacyImportEnabled();
@@ -309,8 +322,23 @@ export default function Dashboard() {
     (async () => {
       setAppLocationsLoading(true);
       try {
-        const { session, locations } = await appApiControlPlaneSnapshot();
+        await waitForPersistedAppState();
         if (disposed) return;
+        let snapshot = await appApiControlPlaneSnapshot();
+        if (!snapshot.session.logged_in) {
+          const legacySubscriptionUrl = findLegacyDoodleSubscriptionUrl(useAppStore.getState().subscriptions);
+          if (legacySubscriptionUrl) {
+            try {
+              const restoredSession = await appApiExchangeLegacySubscription(legacySubscriptionUrl);
+              snapshot = await appApiControlPlaneSnapshot(restoredSession);
+              addLog('success', 'DoodleVPN account restored from the previous version');
+            } catch {
+              addLog('warning', 'Automatic DoodleVPN account restore was unavailable');
+            }
+          }
+        }
+        if (disposed) return;
+        const { session, locations } = snapshot;
         setAppSession(session);
         useAppStore.setState({
           appSessionLoggedIn: session.logged_in,
@@ -1554,7 +1582,9 @@ export default function Dashboard() {
   }, [servers]);
 
   const canConnect = !hasDeviceLimit && (!!activeServer || servers.length > 0);
-  const hasDashboardContent = appSession?.logged_in === true || servers.length > 0 || status !== 'disconnected';
+  const hasDashboardContent = closedControlPlane
+    ? appSession?.logged_in === true
+    : servers.length > 0 || status !== 'disconnected';
   const trimmedQuickInput = quickInput.trim();
   const quickInputKind = trimmedQuickInput.startsWith('https://')
     ? 'subscription'
@@ -1643,7 +1673,7 @@ export default function Dashboard() {
 
       {!hasDashboardContent ? (
         <div className="flex min-h-0 flex-1 items-center justify-center p-6">
-          <div className={`v6-glass v6-onboarding-card w-full max-w-[520px] rounded-[30px] p-9 text-center ${postLoginFlight ? 'v6-onboarding-card-exit' : ''}`}>
+          <div className={`v6-glass v6-onboarding-card w-full max-w-[480px] rounded-[30px] px-8 py-9 text-center ${postLoginFlight ? 'v6-onboarding-card-exit' : ''}`}>
             <div className="mx-auto mb-5 flex items-center justify-center">
               <img
                 src="/assets/mascot.png"
@@ -1653,7 +1683,9 @@ export default function Dashboard() {
                 style={{ boxShadow: '0 12px 36px rgba(234,109,6,0.42)' }}
               />
             </div>
-            <h2 className="text-[23px] font-semibold tracking-[-0.015em] text-white">{t('welcome')}</h2>
+            <h2 className="text-[23px] font-semibold tracking-[-0.015em] text-white">
+              {legacyImportEnabled ? t('welcome') : t('v6AppLoginTitle' as never)}
+            </h2>
             <p className="mx-auto mt-2 max-w-[360px] text-[14px] leading-relaxed text-white/60">
               {legacyImportEnabled ? t('welcomeHint') : t('v6AppLoginHint' as never)}
             </p>
@@ -1689,58 +1721,74 @@ export default function Dashboard() {
               </>
             )}
             {!legacyImportEnabled && (
-              <div className="mt-7 text-left">
-                <div className="mb-5 rounded-[16px] border border-white/[0.1] bg-white/[0.045] px-4 py-3.5">
-                  <p className="text-[11.5px] leading-relaxed text-white/55">
-                    {t('v6VpnDataDisclosure' as never)}
-                  </p>
-                  {privacyPolicyUrl && (
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        try {
-                          const { openUrl } = await import('@tauri-apps/plugin-opener');
-                          await openUrl(privacyPolicyUrl);
-                        } catch {
-                          window.open(privacyPolicyUrl, '_blank', 'noopener,noreferrer');
-                        }
-                      }}
-                      className="mt-2 text-[11.5px] font-medium text-[#FFAE57] underline decoration-[#FFAE57]/45 underline-offset-4 v6-focus"
-                    >
-                      {t('v6PrivacyPolicy' as never)}
-                    </button>
-                  )}
-                </div>
-                <label className="mb-2.5 block text-[12px] font-semibold uppercase tracking-[0.16em] text-white/45">
+              <div className="mt-6 text-left">
+                <label className="mb-2.5 block text-[13px] font-medium text-white/72">
                   {t('v6AppLoginCode' as never)}
                 </label>
-                <div className="flex gap-3">
-                  <input
-                    type="text"
-                    value={appLoginCode}
-                    onChange={(e) => setAppLoginCode(formatAppLoginCode(e.target.value))}
-                    onKeyDown={(e) => { if (e.key === 'Enter' && canSubmitAppLoginCode) handleAppLogin(); }}
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    maxLength={9}
-                    placeholder="3614-4311"
-                    className="v6-glass-inset min-h-[56px] min-w-0 flex-1 rounded-[18px] px-4 text-[17px] font-medium tracking-[0.04em] text-white outline-none placeholder:text-white/30 v6-focus"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleAppLogin}
-                    disabled={!canSubmitAppLoginCode}
-                    className="min-h-[56px] min-w-[104px] rounded-[18px] px-5 text-[15px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 v6-focus"
-                    style={{ background: 'linear-gradient(140deg, #FF9E38, #EA6D06)', boxShadow: '0 6px 18px rgba(234,109,6,0.35)' }}
-                  >
-                    {appLoginBusy ? '...' : t('v6AppSignIn' as never)}
-                  </button>
-                </div>
+                <input
+                  type="text"
+                  value={appLoginCode}
+                  onChange={(e) => setAppLoginCode(formatAppLoginCode(e.target.value))}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && canSubmitAppLoginCode) handleAppLogin(); }}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={9}
+                  placeholder="3614-4311"
+                  aria-label={t('v6AppLoginCode' as never)}
+                  className="v6-glass-inset min-h-[56px] w-full rounded-[18px] px-4 text-center text-[18px] font-semibold tracking-[0.09em] text-white outline-none placeholder:text-white/26 v6-focus"
+                />
+                <p className="mt-2 px-1 text-[11.5px] leading-relaxed text-white/43">
+                  {t('v6AppLoginCodeHelp' as never)}
+                </p>
+                <button
+                  type="button"
+                  onClick={handleAppLogin}
+                  disabled={!canSubmitAppLoginCode}
+                  className="mt-4 min-h-[54px] w-full rounded-[18px] px-5 text-[15px] font-semibold text-white transition-[opacity,transform] hover:-translate-y-px hover:opacity-95 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-40 v6-focus"
+                  style={{ background: 'linear-gradient(140deg, #FF9E38, #EA6D06)', boxShadow: '0 6px 18px rgba(234,109,6,0.35)' }}
+                >
+                  {appLoginBusy ? t('loading') : t('v6AppSignIn' as never)}
+                </button>
                 {(appLoginError || appLocationsLoading) && (
-                  <p className={`mt-3 text-[12px] leading-relaxed ${appLoginError ? 'text-[#ff8b7d]' : 'text-white/45'}`}>
-                    {appLoginError || t('v6AppLoadingLocations' as never)}
+                  <p className={`mt-3 text-center text-[12px] leading-relaxed ${appLoginError ? 'text-[#ff8b7d]' : 'text-white/45'}`}>
+                    {appLoginError || t('v6RestoringSession' as never)}
                   </p>
                 )}
+                <div className="mt-6 border-t border-white/[0.08] pt-4">
+                  <button
+                    type="button"
+                    aria-expanded={privacyDetailsOpen}
+                    onClick={() => setPrivacyDetailsOpen((open) => !open)}
+                    className="v6-focus flex w-full items-center gap-2 rounded-xl py-1 text-left text-[12px] font-medium text-white/48 transition-colors hover:text-white/70"
+                  >
+                    <ShieldCheck className="h-4 w-4 text-[#FFAE57]/75" strokeWidth={2} />
+                    <span className="flex-1">{t('v6PrivacyDetails' as never)}</span>
+                    <ChevronDown className={`h-4 w-4 transition-transform duration-200 ${privacyDetailsOpen ? 'rotate-180' : ''}`} strokeWidth={2} />
+                  </button>
+                  {privacyDetailsOpen && (
+                    <div className="mt-3 rounded-[15px] bg-white/[0.035] px-4 py-3.5">
+                      <p className="text-[11.5px] leading-relaxed text-white/52">
+                        {t('v6VpnDataDisclosure' as never)}
+                      </p>
+                      {privacyPolicyUrl && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              const { openUrl } = await import('@tauri-apps/plugin-opener');
+                              await openUrl(privacyPolicyUrl);
+                            } catch {
+                              window.open(privacyPolicyUrl, '_blank', 'noopener,noreferrer');
+                            }
+                          }}
+                          className="mt-2.5 text-[11.5px] font-medium text-[#FFAE57] underline decoration-[#FFAE57]/45 underline-offset-4 v6-focus"
+                        >
+                          {t('v6PrivacyPolicy' as never)}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>

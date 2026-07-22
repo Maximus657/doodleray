@@ -3187,6 +3187,11 @@ pub struct AppApiExchangeCodeRequest {
     pub code: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct AppApiExchangeLegacySubscriptionRequest {
+    pub subscription_url: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AppApiLocation {
     pub id: String,
@@ -4279,6 +4284,17 @@ fn app_api_client_capabilities() -> serde_json::Value {
     })
 }
 
+fn app_api_device_body(device: &AppApiDeviceState, computer_name: &str) -> serde_json::Value {
+    serde_json::json!({
+        "device_id": device.client_device_id,
+        "platform": app_api_platform(),
+        "model": computer_name,
+        "app_version": env!("CARGO_PKG_VERSION"),
+        "hwid": device.hwid,
+        "public_key": device.public_key
+    })
+}
+
 fn app_api_exchange_code_body(
     code: &str,
     device: &AppApiDeviceState,
@@ -4286,15 +4302,48 @@ fn app_api_exchange_code_body(
 ) -> serde_json::Value {
     serde_json::json!({
         "code": code,
-        "device": {
-            "device_id": device.client_device_id,
-            "platform": app_api_platform(),
-            "model": computer_name,
-            "app_version": env!("CARGO_PKG_VERSION"),
-            "hwid": device.hwid,
-            "public_key": device.public_key
-        }
+        "device": app_api_device_body(device, computer_name)
     })
+}
+
+fn legacy_subscription_token(subscription_url: &str) -> Result<String, String> {
+    let parsed = Url::parse(subscription_url.trim())
+        .map_err(|_| "Stored DoodleVPN subscription URL is invalid.".to_string())?;
+    if parsed.scheme() != "https" {
+        return Err("Stored DoodleVPN subscription must use HTTPS.".into());
+    }
+    let host = parsed.host_str().unwrap_or_default().to_ascii_lowercase();
+    if !matches!(
+        host.as_str(),
+        "ddlvpn.lol"
+            | "www.ddlvpn.lol"
+            | "doodlevpn.online"
+            | "www.doodlevpn.online"
+            | "sub.brewsandrologistics.fun"
+    ) {
+        return Err("Stored subscription is not a DoodleVPN subscription.".into());
+    }
+    let segments = parsed
+        .path_segments()
+        .map(|segments| {
+            segments
+                .filter(|segment| !segment.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if segments.len() != 2 || !matches!(segments[0], "s" | "sub") {
+        return Err("Stored DoodleVPN subscription URL is not supported.".into());
+    }
+    let token = segments[1].trim();
+    if token.len() < 8
+        || token.len() > 256
+        || !token
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || "-_.~=".contains(ch))
+    {
+        return Err("Stored DoodleVPN subscription token is invalid.".into());
+    }
+    Ok(token.to_string())
 }
 
 #[tauri::command(async)]
@@ -4322,6 +4371,32 @@ async fn app_api_exchange_code(
     let session = app_api_send_json::<AppApiTokenResponse>(
         reqwest::Method::POST,
         "/auth/code/exchange",
+        None,
+        Some(body),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    app_api_store_session(&session)?;
+    Ok(app_api_public_session(Some(session)))
+}
+
+#[tauri::command]
+async fn app_api_exchange_legacy_subscription(
+    request: AppApiExchangeLegacySubscriptionRequest,
+) -> Result<AppApiSessionStatus, String> {
+    ensure_closed_control_plane_enabled()?;
+    let token = legacy_subscription_token(&request.subscription_url)?;
+    let device = app_api_load_or_create_device()?;
+    let computer_name = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| APP_PRODUCT_NAME.into());
+    let body = serde_json::json!({
+        "subscription_token": token,
+        "device": app_api_device_body(&device, &computer_name)
+    });
+    let session = app_api_send_json::<AppApiTokenResponse>(
+        reqwest::Method::POST,
+        "/auth/legacy-subscription/exchange",
         None,
         Some(body),
     )
@@ -6541,6 +6616,31 @@ mod tests {
         assert_eq!(body["device"]["device_id"], device.client_device_id);
         assert_eq!(body["device"]["hwid"], device.hwid);
         assert_eq!(body["device"]["public_key"], device.public_key);
+    }
+
+    #[test]
+    fn legacy_subscription_migration_accepts_only_doodlevpn_urls() {
+        assert_eq!(
+            legacy_subscription_token("https://ddlvpn.lol/s/oldDesktopToken123?format=happ")
+                .expect("canonical legacy URL"),
+            "oldDesktopToken123"
+        );
+        assert_eq!(
+            legacy_subscription_token("https://doodlevpn.online/sub/legacy_token-456")
+                .expect("legacy alias URL"),
+            "legacy_token-456"
+        );
+        for invalid in [
+            "http://ddlvpn.lol/s/oldDesktopToken123",
+            "https://example.com/s/oldDesktopToken123",
+            "https://ddlvpn.lol/healthz",
+            "https://ddlvpn.lol/s/bad token",
+        ] {
+            assert!(
+                legacy_subscription_token(invalid).is_err(),
+                "accepted {invalid}"
+            );
+        }
     }
 
     #[test]
@@ -14107,6 +14207,7 @@ pub fn run() {
             secure_store_delete,
             app_api_session_status,
             app_api_exchange_code,
+            app_api_exchange_legacy_subscription,
             app_api_refresh,
             app_api_logout,
             app_api_locations,

@@ -5,6 +5,8 @@ import { isClosedControlPlaneEnabled } from './build-policy';
 import { getActiveRoutingRules, resolveSystemProxyModeForRouting } from './connect-helpers';
 import { getServerSelectionKey, isAutoSelectCandidate } from './server-selection';
 
+export { findLegacyDoodleSubscriptionUrl } from './legacy-subscription';
+
 const CLOSED_SUBSCRIPTION_ID = 'doodlevpn-app';
 const LOCATION_ID_PREFIX = 'app-location:';
 const AUTO_LOCATION_ID = 'auto';
@@ -200,6 +202,16 @@ export async function appApiExchangeCode(code: string): Promise<AppApiSessionSta
   return await invoke<AppApiSessionStatus>('app_api_exchange_code', { request: { code: normalizedCode } });
 }
 
+export async function appApiExchangeLegacySubscription(subscriptionUrl: string): Promise<AppApiSessionStatus> {
+  if (!isTauriRuntime()) {
+    localPreviewLoggedIn = true;
+    return localPreviewSession(true);
+  }
+  return await invoke<AppApiSessionStatus>('app_api_exchange_legacy_subscription', {
+    request: { subscription_url: subscriptionUrl },
+  });
+}
+
 export async function appApiRefresh(): Promise<AppApiSessionStatus> {
   if (!isTauriRuntime()) return localPreviewSession();
   return await invoke<AppApiSessionStatus>('app_api_refresh');
@@ -279,6 +291,15 @@ export function syncClosedLocationsToStore(
   if (!isClosedControlPlaneEnabled()) return;
 
   const state = useAppStore.getState();
+  if (!session?.logged_in) {
+    useAppStore.setState({
+      servers: [],
+      subscriptions: state.subscriptions.filter((subscription) => subscription.url !== 'app://doodlevpn'),
+      activeServer: null,
+      lastSelectedServerKey: null,
+    });
+    return;
+  }
   const previousPings = new Map(state.servers.map((server) => [server.id, server.ping]));
   const locationServers = locations
     .slice(0, MAX_LOCATION_CATALOG_ITEMS)
