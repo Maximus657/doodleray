@@ -1,4 +1,4 @@
-import { getServerSelectionKey, resolveConnectServer, selectPreferredServer } from './server-selection.ts';
+import { findMatchingServer, getServerSelectionKey, resolveConnectServer, selectPreferredServer } from './server-selection.ts';
 import type { ServerConfig } from '../stores/app-store.ts';
 
 function server(overrides: Partial<ServerConfig>): ServerConfig {
@@ -44,3 +44,5 @@ const germany = server({ id: 'app-location:de', name: 'Германия', countr
 assertEqual(selectPreferredServer([russia, germany], true)?.id, germany.id);
 assertEqual(selectPreferredServer([russia], true), null);
 assertEqual(resolveConnectServer(russia, [russia, germany], true)?.id, russia.id);
+assertEqual(findMatchingServer(russia, [germany]), null);
+assertEqual(findMatchingServer(russia, [russia])?.id, russia.id);

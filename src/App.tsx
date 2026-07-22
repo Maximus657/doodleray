@@ -433,9 +433,6 @@ function App() {
         if (prevState.status === 'connected' && state.status === 'disconnected') {
           useToastStore.getState().addToast('VPN Disconnected', 'warning');
         }
-        if (prevState.status === 'connecting' && state.status === 'connected') {
-          useToastStore.getState().addToast('VPN Connected ✓', 'success');
-        }
       }
     );
 

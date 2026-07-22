@@ -133,6 +133,10 @@ export function findMatchingServerInIndex(
   const byId = index.byId.get(target.id);
   if (byId) return byId;
 
+  // Closed-control-plane locations intentionally share a placeholder endpoint;
+  // only their opaque location id identifies the selected country.
+  if (target.id.startsWith('app-location:')) return null;
+
   if (target.rawLink) {
     const byRawLink = index.byRawLink.get(target.rawLink);
     if (byRawLink) return byRawLink;
