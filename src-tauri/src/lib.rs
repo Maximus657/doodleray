@@ -29,7 +29,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, ToSocketAdd
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
-#[cfg(all(target_os = "macos", feature = "app-store"))]
+#[cfg(any(windows, all(target_os = "macos", feature = "app-store")))]
 use std::sync::atomic::AtomicBool;
 #[cfg(windows)]
 use std::sync::atomic::AtomicIsize;
@@ -67,6 +67,8 @@ static RUNTIME_OP_LOCK: LazyLock<tokio::sync::Mutex<()>> =
     LazyLock::new(|| tokio::sync::Mutex::new(()));
 #[cfg(all(target_os = "macos", feature = "app-store"))]
 static APP_STORE_CONNECT_CANCELLED: AtomicBool = AtomicBool::new(false);
+#[cfg(windows)]
+static WINDOWS_CONNECT_CANCELLED: AtomicBool = AtomicBool::new(false);
 #[cfg(all(target_os = "macos", feature = "app-store"))]
 #[derive(Default)]
 struct AppStoreDataplaneProbeCache {
@@ -5868,6 +5870,15 @@ mod tests {
     }
 
     #[test]
+    fn tunnel_start_cancellation_is_an_explicit_terminal_result() {
+        assert!(ensure_tunnel_start_not_cancelled(false).is_ok());
+        assert_eq!(
+            ensure_tunnel_start_not_cancelled(true),
+            Err("VPN connection was cancelled")
+        );
+    }
+
+    #[test]
     fn diagnostics_are_redacted_before_the_app_api_request() {
         let sanitized = app_api_sanitize_diagnostic_value(
             json!({
@@ -8703,6 +8714,9 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
 async fn vpn_connect_direct(mut request: ConnectRequest, app: tauri::AppHandle) -> ConnectResult {
     let _runtime_guard = RUNTIME_OP_LOCK.lock().await;
 
+    #[cfg(windows)]
+    WINDOWS_CONNECT_CANCELLED.store(false, Ordering::SeqCst);
+
     // Clear previous connect logs
     if let Ok(mut logs) = CONNECT_LOG.lock() {
         logs.clear();
@@ -9695,6 +9709,8 @@ async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
     }
     #[cfg(not(all(target_os = "macos", feature = "app-store")))]
     {
+        #[cfg(windows)]
+        WINDOWS_CONNECT_CANCELLED.store(true, Ordering::SeqCst);
         vpn_disconnect_direct(app).await
     }
 }
@@ -11107,6 +11123,15 @@ fn tunnel_service_exe_path() -> Result<PathBuf, String> {
     }
 }
 
+#[cfg(any(windows, test))]
+fn ensure_tunnel_start_not_cancelled(cancelled: bool) -> Result<(), &'static str> {
+    if cancelled {
+        Err("VPN connection was cancelled")
+    } else {
+        Ok(())
+    }
+}
+
 #[cfg(windows)]
 fn tunnel_service_start(
     request: &ConnectRequest,
@@ -11157,6 +11182,14 @@ fn tunnel_service_start(
     let timeout = Duration::from_secs(90);
     let mut last_phase = status.phase.clone();
     loop {
+        if let Err(message) =
+            ensure_tunnel_start_not_cancelled(WINDOWS_CONNECT_CANCELLED.load(Ordering::SeqCst))
+        {
+            vpn_log("Tunnel Service start cancelled; stopping partial runtime");
+            let _ = tunnel_service_stop("connect_cancelled");
+            return Err(message.into());
+        }
+
         match status.state {
             tunnel_service::TunnelState::Connected => return Ok(status),
             tunnel_service::TunnelState::Failed => {
