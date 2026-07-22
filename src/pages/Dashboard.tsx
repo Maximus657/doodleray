@@ -32,8 +32,9 @@ import {
   appApiControlPlaneSnapshot,
   appApiExchangeCode,
   appApiExchangeLegacySubscription,
+  appApiLogout,
   buildAppConnectLocationRequestFromState,
-  findLegacyDoodleSubscriptionUrl,
+  findLegacyDoodleSubscriptionUrls,
   isClosedAutoLocationServer,
   isClosedLocationServer,
   syncClosedLocationsToStore,
@@ -231,7 +232,7 @@ export default function Dashboard() {
   const [appLoginCode, setAppLoginCode] = useState('');
   const [appLoginBusy, setAppLoginBusy] = useState(false);
   const [appLoginError, setAppLoginError] = useState<string | null>(null);
-  const [appLocationsLoading, setAppLocationsLoading] = useState(false);
+  const [appLocationsLoading, setAppLocationsLoading] = useState(isClosedControlPlaneEnabled());
   const [privacyDetailsOpen, setPrivacyDetailsOpen] = useState(false);
   const [postLoginFlight, setPostLoginFlight] = useState(false);
   const [postLoginFlightSettled, setPostLoginFlightSettled] = useState(false);
@@ -326,15 +327,25 @@ export default function Dashboard() {
         if (disposed) return;
         let snapshot = await appApiControlPlaneSnapshot();
         if (!snapshot.session.logged_in) {
-          const legacySubscriptionUrl = findLegacyDoodleSubscriptionUrl(useAppStore.getState().subscriptions);
-          if (legacySubscriptionUrl) {
+          const state = useAppStore.getState();
+          const legacySubscriptionUrls = findLegacyDoodleSubscriptionUrls(
+            state.subscriptions,
+            state.activeServer?.subscriptionId,
+          );
+          let restored = false;
+          for (const legacySubscriptionUrl of legacySubscriptionUrls) {
             try {
               const restoredSession = await appApiExchangeLegacySubscription(legacySubscriptionUrl);
               snapshot = await appApiControlPlaneSnapshot(restoredSession);
+              restored = true;
               addLog('success', 'DoodleVPN account restored from the previous version');
+              break;
             } catch {
-              addLog('warning', 'Automatic DoodleVPN account restore was unavailable');
+              // A stale DoodleVPN entry must not prevent another saved subscription from restoring.
             }
+          }
+          if (legacySubscriptionUrls.length > 0 && !restored) {
+            addLog('warning', 'Automatic DoodleVPN account restore was unavailable');
           }
         }
         if (disposed) return;
@@ -1361,6 +1372,8 @@ export default function Dashboard() {
               system_proxy_mode: state.systemProxyMode,
               subscriptions_count: state.subscriptions.length,
               servers_count: state.servers.length,
+              app_session_logged_in: state.appSessionLoggedIn,
+              app_session_device_allowed: state.appSessionDeviceAllowed,
               active_server_present: !!state.activeServer,
               active_server_name: state.activeServer?.name ?? null,
               active_server_protocol: state.activeServer?.protocol ?? null,
@@ -1395,6 +1408,9 @@ export default function Dashboard() {
               if (current.status !== 'disconnected') {
                 await current.handleConnect();
               }
+            } else if (action === 'logout') {
+              await appApiLogout();
+              window.dispatchEvent(new CustomEvent('doodleray:app-logout'));
             } else if (action === 'switch-mode') {
               const mode = query.get('mode');
               if (mode === 'tun') await current.handleModeSwitch('tun', 'set');
@@ -1720,7 +1736,13 @@ export default function Dashboard() {
                 </button>
               </>
             )}
-            {!legacyImportEnabled && (
+            {!legacyImportEnabled && appLocationsLoading && (
+              <div className="mt-6 flex min-h-[154px] flex-col items-center justify-center gap-3 text-white/55">
+                <Loader2 className="h-5 w-5 v6-orb-spin" aria-hidden="true" />
+                <p className="text-[12px] leading-relaxed">{t('v6RestoringSession' as never)}</p>
+              </div>
+            )}
+            {!legacyImportEnabled && !appLocationsLoading && (
               <div className="mt-6 text-left">
                 <label className="mb-2.5 block text-[13px] font-medium text-white/72">
                   {t('v6AppLoginCode' as never)}
@@ -1749,9 +1771,9 @@ export default function Dashboard() {
                 >
                   {appLoginBusy ? t('loading') : t('v6AppSignIn' as never)}
                 </button>
-                {(appLoginError || appLocationsLoading) && (
-                  <p className={`mt-3 text-center text-[12px] leading-relaxed ${appLoginError ? 'text-[#ff8b7d]' : 'text-white/45'}`}>
-                    {appLoginError || t('v6RestoringSession' as never)}
+                {appLoginError && (
+                  <p className="mt-3 text-center text-[12px] leading-relaxed text-[#ff8b7d]">
+                    {appLoginError}
                   </p>
                 )}
                 <div className="mt-6 border-t border-white/[0.08] pt-4">

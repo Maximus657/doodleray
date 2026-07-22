@@ -8,7 +8,7 @@ mod windows_service_main {
     use std::fs::OpenOptions;
     use std::hash::{Hash, Hasher};
     use std::mem::{size_of, zeroed};
-    use std::net::{Ipv4Addr, TcpStream};
+    use std::net::{Ipv4Addr, Ipv6Addr, TcpStream};
     use std::os::windows::io::AsRawHandle;
     use std::os::windows::process::CommandExt;
     use std::path::{Path, PathBuf};
@@ -1568,8 +1568,8 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             }
         }
         set_phase("singbox_ready", started, generation)?;
-        wait_for_doodleray_ipv4_interface(Duration::from_secs(20), generation)?;
-        set_phase("ipv4_ready", started, generation)?;
+        wait_for_doodleray_dual_stack_interface(Duration::from_secs(20), generation)?;
+        set_phase("dual_stack_ready", started, generation)?;
         apply_doodleray_dns_client_policy(generation);
         wait_for_doodleray_route_preferred(Duration::from_secs(20), generation)?;
         mark_route_ready();
@@ -1644,7 +1644,7 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
 
         ensure_current_generation(generation)?;
         refresh_adapter_snapshot_required()?;
-        wait_for_doodleray_ipv4_interface(Duration::from_secs(8), generation)?;
+        wait_for_doodleray_dual_stack_interface(Duration::from_secs(8), generation)?;
         apply_doodleray_dns_client_policy(generation);
         wait_for_doodleray_route_preferred(Duration::from_secs(8), generation)?;
         mark_route_ready();
@@ -2499,64 +2499,8 @@ $metric = (Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IP
             if !is_current_generation(generation) {
                 return;
             }
-            mark_ipv6_policy_status();
-            if !is_current_generation(generation) {
-                return;
-            }
             mark_quic_policy_status();
         });
-    }
-
-    fn mark_ipv6_policy_status() {
-        let output = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                r#"
-$routes = @(Get-NetRoute -AddressFamily IPv6 -DestinationPrefix '::/0' -ErrorAction SilentlyContinue |
-  Where-Object { $_.State -eq 'Alive' } |
-  Select-Object -First 4 InterfaceAlias,InterfaceIndex,NextHop,RouteMetric)
-if ($routes.Count -eq 0) {
-  Write-Output 'ipv6_default_route=absent'
-  exit 0
-}
-$routes | ForEach-Object {
-  "ipv6_default_route=$($_.InterfaceAlias)|ifIndex=$($_.InterfaceIndex)|nextHop=$($_.NextHop)|metric=$($_.RouteMetric)"
-}
-"#,
-            ])
-            .creation_flags(0x08000000)
-            .output();
-
-        let detail = match output {
-            Ok(output) => String::from_utf8_lossy(&output.stdout).trim().to_string(),
-            Err(error) => format!("ipv6_default_route=unknown: {}", error),
-        };
-
-        let mut runtime = state().lock().unwrap();
-        if detail.contains("ipv6_default_route=absent") {
-            let check = "IPv6 default route is absent; protected verdict covers IPv4 routing";
-            if !runtime
-                .warning_checks
-                .iter()
-                .any(|existing| existing == check)
-            {
-                runtime.warning_checks.push(check.into());
-            }
-        } else {
-            let prefix = "IPv6 full-protection leak proof is not collected yet";
-            if !runtime
-                .degraded_checks
-                .iter()
-                .any(|existing| existing.starts_with(prefix))
-            {
-                runtime.degraded_checks.push(format!(
-                    "{}; treating IPv6 as degraded_disabled ({})",
-                    prefix,
-                    redact(&detail)
-                ));
-            }
-        }
     }
 
     fn mark_quic_policy_status() {
@@ -2607,7 +2551,7 @@ $routes | ForEach-Object {
         let native_started = Instant::now();
         match windows_net::apply_interface_metric("DoodleRay Tunnel", 50) {
             Ok(message) => {
-                record_native_probe("ipv4_metric", native_started);
+                record_native_probe("dual_stack_metric", native_started);
                 set_adapter_probe_backend("native_iphelper");
                 Ok(message)
             }
@@ -2637,21 +2581,24 @@ if (-not $tunIface) {
   Write-Output ("DoodleRay Tunnel IPv4 interface is not ready: ifIndex={0}, adapterStatus={1}, ipv4Binding={2}" -f $adapter.ifIndex, $adapter.Status, $bindingState)
   exit 2
 }
+$tunIfaceV6 = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -ErrorAction SilentlyContinue
+if (-not $tunIfaceV6) {
+  Write-Output ("DoodleRay Tunnel IPv6 interface is not ready: ifIndex={0}, adapterStatus={1}" -f $adapter.ifIndex, $adapter.Status)
+  exit 2
+}
 
 $targetMetric = 50
 Set-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -AutomaticMetric Disabled -InterfaceMetric $targetMetric -ErrorAction Stop
-$ipv6Iface = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -ErrorAction SilentlyContinue
-if ($ipv6Iface) {
-  Set-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -AutomaticMetric Disabled -InterfaceMetric $targetMetric -ErrorAction SilentlyContinue
-}
+Set-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -AutomaticMetric Disabled -InterfaceMetric $targetMetric -ErrorAction Stop
 
 $tunIface = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction Stop
-if ([int]$tunIface.InterfaceMetric -ne $targetMetric) {
-  Write-Output ("DoodleRay Tunnel IPv4 metric was not applied: ifIndex={0}, metric={1}" -f $adapter.ifIndex, $tunIface.InterfaceMetric)
+$tunIfaceV6 = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -ErrorAction Stop
+if ([int]$tunIface.InterfaceMetric -ne $targetMetric -or [int]$tunIfaceV6.InterfaceMetric -ne $targetMetric) {
+  Write-Output ("DoodleRay Tunnel dual-stack metric was not applied: ifIndex={0}, ipv4={1}, ipv6={2}" -f $adapter.ifIndex, $tunIface.InterfaceMetric, $tunIfaceV6.InterfaceMetric)
   exit 3
 }
 
-Write-Output ("DoodleRay Tunnel IPv4 ready: ifIndex={0}, metric={1}, state={2}, mtu={3}" -f $adapter.ifIndex, $tunIface.InterfaceMetric, $tunIface.ConnectionState, $tunIface.NlMtu)
+Write-Output ("DoodleRay Tunnel dual-stack ready: ifIndex={0}, ipv4_metric={1}, ipv6_metric={2}, state={3}, mtu={4}" -f $adapter.ifIndex, $tunIface.InterfaceMetric, $tunIfaceV6.InterfaceMetric, $tunIface.ConnectionState, $tunIface.NlMtu)
 "#;
         match Command::new("powershell")
             .args(["-NoProfile", "-Command", script])
@@ -2670,9 +2617,13 @@ Write-Output ("DoodleRay Tunnel IPv4 ready: ifIndex={0}, metric={1}, state={2}, 
         }
     }
 
-    fn wait_for_doodleray_ipv4_interface(timeout: Duration, generation: u64) -> Result<(), String> {
+    fn wait_for_doodleray_dual_stack_interface(
+        timeout: Duration,
+        generation: u64,
+    ) -> Result<(), String> {
         let deadline = Instant::now() + timeout;
-        let mut last_error = "DoodleRay Tunnel IPv4 interface did not become ready".to_string();
+        let mut last_error =
+            "DoodleRay Tunnel dual-stack interface did not become ready".to_string();
         while Instant::now() < deadline {
             ensure_current_generation(generation)?;
             let cursor = windows_net::network_event_cursors();
@@ -2690,7 +2641,7 @@ Write-Output ("DoodleRay Tunnel IPv4 ready: ifIndex={0}, metric={1}, state={2}, 
         }
         let fallback_started = Instant::now();
         if let Ok(message) = apply_doodleray_interface_metric_powershell() {
-            record_fallback_probe("ipv4_metric_final", fallback_started);
+            record_fallback_probe("dual_stack_metric_final", fallback_started);
             set_adapter_probe_backend("powershell_fallback");
             log_service_event(&format!(
                 "applied DoodleRay Tunnel interface metric via final fallback: {}",
@@ -2699,19 +2650,27 @@ Write-Output ("DoodleRay Tunnel IPv4 ready: ifIndex={0}, metric={1}, state={2}, 
             return Ok(());
         }
         Err(format!(
-            "DoodleRay Tunnel IPv4 readiness failed: {}",
+            "DoodleRay Tunnel dual-stack readiness failed: {}",
             last_error
         ))
     }
 
     fn ensure_doodleray_route_preferred_native() -> Result<String, String> {
-        let canaries = [
+        let ipv4_canaries = [
             Ipv4Addr::new(104, 26, 13, 205),
             Ipv4Addr::new(142, 251, 20, 113),
             Ipv4Addr::new(162, 159, 136, 232),
         ];
+        let ipv6_canaries = [
+            Ipv6Addr::new(0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1111),
+            Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888),
+        ];
         let started = Instant::now();
-        match windows_net::route_canaries_prefer_adapter("DoodleRay Tunnel", &canaries) {
+        match windows_net::route_canaries_prefer_adapter(
+            "DoodleRay Tunnel",
+            &ipv4_canaries,
+            &ipv6_canaries,
+        ) {
             Ok(message) => {
                 record_native_probe("route_canaries", started);
                 set_route_probe_backend("native_getbestroute2");
@@ -2734,6 +2693,11 @@ if (-not $tunIface) {
   $binding = Get-NetAdapterBinding -Name $adapter.Name -ComponentID 'ms_tcpip' -ErrorAction SilentlyContinue
   $bindingState = if ($binding) { $binding.Enabled } else { 'unknown' }
   Write-Output ("DoodleRay Tunnel IPv4 interface is not ready: ifIndex={0}, adapterStatus={1}, ipv4Binding={2}" -f $adapter.ifIndex, $adapter.Status, $bindingState)
+  exit 2
+}
+$tunIfaceV6 = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -ErrorAction SilentlyContinue
+if (-not $tunIfaceV6) {
+  Write-Output ("DoodleRay Tunnel IPv6 interface is not ready: ifIndex={0}, adapterStatus={1}" -f $adapter.ifIndex, $adapter.Status)
   exit 2
 }
 
@@ -2787,10 +2751,23 @@ if ($routeShape -eq 'default' -and $bestOther -and $tunEffective -ge [int]$bestO
   exit 3
 }
 
+$tunV6DefaultRoute = Get-NetRoute -AddressFamily IPv6 -DestinationPrefix '::/0' -InterfaceIndex $adapter.ifIndex -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
+$tunV6SplitRoutes = @(
+  Get-NetRoute -AddressFamily IPv6 -DestinationPrefix '::/1' -InterfaceIndex $adapter.ifIndex -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
+  Get-NetRoute -AddressFamily IPv6 -DestinationPrefix '8000::/1' -InterfaceIndex $adapter.ifIndex -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
+) | Where-Object { $_ }
+$routeShapeV6 = if ($tunV6DefaultRoute) { 'default' } elseif ($tunV6SplitRoutes.Count -eq 2) { 'split' } else { 'none' }
+if ($routeShapeV6 -eq 'none') {
+  Write-Output ("DoodleRay Tunnel IPv6 routes are missing: default=0 split={0}" -f $tunV6SplitRoutes.Count)
+  exit 2
+}
+
 $routeCanaries = @(
   '104.26.13.205',
   '142.251.20.113',
-  '162.159.136.232'
+  '162.159.136.232',
+  '2606:4700:4700::1111',
+  '2001:4860:4860::8888'
 )
 $bypassedCanaries = @()
 foreach ($ip in $routeCanaries) {
@@ -2808,7 +2785,7 @@ if ($bypassedCanaries.Count -gt 0) {
   exit 3
 }
 
-Write-Output ("DoodleRay Tunnel route preferred: shape={0}, tun={1}, best_other={2}, canaries=ok" -f $routeShape, $tunEffective, $(if ($bestOther) { "$($bestOther.Alias):$($bestOther.Effective)" } else { 'none' }))
+Write-Output ("DoodleRay Tunnel dual-stack route preferred: ipv4_shape={0}, ipv6_shape={1}, tun={2}, best_other={3}, canaries=ok" -f $routeShape, $routeShapeV6, $tunEffective, $(if ($bestOther) { "$($bestOther.Alias):$($bestOther.Effective)" } else { 'none' }))
 "#;
         match Command::new("powershell")
             .args(["-NoProfile", "-Command", script])

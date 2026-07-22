@@ -39,7 +39,7 @@ For v6 Windows protected-mode RCs, upload and gate the installer before manual
 UI testing:
 
 ```powershell
-.\scripts\windows-qa\Publish-DoodleRayQaInstaller.ps1 -LocalInstaller .\src-tauri\target\release\bundle\nsis\DoodleRay_5.9.0_x64-setup.exe
+.\scripts\windows-qa\Publish-DoodleRayQaInstaller.ps1 -LocalInstaller .\src-tauri\target\release\bundle\nsis\DoodleRay_6.0.0_x64-setup.exe
 .\scripts\windows-qa\Invoke-DoodleRayV6QaGate.ps1 -InjectStaleWinInet
 .\scripts\windows-qa\Invoke-Play2GoPowerShell.ps1 -ScriptPath .\scripts\windows-qa\Get-DoodleRayDeepQaSnapshot.ps1
 ```
@@ -56,6 +56,7 @@ supported source version:
 .\scripts\windows-qa\Invoke-DoodleRayUpdatePathQa.ps1 -FromVersion 5.4.3 -InjectStaleWinInet -InjectCorporatePac -AllowUnsignedLocalRc
 .\scripts\windows-qa\Invoke-DoodleRayUpdatePathQa.ps1 -FromVersion 5.4.4 -AllowUnsignedLocalRc
 .\scripts\windows-qa\Invoke-DoodleRayUpdatePathQa.ps1 -FromVersion 5.4.5 -AllowUnsignedLocalRc
+.\scripts\windows-qa\Invoke-DoodleRayUpdatePathQa.ps1 -FromVersion 5.9.1 -InjectStaleWinInet -InjectCorporatePac -AllowUnsignedLocalRc
 ```
 
 The update harness downloads the public installer for the source version from

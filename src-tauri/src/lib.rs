@@ -2666,18 +2666,7 @@ fn push_domain_route(
 }
 
 fn tun_address_values() -> serde_json::Value {
-    #[cfg(windows)]
-    {
-        // Windows protected mode is IPv4-authoritative until IPv6 leak-proof
-        // evidence is collected. Advertising an IPv6 TUN default route while
-        // marking IPv6 degraded can make WinDNS/curl/Node resolvers stall on
-        // some hosts.
-        serde_json::json!(["172.30.255.1/30"])
-    }
-    #[cfg(not(windows))]
-    {
-        serde_json::json!(["172.30.255.1/30", "fdfe:dcba:9876::1/126"])
-    }
+    serde_json::json!(["172.30.255.1/30", "fdfe:dcba:9876::1/126"])
 }
 
 fn tun_mtu_value(req: &ConnectRequest) -> u16 {
@@ -7949,10 +7938,6 @@ mod tests {
 
     #[test]
     fn tun_addresses_match_platform_ipv6_policy() {
-        #[cfg(windows)]
-        assert_eq!(tun_address_values(), json!(["172.30.255.1/30"]));
-
-        #[cfg(not(windows))]
         assert_eq!(
             tun_address_values(),
             json!(["172.30.255.1/30", "fdfe:dcba:9876::1/126"])
@@ -14085,6 +14070,7 @@ fn qa_control_dispatch(app: &tauri::AppHandle, path: &str) -> (&'static str, Str
         }
         "/connect"
         | "/disconnect"
+        | "/logout"
         | "/switch-mode"
         | "/refresh-subscription"
         | "/import-subscription"

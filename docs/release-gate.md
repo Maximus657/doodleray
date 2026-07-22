@@ -73,12 +73,14 @@ tools for the changed area.
 For v6 protected-mode RCs, use the committed Play2Go harness:
 
 ```powershell
-.\scripts\windows-qa\Publish-DoodleRayQaInstaller.ps1 -LocalInstaller .\src-tauri\target\release\bundle\nsis\DoodleRay_5.9.0_x64-setup.exe
+.\scripts\windows-qa\Publish-DoodleRayQaInstaller.ps1 -LocalInstaller .\src-tauri\target\release\bundle\nsis\DoodleRay_6.0.0_x64-setup.exe
 .\scripts\windows-qa\Invoke-DoodleRayV6QaGate.ps1 -InjectStaleWinInet
 .\scripts\windows-qa\Invoke-Play2GoPowerShell.ps1 -ScriptPath .\scripts\windows-qa\Get-DoodleRayDeepQaSnapshot.ps1
+.\scripts\windows-qa\Invoke-Play2GoPowerShell.ps1 -ScriptPath .\scripts\windows-qa\Invoke-DoodleRaySplitRoutingDnsQa.ps1
 .\scripts\windows-qa\Invoke-DoodleRayUpdatePathQa.ps1 -FromVersion 5.4.3
 .\scripts\windows-qa\Invoke-DoodleRayUpdatePathQa.ps1 -FromVersion 5.4.4
 .\scripts\windows-qa\Invoke-DoodleRayUpdatePathQa.ps1 -FromVersion 5.4.5 -InjectStaleWinInet -InjectCorporatePac
+.\scripts\windows-qa\Invoke-DoodleRayUpdatePathQa.ps1 -FromVersion 5.9.1 -InjectStaleWinInet -InjectCorporatePac
 ```
 
 `Invoke-DoodleRayV6QaGate.ps1` is the minimum install/update hardening gate. It
@@ -89,11 +91,12 @@ and subscription import testing; it makes those tests start from a known-good
 installed baseline.
 
 `Invoke-DoodleRayUpdatePathQa.ps1` covers the previous-public-version upgrade
-gate: it installs 5.4.3/5.4.4/5.4.5 from GitHub Releases on the stand, installs
+gate: it installs 5.4.3/5.4.4/5.4.5 and the current production 5.9.1 from GitHub Releases on the stand, installs
 the RC over it (optionally with injected stale loopback WinINet and a synthetic
 corporate PAC), and fails unless the updated service reports the RC version as
 JSON, no statsquery orphan exists, and the corporate PAC survived untouched.
-All three source versions must pass before a v6 production tag.
+The current production 5.9.1 path is mandatory before a v6 production tag;
+the older source versions remain regression coverage for long-delayed updates.
 
 `-AllowUnsignedLocalRc` is allowed only for local smoke QA. Production release
 approval requires the default signed gate to pass without that flag.
@@ -101,13 +104,16 @@ approval requires the default signed gate to pass without that flag.
 Attach a redacted evidence note to the release checklist that includes:
 
 - app version, service version, and installer/updater path tested;
-- subscription import/refresh result and server count;
-  use the canonical DoodleVPN test subscription stored in the ignored
+- automatic v5 DoodleVPN session migration result, closed-API location count,
+  and confirmation that no 8-digit code was requested; use the canonical
+  DoodleVPN test subscription stored in the ignored
   `secrets/doodlevpn-test-subscription-url.txt` file; see
   `docs/qa-test-subscription.md`;
 - proxy-mode and protected-mode connect/disconnect result;
 - split-routing result for Russian/direct test sites when relevant;
 - protected-mode crash/recovery result when TUN/service/runtime-health changed;
+- dual-stack route evidence showing both IPv6 canaries select
+  `DoodleRay Tunnel`; any physical-interface result blocks release;
 - service-authored verdict, effective state, generation, runtime ports, and any
   degraded/fatal/warning checks;
 - support bundle redaction result;

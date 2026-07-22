@@ -93,7 +93,7 @@ jobs:
 
       - name: Build unsigned NSIS candidate
         shell: pwsh
-        run: npx tauri build --bundles nsis
+        run: npx tauri build --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Verify candidate contents
         shell: pwsh

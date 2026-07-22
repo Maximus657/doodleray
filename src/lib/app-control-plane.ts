@@ -5,7 +5,7 @@ import { isClosedControlPlaneEnabled } from './build-policy';
 import { getActiveRoutingRules, resolveSystemProxyModeForRouting } from './connect-helpers';
 import { getServerSelectionKey, isAutoSelectCandidate } from './server-selection';
 
-export { findLegacyDoodleSubscriptionUrl } from './legacy-subscription';
+export { findLegacyDoodleSubscriptionUrl, findLegacyDoodleSubscriptionUrls } from './legacy-subscription';
 
 const CLOSED_SUBSCRIPTION_ID = 'doodlevpn-app';
 const LOCATION_ID_PREFIX = 'app-location:';

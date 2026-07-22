@@ -93,6 +93,9 @@ if (-not $SkipUpdatePath) {
     Invoke-Stage "update-path-5.4.5-broken-state" {
         & (Join-Path $PSScriptRoot "Invoke-DoodleRayUpdatePathQa.ps1") -FromVersion 5.4.5 -InjectStaleWinInet -InjectCorporatePac @unsignedArgs -SecretPath $SecretPath
     }
+    Invoke-Stage "update-path-5.9.1-current-production" {
+        & (Join-Path $PSScriptRoot "Invoke-DoodleRayUpdatePathQa.ps1") -FromVersion 5.9.1 -InjectStaleWinInet -InjectCorporatePac @unsignedArgs -SecretPath $SecretPath
+    }
 }
 
 # --- Stage 5: active-VPN-during-update ---------------------------------------
@@ -111,6 +114,10 @@ Invoke-Stage "import-subscription-before-ui-pass" {
 
 Invoke-Stage "rc-ui-cdp-pass" {
     & (Join-Path $PSScriptRoot "Invoke-DoodleRayRc3UiCdpPass.ps1") -SecretPath $SecretPath
+}
+
+Invoke-Stage "dual-stack-split-routing" {
+    & (Join-Path $PSScriptRoot "Invoke-Play2GoPowerShell.ps1") -ScriptPath (Join-Path $PSScriptRoot "Invoke-DoodleRaySplitRoutingDnsQa.ps1") -SecretPath $SecretPath
 }
 
 # --- Stage 7: targeted reliability scenarios ---------------------------------

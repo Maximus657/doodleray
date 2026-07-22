@@ -30,6 +30,11 @@ jobs:
   build-windows:
     runs-on: windows-latest
     env:
+      DOODLERAY_CLOSED_CONTROL_PLANE: "1"
+      VITE_DOODLERAY_CLOSED_CONTROL_PLANE: "1"
+      VITE_DOODLERAY_BUILD_CHANNEL: ${{ inputs.channel }}
+      VITE_DOODLERAY_UPDATE_CHANNEL: ${{ inputs.channel }}
+      VITE_DOODLERAY_DIAGNOSTICS_TELEMETRY: "0"
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       WINDOWS_CODESIGN_TIMESTAMP_URL: ${{ vars.WINDOWS_CODESIGN_TIMESTAMP_URL || 'http://timestamp.digicert.com' }}
