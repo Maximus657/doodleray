@@ -7269,6 +7269,7 @@ mod tests {
         let config: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(config_path).unwrap()).unwrap();
 
+        assert_eq!(config["productName"], json!("DoodleRay"));
         assert_eq!(
             config["bundle"]["windows"]["webviewInstallMode"]["type"],
             json!("offlineInstaller")

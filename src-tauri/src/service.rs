@@ -29,9 +29,8 @@ mod windows_service_main {
     use tokio::net::windows::named_pipe::{PipeMode, ServerOptions};
     use windows_service::define_windows_service;
     use windows_service::service::{
-        PowerEventParam, ServiceAccess, ServiceAction, ServiceActionType, ServiceControl,
-        ServiceControlAccept, ServiceErrorControl, ServiceExitCode, ServiceFailureActions,
-        ServiceFailureResetPeriod, ServiceInfo, ServiceSidType, ServiceStartType, ServiceState,
+        PowerEventParam, ServiceAccess, ServiceControl, ServiceControlAccept, ServiceErrorControl,
+        ServiceExitCode, ServiceInfo, ServiceSidType, ServiceStartType, ServiceState,
         ServiceStatus, ServiceType,
     };
     use windows_service::service_control_handler::{
@@ -303,6 +302,7 @@ mod windows_service_main {
             while !stopped.load(Ordering::SeqCst) && !STOP_REQUESTED.load(Ordering::SeqCst) {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
+            let _ = set_service_status(&status_handle, ServiceState::StopPending, 1);
             for worker in workers {
                 worker.abort();
             }
@@ -317,16 +317,25 @@ mod windows_service_main {
         state: ServiceState,
         checkpoint: u32,
     ) -> windows_service::Result<()> {
+        let controls_accepted = if state == ServiceState::Running {
+            ServiceControlAccept::STOP
+                | ServiceControlAccept::POWER_EVENT
+                | ServiceControlAccept::PARAM_CHANGE
+                | ServiceControlAccept::NETBIND_CHANGE
+        } else {
+            ServiceControlAccept::empty()
+        };
         handle.set_service_status(ServiceStatus {
             service_type: ServiceType::OWN_PROCESS,
             current_state: state,
-            controls_accepted: ServiceControlAccept::STOP
-                | ServiceControlAccept::POWER_EVENT
-                | ServiceControlAccept::PARAM_CHANGE
-                | ServiceControlAccept::NETBIND_CHANGE,
+            controls_accepted,
             exit_code: ServiceExitCode::Win32(0),
             checkpoint,
-            wait_hint: Duration::from_secs(2),
+            wait_hint: if state == ServiceState::StopPending {
+                Duration::from_secs(10)
+            } else {
+                Duration::from_secs(2)
+            },
             process_id: None,
         })
     }
@@ -2979,29 +2988,48 @@ Write-Output ("DoodleRay Tunnel dual-stack route preferred: ipv4_shape={0}, ipv6
         service: &windows_service::service::Service,
     ) -> windows_service::Result<()> {
         service.set_config_service_sid_info(ServiceSidType::Unrestricted)?;
-        service.update_failure_actions(ServiceFailureActions {
-            reset_period: ServiceFailureResetPeriod::After(Duration::from_secs(24 * 60 * 60)),
-            reboot_msg: None,
-            command: None,
-            actions: Some(vec![
-                ServiceAction {
-                    action_type: ServiceActionType::Restart,
-                    delay: Duration::from_secs(2),
-                },
-                ServiceAction {
-                    action_type: ServiceActionType::Restart,
-                    delay: Duration::from_secs(5),
-                },
-                ServiceAction {
-                    action_type: ServiceActionType::None,
-                    delay: Duration::from_secs(0),
-                },
-            ]),
-        })?;
-        service.set_failure_actions_on_non_crash_failures(false)?;
+        configure_service_failure_actions()
+            .map_err(|e| windows_service::Error::Winapi(std::io::Error::other(e)))?;
         grant_builtin_users_start()
             .map_err(|e| windows_service::Error::Winapi(std::io::Error::other(e)))?;
         Ok(())
+    }
+
+    fn configure_service_failure_actions() -> Result<(), String> {
+        let failure = Command::new("sc.exe")
+            .args([
+                "failure",
+                TUNNEL_SERVICE_NAME,
+                "reset=",
+                "86400",
+                "actions=",
+                "restart/2000/restart/5000/\"\"/0",
+            ])
+            .creation_flags(0x08000000)
+            .output()
+            .map_err(|e| format!("Failed to configure tunnel service recovery: {e}"))?;
+        if !failure.status.success() {
+            return Err(format!(
+                "Failed to configure tunnel service recovery: {}{}",
+                String::from_utf8_lossy(&failure.stdout),
+                String::from_utf8_lossy(&failure.stderr)
+            ));
+        }
+
+        let flag = Command::new("sc.exe")
+            .args(["failureflag", TUNNEL_SERVICE_NAME, "0"])
+            .creation_flags(0x08000000)
+            .output()
+            .map_err(|e| format!("Failed to configure tunnel service recovery scope: {e}"))?;
+        if flag.status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "Failed to configure tunnel service recovery scope: {}{}",
+                String::from_utf8_lossy(&flag.stdout),
+                String::from_utf8_lossy(&flag.stderr)
+            ))
+        }
     }
 
     fn grant_builtin_users_start() -> Result<(), String> {
