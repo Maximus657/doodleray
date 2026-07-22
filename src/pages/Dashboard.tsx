@@ -1482,26 +1482,32 @@ export default function Dashboard() {
     }
   }, [status, setStatus, activeServer, setActiveServer, addLog, proxyMode, socksPort, httpPort, setConnectedAt, t, setSocksPort, setHttpPort, markConnectedIfHealthy, closedControlPlane]);
 
-  const handleQuickAdd = useCallback(async () => {
+  const handleQuickAdd = useCallback(async (): Promise<boolean> => {
     const trimmed = quickInput.trim();
-    if (!trimmed) return;
+    if (!trimmed) return false;
     if (!isLegacyImportEnabled()) {
       addLog('error', legacyImportDisabledMessage());
-      return;
+      return false;
     }
     setQuickImporting(true);
     try {
-      if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      if (trimmed.startsWith('https://')) {
         addLog('info', `Fetching subscription: ${describeSubscriptionSource(trimmed)}`);
         const sub = await fetchSubscription(trimmed);
         addSubscription(sub);
         addLog('success', `Loaded ${sub.servers.length} servers from ${sub.name}`);
         setQuickInput('');
+        return true;
       } else if (/^(vless|vmess|trojan|ss|hy2|tuic|wg):\/\//.test(trimmed)) {
         const server = parseProxyLink(trimmed);
-        if (server) { addServer(server); addLog('success', `Added server: ${server.name}`); setQuickInput(''); }
-        else { addLog('error', 'Invalid proxy link format'); }
-      } else { addLog('error', 'Paste a subscription URL (https://...) or proxy link (vless://, vmess://, etc.)'); }
+        if (server) {
+          addServer(server);
+          addLog('success', `Added server: ${server.name}`);
+          setQuickInput('');
+          return true;
+        }
+        addLog('error', 'Invalid proxy link format');
+      } else { addLog('error', 'Paste a secure subscription URL (https://...) or proxy link (vless://, vmess://, etc.)'); }
     } catch (err: any) {
       const message = err.message || String(err);
       addLog('error', `Error: ${message}`);
@@ -1510,8 +1516,10 @@ export default function Dashboard() {
         errorMessage: message,
         details: { action: 'quick_add' },
       });
+      return false;
     }
     finally { setQuickImporting(false); }
+    return false;
   }, [quickInput, addLog, addSubscription, addServer]);
 
   const handleQuickPaste = useCallback(async () => {
@@ -1534,7 +1542,7 @@ export default function Dashboard() {
   const canConnect = !hasDeviceLimit && (!!activeServer || servers.length > 0);
   const hasDashboardContent = appSession?.logged_in === true || servers.length > 0 || status !== 'disconnected';
   const trimmedQuickInput = quickInput.trim();
-  const quickInputKind = trimmedQuickInput.startsWith('http://') || trimmedQuickInput.startsWith('https://')
+  const quickInputKind = trimmedQuickInput.startsWith('https://')
     ? 'subscription'
     : /^(vless|vmess|trojan|ss|hy2|tuic|wg):\/\//.test(trimmedQuickInput)
       ? 'link'
@@ -1607,7 +1615,9 @@ export default function Dashboard() {
         <QuickAddPanel
           value={quickInput}
           onChange={setQuickInput}
-          onAdd={() => { handleQuickAdd(); setShowAddModal(false); }}
+          onAdd={async () => {
+            if (await handleQuickAdd()) setShowAddModal(false);
+          }}
           onPaste={handleQuickPaste}
           onClose={() => setShowAddModal(false)}
           importing={quickImporting}

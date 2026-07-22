@@ -25,6 +25,7 @@ import { pingServersWithLimit } from '../lib/ping-runner';
 import { describeSubscriptionSource } from '../lib/redaction';
 import { isClosedControlPlaneEnabled, isLegacyImportEnabled, legacyImportDisabledMessage } from '../lib/build-policy';
 import { appApiLocations, appApiSessionStatus, syncClosedLocationsToStore } from '../lib/app-control-plane';
+import { FlagIcon } from '../components/v6/ServerRow';
 
 export default function Servers() {
   const {
@@ -89,7 +90,7 @@ export default function Servers() {
   const detectType = (input: string): 'sub' | 'link' | 'unknown' => {
     const trimmed = input.trim();
     if (!trimmed) return 'unknown';
-    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return 'sub';
+    if (trimmed.startsWith('https://')) return 'sub';
     if (/^(vless|vmess|trojan|ss|hy2|tuic|wg):\/\//.test(trimmed)) return 'link';
     return 'unknown';
   };
@@ -138,7 +139,7 @@ export default function Servers() {
         addLog('error', 'Invalid proxy link format');
       }
     } else {
-      addLog('error', 'Unrecognized format. Paste a subscription URL (https://...) or proxy link (vless://, vmess://, etc.)');
+      addLog('error', 'Unrecognized format. Paste a secure subscription URL (https://...) or proxy link (vless://, vmess://, etc.)');
     }
   }, [smartInput, addServer, addSubscription, addLog]);
 
@@ -252,7 +253,7 @@ export default function Servers() {
 
   const renderFlag = (code?: string) => {
     if (!code || code.length !== 2) return <Globe className="w-5 h-5 text-current opacity-70" />;
-    return <img src={`https://flagcdn.com/w40/${code.toLowerCase()}.png`} alt={code} className="w-6 h-4 object-cover rounded-[2px] shadow-sm border-[1px] border-black/20" />;
+    return <FlagIcon countryCode={code} size={24} />;
   };
 
   const serverProtocolLabel = (server: ServerConfig) =>

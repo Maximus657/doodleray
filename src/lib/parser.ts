@@ -1,5 +1,32 @@
 import type { ServerConfig } from '../stores/app-store';
 
+const MAX_PROFILE_LINK_LENGTH = 16 * 1024;
+const MAX_SUBSCRIPTION_TEXT_LENGTH = 8 * 1024 * 1024;
+const MAX_SUBSCRIPTION_SERVERS = 512;
+
+function decodeBase64Utf8(value: string): string {
+  const binary = atob(value);
+  return new TextDecoder().decode(Uint8Array.from(binary, (character) => character.charCodeAt(0)));
+}
+
+function splitCipherAndPassword(value: string): [string, string] {
+  const separator = value.indexOf(':');
+  if (separator <= 0) throw new Error('Invalid Shadowsocks credentials');
+  return [value.slice(0, separator), value.slice(separator + 1)];
+}
+
+function parseHostPort(value: string): { address: string; port: number } {
+  const bracketed = value.startsWith('[');
+  const separator = bracketed ? value.indexOf(']:') + 1 : value.lastIndexOf(':');
+  if (separator <= 0) throw new Error('Invalid server endpoint');
+  const address = value.slice(bracketed ? 1 : 0, bracketed ? separator - 1 : separator);
+  const port = Number(value.slice(separator + 1));
+  if (!address || !Number.isInteger(port) || port <= 0 || port > 65535) {
+    throw new Error('Invalid server endpoint');
+  }
+  return { address, port };
+}
+
 // ========== VLESS Parser ==========
 
 export function parseVlessLink(link: string): ServerConfig | null {
@@ -61,7 +88,7 @@ export function parseVmessLink(link: string): ServerConfig | null {
     if (!link.startsWith('vmess://')) return null;
 
     const base64 = link.replace('vmess://', '');
-    const json: VMessConfig = JSON.parse(atob(base64));
+    const json: VMessConfig = JSON.parse(decodeBase64Utf8(base64));
 
     return {
       id: crypto.randomUUID(),
@@ -91,7 +118,7 @@ export function parseTrojanLink(link: string): ServerConfig | null {
     if (!link.startsWith('trojan://')) return null;
 
     const url = new URL(link.replace('trojan://', 'https://'));
-    const password = url.username;
+    const password = decodeURIComponent(url.username);
     const address = url.hostname;
     const port = parseInt(url.port || '443');
     const params = url.searchParams;
@@ -134,24 +161,25 @@ export function parseShadowsocksLink(link: string): ServerConfig | null {
 
     if (mainPart.includes('@')) {
       // Format: BASE64(method:password)@server:port
-      const [encodedPart, serverPart] = mainPart.split('@');
+      const separator = mainPart.indexOf('@');
+      const encodedPart = mainPart.slice(0, separator);
+      const serverPart = mainPart.slice(separator + 1);
       const decoded = atob(encodedPart);
-      const [method, pass] = decoded.split(':');
+      const [method, pass] = splitCipherAndPassword(decoded);
       encryption = method;
       password = pass;
-      const [addr, p] = serverPart.split(':');
-      address = addr;
-      port = parseInt(p);
+      ({ address, port } = parseHostPort(serverPart));
     } else {
       // Format: BASE64(method:password@server:port)
       const decoded = atob(mainPart);
-      const [methodPass, serverPort] = decoded.split('@');
-      const [method, pass] = methodPass.split(':');
-      const [addr, p] = serverPort.split(':');
+      const separator = decoded.lastIndexOf('@');
+      if (separator <= 0) throw new Error('Invalid Shadowsocks endpoint');
+      const methodPass = decoded.slice(0, separator);
+      const serverPort = decoded.slice(separator + 1);
+      const [method, pass] = splitCipherAndPassword(methodPass);
       encryption = method;
       password = pass;
-      address = addr;
-      port = parseInt(p);
+      ({ address, port } = parseHostPort(serverPort));
     }
 
     return {
@@ -297,6 +325,7 @@ export function parseWireGuardLink(link: string): ServerConfig | null {
 
 export function parseProxyLink(link: string): ServerConfig | null {
   const trimmed = link.trim();
+  if (trimmed.length > MAX_PROFILE_LINK_LENGTH) return null;
   if (trimmed.startsWith('vless://')) return parseVlessLink(trimmed);
   if (trimmed.startsWith('vmess://')) return parseVmessLink(trimmed);
   if (trimmed.startsWith('trojan://')) return parseTrojanLink(trimmed);
@@ -310,10 +339,14 @@ export function parseProxyLink(link: string): ServerConfig | null {
 // ========== Batch Parser (for subscriptions) ==========
 
 export function parseMultipleLinks(text: string): ServerConfig[] {
-  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+  if (text.length > MAX_SUBSCRIPTION_TEXT_LENGTH) return [];
+  const lines = text.split('\n', MAX_SUBSCRIPTION_SERVERS + 1);
   const servers: ServerConfig[] = [];
 
-  for (const line of lines) {
+  for (const rawLine of lines) {
+    if (servers.length >= MAX_SUBSCRIPTION_SERVERS) break;
+    const line = rawLine.trim();
+    if (!line || line.length > MAX_PROFILE_LINK_LENGTH) continue;
     const server = parseProxyLink(line);
     if (server) servers.push(server);
   }
@@ -391,4 +424,3 @@ export function detectCountry(serverName: string): { name: string; code: string 
 
   return undefined;
 }
-

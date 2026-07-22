@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '../stores/app-store';
 import { getActiveRoutingRules, resolveSystemProxyModeForRouting } from './connect-helpers';
+import { sanitizeDiagnosticText } from './redaction';
 
 export type DiagnosticSeverity = 'ok' | 'info' | 'warning' | 'error';
 
@@ -86,7 +87,7 @@ export function diagnosticsReportToText(report: NetworkDiagnosticsReport): strin
     `Summary: ${report.summary}`,
   ];
   if (typeof report.durationMs === 'number') lines.push(`Duration: ${report.durationMs} ms`);
-  if (report.subscriptionHost) lines.push(`Subscription host: ${report.subscriptionHost}`);
+  if (report.subscriptionHost) lines.push('Subscription host: [domain]');
   if (report.resolvedIps.length > 0) lines.push(`Resolved IPs: ${report.resolvedIps.join(', ')}`);
   if (report.conflicts.length > 0) {
     lines.push(`Conflicts: ${report.conflicts.map((item) => item.name).join(', ')}`);
@@ -96,5 +97,5 @@ export function diagnosticsReportToText(report: NetworkDiagnosticsReport): strin
     lines.push(`[${check.severity.toUpperCase()}] ${check.title}`);
     lines.push(check.detail);
   }
-  return lines.join('\n');
+  return sanitizeDiagnosticText(lines.join('\n')) ?? '';
 }

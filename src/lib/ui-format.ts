@@ -2,7 +2,10 @@ const FLAG_EMOJI_RE = /[\u{1F1E6}-\u{1F1FF}]{2}/gu;
 const PROTOCOL_LABEL_RE = /\b(?:vless|vmess|trojan|shadowsocks|hysteria2?|hy2|tuic|wireguard|reality|grpc|xhttp|websocket|ws|quic)\b/gi;
 
 export function displayLocationTitle(name: string, countryCode?: string): string {
-  const cc = countryCode?.trim().toUpperCase();
+  const countryCodeCandidate = countryCode?.trim().toUpperCase();
+  const cc = countryCodeCandidate && /^[A-Z]{2}$/.test(countryCodeCandidate)
+    ? countryCodeCandidate
+    : undefined;
   const cleaned = name
     .replace(FLAG_EMOJI_RE, ' ')
     .trim()

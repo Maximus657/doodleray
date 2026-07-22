@@ -113,16 +113,6 @@ async function pingAddress(
   return Number.isFinite(result.ping_ms) ? result.ping_ms : -1;
 }
 
-async function legacyPingAddress(
-  address: string,
-  port: number,
-  serverId: string,
-  invoke: (cmd: string, args: any) => Promise<any>
-): Promise<number> {
-  const result: any = await invoke('ping_server', { address, port, serverId });
-  return Number.isFinite(result.ping_ms) ? result.ping_ms : -1;
-}
-
 // Used to ping multiple backends for multi-outbound configs (DoodleVPN)
 export function getRawConfigAddresses(rawConfig: any): { address: string; port: number }[] {
   if (!rawConfig?.outbounds) return [];
@@ -188,7 +178,7 @@ export async function pingServerSmart(
   let bestPing = -1;
   for (const addr of addresses) {
     try {
-      const pingMs = await legacyPingAddress(addr.address, addr.port, server.id, invoke);
+      const pingMs = await pingAddress({ ...server, address: addr.address, port: addr.port }, invoke);
       if (pingMs > 0 && (bestPing < 0 || pingMs < bestPing)) {
         bestPing = pingMs;
         break; // Got a good ping, no need to try more

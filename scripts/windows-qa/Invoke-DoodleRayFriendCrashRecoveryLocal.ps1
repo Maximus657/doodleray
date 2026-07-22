@@ -5,6 +5,7 @@ param(
 
 $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
+if ([string]::IsNullOrWhiteSpace($env:DOODLERAY_QA_TOKEN)) { $env:DOODLERAY_QA_TOKEN = [Guid]::NewGuid().ToString("N") }
 
 $runId = Get-Date -Format "yyyyMMdd-HHmmss"
 $evidence = Join-Path $EvidenceRoot $runId
@@ -30,7 +31,7 @@ function Add-Step {
 function Invoke-QaControl {
     param([string] $Route, [int] $TimeoutSec = 20)
     try {
-        return Invoke-RestMethod "http://127.0.0.1:48765$Route" -TimeoutSec $TimeoutSec
+        return Invoke-RestMethod "http://127.0.0.1:48765$Route" -Headers @{ "X-DoodleRay-QA-Token" = $env:DOODLERAY_QA_TOKEN } -TimeoutSec $TimeoutSec
     } catch {
         return [pscustomobject]@{ ok = $false; error = $_.Exception.Message }
     }

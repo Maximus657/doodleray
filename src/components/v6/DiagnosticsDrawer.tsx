@@ -20,8 +20,7 @@ const LEVEL_META: Record<LogEntry['level'], { color: string; icon: typeof Info }
 };
 
 function isActionableIssueLog(log: LogEntry): boolean {
-  if (log.level !== 'error' && log.level !== 'warning') return false;
-  return !/disconnecting|connection active|starting connection/i.test(log.message);
+  return log.level === 'error' || log.level === 'warning';
 }
 
 function displayLogLevel(log: LogEntry): LogEntry['level'] {

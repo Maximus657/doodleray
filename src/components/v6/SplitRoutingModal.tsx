@@ -261,7 +261,7 @@ export default function SplitRoutingModal({ protectedMode, onClose, t }: Props) 
               <select
                 value={action}
                 onChange={(e) => setAction(e.target.value as RoutingRule['action'])}
-                aria-label={t('v6ActionDirect' as never)}
+                aria-label={t((action === 'direct' ? 'v6ActionDirect' : action === 'proxy' ? 'v6ActionProxy' : 'v6ActionBlock') as never)}
                 className="cursor-pointer rounded-[13px] border border-white/[0.14] bg-white/[0.08] px-2.5 py-2 text-[12.5px] font-medium text-white outline-none v6-focus [&>option]:bg-[#1c1116]"
               >
                 <option value="direct">{t('v6ActionDirect' as never)}</option>
@@ -305,7 +305,7 @@ export default function SplitRoutingModal({ protectedMode, onClose, t }: Props) 
                       >
                         {t(actionKey(r.action) as never)}
                       </span>
-                      <button type="button" onClick={() => toggleRule(r.id)} className="v6-focus" aria-label={r.value}>
+                      <button type="button" onClick={() => toggleRule(r.id)} className="v6-focus" aria-label={r.value} aria-pressed={r.enabled}>
                         <Toggle on={r.enabled} label={r.value} />
                       </button>
                       <button

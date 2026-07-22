@@ -38,8 +38,10 @@ export function deriveOrbState(
   if (healthVerdict === 'failed' || healthVerdict === 'cleanup_pending') return 'failed';
 
   if (productMode === 'protected') {
+    if (healthVerdict === 'protected') return 'protected';
     if (healthVerdict === 'protected_degraded') return 'degraded';
-    return 'protected';
+    if (healthVerdict === 'limited') return 'limited';
+    return 'degraded';
   }
   // Browsers / manual are honestly "limited" — never fake full protection.
   return 'limited';

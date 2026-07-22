@@ -4,6 +4,7 @@
  */
 import type { ServerConfig, ProxyMode, SystemProxyMode } from '../stores/app-store';
 import { useAppStore } from '../stores/app-store';
+import { sanitizeRawXrayConfig } from './raw-xray-sanitizer';
 
 export type RoutingRulePayload = { rule_type: string; value: string; action: string };
 
@@ -101,7 +102,7 @@ export function buildConnectRequest(server: ServerConfig, opts: ConnectOpts) {
     // Shadowsocks
     encryption: server.encryption || null,
     // Full raw xray config (DoodleVPN subscriptions)
-    raw_xray_config: server.rawConfig || null,
+    raw_xray_config: server.rawConfig ? sanitizeRawXrayConfig(server.rawConfig, server) : null,
   };
 }
 

@@ -2,9 +2,8 @@
 export default function Toggle({ on, label }: { on: boolean; label?: string }) {
   return (
     <span
-      role="switch"
-      aria-checked={on}
-      aria-label={label}
+      aria-hidden="true"
+      data-label={label}
       className="relative block h-[27px] w-[46px] shrink-0 cursor-pointer rounded-[30px] transition-colors duration-200"
       style={{
         background: on ? '#F97F16' : 'rgba(255,255,255,0.15)',

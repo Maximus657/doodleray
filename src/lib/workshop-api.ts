@@ -6,6 +6,7 @@ import { sanitizeDiagnosticText } from './redaction';
 import { isDiagnosticsTelemetryEnabled } from './build-policy';
 
 const API_BASE = 'https://94-241-172-101.sslip.io/doodleray-api/api';
+const MAX_API_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 // We need to access app state for heartbeat VPN status
 // Lazy import to avoid circular dependencies
@@ -44,7 +45,28 @@ async function browserApiRequest(path: string, method: 'GET' | 'POST', data?: an
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
-  return response.json();
+  const declaredLength = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_API_RESPONSE_BYTES) {
+    throw new Error('Workshop API response is too large');
+  }
+  if (!response.body) return JSON.parse(await response.text());
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let received = 0;
+  let text = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    if (received > MAX_API_RESPONSE_BYTES) {
+      await reader.cancel();
+      throw new Error('Workshop API response is too large');
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+  text += decoder.decode();
+  return JSON.parse(text);
 }
 
 // Helper: call API through Tauri Rust backend in the desktop app; use fetch in web dev.
@@ -224,7 +246,6 @@ export type UserIssueEventType =
   | 'core_crash'
   | 'cache_too_large'
   | 'app_error'
-  | 'app_updated'
   | 'error';
 
 const AUTO_DIAGNOSTIC_EVENTS = new Set<UserIssueEventType>([
@@ -324,7 +345,7 @@ export async function reportConnectionError(opts: {
       automaticSignature = automaticDiagnosticSignature(opts.eventType, opts.errorMessage);
       if (!automaticSignature) return false;
     }
-    if (!isTauriRuntime()) return opts.force === true;
+    if (!isTauriRuntime()) return false;
 
     await invoke('app_api_submit_diagnostics', {
       submission: {
@@ -353,15 +374,4 @@ export async function reportConnectionError(opts: {
     // silent — error reporting should never break the app
     return false;
   }
-}
-
-export async function reportAppUpdated(fromVersion: string | null, toVersion: string): Promise<void> {
-  await reportConnectionError({
-    eventType: 'app_updated',
-    errorMessage: `App updated${fromVersion ? ` from ${fromVersion}` : ''} to ${toVersion}`,
-    details: {
-      from_version: fromVersion,
-      to_version: toVersion,
-    },
-  });
 }

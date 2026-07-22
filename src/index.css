@@ -242,6 +242,19 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .animate-pulse-glow,
+    .animate-spin-slow,
+    .animate-spin-pulse,
+    .animate-fade-in,
+    .animate-fade-in-scale,
+    .animate-slide-up,
+    .animate-slide-in-right,
+    .animate-slide-down,
+    .animate-connecting,
+    .animate-vpn-connected,
+    .animate-vpn-pop {
+      animation: none !important;
+    }
     .smooth-collapse,
     .drawer-collapse {
       transition: none;
@@ -591,9 +604,11 @@
   .v6-dashboard-reveal > *:nth-child(2) > *:nth-child(4) { animation-delay: 1.64s; }
 
   @media (prefers-reduced-motion: reduce) {
-    .v6-pulsering { animation: v6-pulsering 4.8s ease-out infinite !important; }
-    .v6-pulsering-slow { animation: v6-pulsering 7.2s ease-out infinite !important; }
-    .v6-breathe { animation: v6-breathe 5.2s ease-in-out infinite !important; }
+    .v6-pulsering,
+    .v6-pulsering-slow,
+    .v6-breathe {
+      animation: none !important;
+    }
     .v6-brand-enter,
     .v6-onboarding-card,
     .v6-onboarding-card-exit,

@@ -284,8 +284,8 @@ fn wait_for_tunnel_service_stop(timeout: Duration) {
 fn validate_http_url(raw_url: &str) -> Result<Url, String> {
     let parsed = Url::parse(raw_url).map_err(|e| format!("Invalid URL: {}", e))?;
     match parsed.scheme() {
-        "http" | "https" => {}
-        _ => return Err("Only http:// and https:// URLs are allowed".into()),
+        "https" => {}
+        _ => return Err("Only https:// URLs are allowed".into()),
     }
 
     let host = parsed.host_str().ok_or("URL must include a host")?;
@@ -325,6 +325,61 @@ fn is_public_ip(ip: std::net::IpAddr) -> bool {
                 || ip.is_unicast_link_local())
         }
     }
+}
+
+const MAX_SUBSCRIPTION_BODY_BYTES: usize = 8 * 1024 * 1024;
+const MAX_WORKSHOP_BODY_BYTES: usize = 2 * 1024 * 1024;
+
+fn redirect_target_allowed(initial: &Url, next: &Url, redirects: usize) -> Result<(), String> {
+    if redirects >= 5 {
+        return Err("Too many HTTP redirects".into());
+    }
+    validate_http_url(next.as_str())?;
+    if initial.host_str() != next.host_str() {
+        return Err("Cross-host subscription redirects are not allowed".into());
+    }
+    if initial.scheme() == "https" && next.scheme() != "https" {
+        return Err("HTTPS subscription redirects cannot downgrade to HTTP".into());
+    }
+    Ok(())
+}
+
+fn safe_subscription_redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        let Some(initial) = attempt.previous().first() else {
+            return attempt.stop();
+        };
+        if redirect_target_allowed(initial, attempt.url(), attempt.previous().len()).is_ok() {
+            attempt.follow()
+        } else {
+            attempt.stop()
+        }
+    })
+}
+
+async fn read_response_body_limited(
+    mut response: reqwest::Response,
+    max_bytes: usize,
+) -> Result<Vec<u8>, String> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > max_bytes as u64)
+    {
+        return Err(format!("Response exceeds {} bytes", max_bytes));
+    }
+
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| format!("Failed to read response body: {}", e))?
+    {
+        if body.len().saturating_add(chunk.len()) > max_bytes {
+            return Err(format!("Response exceeds {} bytes", max_bytes));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
 }
 
 fn diagnostic_item(
@@ -874,7 +929,7 @@ async fn subscription_fetch_check(raw_url: &str) -> serde_json::Value {
                     ),
                 );
             }
-            match resp.bytes().await {
+            match read_response_body_limited(resp, MAX_SUBSCRIPTION_BODY_BYTES).await {
                 Ok(bytes) if bytes.is_empty() => diagnostic_item(
                     "warning",
                     "subscription_body_empty",
@@ -1884,12 +1939,6 @@ fn routing_policy_is_full_tunnel(req: &ConnectRequest) -> bool {
         .is_some_and(|policy| policy.mode == "full_tunnel")
 }
 
-fn routing_policy_is_split(req: &ConnectRequest) -> bool {
-    req.routing_policy
-        .as_ref()
-        .is_some_and(|policy| policy.mode == "split")
-}
-
 fn routing_policy_xray_domains(req: &ConnectRequest) -> Vec<String> {
     match req.routing_policy.as_ref() {
         Some(policy) if policy.mode == "split" => policy.direct_domains.clone(),
@@ -1975,14 +2024,6 @@ fn default_direct_xray_domains() -> Vec<String> {
                 .map(|value| format!("domain:{}", value)),
         )
         .collect()
-}
-
-fn default_direct_xray_rule() -> serde_json::Value {
-    serde_json::json!({
-        "type": "field",
-        "domain": default_direct_xray_domains(),
-        "outboundTag": "direct"
-    })
 }
 
 fn xray_rule_has_default_direct_domains(rule: &serde_json::Value) -> bool {
@@ -4499,10 +4540,8 @@ async fn fetch_url(url: String) -> Result<String, String> {
     let parsed_url = validate_http_url(&url)?;
     let response = fetch_http_response_with_fallback(&parsed_url, Duration::from_secs(30)).await?;
 
-    response
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read body: {}", e))
+    let body = read_response_body_limited(response, MAX_SUBSCRIPTION_BODY_BYTES).await?;
+    String::from_utf8(body).map_err(|e| format!("Response is not valid UTF-8: {}", e))
 }
 
 /// Fetch a subscription and return its quota metadata headers together with body.
@@ -4532,10 +4571,9 @@ async fn fetch_subscription_url(url: String) -> Result<SubscriptionFetchResult, 
         .and_then(|value| value.to_str().ok())
         .map(|value| value.to_string());
 
-    let body = response
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read body: {}", e))?;
+    let body =
+        String::from_utf8(read_response_body_limited(response, MAX_SUBSCRIPTION_BODY_BYTES).await?)
+            .map_err(|e| format!("Response is not valid UTF-8: {}", e))?;
 
     Ok(SubscriptionFetchResult {
         body,
@@ -4607,10 +4645,8 @@ async fn workshop_api(url: String, method: String, body: Option<String>) -> Resu
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
 
-    response
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read body: {}", e))
+    String::from_utf8(read_response_body_limited(response, MAX_WORKSHOP_BODY_BYTES).await?)
+        .map_err(|e| format!("Workshop API response is not valid UTF-8: {}", e))
 }
 
 /// Check VPN endpoint reachability with a raw TCP connect.
@@ -4628,6 +4664,13 @@ async fn ping_server(address: String, port: u16, server_id: String) -> PingResul
             Ok(addrs) => addrs.collect(),
             Err(_) => return -1i32,
         };
+        if addrs.is_empty() {
+            return -1i32;
+        }
+        let addrs = addrs
+            .into_iter()
+            .filter(|addr| is_public_ip(addr.ip()))
+            .collect::<Vec<_>>();
         if addrs.is_empty() {
             return -1i32;
         }
@@ -4671,11 +4714,22 @@ async fn ping_server_profile(request: ConnectRequest, server_id: String) -> Ping
 #[cfg(not(all(target_os = "macos", feature = "app-store")))]
 async fn ping_server_profile_direct(mut request: ConnectRequest, server_id: String) -> PingResult {
     let sid = server_id.clone();
-    let ping_ms = match profile_http_ping_ms(&mut request).await {
-        Ok(ms) => ms,
-        Err(error) => {
-            eprintln!("[ping] profile GET probe failed: {}", error);
-            -1
+    let endpoint_is_public = format!("{}:{}", request.server_address, request.server_port)
+        .to_socket_addrs()
+        .map(|addrs| {
+            let addrs = addrs.collect::<Vec<_>>();
+            !addrs.is_empty() && addrs.iter().all(|addr| is_public_ip(addr.ip()))
+        })
+        .unwrap_or(false);
+    let ping_ms = if !endpoint_is_public {
+        -1
+    } else {
+        match profile_http_ping_ms(&mut request).await {
+            Ok(ms) => ms,
+            Err(error) => {
+                eprintln!("[ping] profile GET probe failed: {}", error);
+                -1
+            }
         }
     };
 
@@ -5561,6 +5615,19 @@ fn has_effective_xray_rule_field(value: Option<&serde_json::Value>) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn subscription_redirects_stay_on_the_public_origin() {
+        let initial = Url::parse("https://subscriptions.example/path").unwrap();
+        let same_host = Url::parse("https://subscriptions.example/next").unwrap();
+        let private = Url::parse("http://127.0.0.1/admin").unwrap();
+        let downgrade = Url::parse("http://subscriptions.example/next").unwrap();
+
+        assert!(redirect_target_allowed(&initial, &same_host, 1).is_ok());
+        assert!(redirect_target_allowed(&initial, &private, 1).is_err());
+        assert!(redirect_target_allowed(&initial, &downgrade, 1).is_err());
+        assert!(redirect_target_allowed(&initial, &same_host, 5).is_err());
+    }
 
     #[test]
     fn app_api_default_uses_the_canonical_mobile_contract() {
@@ -9360,21 +9427,27 @@ async fn resolve_public_ipv4_doh(host: &str) -> Option<Ipv4Addr> {
 async fn direct_fetch_client(
     parsed_url: &Url,
     timeout: Duration,
-) -> Result<reqwest::Client, reqwest::Error> {
-    let mut builder = reqwest::Client::builder().no_proxy().timeout(timeout);
+) -> Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(timeout)
+        .redirect(safe_subscription_redirect_policy());
 
     if let Some(host) = parsed_url.host_str() {
         if host.parse::<IpAddr>().is_err() {
             let port = parsed_url.port_or_known_default().unwrap_or(443);
             if system_dns_needs_public_override(host, port) {
-                if let Some(ip) = resolve_public_ipv4_doh(host).await {
-                    builder = builder.resolve(host, SocketAddr::new(IpAddr::V4(ip), port));
-                }
+                let ip = resolve_public_ipv4_doh(host).await.ok_or_else(|| {
+                    "Subscription host did not resolve to a public IP".to_string()
+                })?;
+                builder = builder.resolve(host, SocketAddr::new(IpAddr::V4(ip), port));
             }
         }
     }
 
-    builder.build()
+    builder
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))
 }
 
 fn describe_reqwest_fetch_error(error: reqwest::Error) -> String {
@@ -9426,6 +9499,7 @@ fn system_proxy_fetch_client(
         reqwest::Client::builder()
             .timeout(timeout)
             .proxy(proxy)
+            .redirect(safe_subscription_redirect_policy())
             .build()
             .map(Some)
             .map_err(|e| format!("system proxy HTTP client error: {}", e))
@@ -9441,9 +9515,7 @@ async fn fetch_http_response_with_fallback(
     parsed_url: &Url,
     timeout: Duration,
 ) -> Result<reqwest::Response, String> {
-    let direct_client = direct_fetch_client(parsed_url, timeout)
-        .await
-        .map_err(|e| format!("HTTP client error: {}", e))?;
+    let direct_client = direct_fetch_client(parsed_url, timeout).await?;
 
     match send_fetch_get(direct_client, parsed_url).await {
         Ok(response) => Ok(response),
@@ -13249,11 +13321,35 @@ fn full_cleanup() {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// True only when the QA control surface env flag is set at app launch.
 /// Production installs never set it, so the surface stays off by default.
+fn qa_control_token() -> Option<String> {
+    std::env::var("DOODLERAY_QA_TOKEN")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| value.len() >= 24)
+}
+
+#[cfg(windows)]
+fn qa_control_token_matches(provided: &str) -> bool {
+    let Some(expected) = qa_control_token() else {
+        return false;
+    };
+    let provided = provided.trim();
+    if expected.len() != provided.len() {
+        return false;
+    }
+    expected
+        .bytes()
+        .zip(provided.bytes())
+        .fold(0u8, |difference, (left, right)| difference | (left ^ right))
+        == 0
+}
+
 #[tauri::command]
 fn qa_control_enabled() -> bool {
     std::env::var("DOODLERAY_QA_CONTROL")
         .map(|v| v == "1")
         .unwrap_or(false)
+        && qa_control_token().is_some()
 }
 
 #[cfg(windows)]
@@ -13312,6 +13408,20 @@ fn handle_qa_control_connection(
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     let read = stream.read(&mut buffer)?;
     let request = String::from_utf8_lossy(&buffer[..read]);
+    let supplied_token = request.lines().skip(1).find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case("X-DoodleRay-QA-Token")
+            .then(|| value.trim())
+    });
+    if !supplied_token.is_some_and(qa_control_token_matches) {
+        let body = serde_json::json!({ "ok": false, "error": "unauthorized" }).to_string();
+        let response = format!(
+            "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        return stream.write_all(response.as_bytes());
+    }
     let path = request
         .lines()
         .next()

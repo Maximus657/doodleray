@@ -1,14 +1,18 @@
 import type { ServerConfig } from '../stores/app-store';
 
-function normalizePart(value: unknown): string {
+function normalizeCaseInsensitivePart(value: unknown): string {
   return String(value ?? '').trim().toLowerCase();
 }
 
+function normalizeOpaquePart(value: unknown): string {
+  return String(value ?? '').trim();
+}
+
 function normalizeTransportPath(server: ServerConfig): string {
-  const path = normalizePart(server.path);
+  const path = normalizeOpaquePart(server.path);
   if (path) return path;
 
-  const transport = normalizePart(server.transport);
+  const transport = normalizeCaseInsensitivePart(server.transport);
   if (transport === 'ws' || transport === 'httpupgrade' || transport === 'http' || transport === 'h2') {
     return '/';
   }
@@ -17,12 +21,9 @@ function normalizeTransportPath(server: ServerConfig): string {
 }
 
 function getCredentialPart(server: ServerConfig): string {
-  return normalizePart(
-    server.uuid ||
-    server.password ||
-    server.peerPublicKey ||
-    server.publicKey ||
-    server.rawLink
+  if (server.uuid) return normalizeCaseInsensitivePart(server.uuid);
+  return normalizeOpaquePart(
+    server.password || server.peerPublicKey || server.publicKey || server.rawLink
   );
 }
 
@@ -47,22 +48,22 @@ export interface ServerSelectionIndex {
 export function getServerIdentityKey(server: ServerConfig): string {
   return [
     getServerSelectionKey(server),
-    normalizePart(server.name),
+    normalizeCaseInsensitivePart(server.name),
   ].join('|');
 }
 
 export function getServerSelectionKey(server: ServerConfig): string {
   return [
-    normalizePart(server.protocol),
-    normalizePart(server.address),
-    normalizePart(server.port),
+    normalizeCaseInsensitivePart(server.protocol),
+    normalizeCaseInsensitivePart(server.address),
+    normalizeCaseInsensitivePart(server.port),
     getCredentialPart(server),
-    normalizePart(server.transport),
-    normalizePart(server.security),
-    normalizePart(server.host),
+    normalizeCaseInsensitivePart(server.transport),
+    normalizeCaseInsensitivePart(server.security),
+    normalizeCaseInsensitivePart(server.host),
     normalizeTransportPath(server),
-    normalizePart(server.sni),
-    normalizePart(server.flow),
+    normalizeCaseInsensitivePart(server.sni),
+    normalizeCaseInsensitivePart(server.flow),
   ].join('|');
 }
 

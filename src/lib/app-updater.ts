@@ -123,20 +123,14 @@ async function installAppUpdateOnce({
 
   let downloaded = 0;
   let contentLength = 0;
-  let lastProgress: number | null = null;
   let lastProgressAt = 0;
   let progressStatusSent = false;
 
   const emitProgress = (progress: number, force = false) => {
     const now = Date.now();
-    if (
-      !force &&
-      progress === lastProgress &&
-      now - lastProgressAt < UPDATE_PROGRESS_MIN_INTERVAL_MS
-    ) {
+    if (!force && now - lastProgressAt < UPDATE_PROGRESS_MIN_INTERVAL_MS) {
       return;
     }
-    lastProgress = progress;
     lastProgressAt = now;
     onProgress(progress);
     if (!progressStatusSent && progress > 0) {

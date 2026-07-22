@@ -65,7 +65,6 @@ export function buildServerDisplayGroups(servers: ServerConfig[]): ServerDisplay
     const key = [
       label.toLowerCase(),
       server.subscriptionId || 'manual',
-      server.id,
     ].join('|');
     const group = groups.get(key);
     const ping = server.ping;
@@ -84,7 +83,7 @@ export function buildServerDisplayGroups(servers: ServerConfig[]): ServerDisplay
 
     const hasPositivePing = ping !== undefined && ping > 0;
     groups.set(key, {
-      id: `${key}-${server.subscriptionId || 'manual'}`,
+      id: key,
       label,
       servers: [server],
       selectedServer: server,

@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: https://asset.localhost https://flagcdn.com https://unpkg.com data:; connect-src 'self' https://doodleraydb-doodleray-ic3y6k-c7350f-94-241-172-101.traefik.me https://94-241-172-101.sslip.io"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: https://asset.localhost data:; connect-src 'self' https://doodleraydb-doodleray-ic3y6k-c7350f-94-241-172-101.traefik.me https://94-241-172-101.sslip.io"
     }
   },
   "bundle": {

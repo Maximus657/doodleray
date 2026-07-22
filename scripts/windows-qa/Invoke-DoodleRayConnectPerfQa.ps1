@@ -11,6 +11,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+if ([string]::IsNullOrWhiteSpace($env:DOODLERAY_QA_TOKEN)) { $env:DOODLERAY_QA_TOKEN = [Guid]::NewGuid().ToString("N") }
 
 function Invoke-SelfRemote {
     param([ValidateSet("Lan", "Play2Go")] [string] $RemoteTarget)
@@ -68,7 +69,7 @@ function Add-Step {
 function Invoke-QaControl {
     param([string] $Route, [int] $TimeoutSec = 20)
     try {
-        return Invoke-RestMethod "http://127.0.0.1:48765$Route" -TimeoutSec $TimeoutSec
+        return Invoke-RestMethod "http://127.0.0.1:48765$Route" -Headers @{ "X-DoodleRay-QA-Token" = $env:DOODLERAY_QA_TOKEN } -TimeoutSec $TimeoutSec
     } catch {
         return [pscustomobject]@{ ok = $false; error = $_.Exception.Message }
     }
@@ -193,6 +194,7 @@ function Start-DoodleRayQaApp {
     New-Item -ItemType Directory -Force -Path $launcherDir | Out-Null
     @"
 `$env:DOODLERAY_QA_CONTROL = "1"
+`$env:DOODLERAY_QA_TOKEN = "$env:DOODLERAY_QA_TOKEN"
 `$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9333 --remote-allow-origins=*"
 Start-Process -FilePath "$appExe" -WorkingDirectory "$(Split-Path -Parent $appExe)"
 "@ | Set-Content -LiteralPath $launcherPath -Encoding UTF8

@@ -19,14 +19,15 @@ function SectionTitle({ children }: { children: string }) {
   return <div className="px-1 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-[0.1em] text-white/35">{children}</div>;
 }
 
-function Row({ title, sub, right, onClick, danger }: {
-  title: string; sub?: string; right: React.ReactNode; onClick?: () => void; danger?: boolean;
+function Row({ title, sub, right, onClick, danger, pressed }: {
+  title: string; sub?: string; right: React.ReactNode; onClick?: () => void; danger?: boolean; pressed?: boolean;
 }) {
   const Tag = onClick ? 'button' : 'div';
   return (
     <Tag
       type={onClick ? 'button' : undefined}
       onClick={onClick}
+      aria-pressed={onClick && typeof pressed === 'boolean' ? pressed : undefined}
       className={`flex w-full items-center gap-3 border-b border-white/[0.07] px-1 py-3 text-left ${onClick ? 'v6-focus' : ''}`}
     >
       <span className="min-w-0 flex-1">
@@ -262,14 +263,14 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
         <div className="-mr-3 min-h-0 flex-1 overflow-y-auto pr-3">
           {/* General */}
           {desktopAutostartAvailable && (
-            <Row title={t('v6SetLaunch' as never)} sub={t('v6SetLaunchSub' as never)} onClick={toggleLaunch} right={<Toggle on={launchOn} label={t('v6SetLaunch' as never)} />} />
+            <Row title={t('v6SetLaunch' as never)} sub={t('v6SetLaunchSub' as never)} onClick={toggleLaunch} pressed={launchOn} right={<Toggle on={launchOn} label={t('v6SetLaunch' as never)} />} />
           )}
-          <Row title={t('v6SetAutoConnect' as never)} sub={t('v6SetAutoConnectSub' as never)} onClick={() => setAutoConnectOnStartup(!autoConnectOnStartup)} right={<Toggle on={autoConnectOnStartup} label={t('v6SetAutoConnect' as never)} />} />
+          <Row title={t('v6SetAutoConnect' as never)} sub={t('v6SetAutoConnectSub' as never)} onClick={() => setAutoConnectOnStartup(!autoConnectOnStartup)} pressed={autoConnectOnStartup} right={<Toggle on={autoConnectOnStartup} label={t('v6SetAutoConnect' as never)} />} />
           {!networkExtensionOnly && (
-            <Row title={t('v6SetKillSwitch' as never)} sub={t('v6SetKillSwitchSub' as never)} onClick={() => setKillSwitch(!killSwitch)} right={<Toggle on={killSwitch} label={t('v6SetKillSwitch' as never)} />} />
+            <Row title={t('v6SetKillSwitch' as never)} sub={t('v6SetKillSwitchSub' as never)} onClick={() => setKillSwitch(!killSwitch)} pressed={killSwitch} right={<Toggle on={killSwitch} label={t('v6SetKillSwitch' as never)} />} />
           )}
           {!networkExtensionOnly && (
-            <Row title={t('v6SetStats' as never)} sub={t('v6SetStatsSub' as never)} onClick={() => setShowStats(!showStats)} right={<Toggle on={showStats} label={t('v6SetStats' as never)} />} />
+            <Row title={t('v6SetStats' as never)} sub={t('v6SetStatsSub' as never)} onClick={() => setShowStats(!showStats)} pressed={showStats} right={<Toggle on={showStats} label={t('v6SetStats' as never)} />} />
           )}
           <Row
             title={t('v6SetLanguage' as never)}
@@ -290,11 +291,11 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
           {/* Connection */}
           {!networkExtensionOnly && <SectionTitle>{t('v6SecConnection' as never)}</SectionTitle>}
           {!closedControlPlane && (
-            <Row title={t('v6SetAutoSelect' as never)} sub={t('v6SetAutoSelectSub' as never)} onClick={() => setAutoSelectFastest(!autoSelectFastest)} right={<Toggle on={autoSelectFastest} label={t('v6SetAutoSelect' as never)} />} />
+            <Row title={t('v6SetAutoSelect' as never)} sub={t('v6SetAutoSelectSub' as never)} onClick={() => setAutoSelectFastest(!autoSelectFastest)} pressed={autoSelectFastest} right={<Toggle on={autoSelectFastest} label={t('v6SetAutoSelect' as never)} />} />
           )}
           {!networkExtensionOnly && (
             <>
-              <Row title={t('strictRoute' as never)} sub={t('strictRouteDesc' as never)} onClick={() => setStrictRoute(!strictRoute)} right={<Toggle on={strictRoute} label={t('strictRoute' as never)} />} />
+              <Row title={t('strictRoute' as never)} sub={t('strictRouteDesc' as never)} onClick={() => setStrictRoute(!strictRoute)} pressed={strictRoute} right={<Toggle on={strictRoute} label={t('strictRoute' as never)} />} />
               <Row title={t('socksPort' as never)} right={<PortInput value={socksPort} onCommit={setSocksPort} label={t('socksPort' as never)} />} />
               <Row title={t('httpPort' as never)} right={<PortInput value={httpPort} onCommit={setHttpPort} label={t('httpPort' as never)} />} />
             </>
@@ -366,6 +367,7 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
             title={t('v6DiagnosticsConsent' as never)}
             sub={t('v6DiagnosticsConsentSub' as never)}
             onClick={() => setDiagnosticsConsent(!diagnosticsConsent)}
+            pressed={diagnosticsConsent}
             right={<Toggle on={diagnosticsConsent} label={t('v6DiagnosticsConsent' as never)} />}
           />
           <Row

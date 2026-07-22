@@ -51,7 +51,7 @@ export function isHealthAcceptable(mode: ProxyMode, health: ConnectionHealthRepo
 }
 
 const NON_ACTIONABLE_PROTECTED_DEGRADED_RE =
-  /(ipv6 full-protection leak proof is not collected|degraded_disabled|quic\/http3 is not verified|quic.*not verified|unverified-no-tooling|ipv6_default_route=.*doodleray tunnel)/i;
+  /(ipv6 full-protection leak proof is not collected|degraded_disabled|quic\/http3 is not verified|quic.*not verified|unverified-no-tooling)/i;
 
 function failedHealthLines(health: ConnectionHealthReport): string[] {
   const failedChecks = (health.checks ?? [])
@@ -70,13 +70,12 @@ export function isNonActionableProtectedDegraded(health: ConnectionHealthReport 
   if ((health.service_fatal_checks ?? []).length > 0) return false;
 
   const failed = failedHealthLines(health);
-  if (failed.length === 0) return true;
+  if (failed.length === 0) return false;
   return failed.every(line => NON_ACTIONABLE_PROTECTED_DEGRADED_RE.test(line));
 }
 
 export function getUserVisibleHealthVerdict(health: ConnectionHealthReport | null | undefined): string | null {
-  if (!health) return null;
-  return isNonActionableProtectedDegraded(health) ? 'protected' : health.verdict;
+  return health?.verdict ?? null;
 }
 
 export function isHealthFatal(mode: ProxyMode, health: ConnectionHealthReport | null | undefined): boolean {

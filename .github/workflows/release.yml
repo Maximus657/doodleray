@@ -19,7 +19,7 @@ jobs:
       VITE_DOODLERAY_DIAGNOSTICS_TELEMETRY: "0"
       WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
       WINDOWS_CODESIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PFX_PASSWORD }}
-      WINDOWS_CODESIGN_REQUIRED: "true"
+      WINDOWS_CODESIGN_REQUIRED: "false"
       WINDOWS_CODESIGN_TIMESTAMP_URL: ${{ vars.WINDOWS_CODESIGN_TIMESTAMP_URL || 'http://timestamp.digicert.com' }}
     steps:
       - uses: actions/checkout@v4
@@ -41,18 +41,17 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Verify release signing secrets
+      - name: Verify updater signing secret
         env:
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CODESIGN_PFX_BASE64)) {
-            throw "WINDOWS_CODESIGN_PFX_BASE64 is required for Windows releases"
-          }
-          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CODESIGN_PFX_PASSWORD)) {
-            throw "WINDOWS_CODESIGN_PFX_PASSWORD is required for Windows releases"
-          }
           if ([string]::IsNullOrWhiteSpace($env:TAURI_PRIVATE_KEY)) {
             throw "TAURI_SIGNING_PRIVATE_KEY is required for updater artifacts"
+          }
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CODESIGN_PFX_BASE64)) {
+            Write-Warning "Building an unsigned GitHub download; Windows may show Unknown publisher/SmartScreen."
+          } elseif ([string]::IsNullOrWhiteSpace($env:WINDOWS_CODESIGN_PFX_PASSWORD)) {
+            throw "WINDOWS_CODESIGN_PFX_PASSWORD is required when WINDOWS_CODESIGN_PFX_BASE64 is configured"
           }
         shell: pwsh
 
@@ -152,6 +151,7 @@ jobs:
         shell: pwsh
 
       - name: Verify signed Windows runtime binaries
+        if: env.WINDOWS_CODESIGN_PFX_BASE64 != ''
         run: |
           $files = @(
             "src-tauri/DoodleRayService.exe",
@@ -209,6 +209,7 @@ jobs:
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'BETA') }}
 
       - name: Verify signed Windows release artifacts
+        if: env.WINDOWS_CODESIGN_PFX_BASE64 != ''
         run: |
           $patterns = @(
             "src-tauri/target/release/DoodleRay.exe",

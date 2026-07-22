@@ -13,7 +13,7 @@ export function sanitizeSensitiveText(value?: string | null): string | null {
   if (!value) return null;
 
   return value
-    .replace(/\b(vless|vmess|trojan|ss|hy2|tuic|wg):\/\/[^\s"'<>]+/gi, '$1://[redacted]')
+    .replace(/\b(vless|vmess|trojan|ss|hy2|hysteria2|tuic|wg):\/\/[^\s"'<>]+/gi, '$1://[redacted]')
     .replace(/https?:\/\/[^\s"'<>]+/gi, (match) => {
       const { clean, trailing } = splitTrailingPunctuation(match);
       try {
@@ -27,6 +27,9 @@ export function sanitizeSensitiveText(value?: string | null): string | null {
     })
     .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi, '[uuid]')
     .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[ip]')
+    .replace(/(?<![a-z0-9])\[?(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}\]?(?:%[a-z0-9._-]+)?(?![a-z0-9])/gi, '[ip]')
+    .replace(/\b[A-Za-z]:\\Users\\[^\\\s]+\\[^\s]*/g, '[path]')
+    .replace(/\/(?:Users|home)\/[^/\s]+\/[^\s]*/g, '[path]')
     .replace(/("?(?:password|uuid|id|private_key|publicKey|shortId|token|key)"?\s*[:=]\s*)["']?[^"',\s}]+/gi, '$1[redacted]')
     .slice(0, 4000);
 }
@@ -41,8 +44,8 @@ export function sanitizeDiagnosticText(value?: string | null): string | null {
 
 export function describeSubscriptionSource(rawUrl: string): string {
   try {
-    const url = new URL(rawUrl);
-    return `subscription link (${url.host})`;
+    new URL(rawUrl);
+    return 'subscription link';
   } catch {
     return 'subscription link';
   }

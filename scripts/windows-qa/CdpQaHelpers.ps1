@@ -6,6 +6,9 @@
 
 $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
+if ([string]::IsNullOrWhiteSpace($env:DOODLERAY_QA_TOKEN) -and (Test-Path "C:\DoodleRayQA\qa-control-token.txt")) {
+    $env:DOODLERAY_QA_TOKEN = (Get-Content "C:\DoodleRayQA\qa-control-token.txt" -Raw).Trim()
+}
 
 $steps = New-Object System.Collections.Generic.List[object]
 
@@ -124,7 +127,7 @@ function Start-AppWithCdp {
         Start-Sleep -Seconds 2
         if (-not $controlReady) {
             try {
-                $probe = Invoke-RestMethod "http://127.0.0.1:48765/status" -TimeoutSec 3
+                $probe = Invoke-RestMethod "http://127.0.0.1:48765/status" -Headers @{ "X-DoodleRay-QA-Token" = $env:DOODLERAY_QA_TOKEN } -TimeoutSec 3
                 if ($probe -and $probe.app_version) { $controlReady = $true }
             } catch {}
         }
@@ -176,12 +179,12 @@ function Switch-Mode {
 
 # --- QA control surface (preferred over CDP DOM automation) -----------------
 # The app exposes it on 127.0.0.1:48765 only when the launcher sets
-# DOODLERAY_QA_CONTROL=1. Routes: /status, /connect, /disconnect,
+# DOODLERAY_QA_CONTROL=1 with a per-run DOODLERAY_QA_TOKEN. Routes: /status, /connect, /disconnect,
 # /switch-mode?mode=tun|browsers|manual, /refresh-subscription, /export-bundle.
 function Invoke-QaControl {
     param([Parameter(Mandatory = $true)][string] $Route, [int] $TimeoutSec = 20)
     try {
-        return Invoke-RestMethod "http://127.0.0.1:48765$Route" -TimeoutSec $TimeoutSec
+        return Invoke-RestMethod "http://127.0.0.1:48765$Route" -Headers @{ "X-DoodleRay-QA-Token" = $env:DOODLERAY_QA_TOKEN } -TimeoutSec $TimeoutSec
     } catch {
         return [pscustomobject]@{ ok = $false; error = $_.Exception.Message }
     }

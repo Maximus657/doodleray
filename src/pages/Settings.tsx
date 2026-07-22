@@ -592,12 +592,18 @@ export default function Settings() {
                 <>
               <div className="flex items-center justify-between py-3 px-4 bg-white border-[3px] border-black shadow-[2px_2px_0_#000] rounded-xl">
                 <span className="text-sm font-black text-black uppercase tracking-tight">{t('socksPort')}</span>
-                <input type="number" value={socksPort} onChange={(e) => setSocksPort(parseInt(e.target.value) || 10808)}
+                <input type="number" min={1024} max={65535} value={socksPort} onChange={(e) => {
+                  const value = Number(e.target.value);
+                  setSocksPort(Number.isInteger(value) ? Math.min(65535, Math.max(1024, value)) : 10808);
+                }}
                   className="w-24 bg-white border-[3px] border-black shadow-inner rounded-lg px-3 py-1.5 text-sm font-black text-black focus:outline-none text-center" />
               </div>
               <div className="flex items-center justify-between py-3 px-4 bg-white border-[3px] border-black shadow-[2px_2px_0_#000] rounded-xl">
                 <span className="text-sm font-black text-black uppercase tracking-tight">{t('httpPort')}</span>
-                <input type="number" value={httpPort} onChange={(e) => setHttpPort(parseInt(e.target.value) || 10809)}
+                <input type="number" min={1024} max={65535} value={httpPort} onChange={(e) => {
+                  const value = Number(e.target.value);
+                  setHttpPort(Number.isInteger(value) ? Math.min(65535, Math.max(1024, value)) : 10809);
+                }}
                   className="w-24 bg-white border-[3px] border-black shadow-inner rounded-lg px-3 py-1.5 text-sm font-black text-black focus:outline-none text-center" />
               </div>
               <div className="py-3 px-4 bg-white border-[3px] border-black shadow-[2px_2px_0_#000] rounded-xl space-y-2">

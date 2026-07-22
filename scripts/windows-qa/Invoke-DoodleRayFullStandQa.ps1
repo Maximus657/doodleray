@@ -38,6 +38,8 @@ if ($AllowUnsignedLocalRc) { $unsignedArgs.AllowUnsignedLocalRc = $true }
 $bootstrap = @'
 $ErrorActionPreference = "Continue"
 New-Item -ItemType Directory -Force -Path C:\DoodleRayQA\artifacts, C:\DoodleRayQA\evidence | Out-Null
+$qaToken = [Guid]::NewGuid().ToString("N")
+Set-Content -Path "C:\DoodleRayQA\qa-control-token.txt" -Value $qaToken -Encoding ASCII
 $cmdPath = "C:\DoodleRayQA\start-doodleray-cdp.cmd"
 # Always rewrite: the launcher must enable both CDP (visual smoke) and the
 # QA control surface (primary automation channel) on the stand.
@@ -45,6 +47,7 @@ $lines = @(
     "@echo off",
     "set `"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 --remote-allow-origins=*`"",
     "set `"DOODLERAY_QA_CONTROL=1`"",
+    "set `"DOODLERAY_QA_TOKEN=$qaToken`"",
     "start `"`" /D `"C:\Program Files\DoodleRay`" `"C:\Program Files\DoodleRay\DoodleRay.exe`""
 )
 Set-Content -Path $cmdPath -Value $lines -Encoding ASCII

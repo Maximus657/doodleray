@@ -5,12 +5,15 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
+if ([string]::IsNullOrWhiteSpace($env:DOODLERAY_QA_TOKEN) -and (Test-Path "C:\DoodleRayQA\qa-control-token.txt")) {
+    $env:DOODLERAY_QA_TOKEN = (Get-Content "C:\DoodleRayQA\qa-control-token.txt" -Raw).Trim()
+}
 New-Item -ItemType Directory -Force $EvidenceDir | Out-Null
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $evidence = Join-Path $EvidenceDir "split-routing-dns-$stamp.json"
 
 function Invoke-QaApi([string]$Path) {
-    Invoke-RestMethod -Uri "$QaBaseUrl$Path" -TimeoutSec 20
+    Invoke-RestMethod -Uri "$QaBaseUrl$Path" -Headers @{ "X-DoodleRay-QA-Token" = $env:DOODLERAY_QA_TOKEN } -TimeoutSec 20
 }
 
 function Get-QaStatus {

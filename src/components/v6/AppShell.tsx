@@ -1,4 +1,6 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import gsap from 'gsap';
+import { useGSAP } from '@gsap/react';
 import { HelpCircle, RectangleHorizontal, RectangleVertical, SlidersHorizontal } from 'lucide-react';
 import { useAppStore } from '../../stores/app-store';
 import { useTranslation } from '../../locales';
@@ -8,6 +10,45 @@ import WindowControls from './TitleBar';
 import SupportModal from './SupportModal';
 import SettingsModal from './SettingsModal';
 
+gsap.registerPlugin(useGSAP);
+
+type WindowMode = 'wide' | 'compact';
+
+async function resizeNativeWindow(mode: WindowMode): Promise<void> {
+  if (typeof (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ === 'undefined') return;
+
+  const [{ getCurrentWindow }, { LogicalSize }] = await Promise.all([
+    import('@tauri-apps/api/window'),
+    import('@tauri-apps/api/dpi'),
+  ]);
+  const appWindow = getCurrentWindow();
+  const compact = mode === 'compact';
+  const minSize = new LogicalSize(compact ? 420 : 940, compact ? 680 : 660);
+  const targetSize = new LogicalSize(compact ? 440 : 1204, compact ? 760 : 764);
+
+  if (compact) {
+    await appWindow.setMinSize(minSize);
+    await appWindow.setSize(targetSize);
+  } else {
+    await appWindow.setSize(targetSize);
+    await appWindow.setMinSize(minSize);
+  }
+}
+
+function afterNextPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(fallback);
+      resolve();
+    };
+    const fallback = window.setTimeout(done, 250);
+    requestAnimationFrame(() => requestAnimationFrame(done));
+  });
+}
+
 /**
  * v6 shell, ported from the DoodleVPN Claude Design prototype: warm plum
  * glass panel and a design header (logo, traffic chip, support/settings,
@@ -16,6 +57,10 @@ import SettingsModal from './SettingsModal';
  * they looked like full-window warning lights behind the content.
  */
 export default function AppShell({ children }: { children: ReactNode }) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLElement | null>(null);
+  const transitionRunningRef = useRef(false);
+  const mountedRef = useRef(true);
   const subscriptions = useAppStore((s) => s.subscriptions);
   const activeServer = useAppStore((s) => s.activeServer);
   const serversCount = useAppStore((s) => s.servers.length);
@@ -24,32 +69,75 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
   const [supportOpen, setSupportOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [windowMode, setWindowMode] = useState<'wide' | 'compact'>(() => {
+  const [windowMode, setWindowMode] = useState<WindowMode>(() => {
     try { return localStorage.getItem('doodleray_window_mode') === 'compact' ? 'compact' : 'wide'; }
     catch { return 'wide'; }
   });
+  const initialWindowModeRef = useRef(windowMode);
+  const [windowTransitioning, setWindowTransitioning] = useState(false);
   const nativeMacWindow = isNetworkExtensionOnlyBuild();
   const hasMainContent = appSessionLoggedIn || serversCount > 0 || status !== 'disconnected';
 
   useEffect(() => {
     try { localStorage.setItem('doodleray_window_mode', windowMode); } catch { /* non-critical preference */ }
-    if (typeof (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ === 'undefined') return;
-    void Promise.all([import('@tauri-apps/api/window'), import('@tauri-apps/api/dpi')])
-      .then(async ([{ getCurrentWindow }, { LogicalSize }]) => {
-        const appWindow = getCurrentWindow();
-        const compact = windowMode === 'compact';
-        const minSize = new LogicalSize(compact ? 420 : 940, compact ? 680 : 660);
-        const targetSize = new LogicalSize(compact ? 440 : 1204, compact ? 760 : 764);
-        if (compact) {
-          await appWindow.setMinSize(minSize);
-          await appWindow.setSize(targetSize);
-        } else {
-          await appWindow.setSize(targetSize);
-          await appWindow.setMinSize(minSize);
-        }
-      })
-      .catch(() => { /* browser preview or unavailable window capability */ });
   }, [windowMode]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    void resizeNativeWindow(initialWindowModeRef.current)
+      .catch(() => { /* browser preview or unavailable window capability */ });
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  const { contextSafe } = useGSAP({ scope: rootRef });
+  const toggleWindowMode = contextSafe(async () => {
+    if (transitionRunningRef.current) return;
+    transitionRunningRef.current = true;
+    setWindowTransitioning(true);
+
+    const content = contentRef.current;
+    const nextMode: WindowMode = windowMode === 'compact' ? 'wide' : 'compact';
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const direction = nextMode === 'compact' ? -1 : 1;
+
+    try {
+      if (content && !reducedMotion) {
+        await gsap.to(content, {
+          autoAlpha: 0,
+          x: direction * 14,
+          scale: 0.985,
+          duration: 0.16,
+          ease: 'power2.in',
+        });
+      }
+
+      setWindowMode(nextMode);
+      await Promise.all([
+        resizeNativeWindow(nextMode).catch(() => { /* browser preview or unavailable window capability */ }),
+        afterNextPaint(),
+      ]);
+      if (!mountedRef.current) return;
+
+      if (content && !reducedMotion) {
+        await gsap.fromTo(content, {
+          autoAlpha: 0,
+          x: direction * -18,
+          scale: 0.985,
+        }, {
+          autoAlpha: 1,
+          x: 0,
+          scale: 1,
+          duration: 0.38,
+          ease: 'expo.out',
+          clearProps: 'opacity,visibility,transform',
+        });
+      }
+    } finally {
+      if (content) gsap.set(content, { clearProps: 'opacity,visibility,transform' });
+      transitionRunningRef.current = false;
+      if (mountedRef.current) setWindowTransitioning(false);
+    }
+  });
 
   // Traffic chip: real quota of the active subscription (design: "X.X GB left").
   const activeSub = getSubscriptionById(subscriptions, activeServer?.subscriptionId) ?? subscriptions[0] ?? null;
@@ -62,13 +150,13 @@ export default function AppShell({ children }: { children: ReactNode }) {
     const s = useAppStore.getState();
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      const path = await invoke('export_support_bundle', {
+      await invoke('export_support_bundle', {
         proxyMode: s.proxyMode,
         systemProxyMode: s.systemProxyMode,
         socksPort: s.socksPort,
         httpPort: s.httpPort,
-      }) as string;
-      s.addLog('success', `${t('supportBundleExported' as never)}: ${path}`);
+      });
+      s.addLog('success', t('supportBundleExported' as never));
       const { useToastStore } = await import('../../stores/toast-store');
       useToastStore.getState().addToast(t('supportBundleExported' as never), 'success');
     } catch (err) {
@@ -77,7 +165,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   };
 
   return (
-    <div className={`v6-app relative flex h-screen w-screen flex-col overflow-hidden${nativeMacWindow ? ' v6-native-mac-window' : ''}${windowMode === 'compact' ? ' v6-compact-mode' : ''}`} data-window-mode={windowMode}>
+    <div ref={rootRef} className={`v6-app relative flex h-screen w-screen flex-col overflow-hidden${nativeMacWindow ? ' v6-native-mac-window' : ''}${windowMode === 'compact' ? ' v6-compact-mode' : ''}`} data-window-mode={windowMode}>
       <div className="v6-panel relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[34px] p-[18px]">
         {/* Top drag strip: covers the whole header band (incl. panel padding)
             so the window drags from anywhere up top except the buttons. */}
@@ -115,7 +203,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
             )}
             <HeaderButton
               label={t((windowMode === 'compact' ? 'v6WindowWide' : 'v6WindowCompact') as never)}
-              onClick={() => setWindowMode((mode) => mode === 'compact' ? 'wide' : 'compact')}
+              onClick={toggleWindowMode}
+              disabled={windowTransitioning}
             >
               {windowMode === 'compact'
                 ? <RectangleHorizontal className="h-5 w-5" strokeWidth={2} />
@@ -132,7 +221,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         </div>
 
         {/* CONTENT */}
-        <main className="relative z-10 flex min-h-0 flex-1 flex-col">{children}</main>
+        <main ref={contentRef} className={`relative z-10 flex min-h-0 flex-1 flex-col${windowTransitioning ? ' will-change-[transform,opacity]' : ''}`}>{children}</main>
 
         {/* OVERLAYS */}
         {supportOpen && (
@@ -144,14 +233,15 @@ export default function AppShell({ children }: { children: ReactNode }) {
   );
 }
 
-function HeaderButton({ children, onClick, label }: { children: ReactNode; onClick: () => void; label: string }) {
+function HeaderButton({ children, onClick, label, disabled = false }: { children: ReactNode; onClick: () => void; label: string; disabled?: boolean }) {
   return (
     <button
       type="button"
       title={label}
       aria-label={label}
       onClick={onClick}
-      className="v6-hover-bright flex h-10 w-10 items-center justify-center rounded-[13px] border border-white/[0.12] bg-white/[0.07] text-white/[0.78] v6-focus"
+      disabled={disabled}
+      className="v6-hover-bright flex h-10 w-10 items-center justify-center rounded-[13px] border border-white/[0.12] bg-white/[0.07] text-white/[0.78] disabled:cursor-wait disabled:opacity-50 v6-focus"
     >
       {children}
     </button>

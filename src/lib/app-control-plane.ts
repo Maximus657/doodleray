@@ -8,6 +8,8 @@ import { getServerSelectionKey } from './server-selection';
 const CLOSED_SUBSCRIPTION_ID = 'doodlevpn-app';
 const LOCATION_ID_PREFIX = 'app-location:';
 const AUTO_LOCATION_ID = 'auto';
+const MAX_LOCATION_CATALOG_ITEMS = 256;
+const MAX_ACTIVE_LOCATIONS = 128;
 let localPreviewLoggedIn = false;
 
 export interface AppApiSubscriptionSummary {
@@ -75,8 +77,8 @@ function parseExpireSeconds(value?: string | null): number | undefined {
 }
 
 function locationToServer(location: AppApiLocation): ServerConfig {
-  const id = String(location.id || location.country_code || '').toLowerCase();
-  const countryCode = (location.country_code || id).toUpperCase();
+  const id = String(location.id || location.country_code || '').slice(0, 64).toLowerCase();
+  const countryCode = String(location.country_code || id).slice(0, 8).toUpperCase();
   const language = useAppStore.getState().language;
   const localizedCountry = language === 'ru' && countryCode === 'US'
     ? 'США'
@@ -86,7 +88,7 @@ function locationToServer(location: AppApiLocation): ServerConfig {
   const autoName = id === AUTO_LOCATION_ID
     ? language === 'ru' ? '⚡ Автовыбор' : language === 'zh' ? '⚡ 自动选择' : '⚡ Auto select'
     : undefined;
-  const name = autoName || localizedCountry || location.title || countryCode || id;
+  const name = String(autoName || localizedCountry || location.title || countryCode || id).slice(0, 128);
   return {
     id: `${LOCATION_ID_PREFIX}${id}`,
     name,
@@ -253,7 +255,9 @@ export function syncClosedLocationsToStore(
   const state = useAppStore.getState();
   const previousPings = new Map(state.servers.map((server) => [server.id, server.ping]));
   const locationServers = locations
+    .slice(0, MAX_LOCATION_CATALOG_ITEMS)
     .filter((location) => location.available !== false)
+    .slice(0, MAX_ACTIVE_LOCATIONS)
     .sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0) || a.title.localeCompare(b.title))
     .map(locationToServer)
     .map((server) => ({ ...server, ping: previousPings.get(server.id) }));

@@ -484,21 +484,6 @@ function App() {
       });
     }
     
-    // Report version changes only after the user explicitly enables diagnostics.
-    import('./lib/workshop-api').then(async ({ reportAppUpdated }) => {
-      try {
-        const { getVersion } = await import('@tauri-apps/api/app');
-        const currentVersion = await getVersion();
-        const previousVersion = localStorage.getItem('doodleray_last_seen_version');
-        if (previousVersion && previousVersion !== currentVersion) {
-          reportAppUpdated(previousVersion, currentVersion);
-        }
-        localStorage.setItem('doodleray_last_seen_version', currentVersion);
-      } catch {
-        // Version analytics must never affect startup.
-      }
-    }).catch(() => { /* silent */ });
-
     return () => {
       unsubscribe();
       unsubscribeHydration?.();
