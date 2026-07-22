@@ -2569,7 +2569,7 @@ const SYSTEM_BYPASS_PROCESS_NAMES: &[&str] = &[
 ];
 
 fn effective_tun_strict_route(req: &ConnectRequest) -> bool {
-    req.kill_switch || req.strict_route || routing_policy_is_full_tunnel(req)
+    req.kill_switch || req.strict_route || routing_policy_is_full_tunnel(req) || cfg!(windows)
 }
 
 fn normalize_process_name(value: &str) -> Option<String> {
@@ -2666,18 +2666,7 @@ fn push_domain_route(
 }
 
 fn tun_address_values() -> serde_json::Value {
-    #[cfg(windows)]
-    {
-        // Windows protected mode is IPv4-authoritative until IPv6 leak-proof
-        // evidence is collected. Advertising an IPv6 TUN default route while
-        // marking IPv6 degraded can make WinDNS/curl/Node resolvers stall on
-        // some hosts.
-        serde_json::json!(["172.30.255.1/30"])
-    }
-    #[cfg(not(windows))]
-    {
-        serde_json::json!(["172.30.255.1/30", "fdfe:dcba:9876::1/126"])
-    }
+    serde_json::json!(["172.30.255.1/30", "fdfe:dcba:9876::1/126"])
 }
 
 fn tun_mtu_value(req: &ConnectRequest) -> u16 {
@@ -7949,14 +7938,21 @@ mod tests {
 
     #[test]
     fn tun_addresses_match_platform_ipv6_policy() {
-        #[cfg(windows)]
-        assert_eq!(tun_address_values(), json!(["172.30.255.1/30"]));
-
-        #[cfg(not(windows))]
         assert_eq!(
             tun_address_values(),
             json!(["172.30.255.1/30", "fdfe:dcba:9876::1/126"])
         );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn windows_tun_is_always_strict() {
+        let mut request = sample_request("tun");
+        request.kill_switch = false;
+        request.strict_route = false;
+        request.routing_policy = None;
+
+        assert!(effective_tun_strict_route(&request));
     }
 
     #[test]

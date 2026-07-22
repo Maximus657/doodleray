@@ -1574,6 +1574,8 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         wait_for_doodleray_route_preferred(Duration::from_secs(20), generation)?;
         mark_route_ready();
         set_phase("routes_ready", started, generation)?;
+        wait_for_doodleray_ipv6_policy_ready(Duration::from_secs(8), generation)?;
+        set_phase("ipv6_ready", started, generation)?;
         wait_for_windows_system_resolver_ready(Duration::from_secs(20), generation)?;
         mark_dns_policy_ready();
         set_phase("dns_ready", started, generation)?;
@@ -1648,6 +1650,7 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         apply_doodleray_dns_client_policy(generation);
         wait_for_doodleray_route_preferred(Duration::from_secs(8), generation)?;
         mark_route_ready();
+        wait_for_doodleray_ipv6_policy_ready(Duration::from_secs(8), generation)?;
         wait_for_windows_system_resolver_ready(Duration::from_secs(12), generation)?;
         mark_dns_policy_ready();
         spawn_nonfatal_policy_checks(generation);
@@ -2508,53 +2511,31 @@ $metric = (Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IP
     }
 
     fn mark_ipv6_policy_status() {
-        let output = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                r#"
-$routes = @(Get-NetRoute -AddressFamily IPv6 -DestinationPrefix '::/0' -ErrorAction SilentlyContinue |
-  Where-Object { $_.State -eq 'Alive' } |
-  Select-Object -First 4 InterfaceAlias,InterfaceIndex,NextHop,RouteMetric)
-if ($routes.Count -eq 0) {
-  Write-Output 'ipv6_default_route=absent'
-  exit 0
-}
-$routes | ForEach-Object {
-  "ipv6_default_route=$($_.InterfaceAlias)|ifIndex=$($_.InterfaceIndex)|nextHop=$($_.NextHop)|metric=$($_.RouteMetric)"
-}
-"#,
-            ])
-            .creation_flags(0x08000000)
-            .output();
-
-        let detail = match output {
-            Ok(output) => String::from_utf8_lossy(&output.stdout).trim().to_string(),
-            Err(error) => format!("ipv6_default_route=unknown: {}", error),
-        };
-
+        let check = ensure_doodleray_ipv6_policy();
         let mut runtime = state().lock().unwrap();
-        if detail.contains("ipv6_default_route=absent") {
-            let check = "IPv6 default route is absent; protected verdict covers IPv4 routing";
-            if !runtime
-                .warning_checks
-                .iter()
-                .any(|existing| existing == check)
-            {
-                runtime.warning_checks.push(check.into());
+        match check {
+            Ok(detail) => {
+                let detail = format!("IPv6 policy verified: {}", detail);
+                if !runtime
+                    .route_explanations
+                    .iter()
+                    .any(|existing| existing == &detail)
+                {
+                    runtime.route_explanations.push(detail);
+                }
             }
-        } else {
-            let prefix = "IPv6 full-protection leak proof is not collected yet";
-            if !runtime
-                .degraded_checks
-                .iter()
-                .any(|existing| existing.starts_with(prefix))
-            {
-                runtime.degraded_checks.push(format!(
-                    "{}; treating IPv6 as degraded_disabled ({})",
-                    prefix,
-                    redact(&detail)
-                ));
+            Err(error) => {
+                let detail = format!(
+                    "IPv6 route verification failed after connect: {}",
+                    redact(&error)
+                );
+                if !runtime
+                    .degraded_checks
+                    .iter()
+                    .any(|existing| existing == &detail)
+                {
+                    runtime.degraded_checks.push(detail);
+                }
             }
         }
     }
@@ -2837,6 +2818,91 @@ Write-Output ("DoodleRay Tunnel route preferred: shape={0}, tun={1}, best_other=
                 Err(message)
             }
         }
+    }
+
+    fn ensure_doodleray_ipv6_policy() -> Result<String, String> {
+        let script = r#"
+$adapter = Get-NetAdapter -Name 'DoodleRay Tunnel' -ErrorAction SilentlyContinue | Select-Object -First 1
+$allDefaults = @(Get-NetRoute -AddressFamily IPv6 -DestinationPrefix '::/0' -ErrorAction SilentlyContinue |
+  Where-Object { $_.State -eq 'Alive' })
+
+if (-not $adapter) {
+  if ($allDefaults.Count -eq 0) {
+    Write-Output 'no external IPv6 default route; no IPv6 bypass path exists'
+    exit 0
+  }
+  Write-Output 'DoodleRay Tunnel adapter is missing while an IPv6 default route exists'
+  exit 2
+}
+
+$externalDefaults = @($allDefaults | Where-Object { [int]$_.InterfaceIndex -ne [int]$adapter.ifIndex })
+if ($externalDefaults.Count -eq 0) {
+  Write-Output 'no external IPv6 default route; no IPv6 bypass path exists'
+  exit 0
+}
+
+$tunInterface = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -ErrorAction SilentlyContinue
+$tunAddress = Get-NetIPAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -ErrorAction SilentlyContinue |
+  Where-Object { $_.IPAddress -like 'fdfe:dcba:9876:*' } |
+  Select-Object -First 1
+if (-not $tunInterface -or -not $tunAddress) {
+  Write-Output 'DoodleRay Tunnel IPv6 interface/address is missing while an external IPv6 route exists'
+  exit 2
+}
+
+$bypassed = @()
+foreach ($ip in @('2606:4700:4700::1111', '2001:4860:4860::8888')) {
+  $best = Find-NetRoute -RemoteIPAddress $ip -ErrorAction SilentlyContinue | Select-Object -First 1
+  if (-not $best -or [int]$best.InterfaceIndex -ne [int]$adapter.ifIndex) {
+    $via = if ($best) { "$($best.InterfaceAlias):$($best.InterfaceIndex)" } else { 'none' }
+    $bypassed += "$ip via $via"
+  }
+}
+if ($bypassed.Count -gt 0) {
+  Write-Output ("DoodleRay Tunnel is not selected for IPv6 route canaries: {0}" -f ($bypassed -join '; '))
+  exit 3
+}
+
+Write-Output ("DoodleRay Tunnel IPv6 route preferred: ifIndex={0}, canaries=ok" -f $adapter.ifIndex)
+"#;
+        match Command::new("powershell")
+            .args(["-NoProfile", "-Command", script])
+            .creation_flags(0x08000000)
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+            }
+            Ok(output) => Err(format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )),
+            Err(error) => Err(format!(
+                "failed to run IPv6 route readiness command: {}",
+                error
+            )),
+        }
+    }
+
+    fn wait_for_doodleray_ipv6_policy_ready(
+        timeout: Duration,
+        generation: u64,
+    ) -> Result<(), String> {
+        let deadline = Instant::now() + timeout;
+        let mut last_error = "DoodleRay Tunnel IPv6 policy did not become ready".to_string();
+        while Instant::now() < deadline {
+            ensure_current_generation(generation)?;
+            match ensure_doodleray_ipv6_policy() {
+                Ok(message) => {
+                    log_service_event(&format!("IPv6 readiness ok: {}", message));
+                    return Ok(());
+                }
+                Err(error) => last_error = error,
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        Err(last_error)
     }
 
     fn wait_for_doodleray_route_preferred(
