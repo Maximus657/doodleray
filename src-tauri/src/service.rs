@@ -850,13 +850,7 @@ mod windows_service_main {
                 TunnelResponse::Status(status_snapshot())
             }
             TunnelCommand::StopTunnel(request) => match stop_tunnel(request) {
-                Ok(status) => {
-                    std::thread::spawn(|| {
-                        std::thread::sleep(Duration::from_millis(150));
-                        STOP_REQUESTED.store(true, Ordering::SeqCst);
-                    });
-                    TunnelResponse::Status(status)
-                }
+                Ok(status) => TunnelResponse::Status(status),
                 Err(message) => TunnelResponse::Error { message },
             },
             TunnelCommand::ReportProxyCompatibility(report) => {
@@ -1606,8 +1600,12 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             sanitize_id(&request.op_id),
             request.reason
         ));
-        OP_GENERATION.fetch_add(1, Ordering::SeqCst);
-        stop_owned_processes("stop_tunnel")?;
+        let stop_generation = OP_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+        let needs_deferred_wintun_repair = stop_owned_processes("stop_tunnel")?;
+        schedule_idle_service_stop_after_deferred_wintun_repair(
+            stop_generation,
+            needs_deferred_wintun_repair,
+        );
         clear_timings();
         Ok(status_snapshot())
     }
@@ -1704,7 +1702,7 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         Ok(status_snapshot())
     }
 
-    fn stop_owned_processes(reason: &str) -> Result<(), String> {
+    fn stop_owned_processes(reason: &str) -> Result<bool, String> {
         log_service_event(&format!("stop_owned_processes reason={}", reason));
         let (mut singbox, mut xray, job) = {
             let mut runtime = state().lock().unwrap();
@@ -1776,10 +1774,10 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
                 }
             }
         }
-        // Ghost repair is a PowerShell device inventory. A known-clean fresh
-        // start must not wait for it; a failed first bring-up retries through
-        // this function with an owned job, so repair still precedes attempt 2.
-        if retained_network_state_may_exist {
+        // A user-initiated stop has already synchronously removed routes and
+        // DNS above. Its slower PnP ghost inventory can run after the status
+        // response; failure cleanup and startup retries still repair inline.
+        if retained_network_state_may_exist && reason != "stop_tunnel" {
             for action in repair_stale_wintun_ghost_devices(reason) {
                 log_service_event(&action);
                 if action.contains("removed=") && !action.contains("removed=0") {
@@ -1788,7 +1786,7 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
                 }
             }
         }
-        Ok(())
+        Ok(retained_network_state_may_exist)
     }
 
     fn retained_tun_adapter_requires_cleanup(route_count: u32, dns_server_count: u32) -> bool {
@@ -1800,6 +1798,51 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         adapter_may_exist: bool,
     ) -> bool {
         had_owned_runtime || adapter_may_exist
+    }
+
+    fn should_stop_idle_service_after_deferred_cleanup(
+        stop_generation: u64,
+        current_generation: u64,
+        is_disconnected: bool,
+    ) -> bool {
+        stop_generation == current_generation && is_disconnected
+    }
+
+    fn schedule_idle_service_stop_after_deferred_wintun_repair(
+        stop_generation: u64,
+        needs_deferred_wintun_repair: bool,
+    ) {
+        std::thread::spawn(move || {
+            if needs_deferred_wintun_repair {
+                for action in repair_stale_wintun_ghost_devices("stop_tunnel") {
+                    log_service_event(&action);
+                    if action.contains("removed=") && !action.contains("removed=0") {
+                        let mut runtime = state().lock().unwrap();
+                        if matches!(runtime.state, TunnelState::Disconnected) {
+                            runtime.warning_checks.push(action);
+                        }
+                    }
+                }
+            } else {
+                std::thread::sleep(Duration::from_millis(150));
+            }
+
+            let is_disconnected = {
+                let runtime = state().lock().unwrap();
+                matches!(runtime.state, TunnelState::Disconnected)
+            };
+            if should_stop_idle_service_after_deferred_cleanup(
+                stop_generation,
+                OP_GENERATION.load(Ordering::SeqCst),
+                is_disconnected,
+            ) {
+                STOP_REQUESTED.store(true, Ordering::SeqCst);
+            } else {
+                log_service_event(
+                    "deferred Wintun cleanup kept service alive for a newer tunnel operation",
+                );
+            }
+        });
     }
 
     fn clear_retained_tun_network_state() -> Result<String, String> {
@@ -3321,6 +3364,16 @@ Write-Output ("DoodleRay Tunnel dual-stack route preferred: ipv4_shape={0}, ipv6
         assert!(!should_clear_retained_tun_network_state(false, false));
         assert!(should_clear_retained_tun_network_state(true, false));
         assert!(should_clear_retained_tun_network_state(false, true));
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn deferred_wintun_cleanup_never_stops_a_newer_tunnel() {
+        assert!(should_stop_idle_service_after_deferred_cleanup(7, 7, true));
+        assert!(!should_stop_idle_service_after_deferred_cleanup(7, 8, true));
+        assert!(!should_stop_idle_service_after_deferred_cleanup(
+            7, 7, false
+        ));
     }
 }
 

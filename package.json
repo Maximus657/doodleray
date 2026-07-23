@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "test": "node --experimental-strip-types src/lib/redaction.test.ts && node --experimental-strip-types src/lib/ui-format.test.ts && node --experimental-strip-types src/lib/raw-xray-sanitizer.test.ts && node --experimental-strip-types src/lib/parser.test.ts && node --experimental-strip-types src/lib/connection-health.test.ts && node --experimental-strip-types src/lib/server-groups.test.ts && node --experimental-strip-types src/lib/server-selection.test.ts && node --experimental-strip-types src/lib/app-control-plane.test.ts && node --experimental-strip-types src/components/v6/status.test.ts",
+    "test": "node --experimental-strip-types src/lib/redaction.test.ts && node --experimental-strip-types src/lib/ui-format.test.ts && node --experimental-strip-types src/lib/raw-xray-sanitizer.test.ts && node --experimental-strip-types src/lib/parser.test.ts && node --experimental-strip-types src/lib/connection-health.test.ts && node --experimental-strip-types src/lib/server-groups.test.ts && node --experimental-strip-types src/lib/server-selection.test.ts && node --experimental-strip-types src/lib/app-control-plane.test.ts && node --experimental-strip-types src/stores/app-store.test.ts && node --experimental-strip-types src/components/v6/status.test.ts",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri"

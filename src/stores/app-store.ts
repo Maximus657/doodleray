@@ -10,6 +10,7 @@ import {
   getServerSelectionKey,
 } from '../lib/server-selection';
 import { sanitizeLogMessage } from '../lib/redaction';
+import { resolveLanguagePreference, type SupportedLanguage } from './language-preference';
 // Trigger HMR
 
 // ========== Types ==========
@@ -20,7 +21,7 @@ export type AppUpdatePhase = 'idle' | 'checking' | 'available' | 'downloading' |
 export type ProductMode = 'protected' | 'compatibility' | 'manual';
 export type ProxyMode = 'system-proxy' | 'tun';
 export type SystemProxyMode = 'set' | 'clear' | 'unchanged';
-export type SupportedLanguage = 'ru' | 'en' | 'zh';
+export type { SupportedLanguage } from './language-preference';
 
 export interface AntiJammerStatus {
   limitBytes: number;
@@ -205,6 +206,14 @@ const safeLocalGet = (name: string) => {
   }
 };
 
+const safeLocalSet = (name: string, value: string) => {
+  try {
+    localStorage.setItem(name, value);
+  } catch {
+    // The secure store remains the persistence fallback.
+  }
+};
+
 const safeLocalRemove = (name: string) => {
   try {
     localStorage.removeItem(name);
@@ -216,6 +225,7 @@ const safeLocalRemove = (name: string) => {
 const persistedValueCache = new Map<string, string>();
 const volatileBrowserStorage = new Map<string, string>();
 const pendingSecureWrites = new Map<string, Promise<void>>();
+const LANGUAGE_PREFERENCE_KEY = 'doodleray-language-preference';
 
 export function detectInitialLanguage(): SupportedLanguage {
   if (typeof navigator === 'undefined') return 'en';
@@ -479,7 +489,11 @@ export const useAppStore = create<AppState>()(
       autoStart: false,
       silentAdminAutostart: false,
       theme: 'dark',
-      language: detectInitialLanguage(),
+      language: resolveLanguagePreference(
+        null,
+        detectInitialLanguage(),
+        safeLocalGet(LANGUAGE_PREFERENCE_KEY),
+      ),
       networkStack: 'system',
       dnsMode: 'fakeip',
       strictRoute: true,
@@ -607,7 +621,12 @@ export const useAppStore = create<AppState>()(
       setSocksPort: (port) => set({ socksPort: port }),
       setHttpPort: (port) => set({ httpPort: port }),
       setTheme: (theme) => set({ theme }),
-      setLanguage: (lang) => set({ language: lang }),
+      setLanguage: (lang) => {
+        // This UI-only preference is mirrored synchronously so an immediate
+        // app close cannot outrun the asynchronous secure-store write.
+        safeLocalSet(LANGUAGE_PREFERENCE_KEY, lang);
+        set({ language: lang });
+      },
       addLog: (level, message) => set((s) => {
         const sanitized = sanitizeLogMessage(message);
         // Drop consecutive duplicates — health monitors and mount effects can
@@ -640,7 +659,11 @@ export const useAppStore = create<AppState>()(
         const merged = {
           ...current,
           ...persistedState,
-          language: persistedState?.language ?? current.language,
+          language: resolveLanguagePreference(
+            persistedState?.language,
+            current.language,
+            safeLocalGet(LANGUAGE_PREFERENCE_KEY),
+          ),
         } as AppState;
         merged.systemProxyMode = normalizeSystemProxyMode(merged.systemProxyMode, merged.proxyMode);
         merged.networkStack = normalizeNetworkStack(merged.networkStack);

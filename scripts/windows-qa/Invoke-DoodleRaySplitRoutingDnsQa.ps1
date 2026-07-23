@@ -95,6 +95,7 @@ if (-not $ControllerIp -and $env:SSH_CLIENT) {
 
 $managementRoute = Add-ManagementRoute $ControllerIp
 
+try {
 try { Invoke-QaApi "/disconnect" | Out-Null } catch {}
 Wait-QaState "disconnected" 30 | Out-Null
 
@@ -192,3 +193,8 @@ $result = [pscustomobject]@{
 
 $result | ConvertTo-Json -Depth 10 | Set-Content -Encoding UTF8 $evidence
 $result
+} finally {
+    # This script creates Edge direct-routing rules only to prove split routing.
+    # Do not leave a browser bypass behind for later manual VPN checks.
+    try { Invoke-QaApi "/clear-custom-routing-rules" | Out-Null } catch {}
+}
