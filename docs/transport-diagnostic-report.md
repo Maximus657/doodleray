@@ -1,5 +1,44 @@
 # DoodleRay Transport Diagnostic Report
 
+## 2026-07-23 Investigation: Windows fresh-install Xray TUN DNS loop
+
+### Scope
+
+- Route: Windows Full Computer mode using the service-owned Xray-to-sing-box TUN bridge.
+- User-visible issue: a fresh v6.0.1 install takes tens of seconds to connect, retries once, then fails before it reports protected state.
+
+### Evidence
+
+- The supplied v6.0.1 support bundle reaches `adapter_ready`, `xray_ready`, and `routes_ready` on both attempts; Wintun creation, native route probes, and local listeners are not the first broken edge.
+- Both attempts fail at the same service readiness check: the Windows resolver canary times out after TUN routes are installed.
+- Xray records that it cannot resolve its own redacted VPN endpoint hostname. After failed cleanup, the machine's ordinary DNS and HTTPS diagnostics pass, so this is not a general resolver outage or a remote endpoint outage.
+- `src-tauri/src/lib.rs` builds the Xray TUN bridge route rules in this order: sniff, hijack every DNS packet, then send `xray.exe` and `sing-box.exe` directly. DNS emitted by Xray therefore matches the earlier hijack rule, re-enters sing-box, and waits on the Xray proxy that needs that DNS result to connect.
+
+### First Broken Edge
+
+```text
+Xray resolves its VPN endpoint during TUN startup
+-> broad sing-box DNS hijack intercepts the engine's resolver packet
+-> sing-box sends DNS through the Xray SOCKS proxy
+-> Xray cannot connect until its endpoint has been resolved
+-> DNS loop times out, readiness fails, and startup retries
+```
+
+### Classification
+
+- Proven: the route-rule order creates this DNS loop for the service-owned Xray TUN bridge.
+- Proven: the long duration is the two bounded DNS readiness attempts, not server latency.
+- Proposed minimal fix: put the existing engine direct-bypass rule before the broad DNS-hijack rule, leaving user DNS interception and all routing policy rules unchanged.
+
+### Windows Test Path
+
+- Add a regression test that asserts engine bypass precedes DNS hijack in every Xray TUN bridge configuration.
+- Build the Windows service and NSIS RC, then test a fresh Windows installation with a hostname-backed closed-API location: one protected connect, DNS/HTTPS canaries, and clean disconnect.
+
+### Android and iOS Test Paths
+
+- Not touched: this is Windows-only service and bridge configuration.
+
 ## 2026-07-23 Hotfix: Windows retained TUN routes after disconnect
 
 ### Scope

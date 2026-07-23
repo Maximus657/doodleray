@@ -1950,6 +1950,17 @@ fn xray_tun_bridge_udp_rule() -> serde_json::Value {
     })
 }
 
+fn xray_tun_bridge_startup_rules() -> Vec<serde_json::Value> {
+    vec![
+        serde_json::json!({ "action": "sniff" }),
+        // Xray resolves the VPN endpoint before its encrypted proxy session
+        // exists. Keep that engine-owned resolver traffic out of the generic
+        // DNS hijack below or it loops back through the not-yet-ready proxy.
+        serde_json::json!({ "process_name": system_bypass_process_values(), "outbound": "direct" }),
+        serde_json::json!({ "protocol": "dns", "action": "hijack-dns" }),
+    ]
+}
+
 const DEFAULT_DIRECT_DOMAIN_SUFFIXES: &[&str] = &[
     "2ip.ru",
     "vk.com",
@@ -8265,6 +8276,24 @@ mod tests {
     }
 
     #[test]
+    fn xray_tun_bridge_bypasses_engines_before_hijacking_dns() {
+        let rules = xray_tun_bridge_startup_rules();
+        let engine_bypass = rules
+            .iter()
+            .position(|rule| rule.get("process_name").is_some())
+            .expect("engine direct-bypass rule");
+        let dns_hijack = rules
+            .iter()
+            .position(|rule| rule["protocol"] == "dns" && rule["action"] == "hijack-dns")
+            .expect("DNS hijack rule");
+
+        assert!(
+            engine_bypass < dns_hijack,
+            "the Xray engine must resolve its endpoint directly before generic DNS interception"
+        );
+    }
+
+    #[test]
     fn tun_addresses_match_platform_ipv6_policy() {
         assert_eq!(
             tun_address_values(),
@@ -9394,11 +9423,7 @@ async fn vpn_connect_direct(mut request: ConnectRequest, app: tauri::AppHandle) 
             let direct_exes = process_rule_names(&request, "direct");
             let block_exes = process_rule_names(&request, "block");
 
-            let mut tun_bridge_rules = vec![
-                serde_json::json!({ "action": "sniff" }),
-                serde_json::json!({ "protocol": "dns", "action": "hijack-dns" }),
-                serde_json::json!({ "process_name": system_bypass_process_values(), "outbound": "direct" }),
-            ];
+            let mut tun_bridge_rules = xray_tun_bridge_startup_rules();
             push_process_route(&mut tun_bridge_rules, &block_exes, "block");
             push_process_route(&mut tun_bridge_rules, &direct_exes, "direct");
             push_process_route(&mut tun_bridge_rules, &proxy_exes, "proxy");
@@ -9512,11 +9537,7 @@ async fn vpn_connect_direct(mut request: ConnectRequest, app: tauri::AppHandle) 
         let direct_exes = process_rule_names(&request, "direct");
         let block_exes = process_rule_names(&request, "block");
 
-        let mut tun_bridge_rules = vec![
-            serde_json::json!({ "action": "sniff" }),
-            serde_json::json!({ "protocol": "dns", "action": "hijack-dns" }),
-            serde_json::json!({ "process_name": system_bypass_process_values(), "outbound": "direct" }),
-        ];
+        let mut tun_bridge_rules = xray_tun_bridge_startup_rules();
         push_process_route(&mut tun_bridge_rules, &block_exes, "block");
         push_process_route(&mut tun_bridge_rules, &direct_exes, "direct");
         push_process_route(&mut tun_bridge_rules, &proxy_exes, "proxy");
