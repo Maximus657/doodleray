@@ -1,5 +1,24 @@
 # DoodleRay Transport Diagnostic Report
 
+## 2026-07-23 Hotfix: Windows protected mode exits before creating the TUN adapter
+
+### Scope
+
+- Route: Windows Full device mode with the Xray-to-sing-box TUN bridge.
+- User-visible issue: connection waited for the adapter, then failed before the adapter appeared.
+
+### Evidence and fix
+
+- The service log identified a sing-box startup error from `dns-direct`: an explicit `detour: "direct"` targets sing-box's empty built-in direct outbound and is rejected by current sing-box.
+- `dns-direct` remains the resolver selected for direct routing rules, including the RU/geo domain and IP selectors. Xray TUN continues to use real IP addresses, not FakeIP.
+- Removed only the redundant explicit detour from the Windows physical UDP resolver. With no detour specified, sing-box uses its direct DNS behavior without binding the resolver to the empty outbound.
+- Added a focused regression test that rejects reintroducing this invalid direct-detour configuration.
+
+### Verification
+
+- `cargo fmt --check` passed.
+- `cargo test --release --lib` passed (101 passed, 3 ignored).
+
 ## 2026-06-16 Hotfix: Windows Shutdown Xray Teardown Error Flash
 
 ### Scope

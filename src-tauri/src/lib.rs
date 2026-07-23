@@ -1809,8 +1809,7 @@ fn direct_dns_server() -> serde_json::Value {
             "tag": "dns-direct",
             "type": "udp",
             "server": server,
-            "server_port": 53,
-            "detour": "direct"
+            "server_port": 53
         });
     }
     serde_json::json!({
@@ -6701,6 +6700,16 @@ mod tests {
         assert_eq!(
             first_usable_physical_dns("127.0.0.1\n169.254.1.1\n192.168.1.1\n"),
             Some("192.168.1.1".into())
+        );
+    }
+
+    #[test]
+    fn direct_dns_server_never_sets_a_redundant_direct_detour() {
+        let dns = direct_dns_server();
+        assert_eq!(dns["tag"], "dns-direct");
+        assert!(
+            dns.get("detour").is_none(),
+            "sing-box 1.12+ rejects a UDP DNS detour to the empty built-in direct outbound"
         );
     }
 

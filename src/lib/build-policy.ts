@@ -11,7 +11,7 @@ export function getBuildChannel(): BuildChannel {
 }
 
 export function isClosedControlPlaneEnabled(): boolean {
-  return env.VITE_DOODLERAY_CLOSED_CONTROL_PLANE !== '0';
+  return env.VITE_DOODLERAY_CLOSED_CONTROL_PLANE === '1';
 }
 
 export function isLegacyImportEnabled(): boolean {
