@@ -1719,6 +1719,7 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
                 runtime.job.take(),
             )
         };
+        let had_owned_runtime = singbox.is_some() || xray.is_some() || job.is_some();
 
         drop(job);
         if let Some(mut child) = singbox.take() {
@@ -1753,35 +1754,102 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         drop(runtime);
         clear_session_marker();
 
-        // Verify DoodleRay-owned cleanup actually finished: the wintun adapter
-        // must disappear with its owning child. If it lingers, report an
-        // honest cleanup_pending instead of a silent idle. We never touch
-        // non-DoodleRay adapters here.
-        let mut adapter_still_present = doodleray_adapter_snapshot().is_some();
-        for _ in 0..6 {
-            if !adapter_still_present {
-                break;
+        // Wintun may retain the DoodleRay-owned adapter after sing-box exits.
+        // Avoid spawning PowerShell on a new connect when neither an old
+        // runtime nor its adapter exists; otherwise prove routes and DNS are gone.
+        let adapter_may_exist = !matches!(
+            windows_net::find_adapter_by_alias("DoodleRay Tunnel"),
+            Err(windows_net::NetProbeError::NotFound(_))
+        );
+        let retained_network_state_may_exist =
+            should_clear_retained_tun_network_state(had_owned_runtime, adapter_may_exist);
+        if retained_network_state_may_exist {
+            match clear_retained_tun_network_state() {
+                Ok(summary) => log_service_event(&summary),
+                Err(error) => {
+                    let warning =
+                        format!("DoodleRay Tunnel retained network cleanup failed: {error}");
+                    log_service_event(&warning);
+                    let mut runtime = state().lock().unwrap();
+                    runtime.health_verdict = TunnelHealthVerdict::CleanupPending;
+                    runtime.warning_checks.push(warning);
+                }
             }
-            std::thread::sleep(Duration::from_millis(500));
-            adapter_still_present = doodleray_adapter_snapshot().is_some();
         }
-        if adapter_still_present {
-            let mut runtime = state().lock().unwrap();
-            runtime.health_verdict = TunnelHealthVerdict::CleanupPending;
-            runtime.warning_checks.push(
-                "DoodleRay Tunnel adapter is still present after owned cleanup; cleanup pending"
-                    .into(),
-            );
-            log_service_event("cleanup pending: DoodleRay Tunnel adapter still present after stop");
-        }
-        for action in repair_stale_wintun_ghost_devices(reason) {
-            log_service_event(&action);
-            if action.contains("removed=") && !action.contains("removed=0") {
-                let mut runtime = state().lock().unwrap();
-                runtime.warning_checks.push(action);
+        // Ghost repair is a PowerShell device inventory. A known-clean fresh
+        // start must not wait for it; a failed first bring-up retries through
+        // this function with an owned job, so repair still precedes attempt 2.
+        if retained_network_state_may_exist {
+            for action in repair_stale_wintun_ghost_devices(reason) {
+                log_service_event(&action);
+                if action.contains("removed=") && !action.contains("removed=0") {
+                    let mut runtime = state().lock().unwrap();
+                    runtime.warning_checks.push(action);
+                }
             }
         }
         Ok(())
+    }
+
+    fn retained_tun_adapter_requires_cleanup(route_count: u32, dns_server_count: u32) -> bool {
+        route_count > 0 || dns_server_count > 0
+    }
+
+    fn should_clear_retained_tun_network_state(
+        had_owned_runtime: bool,
+        adapter_may_exist: bool,
+    ) -> bool {
+        had_owned_runtime || adapter_may_exist
+    }
+
+    fn clear_retained_tun_network_state() -> Result<String, String> {
+        let script = r#"
+$ErrorActionPreference = 'Stop'
+$adapter = Get-NetAdapter -Name 'DoodleRay Tunnel' -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $adapter) {
+  Write-Output 'retained_tun_cleanup adapter=absent'
+  exit 0
+}
+$routes = @(Get-NetRoute -InterfaceIndex $adapter.ifIndex -ErrorAction SilentlyContinue)
+foreach ($route in $routes) {
+  Remove-NetRoute -InputObject $route -Confirm:$false -ErrorAction Stop
+}
+Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ResetServerAddresses -ErrorAction Stop
+$remainingRoutes = @(Get-NetRoute -InterfaceIndex $adapter.ifIndex -ErrorAction SilentlyContinue).Count
+$dnsServerCount = @(Get-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ErrorAction SilentlyContinue |
+  ForEach-Object { @($_.ServerAddresses) }).Count
+Write-Output ("retained_tun_cleanup adapter=present routes_before={0} routes_after={1} dns_servers_after={2}" -f $routes.Count, $remainingRoutes, $dnsServerCount)
+if ($remainingRoutes -gt 0 -or $dnsServerCount -gt 0) { exit 2 }
+"#;
+        let output = Command::new("powershell")
+            .args(["-NoProfile", "-Command", script])
+            .creation_flags(0x08000000)
+            .output()
+            .map_err(|error| format!("failed to clear retained TUN network state: {error}"))?;
+        let detail = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !output.status.success() {
+            return Err(format!(
+                "{}{}",
+                detail,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let route_count = detail
+            .split_whitespace()
+            .find_map(|part| part.strip_prefix("routes_after=")?.parse::<u32>().ok())
+            .unwrap_or(0);
+        let dns_server_count = detail
+            .split_whitespace()
+            .find_map(|part| part.strip_prefix("dns_servers_after=")?.parse::<u32>().ok())
+            .unwrap_or(0);
+        if retained_tun_adapter_requires_cleanup(route_count, dns_server_count) {
+            return Err(if detail.is_empty() {
+                "retained TUN adapter cleanup produced no verification output".into()
+            } else {
+                detail
+            });
+        }
+        Ok(detail)
     }
 
     fn set_failed(message: &str) {
@@ -3237,6 +3305,22 @@ Write-Output ("DoodleRay Tunnel dual-stack route preferred: ipv4_shape={0}, ipv6
         .map_err(|e| format!("prepare-update IPC failed: {}", e))?;
         println!("{}", serde_json::to_string_pretty(&response)?);
         Ok(())
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn retained_tun_adapter_requires_routes_and_dns_to_be_cleared() {
+        assert!(retained_tun_adapter_requires_cleanup(1, 0));
+        assert!(retained_tun_adapter_requires_cleanup(0, 1));
+        assert!(!retained_tun_adapter_requires_cleanup(0, 0));
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn preflight_cleanup_skips_a_known_absent_adapter_without_owned_runtime() {
+        assert!(!should_clear_retained_tun_network_state(false, false));
+        assert!(should_clear_retained_tun_network_state(true, false));
+        assert!(should_clear_retained_tun_network_state(false, true));
     }
 }
 

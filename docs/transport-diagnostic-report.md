@@ -1,5 +1,25 @@
 # DoodleRay Transport Diagnostic Report
 
+## 2026-07-23 Hotfix: Windows retained TUN routes after disconnect
+
+### Scope
+
+- Route: Windows Full Computer mode with the service-owned `DoodleRay Tunnel` adapter.
+- User-visible risk: after Disconnect the child engine could exit while a retained Wintun interface still carried DoodleRay routes and DNS configuration; a following Connect also spent time in unnecessary cleanup.
+
+### Evidence and fix
+
+- On the Windows QA stand, after a completed disconnect the tunnel service was stopped while the named adapter remained `Up` with service-owned routes. This was a real cleanup failure, not a remote subscription or server failure.
+- The service terminated its owned `sing-box` child, then assumed the Wintun adapter would disappear. Windows can retain that interface after process exit.
+- The service now clears routes and resets DNS only on the exact adapter name `DoodleRay Tunnel`, then verifies that both counts are zero. A failed verification remains `cleanup_pending`; it is never silently treated as safe.
+- The same cleanup, including the expensive stale-Wintun device inventory, is skipped only before a new connect when native inspection proves that there is neither an owned prior runtime nor a DoodleRay adapter. If first bring-up is repairable, its owned retry still runs the complete cleanup before attempt two. This removes a needless PowerShell startup delay without changing disconnect or repair cleanup.
+
+### Verification
+
+- Focused service tests cover route/DNS cleanup requirements and the absent-adapter fast path.
+- A packaged Windows QA RC completed protected-mode split-routing/DNS validation twice after a clean disconnect: protected IPv4 and IPv6 canaries used `DoodleRay Tunnel`, a direct-process exclusion stayed direct, and DNS resolution completed.
+- After the final normal Disconnect, the on-demand Windows service stopped and the QA stand reported zero retained DoodleRay adapter routes and zero retained DoodleRay adapter DNS servers.
+
 ## 2026-07-23 Hotfix: Windows protected mode exits before creating the TUN adapter
 
 ### Scope
