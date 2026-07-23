@@ -1809,8 +1809,7 @@ fn direct_dns_server() -> serde_json::Value {
             "tag": "dns-direct",
             "type": "udp",
             "server": server,
-            "server_port": 53,
-            "detour": "direct"
+            "server_port": 53
         });
     }
     serde_json::json!({
@@ -2468,6 +2467,14 @@ fn xray_engine_protocol(protocol: &str) -> bool {
     matches!(protocol, "vless" | "vmess" | "trojan" | "shadowsocks")
 }
 
+/// Every protocol either engine's config builder actually implements. A
+/// request outside this set must be rejected before it reaches sing-box's
+/// outbound builder, whose fallback for an unrecognized protocol blocks
+/// (fails closed) rather than silently sending traffic unproxied.
+fn is_supported_proxy_protocol(protocol: &str) -> bool {
+    xray_engine_protocol(protocol) || matches!(protocol, "hysteria2" | "tuic" | "wireguard")
+}
+
 fn uses_xray_engine(req: &ConnectRequest) -> bool {
     req.raw_xray_config.is_some()
         || xray_engine_transport(req.transport.as_str())
@@ -2857,10 +2864,31 @@ fn secure_store_native_get(key: &str) -> Result<Option<String>, String> {
 #[cfg(not(target_os = "macos"))]
 fn secure_store_native_get(key: &str) -> Result<Option<String>, String> {
     match secure_store_entry(key)?.get_password() {
-        Ok(value) => Ok(Some(value)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(format!("Secure storage read failed: {}", e)),
+        Ok(value) => return Ok(Some(value)),
+        Err(keyring::Error::NoEntry) => {}
+        Err(e) => {
+            #[cfg(not(windows))]
+            return Err(format!("Secure storage read failed: {}", e));
+            #[cfg(windows)]
+            eprintln!(
+                "[warn] secure storage keyring read failed, trying Windows DPAPI: {}",
+                e
+            );
+        }
     }
+    // Credential Manager is not reliably available in every Windows session
+    // (service accounts, locked-down/Server Core hosts). Fall back to a
+    // per-key DPAPI file, same pattern already used for the App API session.
+    #[cfg(windows)]
+    {
+        let value = app_api_dpapi_get(key)?;
+        if let Some(value) = &value {
+            let _ = secure_store_native_set(key, value);
+        }
+        Ok(value)
+    }
+    #[cfg(not(windows))]
+    Ok(None)
 }
 
 #[cfg(target_os = "macos")]
@@ -2874,9 +2902,21 @@ fn secure_store_native_set(key: &str, value: &str) -> Result<(), String> {
 
 #[cfg(not(target_os = "macos"))]
 fn secure_store_native_set(key: &str, value: &str) -> Result<(), String> {
-    secure_store_entry(key)?
+    let keyring_result = secure_store_entry(key)?
         .set_password(value)
-        .map_err(|e| format!("Secure storage write failed: {}", e))
+        .map_err(|e| format!("Secure storage write failed: {}", e));
+    #[cfg(windows)]
+    {
+        let dpapi_result = app_api_dpapi_set(key, value);
+        return match (keyring_result, dpapi_result) {
+            (Ok(()), Ok(())) | (Err(_), Ok(())) | (Ok(()), Err(_)) => Ok(()),
+            (Err(keyring_error), Err(dpapi_error)) => {
+                Err(format!("{}; {}", keyring_error, dpapi_error))
+            }
+        };
+    }
+    #[cfg(not(windows))]
+    keyring_result
 }
 
 #[cfg(target_os = "macos")]
@@ -2896,10 +2936,24 @@ fn secure_store_native_delete(key: &str) -> Result<(), String> {
 
 #[cfg(not(target_os = "macos"))]
 fn secure_store_native_delete(key: &str) -> Result<(), String> {
-    match secure_store_entry(key)?.delete_credential() {
+    let keyring_result = match secure_store_entry(key)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(format!("Secure storage delete failed: {}", e)),
+    };
+    #[cfg(windows)]
+    {
+        let dpapi_result = app_api_dpapi_delete(key);
+        return match (keyring_result, dpapi_result) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(keyring_error), Ok(())) => Err(keyring_error),
+            (Ok(()), Err(dpapi_error)) => Err(dpapi_error),
+            (Err(keyring_error), Err(dpapi_error)) => {
+                Err(format!("{}; {}", keyring_error, dpapi_error))
+            }
+        };
     }
+    #[cfg(not(windows))]
+    keyring_result
 }
 
 fn secure_store_chunk_key(key: &str, index: usize) -> String {
@@ -3927,29 +3981,24 @@ fn app_api_load_or_create_device() -> Result<AppApiDeviceState, String> {
     Ok(device)
 }
 
-async fn app_api_send_json<T: DeserializeOwned>(
-    method: reqwest::Method,
-    path: &str,
+fn app_api_build_request(
+    client: &reqwest::Client,
+    method: &reqwest::Method,
+    url: &Url,
     bearer: Option<&str>,
-    body: Option<serde_json::Value>,
-) -> Result<T, AppApiHttpError> {
-    let client = app_api_http_client().map_err(|message| AppApiHttpError { status: 0, message })?;
-    let url = app_api_endpoint(path).map_err(|message| AppApiHttpError { status: 0, message })?;
-    let body_text = body.as_ref().map(|body| body.to_string());
+    body_text: &Option<String>,
+    device_headers: &Option<(String, String)>,
+) -> reqwest::RequestBuilder {
     let mut request = client
-        .request(method.clone(), url)
+        .request(method.clone(), url.clone())
         .header("Accept", "application/json")
         .header(
             "User-Agent",
             format!("DoodleRayPC/{}", env!("CARGO_PKG_VERSION")),
         );
-    if closed_control_plane_enabled() {
-        let device = app_api_load_or_create_device()
-            .map_err(|message| AppApiHttpError { status: 0, message })?;
-        let proof = app_api_device_proof(&device, &method, path, body_text.as_deref())
-            .map_err(|message| AppApiHttpError { status: 0, message })?;
+    if let Some((device_id, proof)) = device_headers {
         request = request
-            .header("X-Doodle-Device-ID", device.client_device_id)
+            .header("X-Doodle-Device-ID", device_id)
             .header("X-Doodle-Device-Proof", proof);
     }
     if let Some(token) = bearer {
@@ -3958,13 +4007,14 @@ async fn app_api_send_json<T: DeserializeOwned>(
     if let Some(body) = body_text {
         request = request
             .header("Content-Type", "application/json")
-            .body(body);
+            .body(body.clone());
     }
+    request
+}
 
-    let response = request.send().await.map_err(|e| AppApiHttpError {
-        status: 0,
-        message: e.to_string(),
-    })?;
+async fn app_api_finish_response<T: DeserializeOwned>(
+    response: reqwest::Response,
+) -> Result<T, AppApiHttpError> {
     let status = response.status();
     let text = response.text().await.unwrap_or_default();
     if !status.is_success() {
@@ -3976,6 +4026,64 @@ async fn app_api_send_json<T: DeserializeOwned>(
     serde_json::from_str::<T>(&text).map_err(|e| AppApiHttpError {
         status: status.as_u16(),
         message: format!("App API JSON parse failed: {}", e),
+    })
+}
+
+async fn app_api_send_json<T: DeserializeOwned>(
+    method: reqwest::Method,
+    path: &str,
+    bearer: Option<&str>,
+    body: Option<serde_json::Value>,
+) -> Result<T, AppApiHttpError> {
+    let url = app_api_endpoint(path).map_err(|message| AppApiHttpError { status: 0, message })?;
+    let body_text = body.as_ref().map(|body| body.to_string());
+    let device_headers = if closed_control_plane_enabled() {
+        let device = app_api_load_or_create_device()
+            .map_err(|message| AppApiHttpError { status: 0, message })?;
+        let proof = app_api_device_proof(&device, &method, path, body_text.as_deref())
+            .map_err(|message| AppApiHttpError { status: 0, message })?;
+        Some((device.client_device_id, proof))
+    } else {
+        None
+    };
+
+    let direct_client =
+        app_api_http_client().map_err(|message| AppApiHttpError { status: 0, message })?;
+    let direct_request = app_api_build_request(
+        &direct_client,
+        &method,
+        &url,
+        bearer,
+        &body_text,
+        &device_headers,
+    );
+    let direct_error = match direct_request.send().await {
+        Ok(response) => return app_api_finish_response(response).await,
+        Err(e) => e.to_string(),
+    };
+
+    // Some Windows hosts only reach the internet through a configured system
+    // proxy; .no_proxy() above is intentional (avoids looping through our own
+    // VPN tunnel) but must not be the only path. Retry once through whatever
+    // manual proxy Windows/macOS currently has configured, same fallback
+    // already used for subscription fetches.
+    if let Ok(Some(proxy_client)) = system_proxy_fetch_client(&url, Duration::from_secs(20)) {
+        let proxy_request = app_api_build_request(
+            &proxy_client,
+            &method,
+            &url,
+            bearer,
+            &body_text,
+            &device_headers,
+        );
+        if let Ok(response) = proxy_request.send().await {
+            return app_api_finish_response(response).await;
+        }
+    }
+
+    Err(AppApiHttpError {
+        status: 0,
+        message: direct_error,
     })
 }
 
@@ -5816,10 +5924,14 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
             ob
         }
         unsupported => {
-            // Unknown protocol — return error outbound so user gets clear feedback
-            eprintln!("[error] Unsupported protocol: {}", unsupported);
+            // Unknown protocol: fail closed. A "direct" outbound here would
+            // silently send the user's traffic unproxied while the UI still
+            // claims Connected/Protected — the exact fake-green failure this
+            // app is built to avoid. Block instead, so an unsupported server
+            // fails loudly (no traffic at all) rather than leaking traffic.
+            eprintln!("[error] Unsupported protocol, blocking: {}", unsupported);
             serde_json::json!({
-                "type": "direct",
+                "type": "block",
                 "tag": "proxy"
             })
         }
@@ -9147,6 +9259,14 @@ async fn vpn_connect_direct(mut request: ConnectRequest, app: tauri::AppHandle) 
         logs.clear();
     }
 
+    if request.raw_xray_config.is_none() && !is_supported_proxy_protocol(&request.protocol) {
+        return ConnectResult {
+            success: false,
+            message: format!("Unsupported protocol: {}", request.protocol),
+            health: None,
+        };
+    }
+
     let use_xray = uses_xray_engine(&request);
     let is_tun = request.proxy_mode == "tun";
 
@@ -11623,13 +11743,16 @@ fn tunnel_service_start(
                     .unwrap_or_else(|| "Tunnel Service failed to start TUN".into()))
             }
             // Tunnel start briefly passes through Disconnected while the
-            // service stops the previous owned children (replace_tunnel), and
-            // the bounded bring-up retry does the same for tun_adapter_repair.
-            // Keep waiting instead of aborting the connect in that transient.
+            // service stops the previous owned children (replace_tunnel), the
+            // bounded bring-up retry does the same for tun_adapter_repair, and
+            // a failed start tears down through the same stop_owned_processes
+            // path (failed_cleanup) before set_failed records the real error.
+            // Keep waiting instead of aborting the connect on that transient,
+            // or the generic message below races ahead of the actual cause.
             tunnel_service::TunnelState::Disconnected
                 if matches!(
                     status.last_repair_action.as_deref(),
-                    Some("replace_tunnel") | Some("tun_adapter_repair")
+                    Some("replace_tunnel") | Some("tun_adapter_repair") | Some("failed_cleanup")
                 ) => {}
             tunnel_service::TunnelState::Disconnected => {
                 return Err(status

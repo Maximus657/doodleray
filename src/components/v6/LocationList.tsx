@@ -8,13 +8,22 @@ import ServerRow from './ServerRow';
 
 type T = (key: never) => string;
 
+const ACCOUNT_URL = 'https://doodlevpn.online/account';
+const LOW_QUOTA_RENEW_BYTES = 1024 ** 3; // Show the renew CTA once under 1GB remains.
+
+async function openAccountPage() {
+  try {
+    const { openUrl } = await import('@tauri-apps/plugin-opener');
+    await openUrl(ACCOUNT_URL);
+  } catch {
+    window.open(ACCOUNT_URL, '_blank');
+  }
+}
+
 /** Design day-count color scale for the subscription block. */
 function dayColor(d: number): string {
-  if (d <= 0) return '#ff4d4d';
   if (d <= 3) return '#ff5a5f';
-  if (d <= 7) return '#F88B24';
-  if (d <= 14) return '#ffb02e';
-  if (d <= 30) return '#9fd457';
+  if (d <= 7) return '#ffb02e';
   return '#3ddc84';
 }
 
@@ -150,16 +159,26 @@ export default function LocationList({
                   {t((quota.tone === 'exhausted' ? 'v6AntiJammerExhausted' : 'v6AntiJammerLow') as never)}
                 </p>
               )}
+              {quota.remaining <= LOW_QUOTA_RENEW_BYTES && (
+                <button type="button" onClick={openAccountPage} className="v6-hover-bright mt-2 w-full rounded-[11px] border border-white/[0.12] bg-white/[0.06] py-1.5 text-[11.5px] font-semibold text-[#FFA84E] v6-focus">
+                  {t('v6RenewCta' as never)}
+                </button>
+              )}
             </div>
           )}
 
           {days !== null && dCol && (
             <div className={quota ? 'border-t border-white/[0.08] pt-4' : ''}>
-              <div className="mb-[11px] flex items-baseline gap-1.5">
-                <span className="text-[24px] font-semibold leading-none tabular-nums text-white">{days}</span>
-                <span className="text-[12.5px] text-white/45">
-                  {days <= 0 ? t('subscriptionExpired' as never) : t('v6DaysLeft' as never)}
+              <div className="mb-[11px] flex items-baseline justify-between gap-1.5">
+                <span className="flex items-baseline gap-1.5">
+                  <span className="text-[24px] font-semibold leading-none tabular-nums text-white">{days}</span>
+                  <span className="text-[12.5px] text-white/45">
+                    {days <= 0 ? t('subscriptionExpired' as never) : t('v6DaysLeft' as never)}
+                  </span>
                 </span>
+                <button type="button" onClick={openAccountPage} className="v6-hover-bright shrink-0 rounded-[11px] border border-white/[0.12] bg-white/[0.06] px-2.5 py-1 text-[11.5px] font-semibold text-[#FFA84E] v6-focus">
+                  {t('v6RenewCta' as never)}
+                </button>
               </div>
               <div className="h-[7px] overflow-hidden rounded-md bg-white/10">
                 <div

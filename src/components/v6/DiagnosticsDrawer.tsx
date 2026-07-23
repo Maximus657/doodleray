@@ -67,7 +67,7 @@ export default function DiagnosticsDrawer({ logs, onClear, onOpenDiagnostics, t 
   }, [logs.length, open]);
 
   return (
-    <div className="relative shrink-0">
+    <div className="v6-diagnostics-drawer relative shrink-0">
       {/* Expanded log popover (overlay, no layout shift) */}
       {open && (
         <>

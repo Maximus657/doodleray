@@ -494,7 +494,7 @@ export const useAppStore = create<AppState>()(
       updateStatus: '',
       updateProgress: null,
       showStats: false,
-      diagnosticsConsent: false,
+      diagnosticsConsent: true,
       appSessionLoggedIn: false,
       appSessionDeviceAllowed: null,
 

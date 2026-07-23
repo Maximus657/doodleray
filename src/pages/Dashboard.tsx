@@ -363,6 +363,18 @@ export default function Dashboard() {
           appSessionDeviceAllowed: session.logged_in ? session.subscription?.device_allowed !== false : null,
         });
         syncClosedLocationsToStore(session, locations);
+        if (session.logged_in) {
+          if (loginFlightTimerRef.current !== null) {
+            window.clearTimeout(loginFlightTimerRef.current);
+          }
+          setPostLoginFlightSettled(false);
+          setPostLoginFlight(true);
+          loginFlightTimerRef.current = window.setTimeout(() => {
+            setPostLoginFlightSettled(true);
+            setPostLoginFlight(false);
+            loginFlightTimerRef.current = null;
+          }, 2400);
+        }
       } catch (err) {
         if (!disposed) {
           if (isTauriInvokeUnavailableError(err)) {
@@ -667,6 +679,7 @@ export default function Dashboard() {
     const healthCheck = setInterval(async () => {
       if (healthInFlightRef.current) return;
       healthInFlightRef.current = true;
+      const healthCheckOpId = connectionOpRef.current;
       try {
         const { invoke } = await import('@tauri-apps/api/core');
         const effectiveSystemProxyMode = await getEffectiveHealthSystemProxyMode();
@@ -757,7 +770,13 @@ export default function Dashboard() {
 
         const healthy = isHealthAcceptable(proxyMode, health);
         setHealthVerdict(getUserVisibleHealthVerdict(health));
+        // A manual connect/switch/disconnect that started after this tick
+        // began owns the connection now; the health snapshot we just
+        // awaited can describe a server switch's normal transient teardown,
+        // not a real failure. Never tear down or surface it as an error.
+        const staleTick = connectionOpRef.current !== healthCheckOpId;
         if (healthy) { healthFailRef.current = 0; }
+        else if (staleTick) { /* ignore: superseded by a newer connect operation */ }
         else if (isHealthFatal(proxyMode, health)) {
           const failureSummary = summarizeHealthFailures(health);
           healthFailRef.current = 0;
@@ -1506,7 +1525,7 @@ export default function Dashboard() {
         // the old session first so a country switch cannot reuse its profile.
         await withTimeout(
           invoke('vpn_disconnect'),
-          15_000,
+          30_000,
           'Previous VPN session did not stop in time',
         );
         if (opId !== connectionOpRef.current) return;
@@ -1849,7 +1868,9 @@ export default function Dashboard() {
               primaryLabel={orbPrimary}
               subLabel={orbSub}
               statusLabel={orbStatusLabel}
-              serverName={activeServer ? displayServerName(activeServer) : null}
+              serverName={activeServer
+                ? (isClosedAutoLocationServer(activeServer) ? t('v6AutoLocationName' as never) : displayServerName(activeServer))
+                : null}
               serverRawName={activeServer?.name ?? null}
               serverCountryCode={activeServer?.countryCode ?? null}
               disabled={status === 'disconnected' && !canConnect}
@@ -1858,7 +1879,7 @@ export default function Dashboard() {
               diagnoseLabel={t('v6DiagIssueCta' as never)}
             />
 
-            <div className="flex shrink-0 gap-3.5">
+            <div className="v6-quick-actions-row flex shrink-0 gap-3.5">
               {!networkExtensionOnly && (
                 <SplitRoutingToggle protectedMode={productMode === 'protected'} onOpen={() => setShowSplitModal(true)} t={t} />
               )}

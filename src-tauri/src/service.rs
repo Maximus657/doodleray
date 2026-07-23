@@ -1583,9 +1583,12 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         wait_for_doodleray_route_preferred(Duration::from_secs(20), generation)?;
         mark_route_ready();
         set_phase("routes_ready", started, generation)?;
-        wait_for_windows_system_resolver_ready(Duration::from_secs(20), generation)?;
         mark_dns_policy_ready();
         set_phase("dns_ready", started, generation)?;
+        // The resolver canary no longer gates bring-up (see
+        // spawn_nonfatal_policy_checks): it only proves two specific
+        // third-party domains are reachable, so it now runs in the
+        // background instead of blocking connect for up to 20s.
         spawn_nonfatal_policy_checks(generation);
         if let Some(path) = xray_log_path.as_deref() {
             ensure_xray_alive(path)?;
@@ -1657,7 +1660,6 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         apply_doodleray_dns_client_policy(generation);
         wait_for_doodleray_route_preferred(Duration::from_secs(8), generation)?;
         mark_route_ready();
-        wait_for_windows_system_resolver_ready(Duration::from_secs(12), generation)?;
         mark_dns_policy_ready();
         spawn_nonfatal_policy_checks(generation);
         wait_for_port(socks_port, Duration::from_secs(5), generation)?;
@@ -2503,12 +2505,46 @@ $metric = (Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IP
         Err(last_error)
     }
 
+    // The resolver canary only proves two specific third-party domains are
+    // reachable through the tunnel. The adapter, dual-stack interface and
+    // routes are already confirmed healthy by the time this runs, so a
+    // canary miss (a slow network, or this exit simply not routing to that
+    // one domain) must not block or tear down an otherwise-working TUN
+    // connection — it just downgrades to a degraded_checks entry, from the
+    // background, same as the QUIC policy check below.
+    fn record_windows_system_resolver_canary(generation: u64) {
+        if let Err(error) =
+            wait_for_windows_system_resolver_ready(Duration::from_secs(20), generation)
+        {
+            if !is_current_generation(generation) {
+                return;
+            }
+            log_service_event(&format!(
+                "resolver canary degraded, tunnel stays active: {}",
+                error
+            ));
+            let mut runtime = state().lock().unwrap();
+            let detail = format!(
+                "Windows system resolver canary did not pass through TUN (tunnel stays active): {}",
+                error
+            );
+            if !runtime
+                .degraded_checks
+                .iter()
+                .any(|existing| existing == &detail)
+            {
+                runtime.degraded_checks.push(detail);
+            }
+        }
+    }
+
     fn spawn_nonfatal_policy_checks(generation: u64) {
         std::thread::spawn(move || {
             if !is_current_generation(generation) {
                 return;
             }
             mark_quic_policy_status();
+            record_windows_system_resolver_canary(generation);
         });
     }
 

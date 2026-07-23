@@ -14,6 +14,15 @@ gsap.registerPlugin(useGSAP);
 
 type WindowMode = 'wide' | 'compact';
 
+// The centered header lockup exists only because macOS's native traffic
+// lights sit top-left and leave no room for a left-aligned logo there.
+// Windows (and any other platform) has no such constraint, so the brand
+// belongs on the left like a normal app header.
+function isMacPlatform(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /Mac/i.test(navigator.userAgent);
+}
+
 async function resizeNativeWindow(mode: WindowMode): Promise<void> {
   if (typeof (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ === 'undefined') return;
 
@@ -102,6 +111,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const [windowTransitioning, setWindowTransitioning] = useState(false);
   const nativeMacWindow = isNetworkExtensionOnlyBuild();
   const hasMainContent = appSessionLoggedIn || serversCount > 0 || status !== 'disconnected';
+  const brandOnLeft = windowMode === 'compact' || !isMacPlatform();
 
   useEffect(() => {
     try { localStorage.setItem('doodleray_window_mode', windowMode); } catch { /* non-critical preference */ }
@@ -202,11 +212,11 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <div data-tauri-drag-region className="absolute inset-x-0 top-0 z-[5] h-[68px]" />
 
         {/* HEADER */}
-        <div data-tauri-drag-region className="relative z-10 flex shrink-0 select-none items-center justify-end px-2.5 pb-4 pt-1.5">
-          <div data-tauri-drag-region className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-[calc(50%+4px)]">
+        <div data-tauri-drag-region className={`v6-header-row relative z-10 flex shrink-0 select-none items-center px-2.5 pb-4 pt-1.5 ${brandOnLeft ? 'justify-between' : 'justify-end'}`}>
+          {brandOnLeft ? (
             <div
               data-tauri-drag-region
-              className={`flex items-center gap-[11px] ${hasMainContent ? 'v6-brand-enter' : 'v6-brand-hidden'}`}
+              className={`v6-header-brand flex items-center gap-[11px] ${hasMainContent ? 'v6-brand-enter' : 'v6-brand-hidden'}`}
             >
               <img
                 src="/assets/mascot.png"
@@ -220,7 +230,26 @@ export default function AppShell({ children }: { children: ReactNode }) {
                 Doodle<span className="font-light text-white/70">Ray</span>
               </div>
             </div>
-          </div>
+          ) : (
+            <div data-tauri-drag-region className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-[calc(50%+4px)]">
+              <div
+                data-tauri-drag-region
+                className={`flex items-center gap-[11px] ${hasMainContent ? 'v6-brand-enter' : 'v6-brand-hidden'}`}
+              >
+                <img
+                  src="/assets/mascot.png"
+                  alt=""
+                  draggable={false}
+                  data-v6-brand-logo
+                  className="v6-brand-logo h-[34px] w-[34px] rounded-[11px]"
+                  style={{ boxShadow: '0 6px 18px rgba(234,109,6,0.45)' }}
+                />
+                <div className="v6-brand-word text-[19px] font-semibold tracking-[-0.01em] text-white">
+                  Doodle<span className="font-light text-white/70">Ray</span>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="flex items-center gap-2.5">
             {gbLeft !== null && (
@@ -271,7 +300,7 @@ function HeaderButton({ children, onClick, label, disabled = false }: { children
       aria-label={label}
       onClick={onClick}
       disabled={disabled}
-      className="v6-hover-bright flex h-10 w-10 items-center justify-center rounded-[13px] border border-white/[0.12] bg-white/[0.07] text-white/[0.78] disabled:cursor-wait disabled:opacity-50 v6-focus"
+      className="v6-header-button v6-hover-bright flex h-10 w-10 items-center justify-center rounded-[13px] border border-white/[0.12] bg-white/[0.07] text-white/[0.78] disabled:cursor-wait disabled:opacity-50 v6-focus"
     >
       {children}
     </button>

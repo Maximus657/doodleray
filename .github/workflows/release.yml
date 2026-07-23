@@ -19,7 +19,7 @@ jobs:
       VITE_DOODLERAY_DIAGNOSTICS_TELEMETRY: "0"
       WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
       WINDOWS_CODESIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PFX_PASSWORD }}
-      WINDOWS_CODESIGN_REQUIRED: "true"
+      WINDOWS_CODESIGN_REQUIRED: ${{ vars.WINDOWS_CODESIGN_REQUIRED || 'false' }}
       WINDOWS_CODESIGN_TIMESTAMP_URL: ${{ vars.WINDOWS_CODESIGN_TIMESTAMP_URL || 'http://timestamp.digicert.com' }}
     steps:
       - uses: actions/checkout@v4
@@ -41,18 +41,24 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Verify updater signing secret
+      - name: Verify release signing secrets
         env:
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
+          $windowsSigningRequired = $env:WINDOWS_CODESIGN_REQUIRED -eq "true"
+          $hasWindowsPfx = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_CODESIGN_PFX_BASE64)
+          $hasWindowsPfxPassword = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_CODESIGN_PFX_PASSWORD)
+          if ($windowsSigningRequired -and -not $hasWindowsPfx) {
+            throw "WINDOWS_CODESIGN_PFX_BASE64 is required for Windows releases"
+          }
+          if ($windowsSigningRequired -and -not $hasWindowsPfxPassword) {
+            throw "WINDOWS_CODESIGN_PFX_PASSWORD is required for Windows releases"
+          }
+          if ($hasWindowsPfx -ne $hasWindowsPfxPassword) {
+            throw "WINDOWS_CODESIGN_PFX_BASE64 and WINDOWS_CODESIGN_PFX_PASSWORD must be configured together"
+          }
           if ([string]::IsNullOrWhiteSpace($env:TAURI_PRIVATE_KEY)) {
             throw "TAURI_SIGNING_PRIVATE_KEY is required for updater artifacts"
-          }
-          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CODESIGN_PFX_BASE64)) {
-            throw "WINDOWS_CODESIGN_PFX_BASE64 is required for published GitHub downloads"
-          }
-          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CODESIGN_PFX_PASSWORD)) {
-            throw "WINDOWS_CODESIGN_PFX_PASSWORD is required for published GitHub downloads"
           }
         shell: pwsh
 
@@ -126,6 +132,7 @@ jobs:
         shell: pwsh
 
       - name: Import Windows code signing certificate
+        if: env.WINDOWS_CODESIGN_PFX_BASE64 != ''
         run: |
           $pfxPath = Join-Path $env:RUNNER_TEMP "doodleray-codesign.pfx"
           [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:WINDOWS_CODESIGN_PFX_BASE64))
@@ -136,6 +143,7 @@ jobs:
         shell: pwsh
 
       - name: Sign Windows runtime binaries
+        if: env.WINDOWS_CODESIGN_PFX_BASE64 != ''
         run: |
           $files = @(
             "src-tauri/DoodleRayService.exe",
@@ -150,6 +158,7 @@ jobs:
         shell: pwsh
 
       - name: Verify signed Windows runtime binaries
+        if: env.WINDOWS_CODESIGN_REQUIRED == 'true' || env.WINDOWS_CODESIGN_PFX_BASE64 != ''
         run: |
           $files = @(
             "src-tauri/DoodleRayService.exe",
@@ -207,6 +216,7 @@ jobs:
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'BETA') }}
 
       - name: Verify signed Windows release artifacts
+        if: env.WINDOWS_CODESIGN_REQUIRED == 'true' || env.WINDOWS_CODESIGN_PFX_BASE64 != ''
         run: |
           $patterns = @(
             "src-tauri/target/release/DoodleRay.exe",

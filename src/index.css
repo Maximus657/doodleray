@@ -360,22 +360,42 @@
   .v6-compact-mode .v6-panel {
     padding: 14px;
   }
-  .v6-compact-mode .v6-brand-enter,
-  .v6-compact-mode .v6-brand-hidden {
+  /* Compact header keeps the logo at full (wide-mode) size — a shrunk icon
+     read as an afterthought — but drops the wordmark: with the traffic chip
+     and three icon buttons plus native window controls, a ~420px window
+     doesn't have room for logo + "DoodleRay" text too. */
+  .v6-compact-mode .v6-header-brand .v6-brand-word {
     display: none;
   }
+  .v6-compact-mode .v6-header-button {
+    height: 34px;
+    width: 34px;
+    border-radius: 11px;
+  }
+  .v6-compact-mode .v6-header-button svg {
+    height: 17px;
+    width: 17px;
+  }
+  /* Mode selector: same three controls, moved below the connect core and
+     trimmed to a slim row so it stops eating vertical space above the fold. */
   .v6-compact-mode .v6-mode-selector {
+    order: 2;
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 8px;
+    gap: 6px;
   }
   .v6-compact-mode .v6-mode-card {
     align-items: center;
-    gap: 6px;
-    padding: 10px 6px;
+    gap: 4px;
+    padding: 7px 6px;
+    border-radius: 14px;
   }
   .v6-compact-mode .v6-mode-card-head {
     justify-content: center;
+  }
+  .v6-compact-mode .v6-mode-card-head > span:first-child {
+    height: 24px;
+    width: 24px;
   }
   .v6-compact-mode .v6-mode-card-badges,
   .v6-compact-mode .v6-mode-card-description {
@@ -385,7 +405,7 @@
     width: 100%;
     white-space: normal;
     text-align: center;
-    font-size: 11.5px;
+    font-size: 10.5px;
   }
   .v6-compact-mode .v6-dashboard-layout {
     flex-direction: column;
@@ -399,8 +419,15 @@
     overflow: visible;
   }
   .v6-compact-mode .v6-connect-orb {
-    min-height: 340px;
+    order: 1;
+    min-height: 300px;
     flex: none;
+  }
+  .v6-compact-mode .v6-quick-actions-row {
+    order: 3;
+  }
+  .v6-compact-mode .v6-diagnostics-drawer {
+    order: 4;
   }
   .v6-compact-mode .v6-location-list {
     order: 2;

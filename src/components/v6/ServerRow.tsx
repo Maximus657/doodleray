@@ -142,7 +142,7 @@ export default function ServerRow({ server, active, pinging, onSelect }: Props) 
   const pc = pingColor(server.ping);
   const hasPing = server.ping !== undefined && server.ping > 0;
   const auto = isClosedAutoLocationServer(server);
-  const name = displayServerName(server);
+  const name = auto ? t('v6AutoLocationName' as never) : displayServerName(server);
 
   return (
     <button
