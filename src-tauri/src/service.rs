@@ -2513,7 +2513,9 @@ $metric = (Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IP
     // connection — it just downgrades to a degraded_checks entry, from the
     // background, same as the QUIC policy check below.
     fn record_windows_system_resolver_canary(generation: u64) {
-        if let Err(error) = wait_for_windows_system_resolver_ready(Duration::from_secs(20), generation) {
+        if let Err(error) =
+            wait_for_windows_system_resolver_ready(Duration::from_secs(20), generation)
+        {
             if !is_current_generation(generation) {
                 return;
             }
@@ -2526,7 +2528,11 @@ $metric = (Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IP
                 "Windows system resolver canary did not pass through TUN (tunnel stays active): {}",
                 error
             );
-            if !runtime.degraded_checks.iter().any(|existing| existing == &detail) {
+            if !runtime
+                .degraded_checks
+                .iter()
+                .any(|existing| existing == &detail)
+            {
                 runtime.degraded_checks.push(detail);
             }
         }

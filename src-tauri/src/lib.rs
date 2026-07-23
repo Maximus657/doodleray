@@ -2472,8 +2472,7 @@ fn xray_engine_protocol(protocol: &str) -> bool {
 /// outbound builder, whose fallback for an unrecognized protocol blocks
 /// (fails closed) rather than silently sending traffic unproxied.
 fn is_supported_proxy_protocol(protocol: &str) -> bool {
-    xray_engine_protocol(protocol)
-        || matches!(protocol, "hysteria2" | "tuic" | "wireguard")
+    xray_engine_protocol(protocol) || matches!(protocol, "hysteria2" | "tuic" | "wireguard")
 }
 
 fn uses_xray_engine(req: &ConnectRequest) -> bool {
@@ -4050,8 +4049,14 @@ async fn app_api_send_json<T: DeserializeOwned>(
 
     let direct_client =
         app_api_http_client().map_err(|message| AppApiHttpError { status: 0, message })?;
-    let direct_request =
-        app_api_build_request(&direct_client, &method, &url, bearer, &body_text, &device_headers);
+    let direct_request = app_api_build_request(
+        &direct_client,
+        &method,
+        &url,
+        bearer,
+        &body_text,
+        &device_headers,
+    );
     let direct_error = match direct_request.send().await {
         Ok(response) => return app_api_finish_response(response).await,
         Err(e) => e.to_string(),
