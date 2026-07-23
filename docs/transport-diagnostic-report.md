@@ -1,5 +1,39 @@
 # DoodleRay Transport Diagnostic Report
 
+## 2026-07-23 Investigation: Windows reconnect races the tunnel-service pipe
+
+### Scope
+
+- Route: Windows Full Computer mode after a successful Disconnect, before the next Connect.
+- User-visible issue: the first connection can complete, then a following connection reports that the tunnel-service pipe does not exist; a later attempt waits for engine startup and times out.
+
+### Evidence
+
+- The supplied event sequence has a completed protected connection at 04:56:09. This rules out the subscription, authentication, and first-start adapter path as the first fault in that sequence.
+- Disconnect begins at 04:56:25 and does not complete until 04:56:52. The next Connect receives `os error 2` while opening the named pipe, despite the service manager already reporting the on-demand service as running.
+- `ensure_tunnel_service_running` currently returns as soon as Windows Service Control Manager reports `Running`; it does not wait for the service process to create and accept requests on its named IPC pipe. The immediate Hello request therefore races cold service startup.
+
+### First Broken Edge
+
+```text
+Disconnect stops the on-demand tunnel service
+-> subsequent Connect asks SCM to start it
+-> SCM reports Running before the service creates its named pipe
+-> immediate Hello gets ERROR_FILE_NOT_FOUND (os error 2)
+-> no StartTunnel command is sent and later retries observe incomplete cleanup
+```
+
+### Proposed Minimal Fix
+
+- Preserve the on-demand service lifecycle and routing policy.
+- After SCM reports `Running`, retry only transient named-pipe-not-yet-created failures for a bounded ten seconds before sending StartTunnel.
+- Do not retry service protocol errors or engine errors; those remain actionable failures.
+
+### Windows Test Path
+
+- Regression test for `ERROR_FILE_NOT_FOUND` pipe classification.
+- Build a Windows RC and verify Auto -> Disconnect -> any location reconnect without a repair prompt or startup timeout.
+
 ## 2026-07-23 Investigation: Windows fresh-install Xray TUN DNS loop
 
 ### Scope

@@ -283,6 +283,39 @@ fn ensure_tunnel_service_running() -> Result<(), String> {
     Err("Tunnel service did not start within 10s".into())
 }
 
+#[cfg(any(windows, test))]
+fn is_tunnel_service_pipe_startup_error(error: &str) -> bool {
+    let normalized = error.to_ascii_lowercase();
+    normalized.contains("failed to connect to tunnel service pipe")
+        && (normalized.contains("os error 2")
+            || normalized.contains("cannot find the file specified"))
+}
+
+#[cfg(windows)]
+fn wait_for_tunnel_service_pipe() -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let last_error = loop {
+        match ipc::tunnel_service_hello(env!("CARGO_PKG_VERSION")) {
+            Ok(tunnel_service::TunnelResponse::Status(_)) => return Ok(()),
+            Ok(tunnel_service::TunnelResponse::Error { message }) => return Err(message),
+            Ok(tunnel_service::TunnelResponse::Diagnostics(_)) => {
+                return Err("Tunnel Service returned diagnostics for Hello".into())
+            }
+            Err(error) if is_tunnel_service_pipe_startup_error(&error) => {
+                if Instant::now() >= deadline {
+                    break error;
+                }
+                std::thread::sleep(Duration::from_millis(150));
+            }
+            Err(error) => return Err(error),
+        }
+    };
+    Err(format!(
+        "Tunnel service started but its IPC pipe did not become ready within 10s: {}",
+        last_error
+    ))
+}
+
 #[cfg(windows)]
 fn wait_for_tunnel_service_stop(timeout: Duration) {
     let deadline = Instant::now() + timeout;
@@ -6220,6 +6253,16 @@ mod tests {
     }
 
     #[test]
+    fn tunnel_service_pipe_startup_error_is_retriable() {
+        assert!(is_tunnel_service_pipe_startup_error(
+            "Failed to connect to tunnel service pipe (is the service running?): The system cannot find the file specified. (os error 2)"
+        ));
+        assert!(!is_tunnel_service_pipe_startup_error(
+            "Tunnel service protocol version is incompatible"
+        ));
+    }
+
+    #[test]
     fn diagnostics_are_redacted_before_the_app_api_request() {
         let sanitized = app_api_sanitize_diagnostic_value(
             json!({
@@ -11612,7 +11655,7 @@ fn tunnel_service_start(
         }
     }
     ensure_tunnel_service_running()?;
-    let _ = ipc::tunnel_service_hello(env!("CARGO_PKG_VERSION"))?;
+    wait_for_tunnel_service_pipe()?;
     let response = send_start_tunnel_command(tunnel_service::StartTunnelRequest {
         op_id: tun_op_id(),
         engine_kind,
