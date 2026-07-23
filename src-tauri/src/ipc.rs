@@ -57,14 +57,19 @@ pub fn send_tunnel_command(command: &TunnelCommand) -> Result<TunnelResponse, St
         return Err("IPC payload is too large".into());
     }
 
+    // A just-(re)started service reports Running to SCM before its pipe
+    // server is actually listening, so the very first connect attempt after
+    // a start can transiently fail with "file not found" even though the
+    // service is healthy a moment later. Retry generously; a genuinely dead
+    // service still fails the same way, just a couple seconds later.
     let mut last_error = String::new();
-    for attempt in 0..3 {
+    for attempt in 0..15 {
         match send_tunnel_payload_with_timeout(payload.clone(), Duration::from_secs(6)) {
             Ok(response) => return Ok(response),
             Err(error) => {
                 last_error = error;
-                if attempt < 2 {
-                    std::thread::sleep(std::time::Duration::from_millis(120));
+                if attempt < 14 {
+                    std::thread::sleep(std::time::Duration::from_millis(200));
                 }
             }
         }

@@ -92,9 +92,11 @@ function locationToServer(location: AppApiLocation): ServerConfig {
     : /^[A-Z]{2}$/.test(countryCode)
       ? new Intl.DisplayNames([language], { type: 'region' }).of(countryCode)
       : undefined;
-  const autoName = id === AUTO_LOCATION_ID
-    ? language === 'ru' ? '⚡ Автовыбор' : language === 'zh' ? '⚡ 自动选择' : '⚡ Auto select'
-    : undefined;
+  // The auto-location row's user-facing text is resolved reactively via
+  // t('v6AutoLocationName') in ServerRow so a live language change doesn't
+  // leave a stale baked-in name until the next location fetch. Only the
+  // leading emoji from this stored name is still used, for the row icon.
+  const autoName = id === AUTO_LOCATION_ID ? '⚡ Auto' : undefined;
   const name = String(autoName || localizedCountry || location.title || countryCode || id).slice(0, 128);
   return {
     id: `${LOCATION_ID_PREFIX}${id}`,

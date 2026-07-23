@@ -30,12 +30,27 @@
   ${EndIf}
 !macroend
 
+!macro DoodleRayKillOwnedProcesses
+  ; xray.exe/sing-box.exe run under DoodleRayTunnelService in Protected/TUN
+  ; mode, but under the main DoodleRay.exe app directly in Browsers/Manual
+  ; (system-proxy) mode. Stopping the service alone leaves that second case's
+  ; engine process (and the app itself, if still open) holding a file lock,
+  ; which fails the installer with "Error opening file for writing" on
+  ; xray.exe/sing-box.exe/DoodleRay.exe. Force-kill all of them by name as a
+  ; safety net regardless of which mode spawned them; a process that isn't
+  ; running just makes taskkill fail harmlessly.
+  nsExec::ExecToLog /TIMEOUT=5000 'taskkill /F /IM DoodleRay.exe /T'
+  nsExec::ExecToLog /TIMEOUT=5000 'taskkill /F /IM xray.exe /T'
+  nsExec::ExecToLog /TIMEOUT=5000 'taskkill /F /IM sing-box.exe /T'
+!macroend
+
 !macro NSIS_HOOK_PREINSTALL
   DetailPrint "Preparing DoodleRay Tunnel Service for update..."
   ; Do not call the previously installed DoodleRayService.exe here: older
   ; service builds used a different pipe/protocol and can block the updater.
   ; The app calls PrepareForUpdate before launching the updater; this hook is a
   ; last-resort SCM cleanup so installer replacement never depends on old code.
+  !insertmacro DoodleRayKillOwnedProcesses
   nsExec::ExecToLog /TIMEOUT=10000 'sc stop DoodleRayTunnelService'
   Sleep 1000
   nsExec::ExecToLog /TIMEOUT=10000 'sc stop DoodleRayTunnelService'
@@ -53,6 +68,7 @@
 
 !macro NSIS_HOOK_PREUNINSTALL
   DetailPrint "Removing DoodleRay Tunnel Service..."
+  !insertmacro DoodleRayKillOwnedProcesses
   nsExec::ExecToLog /TIMEOUT=10000 'sc stop DoodleRayTunnelService'
   Sleep 1000
   nsExec::ExecToLog /TIMEOUT=10000 'sc stop DoodleRayTunnelService'
