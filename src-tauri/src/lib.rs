@@ -5034,13 +5034,23 @@ async fn app_connect_location(
             started.elapsed().as_millis() as i64,
             &result.message,
         );
-        let _ = app_api_authorized_json::<serde_json::Value>(
-            reqwest::Method::POST,
-            "/connection-result",
-            Some(result_body),
-        )
-        .await;
+        // Telemetry only — the response was always discarded. Awaiting it here
+        // charged every connect the full backend round trip *after* the tunnel
+        // was already up, including the first DNS resolution through the
+        // brand-new tunnel. Measured on the stand: the service reported
+        // connected at 3.3s while the user's stopwatch read 21s, and the xray
+        // log showed a matching ~12s gap with no traffic. Report in the
+        // background so the UI is released as soon as the tunnel is ready.
+        tauri::async_runtime::spawn(async move {
+            let _ = app_api_authorized_json::<serde_json::Value>(
+                reqwest::Method::POST,
+                "/connection-result",
+                Some(result_body),
+            )
+            .await;
+        });
         if result.success {
+            record_connect_timing("total_to_ui", connect_started);
             return result;
         }
         last_failure = Some(result);

@@ -1766,12 +1766,12 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         // honest cleanup_pending instead of a silent idle. We never touch
         // non-DoodleRay adapters here.
         let mut adapter_still_present = doodleray_adapter_snapshot().is_some();
-        for _ in 0..6 {
-            if !adapter_still_present {
-                break;
+        if should_wait_for_adapter_cleanup(reason) {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while adapter_still_present && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(100));
+                adapter_still_present = doodleray_adapter_snapshot().is_some();
             }
-            std::thread::sleep(Duration::from_millis(500));
-            adapter_still_present = doodleray_adapter_snapshot().is_some();
         }
         if adapter_still_present {
             let mut runtime = state().lock().unwrap();
@@ -1799,6 +1799,19 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             ));
         }
         Ok(())
+    }
+
+    /// Whether to spend up to 3s proving the Wintun adapter disappeared after
+    /// stopping our children. That proof exists so a tunnel that comes to rest
+    /// "disconnected" reports an honest cleanup_pending instead of a silent
+    /// idle — so it is only worth paying for when we are actually coming to
+    /// rest. On `replace_tunnel` we are mid-restart and about to bring a new
+    /// tunnel up immediately; bring-up has its own adapter-readiness wait, and
+    /// the state never settles as "disconnected" for a user to see. Measured on
+    /// the stand: the adapter never vanished inside the window anyway, so a
+    /// country switch burned ~2.5s here on top of ~3s on the preceding stop.
+    fn should_wait_for_adapter_cleanup(reason: &str) -> bool {
+        reason != "replace_tunnel"
     }
 
     /// Whether to pay for the PowerShell Get-PnpDevice ghost-device scan on
@@ -3348,6 +3361,17 @@ Write-Output ("DoodleRay Tunnel dual-stack route preferred: ipv4_shape={0}, ipv6
                 error.contains("failed to run"),
                 "expected a spawn failure, got: {error}"
             );
+        }
+
+        #[test]
+        fn adapter_cleanup_wait_is_skipped_only_when_replacing_the_tunnel() {
+            // Mid-restart: bring-up waits for the adapter itself, and the state
+            // never rests as "disconnected", so the proof buys nothing.
+            assert!(!should_wait_for_adapter_cleanup("replace_tunnel"));
+            // Coming to rest: cleanup_pending must stay honest.
+            assert!(should_wait_for_adapter_cleanup("stop_tunnel"));
+            assert!(should_wait_for_adapter_cleanup("service_stop"));
+            assert!(should_wait_for_adapter_cleanup("failed_cleanup"));
         }
 
         #[test]
