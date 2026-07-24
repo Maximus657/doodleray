@@ -51,20 +51,20 @@ export default function SubscriptionStatusBlock({ activeSub, activeServer, t, cl
   return (
     <div className={className}>
       {quota && (
-        <div className={`v6-fadein ${days !== null ? 'mb-3' : ''}`}>
-          <div className="mb-1.5 flex items-baseline justify-between gap-3">
+        <div className={`v6-fadein ${days !== null ? 'mb-4' : ''}`}>
+          <div className="mb-2 flex items-baseline justify-between gap-3">
             <span className="text-[12.5px] font-semibold text-white">{t('v6AntiJammer' as never)}</span>
             <span className="text-right text-[11.5px] tabular-nums text-white/65">
               {formatQuotaBytes(quota.remaining, language)} {t('v6QuotaOf' as never)} {formatQuotaBytes(quota.limit, language)}
             </span>
           </div>
-          <div className="h-[5px] overflow-hidden rounded-md bg-white/10">
+          <div className="mx-1.5 h-[7px] overflow-hidden rounded-md bg-white/10">
             <div
               className="h-full rounded-md transition-[width] duration-500"
               style={{ width: `${(quota.ratio * 100).toFixed(1)}%`, background: quotaColor, boxShadow: `0 0 10px ${quotaColor}66` }}
             />
           </div>
-          <p className="mt-1.5 text-[11px] leading-snug text-white/45">{t('v6RegularTrafficUnlimited' as never)}</p>
+          <p className="mt-2 text-[11px] leading-snug text-white/45">{t('v6RegularTrafficUnlimited' as never)}</p>
           {quota.tone !== 'normal' && (
             <p className={`mt-1 text-[11px] leading-snug ${quota.tone === 'exhausted' ? 'text-[#ff9b91]' : 'text-[#ffd28a]'}`}>
               {t((quota.tone === 'exhausted' ? 'v6AntiJammerExhausted' : 'v6AntiJammerLow') as never)}
@@ -79,8 +79,8 @@ export default function SubscriptionStatusBlock({ activeSub, activeServer, t, cl
       )}
 
       {days !== null && dCol && (
-        <div className={quota ? 'border-t border-white/[0.08] pt-3' : ''}>
-          <div className="mb-2 flex items-baseline justify-between gap-1.5">
+        <div className={quota ? 'border-t border-white/[0.08] pt-4' : ''}>
+          <div className="mb-[11px] flex items-baseline justify-between gap-1.5">
             <span className="flex items-baseline gap-1.5">
               <span className="text-[24px] font-semibold leading-none tabular-nums text-white">{days}</span>
               <span className="text-[12.5px] text-white/45">
@@ -91,7 +91,7 @@ export default function SubscriptionStatusBlock({ activeSub, activeServer, t, cl
               {t('v6RenewCta' as never)}
             </button>
           </div>
-          <div className="h-[5px] overflow-hidden rounded-md bg-white/10">
+          <div className="mx-1.5 h-[7px] overflow-hidden rounded-md bg-white/10">
             <div
               className="h-full rounded-md transition-[width] duration-500"
               style={{ width: `${(Math.min(1, days / 30) * 100).toFixed(1)}%`, background: dCol, boxShadow: `0 0 10px ${dCol}66` }}

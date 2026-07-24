@@ -14521,6 +14521,14 @@ async fn check_silent_autostart() -> bool {
 
 /// Full cleanup — stop all engines, kill subprocesses, unset system proxy
 /// Safe to call multiple times (idempotent)
+/// Called by the frontend once pending secure-storage writes have flushed in
+/// response to `doodleray:flush-before-exit`, so quit doesn't wait out the
+/// full fallback timeout on the common case.
+#[tauri::command]
+fn confirm_secure_storage_flushed(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 fn full_cleanup() {
     #[cfg(all(target_os = "macos", feature = "app-store"))]
     app_store_tunnel::stop_cached();
@@ -14848,6 +14856,7 @@ pub fn run() {
             force_free_port,
             is_admin,
             quit_app,
+            confirm_secure_storage_flushed,
             workshop_api,
             toggle_silent_autostart,
             check_silent_autostart,
@@ -14972,8 +14981,23 @@ pub fn run() {
                         let _ = window.set_focus();
                     }
                 }
-                tauri::RunEvent::ExitRequested { .. } => {
+                tauri::RunEvent::ExitRequested { api, .. } => {
                     xray::begin_shutdown();
+                    // A Settings change (e.g. a custom port) persists via an
+                    // async secure-storage write kicked off from JS; without
+                    // this, quitting right after committing one could tear
+                    // the process down mid round-trip and silently drop it.
+                    // Hold exit open just long enough for the frontend to
+                    // flush, with a bounded fallback so a stuck/missing
+                    // frontend can never prevent the app from quitting.
+                    use tauri::Emitter;
+                    api.prevent_exit();
+                    let _ = app_handle.emit("doodleray:flush-before-exit", ());
+                    let fallback_handle = app_handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+                        fallback_handle.exit(0);
+                    });
                 }
                 tauri::RunEvent::Exit => {
                     full_cleanup();

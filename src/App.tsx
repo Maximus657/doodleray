@@ -489,6 +489,34 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    // A Settings change (e.g. a custom port) persists via an async
+    // secure-storage write. Quitting right after committing one could tear
+    // the process down mid round-trip and silently drop it back to the
+    // default on next launch. The Rust exit handler holds the process open
+    // briefly and waits for this confirmation instead of exiting immediately.
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    import('@tauri-apps/api/event').then(({ listen }) =>
+      listen('doodleray:flush-before-exit', async () => {
+        try {
+          const { flushPendingSecureWrites } = await import('./stores/app-store');
+          await flushPendingSecureWrites();
+        } finally {
+          const { invoke } = await import('@tauri-apps/api/core');
+          await invoke('confirm_secure_storage_flushed').catch(() => undefined);
+        }
+      })
+    ).then((fn) => {
+      if (disposed) fn();
+      else unlisten = fn;
+    }).catch(() => undefined);
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
   return (
     <Router>
       <AppShell>

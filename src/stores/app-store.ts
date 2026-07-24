@@ -220,6 +220,19 @@ const persistedValueCache = new Map<string, string>();
 const volatileBrowserStorage = new Map<string, string>();
 const pendingSecureWrites = new Map<string, Promise<void>>();
 
+/**
+ * Awaits every in-flight secure-storage write (Settings changes persist via
+ * an async Tauri invoke, e.g. a custom port committed just before the user
+ * quits from the tray). Called before the app is allowed to actually exit —
+ * see the `doodleray:flush-before-exit` listener in App.tsx — so the last
+ * change isn't dropped mid round-trip when the process tears down.
+ */
+export async function flushPendingSecureWrites(): Promise<void> {
+  while (pendingSecureWrites.size > 0) {
+    await Promise.allSettled(Array.from(pendingSecureWrites.values()));
+  }
+}
+
 export function detectInitialLanguage(): SupportedLanguage {
   if (typeof navigator === 'undefined') return 'en';
 
