@@ -1,5 +1,14 @@
 # Reducing DoodleRay TUN Connect Latency on Windows
 
+> **Verified against the code on 2026-07-24 — read the corrections first.**
+> This document was written without repository access and its model of the
+> client is wrong in important ways. Items #2, #3 and #13 are already
+> implemented; #4's premise does not hold; #8 is not implementable as written
+> (sing-box owns the TUN adapter, not xray). Items #1, #6 and #7 are real.
+> See `docs/superpowers/specs/2026-07-24-tun-connect-latency-phase0-design.md`
+> for the point-by-point verification and the scoped plan. Do not use the
+> priority order below without reading that first.
+
 ## Executive summary
 
 Your own phase breakdown points to an orchestration problem more than a protocol problem. The strongest evidence is that **system-proxy mode is already fast**, while **TUN mode averages roughly 15 seconds** and contains several fully serial waits, a synchronous backend lease fetch, repeated port checks, an external network probe, and a UI health loop with a **1.5 second polling cadence** before it will show “Protected.” fileciteturn0file0
