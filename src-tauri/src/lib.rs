@@ -4958,6 +4958,24 @@ async fn app_connect_location(
 
     let location_ids = app_connection_location_ids(&request);
 
+    reset_connect_timings();
+    let connect_started = Instant::now();
+    // The Windows service is stopped while disconnected, so a cold SCM start
+    // plus the named-pipe handshake would otherwise run strictly after the
+    // lease HTTP round trip. Both calls are idempotent and tunnel_service_start
+    // repeats them, so this is purely additive: winning the race makes the
+    // later start free, losing it changes nothing. Deliberate side effect: the
+    // service may stay up after a failed lease fetch, which it already does
+    // between connect attempts. Starting the service creates no tunnel —
+    // StartTunnel is a separate command.
+    #[cfg(windows)]
+    if request.proxy_mode == "tun" {
+        tauri::async_runtime::spawn_blocking(|| {
+            let _ = ensure_tunnel_service_running();
+            let _ = ipc::tunnel_service_hello(env!("CARGO_PKG_VERSION"));
+        });
+    }
+
     let selection_mode = if location_ids.len() > 1 {
         "auto"
     } else {
@@ -4981,6 +4999,7 @@ async fn app_connect_location(
                 continue;
             }
         };
+        record_connect_timing("lease_fetch", started);
         let mut connect_request =
             match app_api_profile_to_connect_request(&lease.native_profile, &request) {
                 Ok(request) => request,
@@ -5004,7 +5023,10 @@ async fn app_connect_location(
                 continue;
             }
         };
+        let bringup_started = Instant::now();
         let result = vpn_connect(connect_request, app.clone()).await;
+        record_connect_timing("bringup", bringup_started);
+        record_connect_timing("total", connect_started);
         let result_body = app_api_connection_result_body(
             &lease,
             &session,
@@ -5194,6 +5216,33 @@ pub struct ConnectionHealthReport {
     #[serde(default)]
     pub powershell_fallback_count: u32,
     pub checks: Vec<ConnectionHealthCheck>,
+}
+
+/// Connect phases measured in the app process. The service's own timings_ms
+/// only starts once bring-up begins, so the lease fetch, the cold SCM service
+/// start and the pipe handshake are invisible to it. Reset at the start of
+/// each connect attempt; read back by the diagnostics report.
+static LAST_CONNECT_TIMINGS: std::sync::OnceLock<std::sync::Mutex<Vec<(String, u64)>>> =
+    std::sync::OnceLock::new();
+
+fn last_connect_timings() -> &'static std::sync::Mutex<Vec<(String, u64)>> {
+    LAST_CONNECT_TIMINGS.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+fn reset_connect_timings() {
+    last_connect_timings().lock().unwrap().clear();
+}
+
+fn record_connect_timing(phase: &str, started: std::time::Instant) {
+    let ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+    last_connect_timings()
+        .lock()
+        .unwrap()
+        .push((phase.to_string(), ms));
+}
+
+fn connect_timings_snapshot() -> Vec<(String, u64)> {
+    last_connect_timings().lock().unwrap().clone()
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -6303,6 +6352,18 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// LAST_CONNECT_TIMINGS is a process-global buffer and cargo runs tests
+    /// in parallel threads by default, so any test that resets or records
+    /// into it must hold this lock for its whole body — otherwise a sibling
+    /// test's reset() races a record()/read() here and both flake.
+    static CONNECT_TIMINGS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn lock_connect_timings_for_test() -> std::sync::MutexGuard<'static, ()> {
+        CONNECT_TIMINGS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     #[test]
     fn subscription_redirects_stay_on_the_public_origin() {
         let initial = Url::parse("https://subscriptions.example/path").unwrap();
@@ -6648,9 +6709,41 @@ mod tests {
 
     #[test]
     fn diagnosis_copy_text_without_timings_says_none() {
+        let _guard = lock_connect_timings_for_test();
+        reset_connect_timings();
         let health = diag_health("protected", vec![], vec![]);
         let report = build_network_diagnosis(&health, "tun", None, false);
         assert!(report.copy_text.contains("service_phases: none"));
+    }
+
+    #[test]
+    fn diagnosis_copy_text_carries_app_connect_phases() {
+        let _guard = lock_connect_timings_for_test();
+        reset_connect_timings();
+        let started = std::time::Instant::now();
+        record_connect_timing("lease_fetch", started);
+
+        let health = diag_health("protected", vec![], vec![]);
+        let report = build_network_diagnosis(&health, "tun", None, false);
+
+        assert!(report.copy_text.contains("app_phases: lease_fetch="));
+        reset_connect_timings();
+    }
+
+    #[test]
+    fn app_connect_timings_reset_and_record_in_order() {
+        let _guard = lock_connect_timings_for_test();
+        reset_connect_timings();
+        let started = std::time::Instant::now();
+        record_connect_timing("lease_fetch", started);
+        record_connect_timing("service_start", started);
+
+        let snapshot = connect_timings_snapshot();
+        let phases: Vec<&str> = snapshot.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(phases, vec!["lease_fetch", "service_start"]);
+
+        reset_connect_timings();
+        assert!(connect_timings_snapshot().is_empty());
     }
 
     #[test]
@@ -11768,8 +11861,12 @@ fn tunnel_service_start(
             }
         }
     }
+    let service_start_started = Instant::now();
     ensure_tunnel_service_running()?;
+    record_connect_timing("service_start", service_start_started);
+    let hello_started = Instant::now();
     let _ = ipc::tunnel_service_hello(env!("CARGO_PKG_VERSION"))?;
+    record_connect_timing("hello", hello_started);
     let response = send_start_tunnel_command(tunnel_service::StartTunnelRequest {
         op_id: tun_op_id(),
         engine_kind,
@@ -13358,12 +13455,25 @@ fn build_network_diagnosis(
             .map(|ms| format!("{ms}ms"))
             .unwrap_or_else(|| "-".into())
     };
+    let app_phases = {
+        let snapshot = connect_timings_snapshot();
+        if snapshot.is_empty() {
+            "none".to_string()
+        } else {
+            snapshot
+                .iter()
+                .map(|(phase, ms)| format!("{phase}={ms}ms"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
+    };
     let timings_block = format!(
-        "connect_timings: xray_check={} singbox_check={} xray_spawn={} powershell_fallbacks={}\nservice_phases: {}",
+        "connect_timings: xray_check={} singbox_check={} xray_spawn={} powershell_fallbacks={}\napp_phases: {}\nservice_phases: {}",
         optional_ms(health.xray_check_ms),
         optional_ms(health.singbox_check_ms),
         optional_ms(health.xray_spawn_ms),
         health.powershell_fallback_count,
+        app_phases,
         service_phases,
     );
 
