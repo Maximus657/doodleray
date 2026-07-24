@@ -5183,6 +5183,16 @@ pub struct ConnectionHealthReport {
     pub route_explanations: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub endpoint_bypass_checks: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub service_timings_ms: Vec<(String, u64)>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub xray_spawn_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub xray_check_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub singbox_check_ms: Option<u64>,
+    #[serde(default)]
+    pub powershell_fallback_count: u32,
     pub checks: Vec<ConnectionHealthCheck>,
 }
 
@@ -6393,6 +6403,11 @@ mod tests {
             service_warning_checks: Vec::new(),
             route_explanations: Vec::new(),
             endpoint_bypass_checks: Vec::new(),
+            service_timings_ms: Vec::new(),
+            xray_spawn_ms: None,
+            xray_check_ms: None,
+            singbox_check_ms: None,
+            powershell_fallback_count: 0,
             checks,
         }
     }
@@ -6607,6 +6622,35 @@ mod tests {
         assert!(!report.copy_text.contains("203.0.113.7"));
         assert!(!report.copy_text.contains("vless://secret"));
         assert!(!report.support_summary.contains("203.0.113.7"));
+    }
+
+    #[test]
+    fn diagnosis_copy_text_carries_service_connect_timings() {
+        let mut health = diag_health("protected", vec![], vec![]);
+        health.service_timings_ms = vec![
+            ("waiting_adapter".into(), 4200),
+            ("routes_ready".into(), 9100),
+        ];
+        health.xray_check_ms = Some(310);
+        health.singbox_check_ms = Some(0);
+        health.xray_spawn_ms = Some(45);
+        health.powershell_fallback_count = 2;
+
+        let report = build_network_diagnosis(&health, "tun", None, false);
+
+        assert!(report.copy_text.contains("waiting_adapter=4200ms"));
+        assert!(report.copy_text.contains("routes_ready=9100ms"));
+        assert!(report.copy_text.contains("xray_check=310ms"));
+        assert!(report.copy_text.contains("singbox_check=0ms"));
+        assert!(report.copy_text.contains("xray_spawn=45ms"));
+        assert!(report.copy_text.contains("powershell_fallbacks=2"));
+    }
+
+    #[test]
+    fn diagnosis_copy_text_without_timings_says_none() {
+        let health = diag_health("protected", vec![], vec![]);
+        let report = build_network_diagnosis(&health, "tun", None, false);
+        assert!(report.copy_text.contains("service_phases: none"));
     }
 
     #[test]
@@ -12719,6 +12763,11 @@ fn health_report(mode: &str, checks: Vec<ConnectionHealthCheck>) -> ConnectionHe
         service_warning_checks: Vec::new(),
         route_explanations: Vec::new(),
         endpoint_bypass_checks: Vec::new(),
+        service_timings_ms: Vec::new(),
+        xray_spawn_ms: None,
+        xray_check_ms: None,
+        singbox_check_ms: None,
+        powershell_fallback_count: 0,
         checks,
     }
 }
@@ -12786,6 +12835,11 @@ fn attach_tunnel_status_to_health(
     }
     health.route_explanations = status.route_explanations.clone();
     health.endpoint_bypass_checks = status.endpoint_bypass_checks.clone();
+    health.service_timings_ms = status.timings_ms.clone();
+    health.xray_spawn_ms = status.xray_spawn_ms;
+    health.xray_check_ms = status.xray_check_ms;
+    health.singbox_check_ms = status.singbox_check_ms;
+    health.powershell_fallback_count = status.powershell_fallback_count;
     health.verdict = service_health_verdict_to_report(&status.health_verdict).into();
 }
 
@@ -13283,8 +13337,38 @@ fn build_network_diagnosis(
         .map(|c| format!("[{}] {}: {}", c.status, c.id, c.technical_detail_redacted))
         .collect::<Vec<_>>()
         .join("\n");
+
+    // Connect-time phase breakdown. The service already records these; they
+    // were previously unreachable from the UI because nothing invoked the
+    // tunnel_service_diagnostics command. powershell_fallback_count matters
+    // because a native probe falling back to spawning PowerShell costs
+    // seconds and is otherwise indistinguishable from a slow network.
+    let service_phases = if health.service_timings_ms.is_empty() {
+        "none".to_string()
+    } else {
+        health
+            .service_timings_ms
+            .iter()
+            .map(|(phase, ms)| format!("{phase}={ms}ms"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let optional_ms = |value: Option<u64>| {
+        value
+            .map(|ms| format!("{ms}ms"))
+            .unwrap_or_else(|| "-".into())
+    };
+    let timings_block = format!(
+        "connect_timings: xray_check={} singbox_check={} xray_spawn={} powershell_fallbacks={}\nservice_phases: {}",
+        optional_ms(health.xray_check_ms),
+        optional_ms(health.singbox_check_ms),
+        optional_ms(health.xray_spawn_ms),
+        health.powershell_fallback_count,
+        service_phases,
+    );
+
     let copy_text = format!(
-        "DoodleRay v{} | {}\nmode={} verdict={} gen={} cause={} repairable={} repair_tried={}\nfailed_checks: {}\n{}\n{}",
+        "DoodleRay v{} | {}\nmode={} verdict={} gen={} cause={} repairable={} repair_tried={}\nfailed_checks: {}\n{}\n{}\n{}",
         env!("CARGO_PKG_VERSION"),
         windows_build_short(),
         proxy_mode,
@@ -13297,6 +13381,7 @@ fn build_network_diagnosis(
         can_auto_repair,
         repair_attempted,
         if failed_ids.is_empty() { "none".into() } else { failed_ids.join(", ") },
+        timings_block,
         support_summary,
         checks_detail,
     );
