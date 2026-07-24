@@ -1,4 +1,5 @@
 import type { ServerConfig } from '../stores/app-store';
+import { localizedCountryName } from './ui-format';
 
 export interface ServerDisplayGroup {
   id: string;
@@ -24,7 +25,13 @@ export function getServerGroupLabel(server: ServerConfig): string {
   return label || server.country || server.name;
 }
 
-export function serverMatchesGroupQuery(server: ServerConfig, query: string): boolean {
+/**
+ * `server.name`/`server.country` are baked in at fetch time in whatever
+ * language was active then, so a Russian-language user searching for
+ * "Казахстан" would never match an English-cached "Kazakhstan" — match
+ * against the live-localized name too (same source as what's on screen).
+ */
+export function serverMatchesGroupQuery(server: ServerConfig, query: string, language?: string): boolean {
   const normalizedQuery = query.trim().toLowerCase();
   if (!normalizedQuery) return true;
 
@@ -33,6 +40,7 @@ export function serverMatchesGroupQuery(server: ServerConfig, query: string): bo
     getServerGroupLabel(server),
     server.country,
     server.countryCode,
+    localizedCountryName(server.countryCode, language),
   ].some((value) => value?.toLowerCase().includes(normalizedQuery));
 }
 

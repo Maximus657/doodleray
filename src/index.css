@@ -357,6 +357,12 @@
     border: 0;
   }
 
+  /* Wide layout shows the days/anti-jammer block inside the location list;
+     compact shows the same data right under the connect button instead. */
+  .v6-orb-sub-status {
+    display: none;
+  }
+
   .v6-compact-mode .v6-panel {
     padding: 14px;
   }
@@ -376,64 +382,63 @@
     height: 17px;
     width: 17px;
   }
-  /* Mode selector: same three controls, moved below the connect core and
-     trimmed to a slim row so it stops eating vertical space above the fold. */
-  .v6-compact-mode .v6-mode-selector {
-    order: 2;
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 6px;
-  }
-  .v6-compact-mode .v6-mode-card {
-    align-items: center;
-    gap: 4px;
-    padding: 7px 6px;
-    border-radius: 14px;
-  }
-  .v6-compact-mode .v6-mode-card-head {
-    justify-content: center;
-  }
-  .v6-compact-mode .v6-mode-card-head > span:first-child {
-    height: 24px;
-    width: 24px;
-  }
-  .v6-compact-mode .v6-mode-card-badges,
-  .v6-compact-mode .v6-mode-card-description {
-    display: none;
-  }
-  .v6-compact-mode .v6-mode-card-title {
-    width: 100%;
-    white-space: normal;
-    text-align: center;
-    font-size: 10.5px;
-  }
   .v6-compact-mode .v6-dashboard-layout {
     flex-direction: column;
-    gap: 14px;
+    gap: 12px;
     overflow-y: auto;
     padding-right: 2px;
+    padding-bottom: 14px;
   }
+  /* display:contents flattens dashboard-main's children (orb, quick actions,
+     events) into direct flex items of the layout, so they can be reordered
+     against the location list itself instead of being stuck as a fixed block
+     above it. */
   .v6-compact-mode .v6-dashboard-main {
-    order: 1;
-    flex: none;
-    overflow: visible;
+    display: contents;
   }
   .v6-compact-mode .v6-connect-orb {
     order: 1;
-    min-height: 300px;
+    min-height: 0;
     flex: none;
+    border: none;
+    background: none;
+    border-radius: 0;
+    gap: 10px;
+    padding-block: 4px;
+  }
+  /* Honesty pill and the "check what's wrong" button repeat information the
+     compact events row already surfaces; the button also eats width next to
+     an already-tight connect core. */
+  .v6-compact-mode .v6-orb-status-pill,
+  .v6-compact-mode .v6-orb-diagnose-btn {
+    display: none;
+  }
+  .v6-compact-mode .v6-orb-sub-status {
+    order: 2;
+    display: block;
+    width: 100%;
   }
   .v6-compact-mode .v6-quick-actions-row {
-    order: 3;
-  }
-  .v6-compact-mode .v6-diagnostics-drawer {
     order: 4;
   }
+  .v6-compact-mode .v6-diagnostics-drawer {
+    order: 5;
+  }
+  .v6-compact-mode .v6-diagnostics-drawer .v6-glass {
+    background: none;
+    border: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    padding-inline: 0;
+  }
   .v6-compact-mode .v6-location-list {
-    order: 2;
+    order: 3;
     min-height: 460px;
     width: 100%;
     flex: none;
+  }
+  .v6-compact-mode .v6-location-sub-status {
+    display: none;
   }
 
   /* Main glass panel = window body: glass gradient layered over the warm

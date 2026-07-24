@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
-import { AlertTriangle, ChevronDown, ClipboardPaste, ExternalLink, Loader2, Plus, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, Bot, ChevronDown, ClipboardPaste, ExternalLink, Globe, Loader2, Plus, ShieldCheck } from 'lucide-react';
 import { useAppStore } from '../stores/app-store';
 import { formatTime } from '../lib/utils';
 import { refreshSubscription, fetchSubscription } from '../lib/subscription';
@@ -25,7 +25,6 @@ import {
 } from '../lib/connection-health';
 import { buildServerSelectionIndex, findMatchingServer, findMatchingServerInIndex, resolveConnectServer } from '../lib/server-selection';
 import { getSubscriptionById, getSubscriptionTrafficStatus } from '../lib/subscription-status';
-import { pingServersWithLimit } from '../lib/ping-runner';
 import { describeSubscriptionSource } from '../lib/redaction';
 import { getPrivacyPolicyUrl, isClosedControlPlaneEnabled, isLegacyImportEnabled, isNetworkExtensionOnlyBuild, legacyImportDisabledMessage } from '../lib/build-policy';
 import {
@@ -45,11 +44,9 @@ import {
 import type { ProductMode, SystemProxyMode } from '../stores/app-store';
 import ConnectOrb from '../components/v6/ConnectOrb';
 import { displayServerName } from '../components/v6/ServerRow';
-import ModeSelector from '../components/v6/ModeCard';
 import LocationList from '../components/v6/LocationList';
 import TrafficStats from '../components/v6/TrafficStats';
-import SplitRoutingToggle from '../components/v6/SplitRoutingToggle';
-import SplitRoutingModal from '../components/v6/SplitRoutingModal';
+import SubscriptionStatusBlock from '../components/v6/SubscriptionStatusBlock';
 import DiagnosticsDrawer from '../components/v6/DiagnosticsDrawer';
 import DiagnosticPanel from '../components/v6/DiagnosticPanel';
 import QuickAddPanel from '../components/v6/QuickAddPanel';
@@ -61,7 +58,7 @@ const TRAFFIC_LIMIT_EOF_THRESHOLD = 4;
 const TRAFFIC_LIMIT_NOTICE_COOLDOWN_MS = 60_000;
 const CONNECT_TIMEOUT_MS = 45_000;
 const TUN_CONNECT_TIMEOUT_MS = 120_000;
-const DOODLEVPN_BOT_URL = 'https://t.me/doodlevpn_bot';
+const DOODLEVPN_ACCOUNT_URL = 'https://doodlevpn.online/account';
 const TUN_LIMITED_FALLBACK_RE =
   /could not create the Windows tunnel adapter|IPv4 readiness failed|adapter is missing|adapter did not become ready|route is not preferred|route did not become ready|routes are missing|sing-box exited|sing-box process is not running|Tunnel Service failed to start TUN|Tunnel Service stopped before TUN|Tunnel Service did not become ready|timed out while starting VPN engines/i;
 
@@ -185,12 +182,12 @@ function isTauriRuntime() {
   return typeof tauriInternals?.invoke === 'function';
 }
 
-async function openDoodleVpnBot() {
+async function openDoodleVpnAccount() {
   try {
     const { openUrl } = await import('@tauri-apps/plugin-opener');
-    await openUrl(DOODLEVPN_BOT_URL);
+    await openUrl(DOODLEVPN_ACCOUNT_URL);
   } catch {
-    window.open(DOODLEVPN_BOT_URL, '_blank', 'noopener,noreferrer');
+    window.open(DOODLEVPN_ACCOUNT_URL, '_blank', 'noopener,noreferrer');
   }
 }
 
@@ -208,14 +205,14 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
 export default function Dashboard() {
   const {
     status, setStatus, activeServer, servers, setActiveServer,
-    proxyMode, setProxyMode, systemProxyMode, setSystemProxyMode, productMode, currentDownload, currentUpload,
+    proxyMode, setProxyMode, systemProxyMode, setSystemProxyMode, productMode, setRequestModeSwitch, currentDownload, currentUpload,
     addTraffic, resetTraffic, addSpeedPoint, setCurrentSpeed,
     logs, addLog, clearLogs, socksPort, httpPort, subscriptions,
     updateSubscription, autoSelectFastest,
     subAutoUpdateMinutes, connectedAt, setConnectedAt,
     addSubscription, addServer,
-    updateServerPings, setSocksPort, setHttpPort, showStats,
-    appSessionDeviceAllowed,
+    setSocksPort, setHttpPort, showStats,
+    appSessionDeviceAllowed, language,
   } = useAppStore();
   const { t } = useTranslation();
 
@@ -224,7 +221,6 @@ export default function Dashboard() {
   const [quickInput, setQuickInput] = useState('');
   const [quickImporting, setQuickImporting] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [showSplitModal, setShowSplitModal] = useState(false);
   const [showDiagModal, setShowDiagModal] = useState(false);
   const [connectionStep, setConnectionStep] = useState<string | null>(null);
   const [activeSystemProxyMode, setActiveSystemProxyMode] = useState<SystemProxyMode | null>(null);
@@ -234,6 +230,7 @@ export default function Dashboard() {
   const [appLoginError, setAppLoginError] = useState<string | null>(null);
   const [appLocationsLoading, setAppLocationsLoading] = useState(isClosedControlPlaneEnabled());
   const [privacyDetailsOpen, setPrivacyDetailsOpen] = useState(false);
+  const [codeSourceOpen, setCodeSourceOpen] = useState(false);
   const [postLoginFlight, setPostLoginFlight] = useState(false);
   const [postLoginFlightSettled, setPostLoginFlightSettled] = useState(false);
   const legacyImportEnabled = isLegacyImportEnabled();
@@ -482,10 +479,7 @@ export default function Dashboard() {
   }, [addLog, setConnectedAt, setConnectionStep, setHttpPort, setSocksPort, setStatus, t]);
 
   const connectionOpRef = useRef(0);
-  const [pingingServerIds, setPingingServerIds] = useState<Set<string>>(() => new Set());
   const serverSelectionIndex = useMemo(() => buildServerSelectionIndex(servers), [servers]);
-  const serverIdentityKey = useMemo(() => servers.map((server) => server.id).join('\0'), [servers]);
-  const autoPingStartedRef = useRef<Set<string>>(new Set());
   const autoSubRefreshStartedRef = useRef(false);
   const trafficLimitNoticeKeyRef = useRef<string | null>(null);
   const eofBurstRef = useRef({ count: 0, windowStartedAt: 0, lastNoticeAt: 0 });
@@ -557,30 +551,6 @@ export default function Dashboard() {
   // ═══════════════════════════════════════════════════
   //  Effects
   // ═══════════════════════════════════════════════════
-
-  // Auto-ping unpinged servers after persisted state/subscriptions are loaded.
-  useEffect(() => {
-    const unpinged = servers.filter(
-      s => !isClosedAutoLocationServer(s) && (s.ping === undefined || (s.ping > 0 && s.ping <= 5)) && !autoPingStartedRef.current.has(s.id)
-    );
-    if (unpinged.length === 0) return;
-    for (const server of unpinged) {
-      autoPingStartedRef.current.add(server.id);
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        await pingServersWithLimit(unpinged, invoke, {
-          isCancelled: () => cancelled,
-          onActiveIdsChange: setPingingServerIds,
-          onBatch: (updates) => updateServerPings(updates),
-        });
-      } catch { /* not in tauri env */ }
-      finally { setPingingServerIds(new Set()); }
-    })();
-    return () => { cancelled = true; };
-  }, [serverIdentityKey, updateServerPings]);
 
   // Connection time counter
   const [connectTime, setConnectTime] = useState(0);
@@ -1125,7 +1095,7 @@ export default function Dashboard() {
       }
 
       setConnectedAt(null);
-      addLog('info', `Starting connection to ${srv.name}...`);
+      addLog('info', t('v6LogConnectingTo' as never).replace('{name}', srv.name));
 
       try {
         const { invoke } = await import('@tauri-apps/api/core');
@@ -1196,7 +1166,7 @@ export default function Dashboard() {
           if (result.message.toLowerCase().includes('full computer components')) {
             const serviceHealthy = await refreshTunnelServiceHealth();
             if (!serviceHealthy) {
-              addLog('warning', 'Tunnel service is not ready. Please reinstall or repair DoodleRay from the installer/settings diagnostics.');
+              addLog('warning', t('v6LogTunnelNotReady' as never));
             }
           }
           reportConnectionError({ eventType: 'connect_fail', serverName: srv!.name, serverAddress: srv!.address, serverPort: srv!.port, protocol: srv!.protocol, errorMessage: result.message });
@@ -1208,7 +1178,7 @@ export default function Dashboard() {
         if (opId !== connectionOpRef.current) return;
         if (isTauriRuntime()) {
           const message = err.message || String(err);
-          addLog('error', `Connection failed: ${message}`);
+          addLog('error', t('v6LogConnectFailed' as never).replace('{message}', message));
           try {
             const { invoke: cleanupInvoke } = await import('@tauri-apps/api/core');
             let fallbackReason = message;
@@ -1257,7 +1227,7 @@ export default function Dashboard() {
       } catch { addLog('info', '[SIM] Disconnected'); }
       setStatus('disconnected'); setActiveSystemProxyMode(null); setConnectionStep(null); setConnectedAt(null); setCurrentSpeed(0, 0); resetTraffic();
     } else if (status === 'connected') {
-      addLog('info', 'Disconnecting...');
+      addLog('info', t('v6LogDisconnecting' as never));
       ++connectionOpRef.current;
       setStatus('disconnecting');
       setConnectionStep(t('connectionDisconnecting'));
@@ -1285,7 +1255,7 @@ export default function Dashboard() {
     if (systemProxyChanged) setSystemProxyMode(normalizedSystemProxyMode);
     addLog('debug', `Режим подключения: ${mode === 'tun' ? t('fullDeviceMode') : t('systemProxy')}`);
     if (status === 'connected') {
-      addLog('info', 'Reconnecting to apply new routing mode...');
+      addLog('info', t('v6LogReconnectingMode' as never));
       setStatus('connecting');
       setConnectionStep(t('connectionSecuringTraffic'));
       try {
@@ -1326,7 +1296,7 @@ export default function Dashboard() {
         } else { setStatus('disconnected'); setActiveSystemProxyMode(null); setConnectionStep(null); }
       } catch (err: any) {
         const message = err.message || String(err);
-        addLog('error', `Reconnect failed: ${message}`);
+        addLog('error', t('v6LogReconnectFailed' as never).replace('{message}', message));
         if (!closedControlPlane && mode === 'tun' && activeServer) {
           try {
             const { invoke: cleanupInvoke } = await import('@tauri-apps/api/core');
@@ -1610,19 +1580,6 @@ export default function Dashboard() {
     try { const text = await navigator.clipboard.readText(); setQuickInput(text); } catch { /* */ }
   }, []);
 
-  const handlePingAll = useCallback(async () => {
-    const toPing = servers.filter((s) => s.address && !isClosedAutoLocationServer(s));
-    if (toPing.length === 0) return;
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await pingServersWithLimit(toPing, invoke, {
-        onActiveIdsChange: setPingingServerIds,
-        onBatch: (updates) => useAppStore.getState().updateServerPings(updates),
-      });
-    } catch { /* not in tauri env */ }
-    finally { setPingingServerIds(new Set()); }
-  }, [servers]);
-
   const canConnect = !hasDeviceLimit && (!!activeServer || servers.length > 0);
   const hasDashboardContent = closedControlPlane
     ? appSession?.logged_in === true
@@ -1665,11 +1622,26 @@ export default function Dashboard() {
     : t(ORB_LABEL_KEY[orbState] as never);
   const activeSub = getSubscriptionById(subscriptions, activeServer?.subscriptionId) ?? subscriptions[0] ?? null;
 
-  const handleModeSelect = (mode: ProductMode) => {
+  const handleModeSelect = useCallback((mode: ProductMode) => {
     if (mode === 'protected') handleModeSwitch('tun', 'set');
     else if (mode === 'compatibility') handleModeSwitch('system-proxy', 'set');
     else handleModeSwitch('system-proxy', 'unchanged');
-  };
+  }, [handleModeSwitch]);
+
+  // The mode selector now lives in Settings, which AppShell renders as a
+  // sibling of Dashboard rather than a child — it can't receive this handler
+  // as a prop, so Dashboard registers it on the store instead. Registered
+  // once via a ref-backed stable wrapper: Dashboard subscribes to the whole
+  // store (no selector), so re-registering on every handleModeSelect
+  // reference change would re-trigger this same effect on every store
+  // write, forever.
+  const handleModeSelectRef = useRef(handleModeSelect);
+  useEffect(() => { handleModeSelectRef.current = handleModeSelect; });
+  useEffect(() => {
+    setRequestModeSwitch((mode: ProductMode) => handleModeSelectRef.current(mode));
+    return () => setRequestModeSwitch(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
@@ -1687,7 +1659,7 @@ export default function Dashboard() {
           {!networkExtensionOnly && (
             <button
               type="button"
-              onClick={openDoodleVpnBot}
+              onClick={openDoodleVpnAccount}
               className="v6-focus flex shrink-0 items-center gap-1.5 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-[11.5px] font-semibold text-white transition-colors hover:bg-white/15"
             >
               {t('v6DeviceLimitAction' as never)}
@@ -1731,6 +1703,42 @@ export default function Dashboard() {
             <p className="mx-auto mt-2 max-w-[360px] text-[14px] leading-relaxed text-white/60">
               {legacyImportEnabled ? t('welcomeHint') : t('v6AppLoginHint' as never)}
             </p>
+            {!legacyImportEnabled && (
+              <div className="mt-4 text-left">
+                <button
+                  type="button"
+                  aria-expanded={codeSourceOpen}
+                  onClick={() => setCodeSourceOpen((open) => !open)}
+                  className="v6-focus mx-auto flex items-center gap-1.5 rounded-xl px-2 py-1 text-[12.5px] font-medium text-[#FFAE57]/85 transition-colors hover:text-[#FFAE57]"
+                >
+                  <span>{t('v6AppLoginWhereToGetCode' as never)}</span>
+                  <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${codeSourceOpen ? 'rotate-180' : ''}`} strokeWidth={2.2} />
+                </button>
+                {codeSourceOpen && (
+                  <div className="mt-2.5 space-y-2">
+                    <div className="v6-glass-inset flex items-start gap-2.5 rounded-[14px] px-3.5 py-3">
+                      <Bot className="mt-0.5 h-4 w-4 shrink-0 text-[#FFAE57]/85" strokeWidth={2} />
+                      <p className="text-[11.5px] leading-relaxed text-white/58">
+                        <span className="font-medium text-white/78">{t('v6AppLoginSourceBotLabel' as never)}</span>{' '}
+                        {t('v6AppLoginSourceBotSteps' as never)}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={openDoodleVpnAccount}
+                      className="v6-glass-inset v6-hover-bright flex w-full items-start gap-2.5 rounded-[14px] px-3.5 py-3 text-left v6-focus"
+                    >
+                      <Globe className="mt-0.5 h-4 w-4 shrink-0 text-[#FFAE57]/85" strokeWidth={2} />
+                      <span className="text-[11.5px] leading-relaxed text-white/58">
+                        <span className="font-medium text-white/78">{t('v6AppLoginSourceWebLabel' as never)}</span>{' '}
+                        {t('v6AppLoginSourceWebSteps' as never)}
+                      </span>
+                      <ExternalLink className="ml-auto mt-0.5 h-3.5 w-3.5 shrink-0 text-white/35" strokeWidth={2} />
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
             {legacyImportEnabled && (
               <>
                 <div className="mt-6 flex gap-2.5">
@@ -1847,29 +1855,23 @@ export default function Dashboard() {
             servers={servers}
             activeServer={activeServer}
             activeSub={activeSub}
-            pingingServerIds={pingingServerIds}
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
             onSelect={handleServerSelect}
             onAdd={() => { if (legacyImportEnabled) setShowAddModal(true); }}
             canAdd={legacyImportEnabled}
-            onPingAll={handlePingAll}
             t={t}
           />
 
-          {/* RIGHT: modes, connect core, bottom row */}
+          {/* RIGHT: connect core, bottom row (mode + exceptions now live in Settings) */}
           <div className="v6-dashboard-main flex min-h-0 min-w-0 flex-1 flex-col gap-4">
-            {!networkExtensionOnly && (
-              <ModeSelector current={productMode} onSelect={handleModeSelect} disabled={busy} t={t} />
-            )}
-
             <ConnectOrb
               state={orbState}
               primaryLabel={orbPrimary}
               subLabel={orbSub}
               statusLabel={orbStatusLabel}
               serverName={activeServer
-                ? (isClosedAutoLocationServer(activeServer) ? t('v6AutoLocationName' as never) : displayServerName(activeServer))
+                ? (isClosedAutoLocationServer(activeServer) ? t('v6AutoLocationName' as never) : displayServerName(activeServer, language))
                 : null}
               serverRawName={activeServer?.name ?? null}
               serverCountryCode={activeServer?.countryCode ?? null}
@@ -1879,19 +1881,23 @@ export default function Dashboard() {
               diagnoseLabel={t('v6DiagIssueCta' as never)}
             />
 
-            <div className="v6-quick-actions-row flex shrink-0 gap-3.5">
-              {!networkExtensionOnly && (
-                <SplitRoutingToggle protectedMode={productMode === 'protected'} onOpen={() => setShowSplitModal(true)} t={t} />
-              )}
-              {!networkExtensionOnly && showStats && (
+            <SubscriptionStatusBlock
+              activeSub={activeSub}
+              activeServer={activeServer}
+              t={t}
+              className="v6-orb-sub-status"
+            />
+
+            {!networkExtensionOnly && showStats && (
+              <div className="v6-quick-actions-row flex shrink-0 gap-3.5">
                 <TrafficStats
                   connected={connected}
                   currentDownload={currentDownload}
                   currentUpload={currentUpload}
                   t={t}
                 />
-              )}
-            </div>
+              </div>
+            )}
 
             <DiagnosticsDrawer
               logs={logs}
@@ -1911,13 +1917,6 @@ export default function Dashboard() {
         />
       )}
 
-      {!networkExtensionOnly && showSplitModal && (
-        <SplitRoutingModal
-          protectedMode={productMode === 'protected'}
-          onClose={() => setShowSplitModal(false)}
-          t={t}
-        />
-      )}
     </div>
   );
 }

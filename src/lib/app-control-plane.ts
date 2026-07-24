@@ -76,6 +76,18 @@ export function closedLocationIdFromServer(server: ServerConfig): string {
     : server.id;
 }
 
+const ANTI_JAMMER_NAME_RE = /обход|блокиров|white|whitelist|bypass|резерв|reserve/i;
+
+/** True when `server` is the "Обход БС" or "Резерв" special location, in either the closed control-plane model (id-based) or legacy subscriptions (name-based). */
+export function isAntiJammerOrReserveServer(server: ServerConfig | null | undefined): boolean {
+  if (!server) return false;
+  if (isClosedLocationServer(server)) {
+    const id = closedLocationIdFromServer(server);
+    return id === 'bypass' || id === 'reserve';
+  }
+  return ANTI_JAMMER_NAME_RE.test(server.name);
+}
+
 function parseExpireSeconds(value?: string | null): number | undefined {
   if (!value) return undefined;
   const ms = Date.parse(value);

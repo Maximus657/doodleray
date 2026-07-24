@@ -115,6 +115,8 @@ export interface AppState {
   productMode: ProductMode;
   proxyMode: ProxyMode;
   systemProxyMode: SystemProxyMode;
+  /** Bridge for Settings (rendered outside Dashboard) to trigger Dashboard's real mode-switch/reconnect flow. Registered by Dashboard on mount, never persisted. */
+  requestModeSwitch: ((mode: ProductMode) => void) | null;
 
   servers: ServerConfig[];
   subscriptions: Subscription[];
@@ -151,6 +153,7 @@ export interface AppState {
   setStatus: (status: ConnectionStatus) => void;
   setActiveServer: (server: ServerConfig | null) => void;
   setProductMode: (mode: ProductMode) => void;
+  setRequestModeSwitch: (fn: ((mode: ProductMode) => void) | null) => void;
   setProxyMode: (mode: ProxyMode) => void;
   setSystemProxyMode: (mode: SystemProxyMode) => void;
 
@@ -465,6 +468,7 @@ export const useAppStore = create<AppState>()(
       productMode: 'protected',
       proxyMode: 'tun',
       systemProxyMode: 'set',
+      requestModeSwitch: null,
 
       servers: [],
       subscriptions: [],
@@ -504,6 +508,7 @@ export const useAppStore = create<AppState>()(
         lastSelectedServerKey: server ? getServerSelectionKey(server) : null,
       }),
       setProductMode: (mode) => set(transportForProductMode(mode)),
+      setRequestModeSwitch: (fn) => set({ requestModeSwitch: fn }),
       setProxyMode: (mode) => set((state) => ({
         proxyMode: mode,
         systemProxyMode: normalizeSystemProxyMode(state.systemProxyMode, mode),
