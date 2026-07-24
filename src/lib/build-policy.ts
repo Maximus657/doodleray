@@ -11,7 +11,11 @@ export function getBuildChannel(): BuildChannel {
 }
 
 export function isClosedControlPlaneEnabled(): boolean {
-  return env.VITE_DOODLERAY_CLOSED_CONTROL_PLANE !== '0';
+  // Must match the Rust gate `closed_control_plane_enabled()`
+  // (`DOODLERAY_CLOSED_CONTROL_PLANE == "1"`), which defaults OFF. Shipping
+  // builds set the flag to "1" explicitly; an opposite default here would let
+  // the UI offer sign-in/migration while every Rust command refuses it.
+  return env.VITE_DOODLERAY_CLOSED_CONTROL_PLANE === '1';
 }
 
 export function isLegacyImportEnabled(): boolean {

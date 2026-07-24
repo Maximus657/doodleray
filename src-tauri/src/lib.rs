@@ -3883,6 +3883,91 @@ fn app_api_ed25519_jwk_from_seed(seed: &[u8; 32]) -> (String, serde_json::Value)
     (encoded_public, jwk)
 }
 
+/// Derive the transmitted `hwid` from a raw per-machine hardware identifier.
+///
+/// The backend upserts devices by `hwid`, so this must be deterministic for a
+/// given machine (survives app reinstalls) yet must never leak the raw
+/// hardware id. Hashing with a domain prefix and case-folding gives both.
+fn app_api_hwid_from_machine_seed(seed: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"doodleray-hwid-v1\n");
+    hasher.update(seed.trim().to_ascii_lowercase().as_bytes());
+    let digest = hasher.finalize();
+    let hex = digest
+        .iter()
+        .take(16)
+        .map(|byte| format!("{:02x}", byte))
+        .collect::<String>();
+    format!("pc-hwid-{}", hex)
+}
+
+/// Read a stable per-machine hardware identifier, or `None` if unavailable.
+#[cfg(windows)]
+fn app_api_machine_seed() -> Option<String> {
+    // HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid is stable per Windows
+    // install and survives app reinstalls. Force the 64-bit view so the value
+    // matches regardless of the app's own bitness.
+    use winreg::enums::{KEY_READ, KEY_WOW64_64KEY};
+    let key = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
+        .open_subkey_with_flags(
+            "SOFTWARE\\Microsoft\\Cryptography",
+            KEY_READ | KEY_WOW64_64KEY,
+        )
+        .ok()?;
+    let guid: String = key.get_value("MachineGuid").ok()?;
+    let guid = guid.trim().to_string();
+    (!guid.is_empty()).then_some(guid)
+}
+
+/// Read a stable per-machine hardware identifier, or `None` if unavailable.
+#[cfg(target_os = "macos")]
+fn app_api_machine_seed() -> Option<String> {
+    // IOPlatformUUID is the stable per-machine hardware UUID on macOS.
+    let output = std::process::Command::new("/usr/sbin/ioreg")
+        .args(["-rd1", "-c", "IOPlatformExpertDevice"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        if !line.contains("IOPlatformUUID") {
+            continue;
+        }
+        if let Some((_, value)) = line.split_once('=') {
+            let value = value.trim().trim_matches('"').trim();
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Read a stable per-machine hardware identifier, or `None` if unavailable.
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn app_api_machine_seed() -> Option<String> {
+    for path in ["/etc/machine-id", "/var/lib/dbus/machine-id"] {
+        if let Ok(value) = std::fs::read_to_string(path) {
+            let value = value.trim().to_string();
+            if !value.is_empty() {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
+/// Machine-stable `hwid`, falling back to a random id only when the hardware id
+/// is unreadable so authentication still works (just not de-duplicated).
+fn app_api_stable_hwid() -> String {
+    match app_api_machine_seed() {
+        Some(seed) => app_api_hwid_from_machine_seed(&seed),
+        None => format!("pc-hwid-{}", uuid::Uuid::new_v4()),
+    }
+}
+
 fn app_api_generate_device_state() -> Result<AppApiDeviceState, String> {
     let mut seed = [0u8; 32];
     getrandom::getrandom(&mut seed)
@@ -3890,7 +3975,7 @@ fn app_api_generate_device_state() -> Result<AppApiDeviceState, String> {
     let (public_key, public_key_jwk) = app_api_ed25519_jwk_from_seed(&seed);
     Ok(AppApiDeviceState {
         client_device_id: format!("pc-{}", uuid::Uuid::new_v4()),
-        hwid: format!("pc-hwid-{}", uuid::Uuid::new_v4()),
+        hwid: app_api_stable_hwid(),
         public_key,
         public_key_jwk,
         private_key_seed: URL_SAFE_NO_PAD.encode(seed),
@@ -4143,6 +4228,14 @@ async fn app_api_send_bytes(path: &str, bearer: &str) -> Result<Vec<u8>, AppApiH
     Ok(bytes.to_vec())
 }
 
+/// Whether a `/auth/refresh` failure is unrecoverable (the refresh token itself
+/// is rejected), meaning the stored session must be discarded so sign-in and
+/// legacy migration can run again. Transient network/server errors (status 0
+/// or 5xx) are not fatal and must preserve the session for a later retry.
+fn app_api_refresh_error_is_fatal(status: u16) -> bool {
+    matches!(status, 401 | 403)
+}
+
 async fn app_api_refresh_session() -> Result<AppApiTokenResponse, String> {
     let Some(session) = app_api_load_session()? else {
         return Err("DoodleVPN sign-in is required.".into());
@@ -4151,14 +4244,25 @@ async fn app_api_refresh_session() -> Result<AppApiTokenResponse, String> {
         "refresh_token": session.refresh_token,
         "device_id": session.device_id,
     });
-    let refreshed = app_api_send_json::<AppApiTokenResponse>(
+    let refreshed = match app_api_send_json::<AppApiTokenResponse>(
         reqwest::Method::POST,
         "/auth/refresh",
         None,
         Some(body),
     )
     .await
-    .map_err(|e| e.to_string())?;
+    {
+        Ok(refreshed) => refreshed,
+        Err(err) => {
+            // A refresh token the server rejects will never recover. Drop the
+            // dead session so `app_api_session_status` re-runs legacy migration
+            // / sign-in instead of reporting a broken logged-in state forever.
+            if app_api_refresh_error_is_fatal(err.status) {
+                let _ = app_api_delete_session();
+            }
+            return Err(err.to_string());
+        }
+    };
     app_api_store_session(&refreshed)?;
     Ok(refreshed)
 }
@@ -4728,10 +4832,20 @@ async fn app_api_session_status(app: tauri::AppHandle) -> Result<AppApiSessionSt
             }
         }
     }
+    let mut last_error: Option<String> = None;
     for subscription_url in legacy_urls {
-        if let Ok(session) = app_api_exchange_legacy_subscription_url(&subscription_url).await {
-            return Ok(session);
+        match app_api_exchange_legacy_subscription_url(&subscription_url).await {
+            Ok(session) => return Ok(session),
+            Err(err) => last_error = Some(err),
         }
+    }
+    if let Some(err) = last_error {
+        // Surface why auto-restore failed (expired subscription, device limit,
+        // 5xx) into logs/support bundles without leaking the subscription URL.
+        eprintln!(
+            "[warn] legacy subscription auto-restore failed: {}",
+            redact_support_line(&err)
+        );
     }
     Ok(app_api_public_session(None))
 }
@@ -7139,6 +7253,52 @@ mod tests {
         let migrated = app_api_encode_session_for_disk(&decoded).expect("migrated json");
         assert!(!migrated.contains("legacy-access-secret"));
         assert!(migrated.contains("legacy-refresh-secret"));
+    }
+
+    #[test]
+    fn app_api_hwid_is_stable_and_derived_from_machine_seed() {
+        // The same machine must always map to the same hwid (case-folded), so
+        // the backend upserts instead of registering a duplicate device.
+        let first = app_api_hwid_from_machine_seed("2F8CB1A0-1234-4ABC-9DEF-000011112222");
+        let second = app_api_hwid_from_machine_seed("  2f8cb1a0-1234-4abc-9def-000011112222  ");
+        assert_eq!(first, second);
+        assert!(first.starts_with("pc-hwid-"));
+        // The raw hardware id must never leak into the transmitted hwid.
+        assert!(!first.to_ascii_lowercase().contains("2f8cb1a0"));
+        // Distinct machines must map to distinct hwids.
+        assert_ne!(
+            first,
+            app_api_hwid_from_machine_seed("00000000-0000-0000-0000-000000000000")
+        );
+    }
+
+    #[test]
+    fn app_api_generated_device_uses_stable_hwid() {
+        let a = app_api_generate_device_state().expect("device a");
+        let b = app_api_generate_device_state().expect("device b");
+        assert!(a.hwid.starts_with("pc-hwid-"));
+        // The keypair/device_id stay unique per device; only hwid is stable.
+        assert_ne!(a.client_device_id, b.client_device_id);
+        assert_ne!(a.public_key, b.public_key);
+        // On any machine with a readable hardware id, re-created device state
+        // must reuse the same hwid so migration does not add a device.
+        if app_api_machine_seed().is_some() {
+            assert_eq!(a.hwid, b.hwid);
+            assert_eq!(a.hwid, app_api_stable_hwid());
+        }
+    }
+
+    #[test]
+    fn app_api_refresh_error_is_fatal_only_for_auth_rejection() {
+        // Server rejects the refresh token -> the dead session must be dropped
+        // so migration / sign-in can run again.
+        assert!(app_api_refresh_error_is_fatal(401));
+        assert!(app_api_refresh_error_is_fatal(403));
+        // Transient failures must preserve the session for a later retry.
+        assert!(!app_api_refresh_error_is_fatal(0)); // network-error sentinel
+        assert!(!app_api_refresh_error_is_fatal(500));
+        assert!(!app_api_refresh_error_is_fatal(503));
+        assert!(!app_api_refresh_error_is_fatal(200));
     }
 
     #[test]
