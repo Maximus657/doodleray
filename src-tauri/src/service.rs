@@ -92,6 +92,7 @@ mod windows_service_main {
         last_repair_action: Option<String>,
         network_event_seq: u64,
         previous_unclean_shutdown: Option<String>,
+        ghost_scan_done_since_start: bool,
         last_start_request: Option<StartTunnelRequest>,
         last_rotation_seq: u64,
         error: Option<String>,
@@ -136,6 +137,7 @@ mod windows_service_main {
                 last_repair_action: None,
                 network_event_seq: 0,
                 previous_unclean_shutdown: None,
+                ghost_scan_done_since_start: false,
                 last_start_request: None,
                 last_rotation_seq: 0,
                 error: None,
@@ -1780,14 +1782,36 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             );
             log_service_event("cleanup pending: DoodleRay Tunnel adapter still present after stop");
         }
-        for action in repair_stale_wintun_ghost_devices(reason) {
-            log_service_event(&action);
-            if action.contains("removed=") && !action.contains("removed=0") {
-                let mut runtime = state().lock().unwrap();
-                runtime.warning_checks.push(action);
+        let already_scanned = state().lock().unwrap().ghost_scan_done_since_start;
+        if should_scan_wintun_ghosts(adapter_still_present, already_scanned) {
+            for action in repair_stale_wintun_ghost_devices(reason) {
+                log_service_event(&action);
+                if action.contains("removed=") && !action.contains("removed=0") {
+                    let mut runtime = state().lock().unwrap();
+                    runtime.warning_checks.push(action);
+                }
             }
+            state().lock().unwrap().ghost_scan_done_since_start = true;
+        } else {
+            log_service_event(&format!(
+                "stale Wintun ghost repair ({}) skipped: already verified clean this service run",
+                reason
+            ));
         }
         Ok(())
+    }
+
+    /// Whether to pay for the PowerShell Get-PnpDevice ghost-device scan on
+    /// this stop. Real-world timing showed this scan costs ~3s per connect
+    /// even when it finds nothing (seen=0 removed=0), because bring-up always
+    /// stops any prior runtime first. A stale Wintun ghost can only appear
+    /// from a crash this service process didn't witness (checked once, right
+    /// after start) or from this stop's own cleanup not finishing cleanly
+    /// (adapter_still_present, checked fresh every time) — so skipping is
+    /// safe once one full scan has proven the machine clean for this service
+    /// run and neither signal is currently active.
+    fn should_scan_wintun_ghosts(adapter_still_present: bool, already_scanned: bool) -> bool {
+        adapter_still_present || !already_scanned
     }
 
     fn set_failed(message: &str) {
@@ -3329,6 +3353,18 @@ Write-Output ("DoodleRay Tunnel dual-stack route preferred: ipv4_shape={0}, ipv6
                 error.contains("failed to run"),
                 "expected a spawn failure, got: {error}"
             );
+        }
+
+        #[test]
+        fn wintun_ghost_scan_runs_once_per_service_run_when_clean() {
+            // First stop this service run: always scan, clean or not.
+            assert!(should_scan_wintun_ghosts(false, false));
+            assert!(should_scan_wintun_ghosts(true, false));
+            // After one clean scan, skip further scans while nothing is wrong.
+            assert!(!should_scan_wintun_ghosts(false, true));
+            // Fresh evidence of trouble always forces a rescan, regardless of
+            // whether this service run already scanned once before.
+            assert!(should_scan_wintun_ghosts(true, true));
         }
     }
 }
