@@ -1783,7 +1783,7 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             log_service_event("cleanup pending: DoodleRay Tunnel adapter still present after stop");
         }
         let already_scanned = state().lock().unwrap().ghost_scan_done_since_start;
-        if should_scan_wintun_ghosts(adapter_still_present, already_scanned) {
+        if should_scan_wintun_ghosts(reason, adapter_still_present, already_scanned) {
             for action in repair_stale_wintun_ghost_devices(reason) {
                 log_service_event(&action);
                 if action.contains("removed=") && !action.contains("removed=0") {
@@ -1823,7 +1823,23 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
     /// (adapter_still_present, checked fresh every time) — so skipping is
     /// safe once one full scan has proven the machine clean for this service
     /// run and neither signal is currently active.
-    fn should_scan_wintun_ghosts(adapter_still_present: bool, already_scanned: bool) -> bool {
+    ///
+    /// `replace_tunnel` never scans. It runs at the start of every connect,
+    /// right after killing sing-box, when the adapter has essentially always
+    /// not vanished yet — so `adapter_still_present` is true for an entirely
+    /// benign reason and would force a rescan on every single connect (~2.4s
+    /// measured on the stand, every time reporting seen=0). A ghost that
+    /// genuinely blocks adapter creation still gets cleaned: bring-up attempt 1
+    /// fails, and the retry path calls stop_owned_processes("tun_adapter_repair"),
+    /// which does scan.
+    fn should_scan_wintun_ghosts(
+        reason: &str,
+        adapter_still_present: bool,
+        already_scanned: bool,
+    ) -> bool {
+        if reason == "replace_tunnel" {
+            return false;
+        }
         adapter_still_present || !already_scanned
     }
 
@@ -3377,13 +3393,23 @@ Write-Output ("DoodleRay Tunnel dual-stack route preferred: ipv4_shape={0}, ipv6
         #[test]
         fn wintun_ghost_scan_runs_once_per_service_run_when_clean() {
             // First stop this service run: always scan, clean or not.
-            assert!(should_scan_wintun_ghosts(false, false));
-            assert!(should_scan_wintun_ghosts(true, false));
+            assert!(should_scan_wintun_ghosts("stop_tunnel", false, false));
+            assert!(should_scan_wintun_ghosts("stop_tunnel", true, false));
             // After one clean scan, skip further scans while nothing is wrong.
-            assert!(!should_scan_wintun_ghosts(false, true));
+            assert!(!should_scan_wintun_ghosts("stop_tunnel", false, true));
             // Fresh evidence of trouble always forces a rescan, regardless of
             // whether this service run already scanned once before.
-            assert!(should_scan_wintun_ghosts(true, true));
+            assert!(should_scan_wintun_ghosts("stop_tunnel", true, true));
+        }
+
+        #[test]
+        fn wintun_ghost_scan_never_runs_on_the_connect_hot_path() {
+            // replace_tunnel runs on every connect with the adapter still
+            // lingering for benign reasons; the bring-up retry path
+            // (tun_adapter_repair) is what cleans a real ghost.
+            assert!(!should_scan_wintun_ghosts("replace_tunnel", true, false));
+            assert!(!should_scan_wintun_ghosts("replace_tunnel", true, true));
+            assert!(should_scan_wintun_ghosts("tun_adapter_repair", true, true));
         }
     }
 }
