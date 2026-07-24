@@ -10507,8 +10507,14 @@ async fn vpn_disconnect_direct(app: tauri::AppHandle) -> ConnectResult {
         }
     }
 
+    // Defensive sweep for processes the app spawned directly and lost track
+    // of (system-proxy mode). For TUN, DoodleRayTunnelService owns xray/sing-box
+    // and already runs its own bounded cleanup, so this is pure redundancy on
+    // the hot disconnect/switch path — but it's still a real safety net for
+    // system-proxy mode, so it stays, just off the critical path: it spawns a
+    // Get-CimInstance Win32_Process query over every process on the machine.
     #[cfg(windows)]
-    terminate_orphaned_doodleray_engine_processes();
+    std::thread::spawn(terminate_orphaned_doodleray_engine_processes);
 
     restore_system_proxy_if_owned(false);
 
