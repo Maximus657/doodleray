@@ -169,18 +169,34 @@ pub fn apply_interface_metric(alias: &str, target_metric: u32) -> Result<String,
     ))
 }
 
-/// Pins the adapter's IPv4 DNS servers and disables dynamic DNS registration
-/// for it, natively. Replaces a PowerShell script (Get/Set-DnsClientServerAddress,
-/// Set-DnsClient -RegisterThisConnectionsAddress) that cost ~2s per connect for
-/// CIM provider startup alone. The adapter is freshly created on every connect,
-/// so unlike the PowerShell version this does not check-then-skip: the servers
-/// are essentially never already correct on a fresh interface.
+/// Pins the adapter's IPv4 DNS servers, disables dynamic DNS registration for
+/// it, and drops the interface metric to 1, natively. Replaces a PowerShell
+/// script that cost ~2s per connect for CIM provider startup alone.
+///
+/// The metric-to-1 step is NOT the same thing as the metric-to-50 step
+/// `apply_interface_metric` performs earlier in dual-stack settling — that one
+/// only stabilizes the value while checking address readiness. This is the
+/// step that actually makes Windows prefer the tunnel route: dropping it
+/// (mistakenly treated as a duplicate when this was first written natively)
+/// left the adapter at metric 50, which lost route preference against the
+/// physical interface on at least one real server and failed bring-up after
+/// the full 20s route-canary retry budget.
+///
+/// The adapter is freshly created on every connect, so unlike the PowerShell
+/// version this does not check-then-skip: neither the servers nor the metric
+/// are ever already correct on a fresh interface.
 pub fn apply_dns_client_policy(alias: &str, servers: &[&str]) -> Result<String, NetProbeError> {
     let snapshot = find_adapter_by_alias(alias)?;
     set_interface_dns_settings(snapshot.luid_value, servers).map_err(NetProbeError::Failed)?;
+    let ipv4_metric = set_interface_metric(snapshot.luid_value, snapshot.ifindex, AF_INET, 1)
+        .map_err(NetProbeError::Failed)?;
+    let ipv6_metric = set_interface_metric(snapshot.luid_value, snapshot.ifindex, AF_INET6, 1)
+        .map_err(NetProbeError::Failed)?;
     Ok(format!(
-        "adapter_dns_ipv4={}; registration_enabled=false",
-        servers.join(",")
+        "adapter_dns_ipv4={}; registration_enabled=false; interface_metric=ipv4:{},ipv6:{}",
+        servers.join(","),
+        ipv4_metric,
+        ipv6_metric
     ))
 }
 

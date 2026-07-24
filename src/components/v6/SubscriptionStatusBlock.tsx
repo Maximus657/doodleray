@@ -58,7 +58,7 @@ export default function SubscriptionStatusBlock({ activeSub, activeServer, t, cl
               {formatQuotaBytes(quota.remaining, language)} {t('v6QuotaOf' as never)} {formatQuotaBytes(quota.limit, language)}
             </span>
           </div>
-          <div className="mx-1.5 h-[7px] overflow-hidden rounded-md bg-white/10">
+          <div className="mx-3 h-[7px] overflow-hidden rounded-md bg-white/10">
             <div
               className="h-full rounded-md transition-[width] duration-500"
               style={{ width: `${(quota.ratio * 100).toFixed(1)}%`, background: quotaColor, boxShadow: `0 0 10px ${quotaColor}66` }}
@@ -91,7 +91,7 @@ export default function SubscriptionStatusBlock({ activeSub, activeServer, t, cl
               {t('v6RenewCta' as never)}
             </button>
           </div>
-          <div className="mx-1.5 h-[7px] overflow-hidden rounded-md bg-white/10">
+          <div className="mx-3 h-[7px] overflow-hidden rounded-md bg-white/10">
             <div
               className="h-full rounded-md transition-[width] duration-500"
               style={{ width: `${(Math.min(1, days / 30) * 100).toFixed(1)}%`, background: dCol, boxShadow: `0 0 10px ${dCol}66` }}
