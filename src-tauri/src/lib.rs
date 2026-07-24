@@ -7330,6 +7330,7 @@ mod tests {
             powershell_fallback_count: 0,
             singbox_check_ms: Some(10),
             xray_spawn_ms: Some(20),
+            xray_check_ms: Some(5),
             adapter_probe_backend: Some("native_iphelper_evented".into()),
             route_probe_backend: Some("native_getbestroute2".into()),
             native_probe_ms: vec![("adapter_snapshot".into(), 30)],

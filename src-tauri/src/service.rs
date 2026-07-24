@@ -59,6 +59,7 @@ mod windows_service_main {
     static STATE: OnceLock<Mutex<TunnelRuntime>> = OnceLock::new();
     static SINGBOX_VALIDATION_CACHE: OnceLock<Mutex<Option<SingboxValidationCache>>> =
         OnceLock::new();
+    static XRAY_VALIDATION_CACHE: OnceLock<Mutex<Option<u64>>> = OnceLock::new();
     static STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
     static OP_GENERATION: AtomicU64 = AtomicU64::new(0);
     const PIPE_WORKERS: usize = 16;
@@ -98,6 +99,7 @@ mod windows_service_main {
         powershell_fallback_count: u32,
         singbox_check_ms: Option<u64>,
         xray_spawn_ms: Option<u64>,
+        xray_check_ms: Option<u64>,
         adapter_probe_backend: Option<String>,
         route_probe_backend: Option<String>,
         native_probe_ms: Vec<(String, u64)>,
@@ -141,6 +143,7 @@ mod windows_service_main {
                 powershell_fallback_count: 0,
                 singbox_check_ms: None,
                 xray_spawn_ms: None,
+                xray_check_ms: None,
                 adapter_probe_backend: None,
                 route_probe_backend: None,
                 native_probe_ms: Vec::new(),
@@ -1008,6 +1011,7 @@ mod windows_service_main {
             powershell_fallback_count: runtime.powershell_fallback_count,
             singbox_check_ms: runtime.singbox_check_ms,
             xray_spawn_ms: runtime.xray_spawn_ms,
+            xray_check_ms: runtime.xray_check_ms,
             adapter_probe_backend: runtime.adapter_probe_backend.clone(),
             route_probe_backend: runtime.route_probe_backend.clone(),
             native_probe_ms: runtime.native_probe_ms.clone(),
@@ -1512,7 +1516,7 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             write_json_file(&xray_config_path, xray_config)?;
             let xray_log_path = runtime_dir.join("xray.log");
             let xray_exe = xray_exe_path()?;
-            check_xray_config(&xray_exe, &xray_config_path)?;
+            check_xray_config(&xray_exe, &xray_config_path, xray_config)?;
             let spawn_started = Instant::now();
             let child = spawn_engine(xray_exe, &["run", "-c"], &xray_config_path, &xray_log_path)?;
             set_xray_spawn_ms(elapsed_ms(spawn_started));
@@ -1855,6 +1859,10 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         state().lock().unwrap().xray_spawn_ms = Some(value);
     }
 
+    fn set_xray_check_ms(value: u64) {
+        state().lock().unwrap().xray_check_ms = Some(value);
+    }
+
     fn start_network_watchers_for_connect() {
         match windows_net::ensure_network_watchers() {
             Ok(detail) => {
@@ -2034,14 +2042,26 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         ))
     }
 
-    fn check_xray_config(exe: &Path, config_path: &Path) -> Result<(), String> {
+    fn check_xray_config(exe: &Path, config_path: &Path, config: &Value) -> Result<(), String> {
+        let config_hash = hash_json_value(config)?;
+        if *xray_validation_cache().lock().unwrap() == Some(config_hash) {
+            set_xray_check_ms(0);
+            log_service_event(
+                "xray config check skipped: effective config hash was already validated",
+            );
+            return Ok(());
+        }
+
+        let started = Instant::now();
         let output = Command::new(exe)
             .args(["run", "-test", "-c"])
             .arg(config_path)
             .creation_flags(0x08000000)
             .output()
             .map_err(|error| format!("xray config check failed to run: {error}"))?;
+        set_xray_check_ms(elapsed_ms(started));
         if output.status.success() {
+            *xray_validation_cache().lock().unwrap() = Some(config_hash);
             return Ok(());
         }
         Err(format!(
@@ -2053,6 +2073,10 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
 
     fn singbox_validation_cache() -> &'static Mutex<Option<SingboxValidationCache>> {
         SINGBOX_VALIDATION_CACHE.get_or_init(|| Mutex::new(None))
+    }
+
+    fn xray_validation_cache() -> &'static Mutex<Option<u64>> {
+        XRAY_VALIDATION_CACHE.get_or_init(|| Mutex::new(None))
     }
 
     fn hash_json_value(value: &Value) -> Result<u64, String> {
@@ -3280,6 +3304,32 @@ Write-Output ("DoodleRay Tunnel dual-stack route preferred: ipv4_shape={0}, ipv6
         .map_err(|e| format!("prepare-update IPC failed: {}", e))?;
         println!("{}", serde_json::to_string_pretty(&response)?);
         Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn xray_config_check_cache_hit_skips_the_subprocess() {
+            let config = serde_json::json!({ "outbounds": [{ "tag": "proxy" }] });
+            let hash = hash_json_value(&config).expect("hash config");
+            *xray_validation_cache().lock().unwrap() = Some(hash);
+
+            // Paths that cannot possibly execute: only a cache hit returns Ok.
+            let missing_exe = Path::new(r"Z:\doodleray-nonexistent\xray.exe");
+            let config_path = Path::new(r"Z:\doodleray-nonexistent\xray_config.json");
+            assert!(check_xray_config(missing_exe, config_path, &config).is_ok());
+
+            // A config that was never validated must still attempt the spawn.
+            let other = serde_json::json!({ "outbounds": [{ "tag": "direct" }] });
+            let error = check_xray_config(missing_exe, config_path, &other)
+                .expect_err("uncached config must attempt to spawn xray");
+            assert!(
+                error.contains("failed to run"),
+                "expected a spawn failure, got: {error}"
+            );
+        }
     }
 }
 

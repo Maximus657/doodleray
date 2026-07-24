@@ -172,6 +172,8 @@ pub struct TunnelStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub xray_spawn_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub xray_check_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adapter_probe_backend: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub route_probe_backend: Option<String>,
