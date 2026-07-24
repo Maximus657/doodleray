@@ -2879,13 +2879,25 @@ fn secure_store_native_get(key: &str) -> Result<Option<String>, String> {
     // Credential Manager is not reliably available in every Windows session
     // (service accounts, locked-down/Server Core hosts). Fall back to a
     // per-key DPAPI file, same pattern already used for the App API session.
+    // A missing/corrupt/inaccessible DPAPI file must degrade to "no data"
+    // (same as a clean keyring miss), never a hard error — this value backs
+    // login/device state and account data, and callers treat Err very
+    // differently from Ok(None) (e.g. failing auth outright instead of
+    // starting fresh).
     #[cfg(windows)]
     {
-        let value = app_api_dpapi_get(key)?;
-        if let Some(value) = &value {
-            let _ = secure_store_native_set(key, value);
+        match app_api_dpapi_get(key) {
+            Ok(value) => {
+                if let Some(value) = &value {
+                    let _ = secure_store_native_set(key, value);
+                }
+                Ok(value)
+            }
+            Err(error) => {
+                eprintln!("[warn] DPAPI fallback read failed for {}: {}", key, error);
+                Ok(None)
+            }
         }
-        Ok(value)
     }
     #[cfg(not(windows))]
     Ok(None)
@@ -3217,11 +3229,18 @@ fn app_api_native_secret_get(key: &str) -> Result<Option<String>, String> {
     }
     #[cfg(windows)]
     {
-        let value = app_api_dpapi_get(key)?;
-        if let Some(value) = &value {
-            let _ = secure_store_keyring_set(key, value);
+        match app_api_dpapi_get(key) {
+            Ok(value) => {
+                if let Some(value) = &value {
+                    let _ = secure_store_keyring_set(key, value);
+                }
+                Ok(value)
+            }
+            Err(error) => {
+                eprintln!("[warn] DPAPI fallback read failed for {}: {}", key, error);
+                Ok(None)
+            }
         }
-        Ok(value)
     }
     #[cfg(not(windows))]
     Ok(None)
@@ -6534,7 +6553,10 @@ mod tests {
         assert_eq!(check.status, "warning");
         assert_eq!(check.user_text, "Требует внимания");
         assert!(report.copy_text.contains("failed_checks: none"));
-        assert!(!report.copy_text.contains("future_warning_probe"));
+        // Copy is the full report now (almost everyone presses Copy, not
+        // "save full bundle"), so a non-fatal check is still listed in the
+        // per-check detail block — just not counted in failed_checks above.
+        assert!(report.copy_text.contains("future_warning_probe"));
     }
 
     #[test]
@@ -13251,8 +13273,17 @@ fn build_network_diagnosis(
         health.service_degraded_checks.join(" | "),
     ));
 
+    // The "Copy" button is what almost every user actually presses (versus
+    // "Save full bundle"), so this must be the complete report, not a
+    // preview — full support_summary (no character cap) plus every check's
+    // redacted technical detail, not just the failed ones.
+    let checks_detail: String = checks
+        .iter()
+        .map(|c| format!("[{}] {}: {}", c.status, c.id, c.technical_detail_redacted))
+        .collect::<Vec<_>>()
+        .join("\n");
     let copy_text = format!(
-        "DoodleRay v{} | {}\nmode={} verdict={} gen={} cause={} repairable={} repair_tried={}\nfailed_checks: {}\n{}",
+        "DoodleRay v{} | {}\nmode={} verdict={} gen={} cause={} repairable={} repair_tried={}\nfailed_checks: {}\n{}\n{}",
         env!("CARGO_PKG_VERSION"),
         windows_build_short(),
         proxy_mode,
@@ -13265,7 +13296,8 @@ fn build_network_diagnosis(
         can_auto_repair,
         repair_attempted,
         if failed_ids.is_empty() { "none".into() } else { failed_ids.join(", ") },
-        support_summary.chars().take(600).collect::<String>(),
+        support_summary,
+        checks_detail,
     );
 
     NetworkDiagnosisReport {

@@ -2405,12 +2405,20 @@ $metric = (Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IP
     }
 
     fn windows_system_resolver_canary() -> Result<String, String> {
+        // auth.openai.com is a known-bad choice as a hard gate: OpenAI
+        // actively blocks huge ranges of VPN/datacenter exit IPs regardless
+        // of whether the tunnel's own DNS/routing is healthy, so a block on
+        // this one domain is not evidence of a real local problem. Try both
+        // targets — never stop at the first failure — and only report the
+        // canary as failed when *neither* target is reachable, matching
+        // this function's own intent ("this exit simply not routing to that
+        // one domain" must not fail the whole check).
         let targets = [
             ("auth.openai.com", "https://auth.openai.com"),
             ("api.ipify.org", "https://api.ipify.org"),
         ];
         let mut ok = Vec::new();
-        let mut last_error = None;
+        let mut errors = Vec::new();
         for (host, url) in targets {
             let output = Command::new("curl.exe")
                 .args([
@@ -2449,7 +2457,7 @@ $metric = (Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IP
                 || lower.contains("getaddrinfo")
                 || lower.contains("enotfound")
                 || lower.contains("name or service not known");
-            last_error = Some(if dns_like {
+            errors.push(if dns_like {
                 format!(
                     "Windows system resolver canary failed after TUN route setup for {}: {}",
                     host,
@@ -2462,16 +2470,15 @@ $metric = (Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IP
                     redact(combined.trim())
                 )
             });
-            break;
         }
 
-        if ok.len() == targets.len() {
+        if !ok.is_empty() {
             Ok(format!(
-                "Windows system resolver canaries passed through TUN ({})",
+                "Windows system resolver canary passed through TUN ({})",
                 ok.join(", ")
             ))
         } else {
-            Err(last_error.unwrap_or_else(|| {
+            Err(errors.into_iter().next().unwrap_or_else(|| {
                 "Windows system resolver canary failed after TUN route setup".into()
             }))
         }
