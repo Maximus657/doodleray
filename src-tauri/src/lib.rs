@@ -9439,19 +9439,29 @@ async fn vpn_connect_direct(mut request: ConnectRequest, app: tauri::AppHandle) 
 
     let use_xray = uses_xray_engine(&request);
     let is_tun = request.proxy_mode == "tun";
+    // Ports handed out by reserve_loopback_ports come straight from the OS
+    // ephemeral range and are therefore already free; see the force-free
+    // sweep below, which is only worth paying for on user-configured ports.
+    let mut ports_freshly_reserved = false;
 
     #[cfg(windows)]
     if is_tun && use_xray {
-        if let Ok(adapters) = competing_tun_adapters() {
-            if !adapters.is_empty() {
-                vpn_log(&format!(
-                    "warning: competing TUN adapters are up: {}",
-                    adapters.join(", ")
-                ));
+        // Diagnostics only — the result is nothing but a log line. Spawning
+        // PowerShell for Get-NetAdapter costs seconds (the same call pattern
+        // measured ~2.4s inside the service), so connect must never wait on it.
+        std::thread::spawn(|| {
+            if let Ok(adapters) = competing_tun_adapters() {
+                if !adapters.is_empty() {
+                    vpn_log(&format!(
+                        "warning: competing TUN adapters are up: {}",
+                        adapters.join(", ")
+                    ));
+                }
             }
-        }
+        });
         match reserve_loopback_ports(3) {
             Ok(ports) => {
+                ports_freshly_reserved = true;
                 request.socks_port = ports[0];
                 request.http_port = ports[1];
                 request.api_port = ports[2];
@@ -9604,6 +9614,7 @@ async fn vpn_connect_direct(mut request: ConnectRequest, app: tauri::AppHandle) 
                         "Proxy ports {} / {} are busy; using runtime ports socks={} http={} api={}",
                         request.socks_port, request.http_port, ports[0], ports[1], ports[2]
                     ));
+                    ports_freshly_reserved = true;
                     request.socks_port = ports[0];
                     request.http_port = ports[1];
                     request.api_port = ports[2];
@@ -9625,12 +9636,24 @@ async fn vpn_connect_direct(mut request: ConnectRequest, app: tauri::AppHandle) 
 
     // Forcefully release local ports to prevent "Only one usage of each socket address is normally permitted"
     // caused by zombie processes (or double React Strict Mode invocations) locking the ports.
-    let _ = force_free_managed_port(request.socks_port).await;
-    let _ = force_free_managed_port(request.http_port).await;
-    let _ = force_free_managed_port(request.api_port).await;
+    // Skipped when the ports were just reserved from the OS ephemeral range:
+    // those are guaranteed free, and each sweep costs a netstat subprocess
+    // (plus a PowerShell CIM query per matching PID).
+    if !ports_freshly_reserved {
+        let _ = force_free_managed_port(request.socks_port).await;
+        let _ = force_free_managed_port(request.http_port).await;
+        let _ = force_free_managed_port(request.api_port).await;
+    }
 
-    // Only wait for sing-box.exe process death when TUN was killed (not preserved)
+    // Only wait for sing-box.exe process death when TUN was killed (not preserved).
+    // Windows TUN is always owned by DoodleRayTunnelService, which performs its
+    // own bounded child cleanup in stop_owned_processes — the app must not wait
+    // on, or try to kill, a sing-box it does not own. Waiting here spawned a
+    // tasklist probe on every connect and could burn 10x200ms plus a further
+    // 4x300ms against the service's own sing-box.
+    let service_owns_tun = cfg!(windows) && is_tun;
     let needs_process_wait = !keep_tun_bridge
+        && !service_owns_tun
         && matches!(
             prev_engine.as_deref(),
             Some("singbox-tun") | Some("xray+tun") | None
