@@ -2381,7 +2381,8 @@ $summary -join "`n"
             return;
         }
         let native_started = Instant::now();
-        let result = windows_net::apply_dns_client_policy("DoodleRay Tunnel", &["1.1.1.1", "8.8.8.8"]);
+        let result =
+            windows_net::apply_dns_client_policy("DoodleRay Tunnel", &["1.1.1.1", "8.8.8.8"]);
         let outcome = match result {
             Ok(detail) => {
                 record_native_probe("dns_policy", native_started);
@@ -2406,7 +2407,9 @@ $summary -join "`n"
         let mut runtime = state().lock().unwrap();
         match outcome {
             Ok(detail) => {
-                let detail = format!("DoodleRay Tunnel DNS client policy pinned to IPv4 resolvers ({detail})");
+                let detail = format!(
+                    "DoodleRay Tunnel DNS client policy pinned to IPv4 resolvers ({detail})"
+                );
                 log_service_event(&detail);
                 if !runtime
                     .route_explanations

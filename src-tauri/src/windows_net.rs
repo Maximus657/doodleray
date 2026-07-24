@@ -6,6 +6,7 @@ use std::ptr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 
+use windows_sys::core::GUID;
 use windows_sys::Win32::Foundation::{ERROR_BUFFER_OVERFLOW, ERROR_NO_DATA, HANDLE, NO_ERROR};
 use windows_sys::Win32::NetworkManagement::IpHelper::{
     ConvertInterfaceLuidToGuid, GetAdaptersAddresses, GetBestRoute2, GetIpInterfaceEntry,
@@ -13,11 +14,10 @@ use windows_sys::Win32::NetworkManagement::IpHelper::{
     NotifyUnicastIpAddressChange, SetInterfaceDnsSettings, SetIpInterfaceEntry,
     DNS_INTERFACE_SETTINGS, DNS_INTERFACE_SETTINGS_VERSION1, DNS_SETTING_NAMESERVER,
     DNS_SETTING_REGISTRATION_ENABLED, GAA_FLAG_INCLUDE_ALL_INTERFACES, GAA_FLAG_SKIP_ANYCAST,
-    GAA_FLAG_SKIP_DNS_SERVER, GAA_FLAG_SKIP_MULTICAST, IP_ADAPTER_ADDRESSES_LH,
-    MIB_IPFORWARD_ROW2, MIB_IPINTERFACE_ROW, MIB_NOTIFICATION_TYPE, MIB_UNICASTIPADDRESS_ROW,
+    GAA_FLAG_SKIP_DNS_SERVER, GAA_FLAG_SKIP_MULTICAST, IP_ADAPTER_ADDRESSES_LH, MIB_IPFORWARD_ROW2,
+    MIB_IPINTERFACE_ROW, MIB_NOTIFICATION_TYPE, MIB_UNICASTIPADDRESS_ROW,
 };
 use windows_sys::Win32::NetworkManagement::Ndis::NET_LUID_LH;
-use windows_sys::core::GUID;
 use windows_sys::Win32::Networking::WinSock::{
     IpDadStatePreferred, ADDRESS_FAMILY, AF_INET, AF_INET6, IN6_ADDR, IN6_ADDR_0, IN_ADDR,
     IN_ADDR_0, IN_ADDR_0_0, SOCKADDR_IN, SOCKADDR_IN6, SOCKADDR_IN6_0, SOCKADDR_INET,
@@ -205,7 +205,9 @@ fn set_interface_dns_settings(luid_value: u64, servers: &[&str]) -> Result<(), S
     let mut guid: GUID = unsafe { zeroed() };
     let convert_error = unsafe { ConvertInterfaceLuidToGuid(&luid, &mut guid) };
     if convert_error != NO_ERROR {
-        return Err(format!("ConvertInterfaceLuidToGuid failed: {convert_error}"));
+        return Err(format!(
+            "ConvertInterfaceLuidToGuid failed: {convert_error}"
+        ));
     }
 
     let mut name_server: Vec<u16> = servers
