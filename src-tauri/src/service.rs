@@ -2351,55 +2351,33 @@ $summary -join "`n"
         if !is_current_generation(generation) {
             return;
         }
-        let output = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                r#"
-$ErrorActionPreference = 'Stop'
-$adapter = Get-NetAdapter -Name 'DoodleRay Tunnel' -ErrorAction Stop | Select-Object -First 1
-$wanted = @('1.1.1.1','8.8.8.8')
-$metricChanged = $false
-try {
-  $ipInterface = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction Stop
-  if ([int]$ipInterface.InterfaceMetric -gt 5) {
-    Set-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -InterfaceMetric 1 -ErrorAction Stop
-    $metricChanged = $true
-  }
-} catch {
-  Write-Output ("metric_warning=" + $_.Exception.Message)
-}
-$current = @(Get-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-  ForEach-Object { $_.ServerAddresses } |
-  Where-Object { $_ })
-$needsSet = $current.Count -ne $wanted.Count
-if (-not $needsSet) {
-  for ($i = 0; $i -lt $wanted.Count; $i++) {
-    if ($current[$i] -ne $wanted[$i]) { $needsSet = $true; break }
-  }
-}
-if ($needsSet) {
-  Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ServerAddresses $wanted -ErrorAction Stop
-  Clear-DnsClientCache -ErrorAction SilentlyContinue
-}
-Set-DnsClient -InterfaceIndex $adapter.ifIndex -RegisterThisConnectionsAddress $false -ErrorAction SilentlyContinue
-$after = @(Get-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-  ForEach-Object { $_.ServerAddresses } |
-  Where-Object { $_ })
-$metric = (Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).InterfaceMetric
-"adapter_dns_ipv4=" + ($after -join ',') + "; interface_metric=" + $metric + "; metric_changed=" + $metricChanged
-"#,
-            ])
-            .creation_flags(0x08000000)
-            .output();
+        let native_started = Instant::now();
+        let result = windows_net::apply_dns_client_policy("DoodleRay Tunnel", &["1.1.1.1", "8.8.8.8"]);
+        let outcome = match result {
+            Ok(detail) => {
+                record_native_probe("dns_policy", native_started);
+                set_adapter_probe_backend("native_iphelper");
+                Ok(detail)
+            }
+            Err(native_error) => {
+                let fallback_started = Instant::now();
+                match apply_doodleray_dns_client_policy_powershell() {
+                    Ok(detail) => {
+                        record_fallback_probe("dns_policy", fallback_started);
+                        set_adapter_probe_backend("powershell_fallback");
+                        Ok(detail)
+                    }
+                    Err(fallback_error) => Err(format!(
+                        "native: {native_error}; powershell fallback: {fallback_error}"
+                    )),
+                }
+            }
+        };
 
         let mut runtime = state().lock().unwrap();
-        match output {
-            Ok(output) if output.status.success() => {
-                let detail = format!(
-                    "DoodleRay Tunnel DNS client policy pinned to IPv4 resolvers ({})",
-                    redact(String::from_utf8_lossy(&output.stdout).trim())
-                );
+        match outcome {
+            Ok(detail) => {
+                let detail = format!("DoodleRay Tunnel DNS client policy pinned to IPv4 resolvers ({detail})");
                 log_service_event(&detail);
                 if !runtime
                     .route_explanations
@@ -2407,22 +2385,6 @@ $metric = (Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IP
                     .any(|existing| existing == &detail)
                 {
                     runtime.route_explanations.push(detail);
-                }
-            }
-            Ok(output) => {
-                let detail = format!(
-                    "Windows DNS client policy could not be pinned to the DoodleRay Tunnel adapter: {}{}",
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
-                );
-                log_service_event(&detail);
-                let detail = redact(&detail);
-                if !runtime
-                    .degraded_checks
-                    .iter()
-                    .any(|existing| existing == &detail)
-                {
-                    runtime.degraded_checks.push(detail);
                 }
             }
             Err(error) => {
@@ -2441,6 +2403,39 @@ $metric = (Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IP
                 }
             }
         }
+    }
+
+    /// Fallback for apply_doodleray_dns_client_policy when the native
+    /// SetInterfaceDnsSettings call fails. Only sets DNS servers and disables
+    /// registration — the interface metric is handled separately by
+    /// apply_doodleray_interface_metric, so it is not duplicated here.
+    fn apply_doodleray_dns_client_policy_powershell() -> Result<String, String> {
+        let output = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                r#"
+$ErrorActionPreference = 'Stop'
+$adapter = Get-NetAdapter -Name 'DoodleRay Tunnel' -ErrorAction Stop | Select-Object -First 1
+Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ServerAddresses @('1.1.1.1','8.8.8.8') -ErrorAction Stop
+Set-DnsClient -InterfaceIndex $adapter.ifIndex -RegisterThisConnectionsAddress $false -ErrorAction SilentlyContinue
+$after = @(Get-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+  ForEach-Object { $_.ServerAddresses } |
+  Where-Object { $_ })
+"adapter_dns_ipv4=" + ($after -join ',') + "; registration_enabled=false"
+"#,
+            ])
+            .creation_flags(0x08000000)
+            .output()
+            .map_err(|error| format!("failed to run: {error}"))?;
+        if output.status.success() {
+            return Ok(redact(String::from_utf8_lossy(&output.stdout).trim()));
+        }
+        Err(redact(&format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )))
     }
 
     fn mark_dns_policy_ready() {
