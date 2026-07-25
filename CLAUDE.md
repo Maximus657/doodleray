@@ -324,6 +324,16 @@ Use these as architecture/test references, not as code to copy blindly:
 Respect licenses. Do not copy GPL/custom-license code into this project unless
 the project license decision explicitly allows it.
 
+## Shipping a Release
+
+Full step-by-step (merge → tag → the manual CDN-publish step everyone
+forgets) is in `docs/release-runbook.md`. Read it before telling the user a
+release is live — merging the PR and pushing the tag alone do NOT put an
+update in front of users; there is a required manual `workflow_dispatch` run
+of `publish-downloads.yml` with its "Upload artifacts to
+doodleray.clickflare.click" box checked, because the app's real update
+endpoint is that CDN, not GitHub.
+
 ## Release Rule
 
 If any production gate item is missing, final status is:
