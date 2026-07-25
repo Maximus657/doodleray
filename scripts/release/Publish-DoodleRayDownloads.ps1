@@ -124,6 +124,11 @@ ln -sfn "../../releases/`$channel/`$version" "`$remote_root/public/channels/`$ch
 rm -f "`$archive"
 echo "published `$channel `$version"
 "@
+# PowerShell here-strings use CRLF line endings on Windows. Sent as-is over
+# ssh, the stray `r before each newline lands inside remote bash's tokens —
+# "set -euo pipefail`r" reads as an invalid option name, not a line ending.
+# Normalize to LF before this ever leaves the machine.
+$remoteScript = $remoteScript -replace "`r`n", "`n"
 & ssh @sshArgs $remote $remoteScript
 if ($LASTEXITCODE -ne 0) { throw "remote publish failed" }
 
