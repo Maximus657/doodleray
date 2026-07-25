@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Publishes immutable DoodleRay release artifacts to the first-party downloads host.
 
@@ -28,7 +28,17 @@ param(
   [int]$Port = 22,
   [string]$RemoteRoot = '/srv/doodleray-downloads',
   [string]$SshKeyPath = $env:DOODLERAY_DOWNLOADS_SSH_KEY,
-  [switch]$Force
+  [switch]$Force,
+
+  # HostName doubles as the SSH target, which CI intentionally points at a raw
+  # IP (DNS/host-key friction in a fresh runner). That same value used to leak
+  # into every public download URL and the verification request, so a
+  # domain-issued TLS cert never matched an IP-based URL
+  # (RemoteCertificateNameMismatch) and downloads shipped to real users
+  # pointed at the IP too. PublicHostName is the one users' apps and browsers
+  # actually see; it defaults to the real public domain regardless of what
+  # HostName is set to for the SSH connection.
+  [string]$PublicHostName = 'doodleray.clickflare.click'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -51,12 +61,48 @@ foreach ($file in $files) {
   Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $work $name) -Force
 }
 
+# `npx tauri build` (used for the direct channel) never writes latest.json
+# itself -- that file is normally assembled by tauri-action, which this script
+# does not use. Without it, nothing ever reaches the app's updater endpoint no
+# matter how many times this script runs successfully. Build it here from the
+# .sig files the build did produce, whenever the caller didn't already supply
+# one.
+$latestJsonPath = Join-Path $work 'latest.json'
+if ($Channel -eq 'direct' -and -not (Test-Path -LiteralPath $latestJsonPath)) {
+  $zipSig = Get-ChildItem -LiteralPath $work -Filter '*.nsis.zip.sig' | Select-Object -First 1
+  $exeSig = Get-ChildItem -LiteralPath $work -Filter '*-setup.exe.sig' | Select-Object -First 1
+  if ($zipSig -and $exeSig) {
+    $zipName = $zipSig.Name -replace '\.sig$', ''
+    $exeName = $exeSig.Name -replace '\.sig$', ''
+    $platforms = [ordered]@{
+      'windows-x86_64' = [ordered]@{
+        signature = (Get-Content -LiteralPath $zipSig.FullName -Raw).Trim()
+        url = "https://$PublicHostName/releases/$Channel/$Version/$zipName"
+      }
+      'windows-x86_64-nsis' = [ordered]@{
+        signature = (Get-Content -LiteralPath $exeSig.FullName -Raw).Trim()
+        url = "https://$PublicHostName/releases/$Channel/$Version/$exeName"
+      }
+    }
+    $latest = [ordered]@{
+      version = $Version
+      notes = "DoodleRay $Version"
+      pub_date = (Get-Date).ToUniversalTime().ToString('o')
+      platforms = $platforms
+    }
+    $latest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $latestJsonPath -Encoding utf8
+    Write-Host "Generated latest.json from build signatures ($zipName, $exeName)"
+  } else {
+    Write-Warning "No .nsis.zip.sig/.exe.sig found in $ArtifactDir -- latest.json will not be published, updater endpoint will stay stale"
+  }
+}
+
 $artifactRows = Get-ChildItem -LiteralPath $work -File | Sort-Object Name | ForEach-Object {
   [pscustomobject]@{
     name = $_.Name
     size = $_.Length
     sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-    url = "https://$HostName/releases/$Channel/$Version/$($_.Name)"
+    url = "https://$PublicHostName/releases/$Channel/$Version/$($_.Name)"
   }
 }
 $artifactRows | ForEach-Object { "$($_.sha256)  $($_.name)" } |
@@ -67,7 +113,7 @@ $manifest = [ordered]@{
   version = $Version
   channel = $Channel
   createdAtUtc = (Get-Date).ToUniversalTime().ToString('o')
-  immutableBaseUrl = "https://$HostName/releases/$Channel/$Version/"
+  immutableBaseUrl = "https://$PublicHostName/releases/$Channel/$Version/"
   files = @($artifactRows)
 }
 $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $work 'manifest.json') -Encoding utf8
@@ -125,14 +171,14 @@ rm -f "`$archive"
 echo "published `$channel `$version"
 "@
 # PowerShell here-strings use CRLF line endings on Windows. Sent as-is over
-# ssh, the stray `r before each newline lands inside remote bash's tokens —
+# ssh, the stray `r before each newline lands inside remote bash's tokens --
 # "set -euo pipefail`r" reads as an invalid option name, not a line ending.
 # Normalize to LF before this ever leaves the machine.
 $remoteScript = $remoteScript -replace "`r`n", "`n"
 & ssh @sshArgs $remote $remoteScript
 if ($LASTEXITCODE -ne 0) { throw "remote publish failed" }
 
-$manifestUrl = "https://$HostName/channels/$Channel/manifest.json"
+$manifestUrl = "https://$PublicHostName/channels/$Channel/manifest.json"
 Write-Host "Verifying $manifestUrl"
 $response = Invoke-WebRequest -Uri $manifestUrl -UseBasicParsing -TimeoutSec 30
 if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 300) {
@@ -141,4 +187,4 @@ if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 300) {
 
 Write-Host "Published DoodleRay $Version ($Channel)." -ForegroundColor Green
 Write-Host "Manifest: $manifestUrl"
-Write-Host "Base URL: https://$HostName/releases/$Channel/$Version/"
+Write-Host "Base URL: https://$PublicHostName/releases/$Channel/$Version/"
