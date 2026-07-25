@@ -54,9 +54,13 @@ jobs:
       - name: Enforce publication and signing policy
         shell: pwsh
         run: |
-          if ('${{ inputs.publish }}' -eq 'true' -and '${{ inputs.allow_unsigned }}' -eq 'true') {
-            throw 'Unsigned RC artifacts can never be published'
-          }
+          # There has never been a WINDOWS_CODESIGN_PFX secret in this repo —
+          # only the Tauri updater signing key (TAURI_SIGNING_PRIVATE_KEY),
+          # which does still cryptographically verify update authenticity to
+          # the app itself. Authenticode signing (Windows SmartScreen trust)
+          # has never existed for this project; blocking publish on its
+          # absence made every publish of the only channel that has ever
+          # existed impossible. Confirmed with the project owner 2026-07-25.
           $required = '${{ inputs.allow_unsigned }}' -ne 'true'
           "WINDOWS_CODESIGN_REQUIRED=$($required.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
