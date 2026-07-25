@@ -203,7 +203,14 @@ jobs:
             throw 'DOWNLOADS_SSH_PRIVATE_KEY is required when publish=true'
           }
           $keyPath = Join-Path $env:RUNNER_TEMP 'downloads_ed25519'
-          $env:DOWNLOADS_SSH_PRIVATE_KEY -replace "`r", "" | Set-Content -LiteralPath $keyPath -NoNewline -Encoding ascii
+          # OpenSSH's key parser rejects a file with no trailing newline after
+          # -----END...-----, and a GitHub secret pasted via the web UI often
+          # has its own trailing newline trimmed — -NoNewline here silently
+          # produced exactly that malformed file ("invalid format", not an
+          # auth error). -Encoding ascii also risked lossy byte corruption;
+          # utf8NoBOM is the safe choice for a PEM/OpenSSH key body.
+          $normalized = ($env:DOWNLOADS_SSH_PRIVATE_KEY -replace "`r", "").TrimEnd("`n") + "`n"
+          Set-Content -LiteralPath $keyPath -Value $normalized -NoNewline -Encoding utf8NoBOM
           icacls $keyPath /inheritance:r /grant:r "$env:USERNAME`:R" | Out-Null
           ./scripts/release/Publish-DoodleRayDownloads.ps1 `
             -Version '${{ inputs.version }}' `
