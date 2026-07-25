@@ -8,6 +8,9 @@ import { isUpdateManagedByStore, openStoreUpdatePage } from '../../lib/update-ch
 import { diagnosticsReportToText, runNetworkDiagnostics } from '../../lib/diagnostics';
 import { reportConnectionError } from '../../lib/workshop-api';
 import Toggle from './Toggle';
+import SplitRoutingToggle from './SplitRoutingToggle';
+import SplitRoutingModal from './SplitRoutingModal';
+import ModeSelector from './ModeCard';
 
 type T = (key: never) => string;
 
@@ -73,8 +76,12 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
     subscriptions, updateSubscription, removeSubscription,
     wipeData, addLog, appSessionLoggedIn,
     diagnosticsConsent, setDiagnosticsConsent,
+    productMode, requestModeSwitch, status,
   } = useAppStore();
 
+  const modeSwitchBusy = status === 'connecting' || status === 'disconnecting';
+
+  const [showSplitModal, setShowSplitModal] = useState(false);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
   const [armedDeleteId, setArmedDeleteId] = useState<string | null>(null);
   const [updateStatus, setUpdateStatus] = useState<string | null>(null);
@@ -248,7 +255,7 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
         onClick={(e) => e.stopPropagation()}
         className="v6-modal flex max-h-[calc(100vh-88px)] w-[min(460px,calc(100vw-48px))] flex-col rounded-[28px] p-[26px] pt-[22px]"
       >
-        <div className="mb-1 flex shrink-0 items-center justify-between">
+        <div className="mb-4 flex shrink-0 items-center justify-between">
           <span className="text-[18px] font-semibold text-white">{t('settings' as never)}</span>
           <button
             type="button"
@@ -261,6 +268,18 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
         </div>
 
         <div className="-mr-3 min-h-0 flex-1 overflow-y-auto pr-3">
+          {/* Connection mode + exceptions, at the top so they're the first thing seen */}
+          {!networkExtensionOnly && (
+            <>
+              <div className="pb-4">
+                <ModeSelector current={productMode} onSelect={(mode) => requestModeSwitch?.(mode)} disabled={modeSwitchBusy || !requestModeSwitch} t={t} />
+              </div>
+              <div className="pb-2">
+                <SplitRoutingToggle protectedMode={productMode === 'protected'} onOpen={() => setShowSplitModal(true)} t={t} />
+              </div>
+            </>
+          )}
+
           {/* General */}
           {desktopAutostartAvailable && (
             <Row title={t('v6SetLaunch' as never)} sub={t('v6SetLaunchSub' as never)} onClick={toggleLaunch} pressed={launchOn} right={<Toggle on={launchOn} label={t('v6SetLaunch' as never)} />} />
@@ -438,6 +457,16 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
           )}
         </div>
       </div>
+
+      {showSplitModal && (
+        <div onClick={(e) => e.stopPropagation()}>
+          <SplitRoutingModal
+            protectedMode={productMode === 'protected'}
+            onClose={() => setShowSplitModal(false)}
+            t={t}
+          />
+        </div>
+      )}
     </div>
   );
 }

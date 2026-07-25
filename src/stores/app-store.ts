@@ -115,6 +115,8 @@ export interface AppState {
   productMode: ProductMode;
   proxyMode: ProxyMode;
   systemProxyMode: SystemProxyMode;
+  /** Bridge for Settings (rendered outside Dashboard) to trigger Dashboard's real mode-switch/reconnect flow. Registered by Dashboard on mount, never persisted. */
+  requestModeSwitch: ((mode: ProductMode) => void) | null;
 
   servers: ServerConfig[];
   subscriptions: Subscription[];
@@ -151,6 +153,7 @@ export interface AppState {
   setStatus: (status: ConnectionStatus) => void;
   setActiveServer: (server: ServerConfig | null) => void;
   setProductMode: (mode: ProductMode) => void;
+  setRequestModeSwitch: (fn: ((mode: ProductMode) => void) | null) => void;
   setProxyMode: (mode: ProxyMode) => void;
   setSystemProxyMode: (mode: SystemProxyMode) => void;
 
@@ -216,6 +219,19 @@ const safeLocalRemove = (name: string) => {
 const persistedValueCache = new Map<string, string>();
 const volatileBrowserStorage = new Map<string, string>();
 const pendingSecureWrites = new Map<string, Promise<void>>();
+
+/**
+ * Awaits every in-flight secure-storage write (Settings changes persist via
+ * an async Tauri invoke, e.g. a custom port committed just before the user
+ * quits from the tray). Called before the app is allowed to actually exit —
+ * see the `doodleray:flush-before-exit` listener in App.tsx — so the last
+ * change isn't dropped mid round-trip when the process tears down.
+ */
+export async function flushPendingSecureWrites(): Promise<void> {
+  while (pendingSecureWrites.size > 0) {
+    await Promise.allSettled(Array.from(pendingSecureWrites.values()));
+  }
+}
 
 export function detectInitialLanguage(): SupportedLanguage {
   if (typeof navigator === 'undefined') return 'en';
@@ -465,6 +481,7 @@ export const useAppStore = create<AppState>()(
       productMode: 'protected',
       proxyMode: 'tun',
       systemProxyMode: 'set',
+      requestModeSwitch: null,
 
       servers: [],
       subscriptions: [],
@@ -504,6 +521,7 @@ export const useAppStore = create<AppState>()(
         lastSelectedServerKey: server ? getServerSelectionKey(server) : null,
       }),
       setProductMode: (mode) => set(transportForProductMode(mode)),
+      setRequestModeSwitch: (fn) => set({ requestModeSwitch: fn }),
       setProxyMode: (mode) => set((state) => ({
         proxyMode: mode,
         systemProxyMode: normalizeSystemProxyMode(state.systemProxyMode, mode),

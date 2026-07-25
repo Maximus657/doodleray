@@ -6,13 +6,16 @@ use std::ptr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 
+use windows_sys::core::GUID;
 use windows_sys::Win32::Foundation::{ERROR_BUFFER_OVERFLOW, ERROR_NO_DATA, HANDLE, NO_ERROR};
 use windows_sys::Win32::NetworkManagement::IpHelper::{
-    GetAdaptersAddresses, GetBestRoute2, GetIpInterfaceEntry, InitializeIpInterfaceEntry,
-    NotifyIpInterfaceChange, NotifyRouteChange2, NotifyUnicastIpAddressChange, SetIpInterfaceEntry,
-    GAA_FLAG_INCLUDE_ALL_INTERFACES, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER,
-    GAA_FLAG_SKIP_MULTICAST, IP_ADAPTER_ADDRESSES_LH, MIB_IPFORWARD_ROW2, MIB_IPINTERFACE_ROW,
-    MIB_NOTIFICATION_TYPE, MIB_UNICASTIPADDRESS_ROW,
+    ConvertInterfaceLuidToGuid, GetAdaptersAddresses, GetBestRoute2, GetIpInterfaceEntry,
+    InitializeIpInterfaceEntry, NotifyIpInterfaceChange, NotifyRouteChange2,
+    NotifyUnicastIpAddressChange, SetInterfaceDnsSettings, SetIpInterfaceEntry,
+    DNS_INTERFACE_SETTINGS, DNS_INTERFACE_SETTINGS_VERSION1, DNS_SETTING_NAMESERVER,
+    DNS_SETTING_REGISTRATION_ENABLED, GAA_FLAG_INCLUDE_ALL_INTERFACES, GAA_FLAG_SKIP_ANYCAST,
+    GAA_FLAG_SKIP_DNS_SERVER, GAA_FLAG_SKIP_MULTICAST, IP_ADAPTER_ADDRESSES_LH, MIB_IPFORWARD_ROW2,
+    MIB_IPINTERFACE_ROW, MIB_NOTIFICATION_TYPE, MIB_UNICASTIPADDRESS_ROW,
 };
 use windows_sys::Win32::NetworkManagement::Ndis::NET_LUID_LH;
 use windows_sys::Win32::Networking::WinSock::{
@@ -164,6 +167,73 @@ pub fn apply_interface_metric(alias: &str, target_metric: u32) -> Result<String,
         ipv4,
         ipv6
     ))
+}
+
+/// Pins the adapter's IPv4 DNS servers, disables dynamic DNS registration for
+/// it, and drops the interface metric to 1, natively. Replaces a PowerShell
+/// script that cost ~2s per connect for CIM provider startup alone.
+///
+/// The metric-to-1 step is NOT the same thing as the metric-to-50 step
+/// `apply_interface_metric` performs earlier in dual-stack settling — that one
+/// only stabilizes the value while checking address readiness. This is the
+/// step that actually makes Windows prefer the tunnel route: dropping it
+/// (mistakenly treated as a duplicate when this was first written natively)
+/// left the adapter at metric 50, which lost route preference against the
+/// physical interface on at least one real server and failed bring-up after
+/// the full 20s route-canary retry budget.
+///
+/// The adapter is freshly created on every connect, so unlike the PowerShell
+/// version this does not check-then-skip: neither the servers nor the metric
+/// are ever already correct on a fresh interface.
+pub fn apply_dns_client_policy(alias: &str, servers: &[&str]) -> Result<String, NetProbeError> {
+    let snapshot = find_adapter_by_alias(alias)?;
+    set_interface_dns_settings(snapshot.luid_value, servers).map_err(NetProbeError::Failed)?;
+    let ipv4_metric = set_interface_metric(snapshot.luid_value, snapshot.ifindex, AF_INET, 1)
+        .map_err(NetProbeError::Failed)?;
+    let ipv6_metric = set_interface_metric(snapshot.luid_value, snapshot.ifindex, AF_INET6, 1)
+        .map_err(NetProbeError::Failed)?;
+    Ok(format!(
+        "adapter_dns_ipv4={}; registration_enabled=false; interface_metric=ipv4:{},ipv6:{}",
+        servers.join(","),
+        ipv4_metric,
+        ipv6_metric
+    ))
+}
+
+fn set_interface_dns_settings(luid_value: u64, servers: &[&str]) -> Result<(), String> {
+    let luid = luid_from_value(luid_value);
+    let mut guid: GUID = unsafe { zeroed() };
+    let convert_error = unsafe { ConvertInterfaceLuidToGuid(&luid, &mut guid) };
+    if convert_error != NO_ERROR {
+        return Err(format!(
+            "ConvertInterfaceLuidToGuid failed: {convert_error}"
+        ));
+    }
+
+    let mut name_server: Vec<u16> = servers
+        .join(",")
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let settings = DNS_INTERFACE_SETTINGS {
+        Version: DNS_INTERFACE_SETTINGS_VERSION1,
+        Flags: (DNS_SETTING_NAMESERVER | DNS_SETTING_REGISTRATION_ENABLED) as u64,
+        Domain: ptr::null_mut(),
+        NameServer: name_server.as_mut_ptr(),
+        SearchList: ptr::null_mut(),
+        RegistrationEnabled: 0,
+        RegisterAdapterName: 0,
+        EnableLLMNR: 0,
+        QueryAdapterName: 0,
+        ProfileNameServer: ptr::null_mut(),
+    };
+
+    let set_error = unsafe { SetInterfaceDnsSettings(guid, &settings) };
+    if set_error != NO_ERROR {
+        return Err(format!("SetInterfaceDnsSettings failed: {set_error}"));
+    }
+    Ok(())
 }
 
 pub fn route_canaries_prefer_adapter(

@@ -102,14 +102,14 @@ export default function ConnectOrb({
           <button
             type="button"
             onClick={onDiagnose}
-            className="v6-fadein v6-hover-bright rounded-full border border-white/[0.14] bg-white/[0.06] px-3 py-1 text-[11px] font-medium text-white/80 v6-focus"
+            className="v6-orb-diagnose-btn v6-fadein v6-hover-bright rounded-full border border-white/[0.14] bg-white/[0.06] px-3 py-1 text-[11px] font-medium text-white/80 v6-focus"
           >
             {diagnoseLabel}
           </button>
         )}
         {pill && (
           <div
-            className="v6-fadein flex items-center gap-[9px] rounded-[30px] border px-[17px] py-2"
+            className="v6-orb-status-pill v6-fadein flex items-center gap-[9px] rounded-[30px] border px-[17px] py-2"
             style={{ background: pill.bg, borderColor: pill.border }}
           >
             <pill.Icon className="h-[15px] w-[15px] shrink-0" style={{ color: pill.color }} strokeWidth={2.4} />

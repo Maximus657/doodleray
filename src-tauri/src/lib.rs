@@ -2879,13 +2879,25 @@ fn secure_store_native_get(key: &str) -> Result<Option<String>, String> {
     // Credential Manager is not reliably available in every Windows session
     // (service accounts, locked-down/Server Core hosts). Fall back to a
     // per-key DPAPI file, same pattern already used for the App API session.
+    // A missing/corrupt/inaccessible DPAPI file must degrade to "no data"
+    // (same as a clean keyring miss), never a hard error — this value backs
+    // login/device state and account data, and callers treat Err very
+    // differently from Ok(None) (e.g. failing auth outright instead of
+    // starting fresh).
     #[cfg(windows)]
     {
-        let value = app_api_dpapi_get(key)?;
-        if let Some(value) = &value {
-            let _ = secure_store_native_set(key, value);
+        match app_api_dpapi_get(key) {
+            Ok(value) => {
+                if let Some(value) = &value {
+                    let _ = secure_store_native_set(key, value);
+                }
+                Ok(value)
+            }
+            Err(error) => {
+                eprintln!("[warn] DPAPI fallback read failed for {}: {}", key, error);
+                Ok(None)
+            }
         }
-        Ok(value)
     }
     #[cfg(not(windows))]
     Ok(None)
@@ -3217,11 +3229,18 @@ fn app_api_native_secret_get(key: &str) -> Result<Option<String>, String> {
     }
     #[cfg(windows)]
     {
-        let value = app_api_dpapi_get(key)?;
-        if let Some(value) = &value {
-            let _ = secure_store_keyring_set(key, value);
+        match app_api_dpapi_get(key) {
+            Ok(value) => {
+                if let Some(value) = &value {
+                    let _ = secure_store_keyring_set(key, value);
+                }
+                Ok(value)
+            }
+            Err(error) => {
+                eprintln!("[warn] DPAPI fallback read failed for {}: {}", key, error);
+                Ok(None)
+            }
         }
-        Ok(value)
     }
     #[cfg(not(windows))]
     Ok(None)
@@ -4939,6 +4958,24 @@ async fn app_connect_location(
 
     let location_ids = app_connection_location_ids(&request);
 
+    reset_connect_timings();
+    let connect_started = Instant::now();
+    // The Windows service is stopped while disconnected, so a cold SCM start
+    // plus the named-pipe handshake would otherwise run strictly after the
+    // lease HTTP round trip. Both calls are idempotent and tunnel_service_start
+    // repeats them, so this is purely additive: winning the race makes the
+    // later start free, losing it changes nothing. Deliberate side effect: the
+    // service may stay up after a failed lease fetch, which it already does
+    // between connect attempts. Starting the service creates no tunnel —
+    // StartTunnel is a separate command.
+    #[cfg(windows)]
+    if request.proxy_mode == "tun" {
+        tauri::async_runtime::spawn_blocking(|| {
+            let _ = ensure_tunnel_service_running();
+            let _ = ipc::tunnel_service_hello(env!("CARGO_PKG_VERSION"));
+        });
+    }
+
     let selection_mode = if location_ids.len() > 1 {
         "auto"
     } else {
@@ -4962,6 +4999,7 @@ async fn app_connect_location(
                 continue;
             }
         };
+        record_connect_timing("lease_fetch", started);
         let mut connect_request =
             match app_api_profile_to_connect_request(&lease.native_profile, &request) {
                 Ok(request) => request,
@@ -4985,7 +5023,10 @@ async fn app_connect_location(
                 continue;
             }
         };
+        let bringup_started = Instant::now();
         let result = vpn_connect(connect_request, app.clone()).await;
+        record_connect_timing("bringup", bringup_started);
+        record_connect_timing("total", connect_started);
         let result_body = app_api_connection_result_body(
             &lease,
             &session,
@@ -4993,13 +5034,23 @@ async fn app_connect_location(
             started.elapsed().as_millis() as i64,
             &result.message,
         );
-        let _ = app_api_authorized_json::<serde_json::Value>(
-            reqwest::Method::POST,
-            "/connection-result",
-            Some(result_body),
-        )
-        .await;
+        // Telemetry only — the response was always discarded. Awaiting it here
+        // charged every connect the full backend round trip *after* the tunnel
+        // was already up, including the first DNS resolution through the
+        // brand-new tunnel. Measured on the stand: the service reported
+        // connected at 3.3s while the user's stopwatch read 21s, and the xray
+        // log showed a matching ~12s gap with no traffic. Report in the
+        // background so the UI is released as soon as the tunnel is ready.
+        tauri::async_runtime::spawn(async move {
+            let _ = app_api_authorized_json::<serde_json::Value>(
+                reqwest::Method::POST,
+                "/connection-result",
+                Some(result_body),
+            )
+            .await;
+        });
         if result.success {
+            record_connect_timing("total_to_ui", connect_started);
             return result;
         }
         last_failure = Some(result);
@@ -5164,7 +5215,44 @@ pub struct ConnectionHealthReport {
     pub route_explanations: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub endpoint_bypass_checks: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub service_timings_ms: Vec<(String, u64)>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub xray_spawn_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub xray_check_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub singbox_check_ms: Option<u64>,
+    #[serde(default)]
+    pub powershell_fallback_count: u32,
     pub checks: Vec<ConnectionHealthCheck>,
+}
+
+/// Connect phases measured in the app process. The service's own timings_ms
+/// only starts once bring-up begins, so the lease fetch, the cold SCM service
+/// start and the pipe handshake are invisible to it. Reset at the start of
+/// each connect attempt; read back by the diagnostics report.
+static LAST_CONNECT_TIMINGS: std::sync::OnceLock<std::sync::Mutex<Vec<(String, u64)>>> =
+    std::sync::OnceLock::new();
+
+fn last_connect_timings() -> &'static std::sync::Mutex<Vec<(String, u64)>> {
+    LAST_CONNECT_TIMINGS.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+fn reset_connect_timings() {
+    last_connect_timings().lock().unwrap().clear();
+}
+
+fn record_connect_timing(phase: &str, started: std::time::Instant) {
+    let ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+    last_connect_timings()
+        .lock()
+        .unwrap()
+        .push((phase.to_string(), ms));
+}
+
+fn connect_timings_snapshot() -> Vec<(String, u64)> {
+    last_connect_timings().lock().unwrap().clone()
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -6274,6 +6362,18 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// LAST_CONNECT_TIMINGS is a process-global buffer and cargo runs tests
+    /// in parallel threads by default, so any test that resets or records
+    /// into it must hold this lock for its whole body — otherwise a sibling
+    /// test's reset() races a record()/read() here and both flake.
+    static CONNECT_TIMINGS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn lock_connect_timings_for_test() -> std::sync::MutexGuard<'static, ()> {
+        CONNECT_TIMINGS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     #[test]
     fn subscription_redirects_stay_on_the_public_origin() {
         let initial = Url::parse("https://subscriptions.example/path").unwrap();
@@ -6374,6 +6474,11 @@ mod tests {
             service_warning_checks: Vec::new(),
             route_explanations: Vec::new(),
             endpoint_bypass_checks: Vec::new(),
+            service_timings_ms: Vec::new(),
+            xray_spawn_ms: None,
+            xray_check_ms: None,
+            singbox_check_ms: None,
+            powershell_fallback_count: 0,
             checks,
         }
     }
@@ -6534,7 +6639,10 @@ mod tests {
         assert_eq!(check.status, "warning");
         assert_eq!(check.user_text, "Требует внимания");
         assert!(report.copy_text.contains("failed_checks: none"));
-        assert!(!report.copy_text.contains("future_warning_probe"));
+        // Copy is the full report now (almost everyone presses Copy, not
+        // "save full bundle"), so a non-fatal check is still listed in the
+        // per-check detail block — just not counted in failed_checks above.
+        assert!(report.copy_text.contains("future_warning_probe"));
     }
 
     #[test]
@@ -6585,6 +6693,67 @@ mod tests {
         assert!(!report.copy_text.contains("203.0.113.7"));
         assert!(!report.copy_text.contains("vless://secret"));
         assert!(!report.support_summary.contains("203.0.113.7"));
+    }
+
+    #[test]
+    fn diagnosis_copy_text_carries_service_connect_timings() {
+        let mut health = diag_health("protected", vec![], vec![]);
+        health.service_timings_ms = vec![
+            ("waiting_adapter".into(), 4200),
+            ("routes_ready".into(), 9100),
+        ];
+        health.xray_check_ms = Some(310);
+        health.singbox_check_ms = Some(0);
+        health.xray_spawn_ms = Some(45);
+        health.powershell_fallback_count = 2;
+
+        let report = build_network_diagnosis(&health, "tun", None, false);
+
+        assert!(report.copy_text.contains("waiting_adapter=4200ms"));
+        assert!(report.copy_text.contains("routes_ready=9100ms"));
+        assert!(report.copy_text.contains("xray_check=310ms"));
+        assert!(report.copy_text.contains("singbox_check=0ms"));
+        assert!(report.copy_text.contains("xray_spawn=45ms"));
+        assert!(report.copy_text.contains("powershell_fallbacks=2"));
+    }
+
+    #[test]
+    fn diagnosis_copy_text_without_timings_says_none() {
+        let _guard = lock_connect_timings_for_test();
+        reset_connect_timings();
+        let health = diag_health("protected", vec![], vec![]);
+        let report = build_network_diagnosis(&health, "tun", None, false);
+        assert!(report.copy_text.contains("service_phases: none"));
+    }
+
+    #[test]
+    fn diagnosis_copy_text_carries_app_connect_phases() {
+        let _guard = lock_connect_timings_for_test();
+        reset_connect_timings();
+        let started = std::time::Instant::now();
+        record_connect_timing("lease_fetch", started);
+
+        let health = diag_health("protected", vec![], vec![]);
+        let report = build_network_diagnosis(&health, "tun", None, false);
+
+        assert!(report.copy_text.contains("app_phases: lease_fetch="));
+        reset_connect_timings();
+    }
+
+    #[test]
+    fn app_connect_timings_reset_and_record_in_order() {
+        let _guard = lock_connect_timings_for_test();
+        reset_connect_timings();
+        let started = std::time::Instant::now();
+        record_connect_timing("lease_fetch", started);
+        record_connect_timing("service_start", started);
+
+        let snapshot = connect_timings_snapshot();
+        let phases: Vec<&str> = snapshot.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(phases, vec!["lease_fetch", "service_start"]);
+
+        reset_connect_timings();
+        assert!(connect_timings_snapshot().is_empty());
     }
 
     #[test]
@@ -7308,6 +7477,7 @@ mod tests {
             powershell_fallback_count: 0,
             singbox_check_ms: Some(10),
             xray_spawn_ms: Some(20),
+            xray_check_ms: Some(5),
             adapter_probe_backend: Some("native_iphelper_evented".into()),
             route_probe_backend: Some("native_getbestroute2".into()),
             native_probe_ms: vec![("adapter_snapshot".into(), 30)],
@@ -9269,19 +9439,29 @@ async fn vpn_connect_direct(mut request: ConnectRequest, app: tauri::AppHandle) 
 
     let use_xray = uses_xray_engine(&request);
     let is_tun = request.proxy_mode == "tun";
+    // Ports handed out by reserve_loopback_ports come straight from the OS
+    // ephemeral range and are therefore already free; see the force-free
+    // sweep below, which is only worth paying for on user-configured ports.
+    let mut ports_freshly_reserved = false;
 
     #[cfg(windows)]
     if is_tun && use_xray {
-        if let Ok(adapters) = competing_tun_adapters() {
-            if !adapters.is_empty() {
-                vpn_log(&format!(
-                    "warning: competing TUN adapters are up: {}",
-                    adapters.join(", ")
-                ));
+        // Diagnostics only — the result is nothing but a log line. Spawning
+        // PowerShell for Get-NetAdapter costs seconds (the same call pattern
+        // measured ~2.4s inside the service), so connect must never wait on it.
+        std::thread::spawn(|| {
+            if let Ok(adapters) = competing_tun_adapters() {
+                if !adapters.is_empty() {
+                    vpn_log(&format!(
+                        "warning: competing TUN adapters are up: {}",
+                        adapters.join(", ")
+                    ));
+                }
             }
-        }
+        });
         match reserve_loopback_ports(3) {
             Ok(ports) => {
+                ports_freshly_reserved = true;
                 request.socks_port = ports[0];
                 request.http_port = ports[1];
                 request.api_port = ports[2];
@@ -9434,6 +9614,7 @@ async fn vpn_connect_direct(mut request: ConnectRequest, app: tauri::AppHandle) 
                         "Proxy ports {} / {} are busy; using runtime ports socks={} http={} api={}",
                         request.socks_port, request.http_port, ports[0], ports[1], ports[2]
                     ));
+                    ports_freshly_reserved = true;
                     request.socks_port = ports[0];
                     request.http_port = ports[1];
                     request.api_port = ports[2];
@@ -9455,12 +9636,24 @@ async fn vpn_connect_direct(mut request: ConnectRequest, app: tauri::AppHandle) 
 
     // Forcefully release local ports to prevent "Only one usage of each socket address is normally permitted"
     // caused by zombie processes (or double React Strict Mode invocations) locking the ports.
-    let _ = force_free_managed_port(request.socks_port).await;
-    let _ = force_free_managed_port(request.http_port).await;
-    let _ = force_free_managed_port(request.api_port).await;
+    // Skipped when the ports were just reserved from the OS ephemeral range:
+    // those are guaranteed free, and each sweep costs a netstat subprocess
+    // (plus a PowerShell CIM query per matching PID).
+    if !ports_freshly_reserved {
+        let _ = force_free_managed_port(request.socks_port).await;
+        let _ = force_free_managed_port(request.http_port).await;
+        let _ = force_free_managed_port(request.api_port).await;
+    }
 
-    // Only wait for sing-box.exe process death when TUN was killed (not preserved)
+    // Only wait for sing-box.exe process death when TUN was killed (not preserved).
+    // Windows TUN is always owned by DoodleRayTunnelService, which performs its
+    // own bounded child cleanup in stop_owned_processes — the app must not wait
+    // on, or try to kill, a sing-box it does not own. Waiting here spawned a
+    // tasklist probe on every connect and could burn 10x200ms plus a further
+    // 4x300ms against the service's own sing-box.
+    let service_owns_tun = cfg!(windows) && is_tun;
     let needs_process_wait = !keep_tun_bridge
+        && !service_owns_tun
         && matches!(
             prev_engine.as_deref(),
             Some("singbox-tun") | Some("xray+tun") | None
@@ -10314,8 +10507,14 @@ async fn vpn_disconnect_direct(app: tauri::AppHandle) -> ConnectResult {
         }
     }
 
+    // Defensive sweep for processes the app spawned directly and lost track
+    // of (system-proxy mode). For TUN, DoodleRayTunnelService owns xray/sing-box
+    // and already runs its own bounded cleanup, so this is pure redundancy on
+    // the hot disconnect/switch path — but it's still a real safety net for
+    // system-proxy mode, so it stays, just off the critical path: it spawns a
+    // Get-CimInstance Win32_Process query over every process on the machine.
     #[cfg(windows)]
-    terminate_orphaned_doodleray_engine_processes();
+    std::thread::spawn(terminate_orphaned_doodleray_engine_processes);
 
     restore_system_proxy_if_owned(false);
 
@@ -11701,8 +11900,12 @@ fn tunnel_service_start(
             }
         }
     }
+    let service_start_started = Instant::now();
     ensure_tunnel_service_running()?;
+    record_connect_timing("service_start", service_start_started);
+    let hello_started = Instant::now();
     let _ = ipc::tunnel_service_hello(env!("CARGO_PKG_VERSION"))?;
+    record_connect_timing("hello", hello_started);
     let response = send_start_tunnel_command(tunnel_service::StartTunnelRequest {
         op_id: tun_op_id(),
         engine_kind,
@@ -12696,6 +12899,11 @@ fn health_report(mode: &str, checks: Vec<ConnectionHealthCheck>) -> ConnectionHe
         service_warning_checks: Vec::new(),
         route_explanations: Vec::new(),
         endpoint_bypass_checks: Vec::new(),
+        service_timings_ms: Vec::new(),
+        xray_spawn_ms: None,
+        xray_check_ms: None,
+        singbox_check_ms: None,
+        powershell_fallback_count: 0,
         checks,
     }
 }
@@ -12763,6 +12971,11 @@ fn attach_tunnel_status_to_health(
     }
     health.route_explanations = status.route_explanations.clone();
     health.endpoint_bypass_checks = status.endpoint_bypass_checks.clone();
+    health.service_timings_ms = status.timings_ms.clone();
+    health.xray_spawn_ms = status.xray_spawn_ms;
+    health.xray_check_ms = status.xray_check_ms;
+    health.singbox_check_ms = status.singbox_check_ms;
+    health.powershell_fallback_count = status.powershell_fallback_count;
     health.verdict = service_health_verdict_to_report(&status.health_verdict).into();
 }
 
@@ -13251,8 +13464,60 @@ fn build_network_diagnosis(
         health.service_degraded_checks.join(" | "),
     ));
 
+    // The "Copy" button is what almost every user actually presses (versus
+    // "Save full bundle"), so this must be the complete report, not a
+    // preview — full support_summary (no character cap) plus every check's
+    // redacted technical detail, not just the failed ones.
+    let checks_detail: String = checks
+        .iter()
+        .map(|c| format!("[{}] {}: {}", c.status, c.id, c.technical_detail_redacted))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Connect-time phase breakdown. The service already records these; they
+    // were previously unreachable from the UI because nothing invoked the
+    // tunnel_service_diagnostics command. powershell_fallback_count matters
+    // because a native probe falling back to spawning PowerShell costs
+    // seconds and is otherwise indistinguishable from a slow network.
+    let service_phases = if health.service_timings_ms.is_empty() {
+        "none".to_string()
+    } else {
+        health
+            .service_timings_ms
+            .iter()
+            .map(|(phase, ms)| format!("{phase}={ms}ms"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let optional_ms = |value: Option<u64>| {
+        value
+            .map(|ms| format!("{ms}ms"))
+            .unwrap_or_else(|| "-".into())
+    };
+    let app_phases = {
+        let snapshot = connect_timings_snapshot();
+        if snapshot.is_empty() {
+            "none".to_string()
+        } else {
+            snapshot
+                .iter()
+                .map(|(phase, ms)| format!("{phase}={ms}ms"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
+    };
+    let timings_block = format!(
+        "connect_timings: xray_check={} singbox_check={} xray_spawn={} powershell_fallbacks={}\napp_phases: {}\nservice_phases: {}",
+        optional_ms(health.xray_check_ms),
+        optional_ms(health.singbox_check_ms),
+        optional_ms(health.xray_spawn_ms),
+        health.powershell_fallback_count,
+        app_phases,
+        service_phases,
+    );
+
     let copy_text = format!(
-        "DoodleRay v{} | {}\nmode={} verdict={} gen={} cause={} repairable={} repair_tried={}\nfailed_checks: {}\n{}",
+        "DoodleRay v{} | {}\nmode={} verdict={} gen={} cause={} repairable={} repair_tried={}\nfailed_checks: {}\n{}\n{}\n{}",
         env!("CARGO_PKG_VERSION"),
         windows_build_short(),
         proxy_mode,
@@ -13265,7 +13530,9 @@ fn build_network_diagnosis(
         can_auto_repair,
         repair_attempted,
         if failed_ids.is_empty() { "none".into() } else { failed_ids.join(", ") },
-        support_summary.chars().take(600).collect::<String>(),
+        timings_block,
+        support_summary,
+        checks_detail,
     );
 
     NetworkDiagnosisReport {
@@ -14283,6 +14550,14 @@ async fn check_silent_autostart() -> bool {
 
 /// Full cleanup — stop all engines, kill subprocesses, unset system proxy
 /// Safe to call multiple times (idempotent)
+/// Called by the frontend once pending secure-storage writes have flushed in
+/// response to `doodleray:flush-before-exit`, so quit doesn't wait out the
+/// full fallback timeout on the common case.
+#[tauri::command]
+fn confirm_secure_storage_flushed(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 fn full_cleanup() {
     #[cfg(all(target_os = "macos", feature = "app-store"))]
     app_store_tunnel::stop_cached();
@@ -14610,6 +14885,7 @@ pub fn run() {
             force_free_port,
             is_admin,
             quit_app,
+            confirm_secure_storage_flushed,
             workshop_api,
             toggle_silent_autostart,
             check_silent_autostart,
@@ -14734,8 +15010,23 @@ pub fn run() {
                         let _ = window.set_focus();
                     }
                 }
-                tauri::RunEvent::ExitRequested { .. } => {
+                tauri::RunEvent::ExitRequested { api, .. } => {
                     xray::begin_shutdown();
+                    // A Settings change (e.g. a custom port) persists via an
+                    // async secure-storage write kicked off from JS; without
+                    // this, quitting right after committing one could tear
+                    // the process down mid round-trip and silently drop it.
+                    // Hold exit open just long enough for the frontend to
+                    // flush, with a bounded fallback so a stuck/missing
+                    // frontend can never prevent the app from quitting.
+                    use tauri::Emitter;
+                    api.prevent_exit();
+                    let _ = app_handle.emit("doodleray:flush-before-exit", ());
+                    let fallback_handle = app_handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+                        fallback_handle.exit(0);
+                    });
                 }
                 tauri::RunEvent::Exit => {
                     full_cleanup();

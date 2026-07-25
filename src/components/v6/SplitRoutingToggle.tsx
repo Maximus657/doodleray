@@ -21,7 +21,7 @@ export default function SplitRoutingToggle({ protectedMode, onOpen, t }: { prote
     <button
       type="button"
       onClick={onOpen}
-      className="v6-hover-bright flex min-w-0 flex-1 items-center gap-[13px] rounded-[20px] border border-white/[0.09] bg-white/[0.05] px-[18px] py-3.5 text-left v6-focus"
+      className="v6-hover-bright flex w-full min-w-0 flex-1 items-center gap-[13px] rounded-[20px] border border-white/[0.09] bg-white/[0.05] px-[18px] py-3.5 text-left v6-focus"
     >
       <span className="v6-tile-accent flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-xl">
         <ShieldCheck className="h-[19px] w-[19px]" strokeWidth={1.9} />

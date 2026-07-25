@@ -76,32 +76,6 @@ embed step. If a fresh-looking build still shows old UI, `cargo clean --release
 -p doodleray --manifest-path .\src-tauri\Cargo.toml` before rebuilding to
 rule it out.
 
-**`DoodleRayService.exe` is bundled from a checked-in-style copy at
-`src-tauri/DoodleRayService.exe`, NOT from `target/release/`.**
-`tauri.windows.conf.json` → `bundle.resources` maps
-`"DoodleRayService.exe": "DoodleRayService.exe"` — that source path is
-relative to `src-tauri/`, a plain file sitting next to `Cargo.toml`. `npx
-tauri build` only compiles and embeds the main `DoodleRay` binary; it never
-touches this file. Every CI workflow (`release.yml`, `windows-v6-rc.yml`,
-`publish-downloads.yml`) does an extra step for exactly this reason — build
-the service, then copy it into place — right before `tauri build`:
-
-```powershell
-cargo build --release --manifest-path .\src-tauri\Cargo.toml --bin DoodleRayService --features windows-service
-Copy-Item .\src-tauri\target\release\DoodleRayService.exe .\src-tauri\ -Force
-```
-
-Skip this and every local installer silently ships whatever
-`src-tauri/DoodleRayService.exe` last happened to contain — `cargo check
---bin DoodleRayService` passes clean, `npx tauri build` succeeds, the app
-binary updates, and the service binary just doesn't, with no error anywhere
-in the chain. Confirmed 2026-07-24: three straight local RC builds shipped a
-day-old service binary this way, including one after a full uninstall +
-server reboot on the test stand — the reboot was a red herring, the resource
-copy step was simply never run. Verify with `(Get-Item
-.\src-tauri\DoodleRayService.exe).LastWriteTime` before trusting a build that
-touched `service.rs` or `tunnel_service.rs`.
-
 ## Secrets
 
 Never print, paste, commit, or include raw secrets in support bundles:
