@@ -1,4 +1,4 @@
-use super::legacy_subscription_token;
+use super::control_plane::legacy_subscription_token;
 #[cfg(windows)]
 use super::{write_private_file, APP_IDENTIFIER};
 #[cfg(windows)]
