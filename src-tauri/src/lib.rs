@@ -3907,6 +3907,42 @@ fn app_api_ed25519_jwk_from_seed(seed: &[u8; 32]) -> (String, serde_json::Value)
     (encoded_public, jwk)
 }
 
+fn app_api_hwid_from_machine_seed(seed: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"doodleray-hwid-v1\n");
+    hasher.update(seed.trim().to_ascii_lowercase().as_bytes());
+    let digest = hasher.finalize();
+    let prefix = digest[..16]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("pc-hwid-{prefix}")
+}
+
+#[cfg(windows)]
+fn app_api_windows_machine_seed() -> Option<String> {
+    use winreg::enums::{KEY_READ, KEY_WOW64_64KEY};
+
+    let key = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
+        .open_subkey_with_flags(
+            "SOFTWARE\\Microsoft\\Cryptography",
+            KEY_READ | KEY_WOW64_64KEY,
+        )
+        .ok()?;
+    let seed: String = key.get_value("MachineGuid").ok()?;
+    let seed = seed.trim().to_string();
+    (!seed.is_empty()).then_some(seed)
+}
+
+fn app_api_hwid_for_new_device() -> String {
+    #[cfg(windows)]
+    if let Some(seed) = app_api_windows_machine_seed() {
+        return app_api_hwid_from_machine_seed(&seed);
+    }
+
+    format!("pc-hwid-{}", uuid::Uuid::new_v4())
+}
+
 fn app_api_generate_device_state() -> Result<AppApiDeviceState, String> {
     let mut seed = [0u8; 32];
     getrandom::getrandom(&mut seed)
@@ -3914,7 +3950,7 @@ fn app_api_generate_device_state() -> Result<AppApiDeviceState, String> {
     let (public_key, public_key_jwk) = app_api_ed25519_jwk_from_seed(&seed);
     Ok(AppApiDeviceState {
         client_device_id: format!("pc-{}", uuid::Uuid::new_v4()),
-        hwid: format!("pc-hwid-{}", uuid::Uuid::new_v4()),
+        hwid: app_api_hwid_for_new_device(),
         public_key,
         public_key_jwk,
         private_key_seed: URL_SAFE_NO_PAD.encode(seed),
@@ -4167,6 +4203,10 @@ async fn app_api_send_bytes(path: &str, bearer: &str) -> Result<Vec<u8>, AppApiH
     Ok(bytes.to_vec())
 }
 
+fn app_api_refresh_error_is_fatal(status: u16) -> bool {
+    matches!(status, 401 | 403)
+}
+
 async fn app_api_refresh_session() -> Result<AppApiTokenResponse, String> {
     let Some(session) = app_api_load_session()? else {
         return Err("DoodleVPN sign-in is required.".into());
@@ -4175,14 +4215,22 @@ async fn app_api_refresh_session() -> Result<AppApiTokenResponse, String> {
         "refresh_token": session.refresh_token,
         "device_id": session.device_id,
     });
-    let refreshed = app_api_send_json::<AppApiTokenResponse>(
+    let refreshed = match app_api_send_json::<AppApiTokenResponse>(
         reqwest::Method::POST,
         "/auth/refresh",
         None,
         Some(body),
     )
     .await
-    .map_err(|e| e.to_string())?;
+    {
+        Ok(refreshed) => refreshed,
+        Err(error) => {
+            if app_api_refresh_error_is_fatal(error.status) {
+                let _ = app_api_delete_session();
+            }
+            return Err(error.to_string());
+        }
+    };
     app_api_store_session(&refreshed)?;
     Ok(refreshed)
 }
@@ -4728,6 +4776,17 @@ async fn app_api_exchange_legacy_subscription_url(
     Ok(app_api_public_session(Some(session)))
 }
 
+fn legacy_auto_exchange_failure_message(error: &str, subscription_url: &str) -> String {
+    let mut error = error.replace(subscription_url, "[redacted-url]");
+    if let Ok(token) = legacy_subscription_token(subscription_url) {
+        error = error.replace(&token, "[redacted-token]");
+    }
+    format!(
+        "legacy subscription auto-restore failed: {}",
+        redact_support_line(&error)
+    )
+}
+
 #[tauri::command]
 async fn app_api_session_status(app: tauri::AppHandle) -> Result<AppApiSessionStatus, String> {
     if !closed_control_plane_enabled() {
@@ -4752,10 +4811,18 @@ async fn app_api_session_status(app: tauri::AppHandle) -> Result<AppApiSessionSt
             }
         }
     }
+    let mut last_failure = None;
     for subscription_url in legacy_urls {
-        if let Ok(session) = app_api_exchange_legacy_subscription_url(&subscription_url).await {
-            return Ok(session);
+        match app_api_exchange_legacy_subscription_url(&subscription_url).await {
+            Ok(session) => return Ok(session),
+            Err(error) => last_failure = Some((subscription_url, error)),
         }
+    }
+    if let Some((subscription_url, error)) = last_failure {
+        eprintln!(
+            "[warn] {}",
+            legacy_auto_exchange_failure_message(&error, &subscription_url)
+        );
     }
     Ok(app_api_public_session(None))
 }
@@ -7313,6 +7380,61 @@ mod tests {
         let migrated = app_api_encode_session_for_disk(&decoded).expect("migrated json");
         assert!(!migrated.contains("legacy-access-secret"));
         assert!(migrated.contains("legacy-refresh-secret"));
+    }
+
+    #[test]
+    fn app_api_windows_hwid_is_stable_without_exposing_the_machine_seed() {
+        let first = app_api_hwid_from_machine_seed("2F8CB1A0-1234-4ABC-9DEF-000011112222");
+        let second = app_api_hwid_from_machine_seed("  2f8cb1a0-1234-4abc-9def-000011112222  ");
+
+        assert_eq!(first, second);
+        assert_eq!(first, "pc-hwid-bfef7afacef4cf4d59ead23be1ab099a");
+        assert_eq!(first.len(), "pc-hwid-".len() + 32);
+        assert!(first.starts_with("pc-hwid-"));
+        assert!(first["pc-hwid-".len()..]
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()));
+        assert!(!first
+            .to_ascii_lowercase()
+            .contains("2f8cb1a0-1234-4abc-9def-000011112222"));
+        assert_ne!(
+            first,
+            app_api_hwid_from_machine_seed("00000000-0000-0000-0000-000000000000")
+        );
+    }
+
+    #[test]
+    fn app_api_generated_device_keeps_random_identity_and_keypair() {
+        let first = app_api_generate_device_state().expect("first device");
+        let second = app_api_generate_device_state().expect("second device");
+
+        assert_ne!(first.client_device_id, second.client_device_id);
+        assert_ne!(first.private_key_seed, second.private_key_seed);
+        assert_ne!(first.public_key, second.public_key);
+    }
+
+    #[test]
+    fn app_api_refresh_error_is_fatal_only_for_auth_rejection() {
+        for status in [401, 403] {
+            assert!(app_api_refresh_error_is_fatal(status));
+        }
+        for status in [0, 500, 503, 200] {
+            assert!(!app_api_refresh_error_is_fatal(status));
+        }
+    }
+
+    #[test]
+    fn legacy_auto_exchange_failure_diagnostic_redacts_url_and_token() {
+        let url = "https://ddlvpn.lol/s/legacy_token_1234567890";
+        let token = "legacy_token_1234567890";
+        let diagnostic = legacy_auto_exchange_failure_message(
+            &format!("exchange failed for {url}; token={token}"),
+            url,
+        );
+
+        assert!(!diagnostic.contains(url));
+        assert!(!diagnostic.contains(token));
+        assert!(diagnostic.contains("legacy subscription auto-restore failed"));
     }
 
     #[test]
