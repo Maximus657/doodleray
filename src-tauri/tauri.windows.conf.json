@@ -14,17 +14,6 @@
         "type": "offlineInstaller",
         "silent": true
       },
-      "signCommand": {
-        "cmd": "powershell",
-        "args": [
-          "-NoProfile",
-          "-ExecutionPolicy",
-          "Bypass",
-          "-File",
-          "./sign-windows-if-configured.ps1",
-          "%1"
-        ]
-      },
       "nsis": {
         "installMode": "perMachine",
         "installerHooks": "nsis-hooks.nsh"

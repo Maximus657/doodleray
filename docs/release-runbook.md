@@ -1,76 +1,61 @@
-# Release Runbook — from merged PR to users seeing the update banner
+# Production release runbook
 
-Learned the hard way 2026-07-25: shipping v6.0.2 required 3 separate manual
-steps, not 1. Missing any of the last two means the GitHub Release looks
-perfect but zero users ever see an update prompt.
+Production has one entry point: GitHub Actions → `release-production` →
+**Run workflow** from `main`.
 
-## The three steps, in order
+## Inputs
 
-### 1. Merge the PR into `main`
-Via GitHub UI (Claude Code's auto-mode classifier blocks `gh pr merge` —
-don't fight it, ask the human to click the button).
+- `source_sha`: the full 40-character SHA currently at `main`.
+- `dry_run`: keep enabled for rehearsal. A dry run builds and validates both
+  enabled targets but cannot create a tag, upload a build, publish a GitHub
+  Release, submit to App Store Connect, or replace `latest.json`.
 
-### 2. Tag and push — builds + publishes the GitHub Release
-```bash
-git checkout main
-git pull
-git tag vX.Y.Z
-git push origin vX.Y.Z
-```
-This triggers `.github/workflows/release.yml` (`on: push: tags: v*`).
-- `build-windows` builds, signs, and creates the GitHub Release with all
-  Windows assets including a **correct, complete `latest.json`** (both
-  `windows-x86_64` and `windows-x86_64-nsis` keys, already valid — verified
-  by hand-inspecting the asset content, no patch needed in practice).
-- `build-macos` needs Apple signing secrets that are **not currently
-  configured** in this repo. It will fail. This is expected and does not
-  affect the Windows release — `build-windows` already stands on its own,
-  release included.
-- `patch-updater-metadata` needs `build-macos` and will show as skipped/failed
-  as a result. Checked its actual job body: it only ever touches the Windows
-  keys in `latest.json`, and those are already correct from step 1. **This
-  failing is cosmetic, not a real blocker, as of 2026-07-25.**
-- Verify the release directly if in doubt:
-  `gh api repos/Maximus657/doodleray/releases/tags/vX.Y.Z --jq '.assets[].name'`
-  should list the `.exe`, `.nsis.zip`, both `.sig` files, and `latest.json`.
+Version and targets come only from `release/release.json`; production currently
+requires both target flags to be enabled. The workflow rejects
+a version older than the live direct-channel version (equality is allowed only
+for an exact-hash idempotent rerun), a SHA other
+than current `main`, a conflicting tag, missing signing material, and any
+attempt to reuse an immutable version with different bytes.
 
-### 3. Manually run `publish-downloads.yml` — this is the step everyone forgets
-The app's real update-check endpoint is **not** GitHub — it's
-`https://doodleray.clickflare.click/channels/direct/latest.json` (see
-`src-tauri/tauri.conf.json` → `plugins.updater.endpoints`). The GitHub
-Release existing changes nothing about what the CDN serves. Nobody's running
-app will ever see a new version until this step runs.
+## Required secrets
 
-`publish-downloads.yml` only triggers via `workflow_dispatch` (manual) — it
-does **not** fire on tag push. Go to:
-https://github.com/Maximus657/doodleray/actions/workflows/publish-downloads.yml
-→ **Run workflow**, and set:
-- **Semver version to publish**: `X.Y.Z` (no `v` prefix, must match the tag)
-- **Release channel**: `direct` (matches the endpoint path in
-  `tauri.conf.json` — `channels/direct/latest.json`; only change this if the
-  app's own endpoint config changes too)
-- **RC-only unsigned build**: leave **unchecked** for a real release (only
-  check this for an internal unsigned RC that must never reach the CDN)
-- **Upload artifacts to doodleray.clickflare.click**: **check this** — this
-  is the actual switch that updates the CDN. Without it, the workflow runs
-  and does nothing user-visible.
+Windows requires `TAURI_SIGNING_PRIVATE_KEY` and, when applicable,
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. These sign Tauri updater artifacts and
+are unrelated to Windows Authenticode. No Windows PFX or certificate is a
+release prerequisite.
 
-## How users actually find out
+The enabled App Store target fails closed without:
 
-The app checks for updates on launch, then every 30 minutes
-(`src/App.tsx`, `checkForUpdates` / the 30-min `setInterval`). There is no
-push notification and no way to force it sooner from the server side — a
-user who already has the app open won't see the banner until their next
-periodic check or a full restart (closing to the tray does **not** count;
-the process must actually relaunch).
+- `APPLE_CERTIFICATE` and `APPLE_CERTIFICATE_PASSWORD` (the imported keychain
+  must contain Apple Distribution and Mac Installer Distribution identities);
+- `MACOS_APP_STORE_HOST_PROFILE_BASE64`;
+- `MACOS_APP_STORE_EXTENSION_PROFILE_BASE64`;
+- `APP_STORE_CONNECT_API_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, and
+  `APP_STORE_CONNECT_API_PRIVATE_KEY`.
 
-## Sanity checklist before telling the user "it's live"
+CDN publication requires `DOWNLOADS_SSH_PRIVATE_KEY`; host/user/port/root may
+be overridden with the documented `DOWNLOADS_*` repository variables.
 
-- [ ] GitHub Release for the tag exists and is not a draft.
-- [ ] `latest.json` on the release has both Windows platform keys with
-      signatures (spot check: download it, eyeball the two `platforms.*`
-      entries).
-- [ ] `publish-downloads.yml` was run manually with "Upload artifacts to
-      doodleray.clickflare.click" checked.
-- [ ] Only then say the update is live — merging the PR and pushing the tag
-      are necessary but silently insufficient on their own.
+## Order and idempotency
+
+The Windows app is built once. The retained artifact is used for QA, the CDN,
+and GitHub Release—deploy jobs never rebuild it. Publication order is:
+
+1. upload or verify the immutable CDN version directory;
+2. upload the signed macOS build to App Store Connect;
+3. create or verify the exact tag and publish the GitHub Release;
+4. atomically promote the CDN `latest.json` as the last mutation.
+
+An existing file set with identical hashes is a no-op. Different hashes for an
+existing version stop the release. Published artifacts are never overwritten;
+rollback is a new SemVer release.
+
+Apple review remains asynchronous. A successful workflow proves submission,
+not App Store approval.
+
+## Before production
+
+Run the workflow with `dry_run=true`, then complete the Windows install/update
+matrix and macOS TestFlight upgrade checks in `docs/release-gate.md`. Until
+those external checks are attached, the status is **RC only, production
+blocked**.

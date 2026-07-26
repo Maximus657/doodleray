@@ -7,7 +7,6 @@ param(
     [string] $EvidenceDir = "C:\DoodleRayQA\evidence",
     [switch] $InjectStaleWinInet,
     [switch] $InjectCorporatePac,
-    [switch] $AllowUnsignedLocalRc,
     [string] $SecretPath = (Join-Path $PSScriptRoot "..\..\secrets\doodlevpn-server-access.md"),
     [string] $SubscriptionSecretPath = (Join-Path $PSScriptRoot "..\..\secrets\doodlevpn-test-subscription-url.txt")
 )
@@ -17,7 +16,6 @@ $ProgressPreference = "SilentlyContinue"
 
 $injectStaleWinInetLiteral = if ($InjectStaleWinInet.IsPresent) { '$true' } else { '$false' }
 $injectCorporatePacLiteral = if ($InjectCorporatePac.IsPresent) { '$true' } else { '$false' }
-$allowUnsignedLocalRcLiteral = if ($AllowUnsignedLocalRc.IsPresent) { '$true' } else { '$false' }
 
 # Synthetic corporate PAC URL. It must survive the update untouched: DoodleRay
 # may only clean DoodleRay-owned loopback proxy state, never corporate config.
@@ -122,13 +120,6 @@ Install-Silently "$RemoteRcInstaller"
 
 `$serviceExe = "C:\Program Files\DoodleRay\DoodleRayService.exe"
 `$sig = Get-AuthenticodeSignature -LiteralPath `$serviceExe
-if (`$sig.Status -ne "Valid") {
-    if ($allowUnsignedLocalRcLiteral) {
-        Write-Warning "unsigned local RC allowed for smoke QA only: `$serviceExe status=`$(`$sig.Status)"
-    } else {
-        throw "invalid signature for updated service: `$(`$sig.Status)"
-    }
-}
 
 `$service = Get-Service DoodleRayTunnelService -ErrorAction Stop
 if (`$service.Status -ne "Running") {

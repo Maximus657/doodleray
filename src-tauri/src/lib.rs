@@ -5716,10 +5716,7 @@ mod tests {
             config["bundle"]["windows"]["webviewInstallMode"]["silent"],
             json!(true)
         );
-        assert_eq!(
-            config["bundle"]["windows"]["signCommand"]["cmd"],
-            json!("powershell")
-        );
+        assert!(config["bundle"]["windows"].get("signCommand").is_none());
     }
 
     #[test]

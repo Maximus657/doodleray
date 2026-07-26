@@ -12,8 +12,8 @@ on:
       - scripts/macos/build-libxray.sh
       - scripts/vpn-qa/test-isolated-xray-tun.sh
       - .github/workflows/runtime-updates.yml
-      - .github/workflows/release.yml
-      - .github/workflows/publish-downloads.yml
+      - .github/workflows/ci.yml
+      - .github/workflows/release-production.yml
 
 concurrency:
   group: runtime-updates
@@ -195,26 +195,23 @@ jobs:
         if: steps.changes.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          BASE_BRANCH: develop
+          BASE_BRANCH: main
         run: |
-          branch='codex/runtime-updates'
+          branch="codex/runtime-updates-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git fetch origin "refs/heads/$branch:refs/remotes/origin/$branch" || true
           git checkout -B "$branch"
           git add runtime-versions.json
           git commit -m 'chore: update VPN runtimes'
-          git push --force-with-lease origin "HEAD:$branch"
+          git push origin "HEAD:$branch"
 
-          if [ "$(gh pr list --head "$branch" --state open --json number --jq length)" = '0' ]; then
-            gh pr create \
-              --base "$BASE_BRANCH" \
-              --head "$branch" \
-              --title 'chore: update VPN runtimes' \
-              --body $'Automated update from official release metadata.\n\n- [x] Official asset digests verified\n- [x] Runtime manifest verified\n- [ ] Release/build gates\n- [ ] Manual compatibility review'
-          fi
+          gh pr create \
+            --base "$BASE_BRANCH" \
+            --head "$branch" \
+            --title 'chore: update VPN runtimes' \
+            --body $'Automated update from official release metadata.\n\n- [x] Official asset digests verified\n- [x] Runtime manifest verified\n- [ ] Release/build gates\n- [ ] Manual compatibility review'
 
           pr_number="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number')"
           if [ "${{ steps.risk.outputs.safe }}" = 'true' ] && [ -n "$pr_number" ]; then
-            gh pr merge "$pr_number" --auto --squash
+            gh pr merge "$pr_number" --auto --squash --delete-branch
           fi

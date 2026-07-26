@@ -15,8 +15,8 @@ if ! command -v caddy >/dev/null 2>&1; then
   exit 1
 fi
 
-install -d -m 0755 "$ROOT/public/releases/direct" "$ROOT/public/releases/store-win32"
-install -d -m 0755 "$ROOT/public/channels/direct" "$ROOT/public/channels/store-win32"
+install -d -m 0755 "$ROOT/public/releases/direct"
+install -d -m 0755 "$ROOT/public/channels/direct"
 install -d -m 0750 "$ROOT/staging"
 
 cat > "$ROOT/public/index.html" <<EOF

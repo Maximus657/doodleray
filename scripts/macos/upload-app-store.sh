@@ -16,6 +16,9 @@ EXPORT_OPTIONS="$OUTPUT_DIR/ExportOptions-$STAMP.plist"
 UPLOAD_LOG="$OUTPUT_DIR/upload-$STAMP.log"
 HOST_PROFILE_PLIST="$(mktemp "${TMPDIR:-/tmp}/doodleray-upload-host-profile.XXXXXX")"
 EVIDENCE="$OUTPUT_DIR/upload-evidence-$STAMP.json"
+API_KEY_PATH="${APP_STORE_CONNECT_API_KEY_PATH:-}"
+API_KEY_ID="${APP_STORE_CONNECT_API_KEY_ID:-}"
+API_ISSUER_ID="${APP_STORE_CONNECT_ISSUER_ID:-}"
 read -r RELEASE_VERSION RELEASE_BUILD < <(
   node -e 'const release = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")); console.log(`${release.version} ${release.macBuild}`);' "$ROOT_DIR/release/release.json"
 )
@@ -27,6 +30,9 @@ node "$ROOT_DIR/scripts/release/check-release.mjs"
   printf 'Invalid App Store bundle version: %s\n' "$RELEASE_BUILD" >&2
   exit 1
 }
+[ -f "$API_KEY_PATH" ] || { printf 'App Store Connect API private-key file is missing.\n' >&2; exit 1; }
+[ -n "$API_KEY_ID" ] || { printf 'APP_STORE_CONNECT_API_KEY_ID is missing.\n' >&2; exit 1; }
+[ -n "$API_ISSUER_ID" ] || { printf 'APP_STORE_CONNECT_ISSUER_ID is missing.\n' >&2; exit 1; }
 
 git -C "$ROOT_DIR" diff --quiet
 git -C "$ROOT_DIR" diff --cached --quiet
@@ -91,7 +97,10 @@ if ! xcodebuild \
   -archivePath "$ARCHIVE" \
   -exportPath "$EXPORT_DIR" \
   -exportOptionsPlist "$EXPORT_OPTIONS" \
-  -allowProvisioningUpdates > "$UPLOAD_LOG" 2>&1; then
+  -allowProvisioningUpdates \
+  -authenticationKeyPath "$API_KEY_PATH" \
+  -authenticationKeyID "$API_KEY_ID" \
+  -authenticationKeyIssuerID "$API_ISSUER_ID" > "$UPLOAD_LOG" 2>&1; then
   tail -n 160 "$UPLOAD_LOG" >&2
   exit 1
 fi
