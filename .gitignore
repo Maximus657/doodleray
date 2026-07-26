@@ -77,3 +77,9 @@ baseline-user-*.json
 lan-baseline-system*.json
 lan-baseline-system*.txt
 tools/sysinternals/
+
+# Local-only release and agent state
+.release-upload/
+backend_credits.md
+.superpowers/
+.claude/settings.local.json

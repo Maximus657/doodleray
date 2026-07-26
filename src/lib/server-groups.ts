@@ -1,5 +1,5 @@
 import type { ServerConfig } from '../stores/app-store';
-import { localizedCountryName } from './ui-format';
+import { localizedCountryName } from './ui-format.ts';
 
 export interface ServerDisplayGroup {
   id: string;
