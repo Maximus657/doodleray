@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import { AlertTriangle, Bot, ChevronDown, ClipboardPaste, ExternalLink, Globe, Loader2, Plus, ShieldCheck } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../stores/app-store';
 import { formatTime } from '../lib/utils';
 import { refreshSubscription, fetchSubscription } from '../lib/subscription';
@@ -52,6 +53,7 @@ import DiagnosticPanel from '../components/v6/DiagnosticPanel';
 import QuickAddPanel from '../components/v6/QuickAddPanel';
 import LoginFlightOverlay from '../components/v6/LoginFlightOverlay';
 import { deriveOrbState, ORB_LABEL_KEY } from '../components/v6/status';
+import { selectDashboardState } from './dashboard-state';
 
 const TRAFFIC_LIMIT_EOF_WINDOW_MS = 12_000;
 const TRAFFIC_LIMIT_EOF_THRESHOLD = 4;
@@ -213,7 +215,7 @@ export default function Dashboard() {
     addSubscription, addServer,
     setSocksPort, setHttpPort, showStats,
     appSessionDeviceAllowed, language,
-  } = useAppStore();
+  } = useAppStore(useShallow(selectDashboardState));
   const { t } = useTranslation();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -1631,10 +1633,8 @@ export default function Dashboard() {
   // The mode selector now lives in Settings, which AppShell renders as a
   // sibling of Dashboard rather than a child — it can't receive this handler
   // as a prop, so Dashboard registers it on the store instead. Registered
-  // once via a ref-backed stable wrapper: Dashboard subscribes to the whole
-  // store (no selector), so re-registering on every handleModeSelect
-  // reference change would re-trigger this same effect on every store
-  // write, forever.
+  // once via a ref-backed stable wrapper so handler identity changes never
+  // re-register the store callback or create a setter/effect loop.
   const handleModeSelectRef = useRef(handleModeSelect);
   useEffect(() => { handleModeSelectRef.current = handleModeSelect; });
   useEffect(() => {
