@@ -22,6 +22,7 @@ import {
 import { useWorkshopStore } from '../stores/workshop-store';
 import type { RoutingPreset, RoutingRule } from '../stores/workshop-store';
 import { useTranslation } from '../locales';
+import { desktopBridge } from '../platform/tauri/desktop-bridge';
 
 const ACTION_ORDER: RoutingRule['action'][] = ['proxy', 'direct', 'block'];
 
@@ -365,8 +366,7 @@ function MyRulesTab({ onOpenBrowse }: { onOpenBrowse: () => void }) {
     setShowAppScanner(true);
     setScanningApps(true);
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      const apps = await invoke<{ name: string; path: string }[]>('scan_installed_apps');
+      const apps = await desktopBridge.command<{ name: string; path: string }[]>('scan_installed_apps');
       setInstalledApps(apps);
     } catch {
       setInstalledApps([]);

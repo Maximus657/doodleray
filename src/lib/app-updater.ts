@@ -1,4 +1,5 @@
 import { desktopBridge } from '../platform/tauri/desktop-bridge.ts';
+import { isInAppUpdateEnabled, isUpdateManagedByStore, openStoreUpdatePage } from './update-channel';
 
 type UpdateEvent = {
   event: 'Started' | 'Progress' | 'Finished';
@@ -56,7 +57,6 @@ export function setCachedUpdate(update: UpdateLike | null) {
 }
 
 export async function checkForAppUpdate() {
-  const { isUpdateManagedByStore } = await import('./update-channel');
   if (isUpdateManagedByStore()) {
     cachedUpdate = null;
     return null;
@@ -104,7 +104,6 @@ async function installAppUpdateOnce({
 }: InstallOptions = {}) {
   // App Store builds delegate installation to Apple. Callers branch earlier
   // for proper UI state; this is the defense-in-depth choke point.
-  const { isInAppUpdateEnabled, openStoreUpdatePage } = await import('./update-channel');
   if (!isInAppUpdateEnabled()) {
     await openStoreUpdatePage();
     return false;

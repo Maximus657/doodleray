@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
 import type { ServerConfig, Subscription, SystemProxyMode } from '../stores/app-store';
 import { useAppStore } from '../stores/app-store';
 import { isClosedControlPlaneEnabled } from './build-policy';
@@ -381,5 +380,5 @@ export async function buildAppConnectLocationRequestFromState(
 
 export async function appConnectLocation(server: ServerConfig) {
   const request = await buildAppConnectLocationRequestFromState(server);
-  return await invoke('app_connect_location', { request });
+  return await desktopBridge.appConnectLocation(request);
 }

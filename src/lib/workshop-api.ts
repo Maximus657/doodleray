@@ -1,19 +1,18 @@
 // Workshop API client
-// Uses Tauri invoke to bypass SSL — all HTTP goes through Rust reqwest
+// Uses the Tauri bridge to bypass SSL — all HTTP goes through Rust reqwest
 
-import { invoke } from '@tauri-apps/api/core';
 import { sanitizeDiagnosticText } from './redaction';
 import { isDiagnosticsTelemetryEnabled } from './build-policy';
+import { useAppStore } from '../stores/app-store';
+import { desktopBridge } from '../platform/tauri/desktop-bridge';
 
 const API_BASE = 'https://94-241-172-101.sslip.io/doodleray-api/api';
 const MAX_API_RESPONSE_BYTES = 2 * 1024 * 1024;
 
-// We need to access app state for heartbeat VPN status
-// Lazy import to avoid circular dependencies
+// Heartbeat reports the current app state through the shared store.
 let getAppState: (() => any) | null = null;
 async function ensureAppState() {
   if (!getAppState) {
-    const { useAppStore } = await import('../stores/app-store');
     getAppState = () => useAppStore.getState();
   }
   return getAppState();
@@ -74,7 +73,7 @@ async function apiGet(path: string): Promise<any> {
   if (!isTauriRuntime()) {
     return browserApiRequest(path, 'GET');
   }
-  const text = await invoke<string>('workshop_api', {
+  const text = await desktopBridge.command<string>('workshop_api', {
     url: `${API_BASE}${path}`,
     method: 'GET',
     body: null,
@@ -86,7 +85,7 @@ async function apiPost(path: string, data: any): Promise<any> {
   if (!isTauriRuntime()) {
     return browserApiRequest(path, 'POST', data);
   }
-  const text = await invoke<string>('workshop_api', {
+  const text = await desktopBridge.command<string>('workshop_api', {
     url: `${API_BASE}${path}`,
     method: 'POST',
     body: JSON.stringify(data),
@@ -347,7 +346,7 @@ export async function reportConnectionError(opts: {
     }
     if (!isTauriRuntime()) return false;
 
-    await invoke('app_api_submit_diagnostics', {
+    await desktopBridge.command('app_api_submit_diagnostics', {
       submission: {
         manual: opts.force === true,
         events: [{

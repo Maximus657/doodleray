@@ -20,7 +20,10 @@ const values = new Map<string, unknown>([
   ['app_api_refresh', { logged_in: true, device_id: 'refreshed-device' }],
   ['app_api_locations', { locations: [{ id: 'de' }] }],
   ['app_api_subscription_status', { active: true }],
-  ['vpn_disconnect', 'disconnected'],
+  ['tunnel_service_health', { verdict: 'protected' }],
+  ['app_connect_location', { success: true, message: 'connected' }],
+  ['vpn_connect', { success: true, message: 'legacy connected' }],
+  ['vpn_disconnect', { success: true, message: 'disconnected' }],
   ['prepare_for_app_update', 'prepared'],
   ['get_connection_health', { verdict: 'protected', checks: [] }],
   ['check_defender_exclusion', true],
@@ -44,7 +47,16 @@ assertJsonEqual(await bridge.appApiRefresh(), { logged_in: true, device_id: 'ref
 assertEqual(await bridge.appApiLogout(), undefined);
 assertJsonEqual(await bridge.appApiLocations(), { locations: [{ id: 'de' }] });
 assertJsonEqual(await bridge.appApiSubscriptionStatus(), { active: true });
-assertEqual(await bridge.vpnDisconnect(), 'disconnected');
+assertJsonEqual(await bridge.command('tunnel_service_health'), { verdict: 'protected' });
+assertJsonEqual(
+  await bridge.appConnectLocation({ location_id: 'de', proxy_mode: 'tun' }),
+  { success: true, message: 'connected' },
+);
+assertJsonEqual(
+  await bridge.vpnConnect({ server_address: 'example.invalid', server_port: 443 }),
+  { success: true, message: 'legacy connected' },
+);
+assertJsonEqual(await bridge.vpnDisconnect(), { success: true, message: 'disconnected' });
 assertEqual(await bridge.prepareForAppUpdate(), 'prepared');
 assertEqual(await bridge.secureStoreSet('doodleray-storage', 'state'), undefined);
 assertEqual(await bridge.secureStoreDelete('doodleray-storage'), undefined);
@@ -70,6 +82,15 @@ assertJsonEqual(calls, [
   { command: 'app_api_logout' },
   { command: 'app_api_locations' },
   { command: 'app_api_subscription_status' },
+  { command: 'tunnel_service_health' },
+  {
+    command: 'app_connect_location',
+    args: { request: { location_id: 'de', proxy_mode: 'tun' } },
+  },
+  {
+    command: 'vpn_connect',
+    args: { request: { server_address: 'example.invalid', server_port: 443 } },
+  },
   { command: 'vpn_disconnect' },
   { command: 'prepare_for_app_update' },
   { command: 'secure_store_set', args: { key: 'doodleray-storage', value: 'state' } },

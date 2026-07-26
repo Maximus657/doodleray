@@ -1,7 +1,6 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware';
 import { mergeLegacyDoodleSubscriptionState } from '../lib/legacy-subscription';
-import { invoke } from '@tauri-apps/api/core';
 import { desktopBridge } from '../platform/tauri/desktop-bridge.ts';
 import {
   buildServerSelectionIndex,
@@ -256,7 +255,7 @@ const secureStorage: StateStorage<Promise<void> | void> = {
 
     const legacyValue = safeLocalGet(name);
     try {
-      const secureValue = await invoke<string | null>('secure_store_get', { key: name });
+      const secureValue = await desktopBridge.command<string | null>('secure_store_get', { key: name });
       if (secureValue !== null) {
         const reconciledValue = name === 'doodleray-storage' && legacyValue !== null
           ? mergeLegacyDoodleSubscriptionState(secureValue, legacyValue)

@@ -1,7 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, useNavigate } from 'react-router-dom';
 import { useEffect, type ReactNode } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { Download, Loader2, ArrowLeft } from 'lucide-react';
+import { isEnabled } from '@tauri-apps/plugin-autostart';
 import { useTranslation } from './locales';
 import AppShell from './components/v6/AppShell';
 import Dashboard from './pages/Dashboard';
@@ -9,7 +9,7 @@ import Servers from './pages/Servers';
 import Workshop from './pages/Workshop';
 
 import Settings from './pages/Settings';
-import { useAppStore } from './stores/app-store';
+import { flushPendingSecureWrites, useAppStore } from './stores/app-store';
 import { useToastStore } from './stores/toast-store';
 import { buildConnectRequestFromState } from './lib/connect-helpers';
 import { isHealthAcceptable, summarizeHealthFailures, waitForConnectionHealth } from './lib/connection-health';
@@ -18,7 +18,11 @@ import { checkForAppUpdate, installAppUpdate } from './lib/app-updater';
 import { isInAppUpdateEnabled, openStoreUpdatePage } from './lib/update-channel';
 import { buildAppConnectLocationRequestFromState, isClosedLocationServer } from './lib/app-control-plane';
 import { isClosedControlPlaneEnabled, isDesktopAutostartAvailable } from './lib/build-policy';
+import { reportConnectionError } from './lib/workshop-api';
+import { desktopBridge } from './platform/tauri/desktop-bridge';
 import './index.css';
+
+const invoke = desktopBridge.command.bind(desktopBridge);
 
 function formatMessage(template: string, values: Record<string, string | number>) {
   return Object.entries(values).reduce(
@@ -260,7 +264,6 @@ function App() {
       }
 
       try {
-        const { isEnabled } = await import('@tauri-apps/plugin-autostart');
         const enabled = await isEnabled();
         useAppStore.setState({ autoStart: enabled });
       } catch (err) {
@@ -372,12 +375,13 @@ function App() {
       try {
         state.addLog('info', `Auto-connecting to ${srv.name}...`);
         
-        const { invoke } = await import('@tauri-apps/api/core');
         const useClosedLocation = isClosedControlPlaneEnabled() && isClosedLocationServer(srv);
         const request = useClosedLocation
           ? await buildAppConnectLocationRequestFromState(srv)
           : await buildConnectRequestFromState(srv);
-        const result: any = await invoke(useClosedLocation ? 'app_connect_location' : 'vpn_connect', { request });
+        const result = useClosedLocation
+          ? await desktopBridge.appConnectLocation(request)
+          : await desktopBridge.vpnConnect(request);
         
         if (result.success) {
           const { health } = await waitForConnectionHealth(
@@ -399,7 +403,6 @@ function App() {
         } else {
           useAppStore.setState({ status: 'disconnected' });
           state.addLog('error', `Auto-connect failed: ${result.message}`);
-          const { reportConnectionError } = await import('./lib/workshop-api');
           reportConnectionError({
             eventType: 'connect_fail',
             serverName: srv.name,
@@ -414,7 +417,6 @@ function App() {
         useAppStore.setState({ status: 'disconnected' });
         const message = err.message || String(err);
         state.addLog('error', `Auto-connect error: ${message}`);
-        const { reportConnectionError } = await import('./lib/workshop-api');
         reportConnectionError({
           eventType: 'connect_fail',
           serverName: srv.name,
@@ -500,10 +502,8 @@ function App() {
     import('@tauri-apps/api/event').then(({ listen }) =>
       listen('doodleray:flush-before-exit', async () => {
         try {
-          const { flushPendingSecureWrites } = await import('./stores/app-store');
           await flushPendingSecureWrites();
         } finally {
-          const { invoke } = await import('@tauri-apps/api/core');
           await invoke('confirm_secure_storage_flushed').catch(() => undefined);
         }
       })

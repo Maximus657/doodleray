@@ -4,6 +4,7 @@
  */
 import type { ServerConfig, ProxyMode, SystemProxyMode } from '../stores/app-store';
 import { useAppStore } from '../stores/app-store';
+import { useWorkshopStore } from '../stores/workshop-store';
 import { sanitizeRawXrayConfig } from './raw-xray-sanitizer';
 
 export type RoutingRulePayload = { rule_type: string; value: string; action: string };
@@ -121,9 +122,8 @@ export function buildPingProbeRequest(server: ServerConfig) {
   });
 }
 
-/** Get active routing rules from WorkshopStore (async to avoid circular deps). */
+/** Get active routing rules from the shared Workshop store. */
 export async function getActiveRoutingRules() {
-  const { useWorkshopStore } = await import('../stores/workshop-store');
   return useWorkshopStore.getState().getAllActiveRules()
     .map(r => ({ rule_type: r.type, value: r.value, action: r.action }));
 }

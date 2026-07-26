@@ -3,12 +3,14 @@ import gsap from 'gsap';
 import { useGSAP } from '@gsap/react';
 import { HelpCircle, RectangleHorizontal, RectangleVertical, SlidersHorizontal } from 'lucide-react';
 import { useAppStore } from '../../stores/app-store';
+import { useToastStore } from '../../stores/toast-store';
 import { useTranslation } from '../../locales';
 import { getSubscriptionById, getSubscriptionTrafficStatus } from '../../lib/subscription-status';
 import { isNetworkExtensionOnlyBuild } from '../../lib/build-policy';
 import WindowControls from './TitleBar';
 import SupportModal from './SupportModal';
 import SettingsModal from './SettingsModal';
+import { desktopBridge } from '../../platform/tauri/desktop-bridge';
 
 gsap.registerPlugin(useGSAP);
 
@@ -189,15 +191,13 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const exportSupportBundle = async () => {
     const s = useAppStore.getState();
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('export_support_bundle', {
+      await desktopBridge.command('export_support_bundle', {
         proxyMode: s.proxyMode,
         systemProxyMode: s.systemProxyMode,
         socksPort: s.socksPort,
         httpPort: s.httpPort,
       });
       s.addLog('success', t('supportBundleExported' as never));
-      const { useToastStore } = await import('../../stores/toast-store');
       useToastStore.getState().addToast(t('supportBundleExported' as never), 'success');
     } catch (err) {
       s.addLog('error', `${t('supportBundleExportFailed' as never)}: ${err instanceof Error ? err.message : String(err)}`);

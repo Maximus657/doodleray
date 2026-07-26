@@ -1,7 +1,10 @@
 import { useState } from 'react';
 import { X, LogOut, RefreshCw, Trash2, DownloadCloud, Wrench, Loader2, Send } from 'lucide-react';
+import { disable, enable } from '@tauri-apps/plugin-autostart';
 import { useAppStore, type SupportedLanguage } from '../../stores/app-store';
+import { useToastStore } from '../../stores/toast-store';
 import { refreshSubscription } from '../../lib/subscription';
+import { checkForAppUpdate } from '../../lib/app-updater';
 import { isClosedControlPlaneEnabled, isDesktopAutostartAvailable, isNetworkExtensionOnlyBuild } from '../../lib/build-policy';
 import { appApiLogout } from '../../lib/app-control-plane';
 import { isUpdateManagedByStore, openStoreUpdatePage } from '../../lib/update-channel';
@@ -11,6 +14,7 @@ import Toggle from './Toggle';
 import SplitRoutingToggle from './SplitRoutingToggle';
 import SplitRoutingModal from './SplitRoutingModal';
 import ModeSelector from './ModeCard';
+import { desktopBridge } from '../../platform/tauri/desktop-bridge';
 
 type T = (key: never) => string;
 
@@ -102,7 +106,6 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
     const next = !autoStart;
     useAppStore.setState({ autoStart: next });
     try {
-      const { enable, disable } = await import('@tauri-apps/plugin-autostart');
       if (next) await enable(); else await disable();
     } catch {
       useAppStore.setState({ autoStart: !next });
@@ -133,7 +136,6 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
         return;
       }
 
-      const { checkForAppUpdate } = await import('../../lib/app-updater');
       const update = await checkForAppUpdate();
       if (update) {
         useAppStore.getState().setUpdateState({
@@ -157,10 +159,8 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
     if (!isTauri() || repairing) return;
     setRepairing(true);
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      const message = await invoke('repair_windows_runtime') as string;
+      const message = await desktopBridge.command<string>('repair_windows_runtime');
       addLog('info', message.split('\n')[0]);
-      const { useToastStore } = await import('../../stores/toast-store');
       useToastStore.getState().addToast(message.split('\n')[0], 'success');
     } catch (err) {
       addLog('error', `Repair failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -175,8 +175,7 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
       setLoggingOut(true);
       try {
         if (isTauri()) {
-          const { invoke } = await import('@tauri-apps/api/core');
-          await invoke('vpn_disconnect').catch(() => {});
+          await desktopBridge.vpnDisconnect().catch(() => {});
         }
         let logoutError: unknown = null;
         await appApiLogout().catch((err) => { logoutError = err; });
@@ -196,9 +195,8 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
     }
 
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('vpn_disconnect').catch(() => {});
-      await invoke('quit_app');
+      await desktopBridge.vpnDisconnect().catch(() => {});
+      await desktopBridge.command('quit_app');
     } catch {
       window.close();
     }

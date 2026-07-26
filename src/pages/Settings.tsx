@@ -3,7 +3,9 @@ import { Settings as SettingsIcon, Trash2, RotateCcw, Database, Zap, Monitor, Do
 import { disable } from '@tauri-apps/plugin-autostart';
 import { useTranslation } from '../locales';
 import { useAppStore } from '../stores/app-store';
+import { useToastStore } from '../stores/toast-store';
 import { checkForAppUpdate, getCachedUpdate, installAppUpdate } from '../lib/app-updater';
+import { isInAppUpdateEnabled, isUpdateManagedByStore, openStoreUpdatePage } from '../lib/update-channel';
 import { clearAppCache, diagnosticsReportToText, getStorageReport, runNetworkDiagnostics, type DiagnosticCheck, type NetworkDiagnosticsReport, type StorageReport } from '../lib/diagnostics';
 import { reportConnectionError } from '../lib/workshop-api';
 import { isDesktopAutostartAvailable } from '../lib/build-policy';
@@ -251,11 +253,9 @@ export default function Settings() {
     try {
       const result = await desktopBridge.addDefenderExclusion();
       setDefenderStatus(result);
-      const { useToastStore } = await import('../stores/toast-store');
       useToastStore.getState().addToast('Defender exclusion added ✓', 'success');
     } catch (e: any) {
       setDefenderStatus('Failed: ' + (e?.toString() || 'Unknown error'));
-      const { useToastStore } = await import('../stores/toast-store');
       useToastStore.getState().addToast('Defender exclusion failed (need admin)', 'error');
     } finally {
       setDefenderLoading(false);
@@ -274,7 +274,6 @@ export default function Settings() {
           useAppStore.setState({ autoStart: false });
         } catch (_) { /* ignore if already disabled */ }
       }
-      const { useToastStore } = await import('../stores/toast-store');
       useToastStore.getState().addToast(
         val ? 'Admin autostart enabled ✓' : 'Admin autostart disabled',
         'success'
@@ -302,7 +301,6 @@ export default function Settings() {
       // Revert on failure (e.g. UAC declined)
       setSilentAdminAutostart(!val);
       addLog('error', `Failed to toggle admin autostart: ${e}`);
-      const { useToastStore } = await import('../stores/toast-store');
       useToastStore.getState().addToast(
         `Autostart failed: ${e?.toString()?.replace('Error: ', '') || 'UAC declined'}`,
         'error'
@@ -330,8 +328,7 @@ export default function Settings() {
   useEffect(() => {
     (async () => {
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        const state = await invoke<string>('detect_stale_doodleray_proxy');
+        const state = await desktopBridge.command<string>('detect_stale_doodleray_proxy');
         setProxyStaleState(state);
       } catch {
         setProxyStaleState('unsupported');
@@ -343,12 +340,10 @@ export default function Settings() {
     setProxyRepairLoading(true);
     setProxyRepairStatus('');
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      const outcome = await invoke<string>('repair_stale_doodleray_proxy_only');
+      const outcome = await desktopBridge.command<string>('repair_stale_doodleray_proxy_only');
       setProxyRepairStatus(`${t('windowsProxyRepairDone')}: ${outcome}`);
       setProxyStaleState('none');
       addLog('success', `${t('windowsProxyRepair')}: ${outcome}`);
-      const { useToastStore } = await import('../stores/toast-store');
       useToastStore.getState().addToast(t('windowsProxyRepairDone'), 'success');
     } catch (e: any) {
       const message = e?.message || String(e);
@@ -366,7 +361,6 @@ export default function Settings() {
       updateProgress: null,
     });
     try {
-      const { isUpdateManagedByStore, openStoreUpdatePage } = await import('../lib/update-channel');
       if (isUpdateManagedByStore()) {
         await openStoreUpdatePage();
         setUpdateState({
@@ -385,7 +379,6 @@ export default function Settings() {
       if (update) {
         // Keep managed App Store builds on Apple's update flow; direct
         // Windows builds continue through the signed in-app updater.
-        const { isInAppUpdateEnabled, openStoreUpdatePage } = await import('../lib/update-channel');
         if (!isInAppUpdateEnabled()) {
           await openStoreUpdatePage();
           setUpdateState({

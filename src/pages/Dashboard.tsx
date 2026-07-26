@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } fr
 import { AlertTriangle, Bot, ChevronDown, ClipboardPaste, ExternalLink, Globe, Loader2, Plus, ShieldCheck } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../stores/app-store';
+import { useWorkshopStore } from '../stores/workshop-store';
 import { formatTime } from '../lib/utils';
 import { refreshSubscription, fetchSubscription } from '../lib/subscription';
 import { parseProxyLink } from '../lib/parser';
@@ -40,6 +41,7 @@ import {
   syncClosedLocationsToStore,
   type AppApiSessionStatus,
 } from '../lib/app-control-plane';
+import { desktopBridge } from '../platform/tauri/desktop-bridge';
 
 // v6 DoodleVPN design UI
 import type { ProductMode, SystemProxyMode } from '../stores/app-store';
@@ -61,6 +63,7 @@ const TRAFFIC_LIMIT_NOTICE_COOLDOWN_MS = 60_000;
 const CONNECT_TIMEOUT_MS = 45_000;
 const TUN_CONNECT_TIMEOUT_MS = 120_000;
 const DOODLEVPN_ACCOUNT_URL = 'https://doodlevpn.online/account';
+const invoke = <T,>(command: string, args?: Record<string, unknown>) => desktopBridge.command<T>(command, args);
 const TUN_LIMITED_FALLBACK_RE =
   /could not create the Windows tunnel adapter|IPv4 readiness failed|adapter is missing|adapter did not become ready|route is not preferred|route did not become ready|routes are missing|sing-box exited|sing-box process is not running|Tunnel Service failed to start TUN|Tunnel Service stopped before TUN|Tunnel Service did not become ready|timed out while starting VPN engines/i;
 
@@ -262,7 +265,7 @@ export default function Dashboard() {
   const refreshTunnelServiceHealth = useCallback(async () => {
     if (!isTauriRuntime()) return false;
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
+
       await invoke('tunnel_service_health');
       return true;
     } catch {
@@ -517,7 +520,7 @@ export default function Dashboard() {
           fbReq.http_port,
         );
         addLog('warning', t('limitedFallbackActive'));
-        const { useToastStore } = await import('../stores/toast-store');
+
         useToastStore.getState().addToast(t('limitedFallbackActive'), 'warning');
         return true;
       }
@@ -578,7 +581,7 @@ export default function Dashboard() {
   useEffect(() => {
     (async () => {
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+
         const running: boolean = await invoke('vpn_status');
         if (running && status !== 'connected') {
           const effectiveSystemProxyMode = await getEffectiveHealthSystemProxyMode();
@@ -653,7 +656,7 @@ export default function Dashboard() {
       healthInFlightRef.current = true;
       const healthCheckOpId = connectionOpRef.current;
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+
         const effectiveSystemProxyMode = await getEffectiveHealthSystemProxyMode();
         let health = await withTimeout(
           invoke('get_connection_health', {
@@ -770,8 +773,8 @@ export default function Dashboard() {
           setActiveSystemProxyMode(null);
           setConnectionStep(null);
           setConnectedAt(null);
-          const toastStoreModule = await import('../stores/toast-store');
-          toastStoreModule.useToastStore.getState().addToast('Whole computer mode stopped; reconnect to repair it.', 'error');
+
+          useToastStore.getState().addToast('Whole computer mode stopped; reconnect to repair it.', 'error');
           const activeHealthServer = useAppStore.getState().activeServer;
           reportConnectionError({
             eventType: 'health_fatal', serverName: activeHealthServer?.name,
@@ -788,8 +791,8 @@ export default function Dashboard() {
               ? 'Protected-mode health quorum is unstable; keeping the tunnel up and monitoring...'
               : 'Proxy health check is unstable; keeping the connection up and monitoring...';
             addLog('warning', healthMessage);
-            const toastStoreModule = await import('../stores/toast-store');
-            toastStoreModule.useToastStore.getState().addToast('Connection health is unstable; monitoring...', 'warning');
+
+            useToastStore.getState().addToast('Connection health is unstable; monitoring...', 'warning');
             const activeHealthServer = useAppStore.getState().activeServer;
             reportConnectionError({
               eventType: 'health_drop', serverName: activeHealthServer?.name,
@@ -827,7 +830,7 @@ export default function Dashboard() {
       if (disposed || fatalWatchdogRef.current || healthInFlightRef.current) return;
       healthInFlightRef.current = true;
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+
         const effectiveSystemProxyMode = await getEffectiveHealthSystemProxyMode();
         const health = await withTimeout(
           invoke('get_connection_health', {
@@ -850,8 +853,8 @@ export default function Dashboard() {
         setActiveSystemProxyMode(null);
         setConnectionStep(null);
         setConnectedAt(null);
-        const toastStoreModule = await import('../stores/toast-store');
-        toastStoreModule.useToastStore.getState().addToast('Whole computer mode stopped; reconnect to repair it.', 'error');
+
+        useToastStore.getState().addToast('Whole computer mode stopped; reconnect to repair it.', 'error');
       } catch {
         // The slower monitor handles repeated timeouts. Avoid noisy duplicate logs here.
       } finally {
@@ -880,7 +883,7 @@ export default function Dashboard() {
     if (status !== 'connected') return;
     const poll = setInterval(async () => {
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+
         const lines: string[] = await invoke('get_proxy_logs');
         for (const line of lines) {
           if (!line.trim() || line.match(/tunneling request to tcp|accepted (?:tcp|udp)/)) continue;
@@ -906,7 +909,7 @@ export default function Dashboard() {
                 : tRef.current('subscriptionMaybeLimitedLog');
               burst.lastNoticeAt = now;
               addLog('warning', message);
-              const { useToastStore } = await import('../stores/toast-store');
+
               useToastStore.getState().addToast(message, 'warning');
             }
             continue;
@@ -945,9 +948,7 @@ export default function Dashboard() {
     const message = `${trafficStatus.reason === 'expired' ? t('subscriptionExpiredLog') : t('subscriptionTrafficLimitedLog')}: ${activeSub.name}`;
     eofBurstRef.current.lastNoticeAt = Date.now();
     addLog('warning', message);
-    import('../stores/toast-store').then(({ useToastStore }) => {
-      useToastStore.getState().addToast(message, 'warning');
-    }).catch(() => {});
+    useToastStore.getState().addToast(message, 'warning');
   }, [status, activeServer?.subscriptionId, subscriptions, addLog, t]);
 
   // Poll traffic stats
@@ -955,7 +956,7 @@ export default function Dashboard() {
     if (status !== 'connected') return;
     const interval = setInterval(async () => {
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+
         const stats: any = await invoke('get_traffic_stats');
         const dl = stats.download || 0;
         const ul = stats.upload || 0;
@@ -1075,7 +1076,7 @@ export default function Dashboard() {
           },
         });
         try {
-          const { useToastStore } = await import('../stores/toast-store');
+
           useToastStore.getState().addToast(t('splitTunnelingNeedsTun'), 'warning');
         } catch { /* ignore */ }
       }
@@ -1100,7 +1101,7 @@ export default function Dashboard() {
       addLog('info', t('v6LogConnectingTo' as never).replace('{name}', srv.name));
 
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+
         setConnectionStep(t('connectionCheckingServer'));
         const request = closedControlPlane && isClosedLocationServer(srv)
           ? await buildAppConnectLocationRequestFromState(srv)
@@ -1182,7 +1183,7 @@ export default function Dashboard() {
           const message = err.message || String(err);
           addLog('error', t('v6LogConnectFailed' as never).replace('{message}', message));
           try {
-            const { invoke: cleanupInvoke } = await import('@tauri-apps/api/core');
+            const cleanupInvoke = invoke;
             let fallbackReason = message;
             try {
               const health = await cleanupInvoke('get_connection_health', {
@@ -1223,7 +1224,7 @@ export default function Dashboard() {
       setStatus('disconnecting');
       setConnectionStep(t('connectionDisconnecting'));
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+
         const result: any = await invoke('vpn_disconnect');
         addLog(result.success ? 'info' : 'error', result.message);
       } catch { addLog('info', '[SIM] Disconnected'); }
@@ -1234,7 +1235,7 @@ export default function Dashboard() {
       setStatus('disconnecting');
       setConnectionStep(t('connectionDisconnecting'));
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+
         const result: any = await invoke('vpn_disconnect');
         addLog(result.success ? 'info' : 'error', result.message);
       } catch { addLog('info', '[SIM] Disconnected'); }
@@ -1261,7 +1262,7 @@ export default function Dashboard() {
       setStatus('connecting');
       setConnectionStep(t('connectionSecuringTraffic'));
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+
         await invoke('vpn_disconnect');
         await new Promise(r => setTimeout(r, 2000));
         const srv = activeServer;
@@ -1301,7 +1302,7 @@ export default function Dashboard() {
         addLog('error', t('v6LogReconnectFailed' as never).replace('{message}', message));
         if (!closedControlPlane && mode === 'tun' && activeServer) {
           try {
-            const { invoke: cleanupInvoke } = await import('@tauri-apps/api/core');
+            const cleanupInvoke = invoke;
             if (await attemptLimitedBrowsersFallback(activeServer, cleanupInvoke, connectionOpRef.current, message)) {
               return;
             }
@@ -1316,7 +1317,7 @@ export default function Dashboard() {
 
   const handleExportSupportBundle = useCallback(async () => {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
+
       const effectiveSystemProxyMode = await getEffectiveHealthSystemProxyMode();
       const path = await invoke('export_support_bundle', {
         proxyMode,
@@ -1325,11 +1326,11 @@ export default function Dashboard() {
         httpPort,
       }) as string;
       addLog('success', `${t('supportBundleExported')}: ${path}`);
-      const { useToastStore } = await import('../stores/toast-store');
+
       useToastStore.getState().addToast(`${t('supportBundleExported')}: ${path}`, 'success');
     } catch (err: any) {
       addLog('error', `${t('supportBundleExportFailed')}: ${err?.message || err}`);
-      const { useToastStore } = await import('../stores/toast-store');
+
       useToastStore.getState().addToast(`${t('supportBundleExportFailed')}: ${err?.message || err}`, 'error');
     }
   }, [addLog, getEffectiveHealthSystemProxyMode, httpPort, proxyMode, socksPort, t]);
@@ -1340,7 +1341,7 @@ export default function Dashboard() {
       addLog('error', '[QA-control] simulate-tun-failure failed: no active server');
       return;
     }
-    const { invoke } = await import('@tauri-apps/api/core');
+
     await attemptLimitedBrowsersFallback(srv, invoke, connectionOpRef.current, reason);
   }, [activeServer, addLog, attemptLimitedBrowsersFallback, servers]);
 
@@ -1357,7 +1358,7 @@ export default function Dashboard() {
     let unlisten: (() => void) | undefined;
     (async () => {
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+
         const enabled = await invoke<boolean>('qa_control_enabled').catch(() => false);
         if (!enabled || disposed) return;
         const publishFrontendSnapshot = async () => {
@@ -1415,9 +1416,8 @@ export default function Dashboard() {
               else if (mode === 'browsers') await current.handleModeSwitch('system-proxy', 'set');
               else if (mode === 'manual') await current.handleModeSwitch('system-proxy', 'unchanged');
             } else if (action === 'refresh-subscription') {
-              const { refreshSubscription } = await import('../lib/subscription');
-              const storeModule = await import('../stores/app-store');
-              const state = storeModule.useAppStore.getState();
+
+              const state = useAppStore.getState();
               for (const sub of state.subscriptions) {
                 const updated = await refreshSubscription(sub);
                 state.updateSubscription(sub.id, updated);
@@ -1426,12 +1426,11 @@ export default function Dashboard() {
             } else if (action === 'import-subscription') {
               const url = query.get('url');
               if (url) {
-                const { fetchSubscription } = await import('../lib/subscription');
-                const storeModule = await import('../stores/app-store');
-                const state = storeModule.useAppStore.getState();
+
+                const state = useAppStore.getState();
                 const existing = state.subscriptions.find((sub) => sub.url === url);
                 if (existing) {
-                  const { refreshSubscription } = await import('../lib/subscription');
+
                   state.updateSubscription(existing.id, await refreshSubscription(existing));
                   addLog('success', '[QA-control] existing subscription refreshed');
                 } else {
@@ -1448,7 +1447,7 @@ export default function Dashboard() {
                   ? 'block'
                   : 'direct';
               if (value) {
-                const { useWorkshopStore } = await import('../stores/workshop-store');
+
                 useWorkshopStore.getState().addRule({
                   id: crypto.randomUUID(),
                   type: ruleType,
@@ -1459,7 +1458,7 @@ export default function Dashboard() {
                 addLog('success', `[QA-control] routing rule added: ${ruleType}:${value}:${routeAction}`);
               }
             } else if (action === 'clear-custom-routing-rules') {
-              const { useWorkshopStore } = await import('../stores/workshop-store');
+
               const state = useWorkshopStore.getState();
               for (const rule of state.myRules) state.removeRule(rule.id);
               addLog('success', '[QA-control] custom routing rules cleared');
@@ -1492,7 +1491,7 @@ export default function Dashboard() {
       setStatus('connecting');
       setConnectionStep(t('connectionCheckingServer'));
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+
         // Network Extension and the Windows service both own OS routes. Stop
         // the old session first so a country switch cannot reuse its profile.
         await withTimeout(
@@ -1529,7 +1528,7 @@ export default function Dashboard() {
       } catch (err: any) {
         if (opId !== connectionOpRef.current) return;
         try {
-          const { invoke } = await import('@tauri-apps/api/core');
+
           await invoke('vpn_disconnect');
         } catch { /* best effort network restoration */ }
         addLog('error', `Server switch failed: ${err.message || err}`);
