@@ -1,5 +1,6 @@
 #![cfg_attr(all(target_os = "macos", feature = "app-store"), allow(dead_code))]
 
+pub mod runtime_guard;
 pub mod singbox;
 pub mod tun;
 pub mod tunnel_service;
