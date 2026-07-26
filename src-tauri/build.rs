@@ -1,7 +1,15 @@
+mod build_config;
+
 fn main() {
-    if std::env::var_os("TAURI_CONFIG").is_none()
-        && std::env::var("PROFILE").as_deref() == Ok("debug")
-    {
+    for path in build_config::WINDOWS_RUNTIME_FILES {
+        println!("cargo:rerun-if-changed={path}");
+    }
+
+    if build_config::should_use_check_config(
+        std::path::Path::new("."),
+        &std::env::var("PROFILE").unwrap_or_default(),
+        std::env::var_os("TAURI_CONFIG").is_some(),
+    ) {
         std::env::set_var("TAURI_CONFIG", include_str!("tauri.test.conf.json"));
     }
 

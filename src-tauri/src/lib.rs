@@ -5,6 +5,10 @@ pub mod tun;
 pub mod tunnel_service;
 pub mod xray;
 
+#[cfg(test)]
+#[path = "../build_config.rs"]
+mod build_config;
+
 #[cfg(all(target_os = "macos", feature = "app-store"))]
 mod app_store_tunnel;
 
