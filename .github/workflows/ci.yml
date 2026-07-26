@@ -36,12 +36,14 @@ jobs:
           workspaces: src-tauri
       - run: npm ci
       - run: npm test
+      - run: npm run release:check
       - run: node --test scripts/release/check-workflows.test.mjs
       - shell: pwsh
         run: ./scripts/release/Prepare-WindowsRelease.test.ps1
       - run: npm run build
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
       - run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --example verify_updater_signature
       - run: cargo test --manifest-path src-tauri/Cargo.toml --bin DoodleRayService --features windows-service
       - run: cargo check --manifest-path src-tauri/Cargo.toml --bin DoodleRay
       - run: cargo check --manifest-path src-tauri/Cargo.toml --bin DoodleRayService --features windows-service

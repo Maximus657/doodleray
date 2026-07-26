@@ -27,14 +27,18 @@ export function checkReleaseWorkflows(root) {
   }
 
   const release = read(root, '.github/workflows/release-production.yml');
+  const ci = read(root, '.github/workflows/ci.yml');
   const runtime = read(root, '.github/workflows/runtime-updates.yml');
   const prepareWindows = read(root, 'scripts/release/Prepare-WindowsRelease.ps1');
+  const publishWindows = read(root, 'scripts/release/Publish-DoodleRayDownloads.ps1');
+  const updaterVerifier = read(root, 'src-tauri/examples/verify_updater_signature.rs');
+  const cargoToml = read(root, 'src-tauri/Cargo.toml');
   const activeWindowsSources = [
     release,
-    read(root, '.github/workflows/ci.yml'),
+    ci,
     runtime,
     read(root, 'src-tauri/tauri.windows.conf.json'),
-    read(root, 'scripts/release/Publish-DoodleRayDownloads.ps1'),
+    publishWindows,
   ].join('\n');
   if (forbiddenWindowsSigning.test(activeWindowsSources)) errors.push('active release paths must not contain Windows Authenticode prerequisites');
 
@@ -48,10 +52,45 @@ export function checkReleaseWorkflows(root) {
     errors.push('production release must bind an exact source SHA to protected main');
   }
   if (!/release:check -- --published-version/.test(release)) errors.push('production release must enforce the published-version gate');
+  if (!/npm run release:check/.test(ci)) errors.push('CI must run the canonical release metadata check');
+  if (!/cargo test --manifest-path src-tauri\/Cargo\.toml --example verify_updater_signature/.test(ci)) errors.push('CI must run the updater signature known-vector and tamper test');
   if (!/TAURI_SIGNING_PRIVATE_KEY/.test(release) || !/\.sig/.test(release)) errors.push('Tauri updater signing and signatures must fail closed');
   if (!/\*\.nsis\.zip\.sig/.test(prepareWindows) || /\*\.exe\.sig/.test(prepareWindows)) errors.push('Windows release set must require the single Tauri NSIS updater signature');
+  if (!/--example verify_updater_signature/.test(prepareWindows)
+    || !/-TauriConfigPath src-tauri\/tauri\.conf\.json/.test(release)
+    || !/^minisign-verify\s*=\s*"=0\.2\.5"$/m.test(cargoToml)
+    || !/PublicKey::decode/.test(updaterVerifier)
+    || !/Signature::decode/.test(updaterVerifier)
+    || !/\.verify\(artifact, &signature, false\)/.test(updaterVerifier)) {
+    errors.push('Windows staging must cryptographically verify the updater signature with the configured Tauri key');
+  }
   if (!/APPLE_CERTIFICATE/.test(release) || !/upload-app-store\.sh/.test(release)) errors.push('enabled App Store target must retain signing and upload gates');
-  if (!/Production releases require both Windows and macAppStore targets/.test(release)) errors.push('production target dependencies must fail closed unless both targets are enabled');
+  if (!/if \[ "\$windows" != 'true' \] && \[ "\$mac_app_store" != 'true' \]/.test(release)
+    || /Production releases require both Windows and macAppStore targets/.test(release)
+    || !/upload_macos_app_store:\r?\n\s+needs: \[preflight, build_macos_app_store\]/.test(release)
+    || !/needs\.preflight\.outputs\.windows == 'true'[\s\S]*needs\.preflight\.outputs\.mac_app_store != 'true'[\s\S]*needs\.upload_macos_app_store\.result == 'success'/.test(release)) {
+    errors.push('production target graph must support Windows-only, App-Store-only, and combined releases');
+  }
+
+  const uploadArtifactCount = (release.match(/actions\/upload-artifact@/g) ?? []).length;
+  const guardedUploadArtifactCount = (release.match(/^\s{6}- name:[^\n]+\r?\n\s{8}if: inputs\.dry_run == false\r?\n\s{8}uses: actions\/upload-artifact@/gm) ?? []).length;
+  if (uploadArtifactCount !== 2 || guardedUploadArtifactCount !== uploadArtifactCount
+    || /swatinem\/rust-cache/.test(release)
+    || /^\s+cache:\s*npm\s*$/m.test(release)) {
+    errors.push('dry-run must not upload retained artifacts or write action caches');
+  }
+
+  if ((release.match(/secrets\.DOWNLOADS_SSH_KNOWN_HOSTS/g) ?? []).length !== 2
+    || !/StrictHostKeyChecking=yes/.test(publishWindows)
+    || !/UserKnownHostsFile=/.test(publishWindows)
+    || /StrictHostKeyChecking=accept-new/.test(publishWindows)
+    || !/ValidatePattern[^\n]*\r?\n\s*\[string\]\$HostName/.test(publishWindows)
+    || !/ValidatePattern[^\n]*\r?\n\s*\[string\]\$User/.test(publishWindows)
+    || !/ValidateRange\(1,\s*65535\)/.test(publishWindows)
+    || !/RemoteRoot[^\n]*safe|safe[^\n]*RemoteRoot/i.test(publishWindows)
+    || !/ConvertTo-PosixSingleQuotedLiteral/.test(publishWindows)) {
+    errors.push('production SSH must use pinned host keys and strict safe connection inputs');
+  }
 
   const windowsBuildCount = (release.match(/npx tauri build --bundles nsis/g) ?? []).length;
   if (windowsBuildCount !== 1) errors.push('production release must contain exactly one Windows Tauri build');

@@ -3,11 +3,20 @@ param(
   [Parameter(Mandatory = $true)][string]$SourceSha,
   [Parameter(Mandatory = $true)][string]$BundleDir,
   [Parameter(Mandatory = $true)][string]$OutputDir,
+  [string]$TauriConfigPath,
   [string]$PublicHostName = 'doodleray.clickflare.click'
 )
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+$tauriConfigCandidate = if ([string]::IsNullOrWhiteSpace($TauriConfigPath)) {
+  Join-Path $repoRoot 'src-tauri/tauri.conf.json'
+} elseif ([IO.Path]::IsPathRooted($TauriConfigPath)) {
+  $TauriConfigPath
+} else {
+  Join-Path $repoRoot $TauriConfigPath
+}
+$tauriConfigFullPath = [IO.Path]::GetFullPath($tauriConfigCandidate)
 $release = Get-Content (Join-Path $repoRoot 'release/release.json') -Raw | ConvertFrom-Json
 $version = [string]$release.version
 $outputCandidate = if ([IO.Path]::IsPathRooted($OutputDir)) { $OutputDir } else { Join-Path (Get-Location) $OutputDir }
@@ -16,6 +25,7 @@ $approvedOutput = [IO.Path]::GetFullPath((Join-Path $repoRoot 'windows-release')
 
 if ($SourceSha -notmatch '^[0-9a-f]{40}$') { throw 'SourceSha must be an exact lowercase commit SHA' }
 if (-not (Test-Path -LiteralPath $BundleDir)) { throw "BundleDir not found: $BundleDir" }
+if (-not (Test-Path -LiteralPath $tauriConfigFullPath -PathType Leaf)) { throw "Tauri config not found: $tauriConfigFullPath" }
 if ($outputFullPath -ne $approvedOutput) { throw "OutputDir must be the dedicated repository staging directory: $approvedOutput" }
 
 $installer = @(Get-ChildItem -LiteralPath $BundleDir -File -Filter '*.exe')
@@ -28,6 +38,11 @@ foreach ($entry in @(
 )) {
   if ($entry.Files.Count -ne 1) { throw "Expected exactly one $($entry.Name), found $($entry.Files.Count)" }
 }
+
+& cargo run --quiet --locked --manifest-path (Join-Path $repoRoot 'src-tauri/Cargo.toml') `
+  --example verify_updater_signature -- `
+  $updater[0].FullName $updaterSignature[0].FullName $tauriConfigFullPath
+if ($LASTEXITCODE -ne 0) { throw 'Updater signature verification failed before release staging' }
 
 if (Test-Path -LiteralPath $outputFullPath) {
   if (Get-ChildItem -LiteralPath $outputFullPath -Force | Select-Object -First 1) { throw 'Windows release staging directory must be empty' }

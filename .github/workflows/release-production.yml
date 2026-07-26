@@ -39,7 +39,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          cache: npm
 
       - name: Bind dispatch to the exact current main SHA
         run: |
@@ -60,29 +59,35 @@ jobs:
           npm ci
           npm test
           node --test scripts/release/check-workflows.test.mjs
-          published_version="$(curl --fail --silent --show-error https://doodleray.clickflare.click/channels/direct/latest.json | node -e 'let value=""; process.stdin.on("data", chunk => value += chunk); process.stdin.on("end", () => process.stdout.write(JSON.parse(value).version));')"
           version="$(node -p "require('./release/release.json').version")"
-          if [ "$version" = "$published_version" ]; then
-            npm run release:check
-            idempotent_rerun=true
-          else
-            npm run release:check -- --published-version "$published_version"
-            idempotent_rerun=false
-          fi
           windows="$(node -p "String(require('./release/release.json').targets.windows)")"
           mac_app_store="$(node -p "String(require('./release/release.json').targets.macAppStore)")"
-          if [ "$windows" != 'true' ] || [ "$mac_app_store" != 'true' ]; then
-            echo 'Production releases require both Windows and macAppStore targets; use local builds for target-specific RCs' >&2
+          if [ "$windows" != 'true' ] && [ "$mac_app_store" != 'true' ]; then
+            echo 'At least one production target must be enabled' >&2
             exit 1
           fi
-          tag="v$version"
-          existing="$(git ls-remote --tags origin "refs/tags/$tag^{}" | cut -f1)"
-          if [ -z "$existing" ]; then
-            existing="$(git ls-remote --tags origin "refs/tags/$tag" | cut -f1)"
-          fi
-          if [ -n "$existing" ] && [ "$existing" != "$SOURCE_SHA" ]; then
-            echo "Tag $tag exists at another commit" >&2
-            exit 1
+          if [ "$windows" = 'true' ]; then
+            published_version="$(curl --fail --silent --show-error https://doodleray.clickflare.click/channels/direct/latest.json | node -e 'let value=""; process.stdin.on("data", chunk => value += chunk); process.stdin.on("end", () => process.stdout.write(JSON.parse(value).version));')"
+            if [ "$version" = "$published_version" ]; then
+              npm run release:check
+              idempotent_rerun=true
+            else
+              npm run release:check -- --published-version "$published_version"
+              idempotent_rerun=false
+            fi
+            tag="v$version"
+            existing="$(git ls-remote --tags origin "refs/tags/$tag^{}" | cut -f1)"
+            if [ -z "$existing" ]; then
+              existing="$(git ls-remote --tags origin "refs/tags/$tag" | cut -f1)"
+            fi
+            if [ -n "$existing" ] && [ "$existing" != "$SOURCE_SHA" ]; then
+              echo "Tag $tag exists at another commit" >&2
+              exit 1
+            fi
+          else
+            npm run release:check
+            published_version='not applicable (Windows target disabled)'
+            idempotent_rerun=false
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "windows=$windows" >> "$GITHUB_OUTPUT"
@@ -93,6 +98,7 @@ jobs:
             echo "- Version: \`$version\` (published: \`$published_version\`)"
             echo "- Idempotent rerun: \`$idempotent_rerun\`"
             echo "- Dry run: \`${{ inputs.dry_run }}\`"
+            echo "- Targets: Windows=\`$windows\`, macAppStore=\`$mac_app_store\`"
             echo '- Windows signing certificate: not a release prerequisite'
             echo '- Tauri updater signing: mandatory for the Windows target'
             echo '- Apple signing: mandatory for the App Store target'
@@ -118,15 +124,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
 
       - name: Require updater signing key
         shell: pwsh
@@ -143,6 +144,7 @@ jobs:
           npm run build
           cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
           cargo test --manifest-path src-tauri/Cargo.toml --lib
+          cargo test --manifest-path src-tauri/Cargo.toml --example verify_updater_signature
           cargo test --manifest-path src-tauri/Cargo.toml --bin DoodleRayService --features windows-service
           cargo check --manifest-path src-tauri/Cargo.toml --bin DoodleRay
           cargo check --manifest-path src-tauri/Cargo.toml --bin DoodleRayService --features windows-service
@@ -189,13 +191,16 @@ jobs:
           ./scripts/release/Prepare-WindowsRelease.ps1 `
             -SourceSha '${{ inputs.source_sha }}' `
             -BundleDir src-tauri/target/release/bundle/nsis `
-            -OutputDir windows-release
+            -OutputDir windows-release `
+            -TauriConfigPath src-tauri/tauri.conf.json
           $signatures = @(Get-ChildItem windows-release -File -Filter '*.sig')
           if ($signatures.Count -ne 1 -or $signatures[0].Name -notlike '*.nsis.zip.sig') {
             throw 'The Tauri NSIS updater .nsis.zip.sig file is mandatory'
           }
 
-      - uses: actions/upload-artifact@v4
+      - name: Retain exact Windows release bytes
+        if: inputs.dry_run == false
+        uses: actions/upload-artifact@v4
         with:
           name: windows-release-${{ needs.preflight.outputs.version }}-${{ inputs.source_sha }}
           path: windows-release/
@@ -219,7 +224,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          cache: npm
 
       - uses: actions/setup-go@v5
         with:
@@ -263,7 +267,9 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent 'src-tauri/target/universal-apple-darwin/release/bundle/macos/DoodleRay VPN.app' macos-handoff/DoodleRay-app.zip
           ditto -c -k --sequesterRsrc --keepParent 'src-tauri/macos/DerivedData/Build/Products/Release/DoodleRayVPN.appex.dSYM' macos-handoff/DoodleRayVPN-dSYM.zip
 
-      - uses: actions/upload-artifact@v4
+      - name: Retain exact signed App Store build
+        if: inputs.dry_run == false
+        uses: actions/upload-artifact@v4
         with:
           name: macos-app-store-${{ needs.preflight.outputs.version }}-${{ inputs.source_sha }}
           path: macos-handoff/
@@ -289,22 +295,26 @@ jobs:
         shell: pwsh
         env:
           DOWNLOADS_SSH_PRIVATE_KEY: ${{ secrets.DOWNLOADS_SSH_PRIVATE_KEY }}
+          DOWNLOADS_SSH_KNOWN_HOSTS: ${{ secrets.DOWNLOADS_SSH_KNOWN_HOSTS }}
           DOWNLOADS_SSH_HOST: ${{ vars.DOWNLOADS_SSH_HOST || 'doodleray.clickflare.click' }}
           DOWNLOADS_SSH_USER: ${{ vars.DOWNLOADS_SSH_USER || 'root' }}
           DOWNLOADS_SSH_PORT: ${{ vars.DOWNLOADS_SSH_PORT || '22' }}
           DOWNLOADS_REMOTE_ROOT: ${{ vars.DOWNLOADS_REMOTE_ROOT || '/srv/doodleray-downloads' }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:DOWNLOADS_SSH_PRIVATE_KEY)) { throw 'DOWNLOADS_SSH_PRIVATE_KEY is required' }
+          if ([string]::IsNullOrWhiteSpace($env:DOWNLOADS_SSH_KNOWN_HOSTS)) { throw 'DOWNLOADS_SSH_KNOWN_HOSTS is required' }
           $key = Join-Path $env:RUNNER_TEMP 'downloads_ed25519'
+          $knownHosts = Join-Path $env:RUNNER_TEMP 'downloads_known_hosts'
           ($env:DOWNLOADS_SSH_PRIVATE_KEY -replace "`r", '').TrimEnd("`n") + "`n" | Set-Content -LiteralPath $key -NoNewline -Encoding utf8NoBOM
-          chmod 600 $key
+          ($env:DOWNLOADS_SSH_KNOWN_HOSTS -replace "`r", '').TrimEnd("`n") + "`n" | Set-Content -LiteralPath $knownHosts -NoNewline -Encoding utf8NoBOM
+          chmod 600 $key $knownHosts
           ./scripts/release/Publish-DoodleRayDownloads.ps1 `
             -Version '${{ needs.preflight.outputs.version }}' -Mode UploadImmutable -ArtifactDir windows-release `
             -HostName $env:DOWNLOADS_SSH_HOST -User $env:DOWNLOADS_SSH_USER -Port ([int]$env:DOWNLOADS_SSH_PORT) `
-            -RemoteRoot $env:DOWNLOADS_REMOTE_ROOT -SshKeyPath $key
+            -RemoteRoot $env:DOWNLOADS_REMOTE_ROOT -SshKeyPath $key -SshKnownHostsPath $knownHosts
 
   upload_macos_app_store:
-    needs: [preflight, build_macos_app_store, upload_immutable]
+    needs: [preflight, build_macos_app_store]
     if: inputs.dry_run == false && needs.preflight.outputs.mac_app_store == 'true'
     runs-on: macos-latest
     environment: production
@@ -322,7 +332,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          cache: npm
 
       - uses: apple-actions/import-codesign-certs@v3
         with:
@@ -355,7 +364,7 @@ jobs:
 
   publish_github_release:
     needs: [preflight, upload_immutable, upload_macos_app_store]
-    if: always() && inputs.dry_run == false && needs.upload_immutable.result == 'success' && (needs.upload_macos_app_store.result == 'success' || needs.upload_macos_app_store.result == 'skipped')
+    if: always() && inputs.dry_run == false && needs.preflight.outputs.windows == 'true' && needs.upload_immutable.result == 'success' && (needs.preflight.outputs.mac_app_store != 'true' || needs.upload_macos_app_store.result == 'success')
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -421,17 +430,21 @@ jobs:
         shell: pwsh
         env:
           DOWNLOADS_SSH_PRIVATE_KEY: ${{ secrets.DOWNLOADS_SSH_PRIVATE_KEY }}
+          DOWNLOADS_SSH_KNOWN_HOSTS: ${{ secrets.DOWNLOADS_SSH_KNOWN_HOSTS }}
           DOWNLOADS_SSH_HOST: ${{ vars.DOWNLOADS_SSH_HOST || 'doodleray.clickflare.click' }}
           DOWNLOADS_SSH_USER: ${{ vars.DOWNLOADS_SSH_USER || 'root' }}
           DOWNLOADS_SSH_PORT: ${{ vars.DOWNLOADS_SSH_PORT || '22' }}
           DOWNLOADS_REMOTE_ROOT: ${{ vars.DOWNLOADS_REMOTE_ROOT || '/srv/doodleray-downloads' }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:DOWNLOADS_SSH_PRIVATE_KEY)) { throw 'DOWNLOADS_SSH_PRIVATE_KEY is required' }
+          if ([string]::IsNullOrWhiteSpace($env:DOWNLOADS_SSH_KNOWN_HOSTS)) { throw 'DOWNLOADS_SSH_KNOWN_HOSTS is required' }
           $key = Join-Path $env:RUNNER_TEMP 'downloads_ed25519'
+          $knownHosts = Join-Path $env:RUNNER_TEMP 'downloads_known_hosts'
           ($env:DOWNLOADS_SSH_PRIVATE_KEY -replace "`r", '').TrimEnd("`n") + "`n" | Set-Content -LiteralPath $key -NoNewline -Encoding utf8NoBOM
-          chmod 600 $key
+          ($env:DOWNLOADS_SSH_KNOWN_HOSTS -replace "`r", '').TrimEnd("`n") + "`n" | Set-Content -LiteralPath $knownHosts -NoNewline -Encoding utf8NoBOM
+          chmod 600 $key $knownHosts
           ./scripts/release/Publish-DoodleRayDownloads.ps1 `
             -Version '${{ needs.preflight.outputs.version }}' -Mode PromoteLatest `
             -HostName $env:DOWNLOADS_SSH_HOST -User $env:DOWNLOADS_SSH_USER -Port ([int]$env:DOWNLOADS_SSH_PORT) `
-            -RemoteRoot $env:DOWNLOADS_REMOTE_ROOT -SshKeyPath $key
+            -RemoteRoot $env:DOWNLOADS_REMOTE_ROOT -SshKeyPath $key -SshKnownHostsPath $knownHosts
           # Exact-byte rule: same hashes are a no-op; different hashes hard fail; latest.json is promoted last.

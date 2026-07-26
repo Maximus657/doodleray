@@ -11,6 +11,8 @@ gate below has evidence.
 - release metadata, compatibility identities, updater endpoint/public key;
 - pinned SHA-256 verification for Xray, sing-box, and Wintun downloads;
 - exactly one Windows Tauri build with its mandatory updater `.sig` file;
+- cryptographic verification of that `.sig` against the exact updater public
+  key in `src-tauri/tauri.conf.json` before release staging;
 - Apple signing, provisioning, sandbox, entitlements, and App Store upload
   credentials for the enabled macOS target;
 - immutable artifact hashes and exact source SHA at current `main`;

@@ -32,7 +32,7 @@ function writeFixture(overrides = {}) {
     version,
     macBuild,
     channel: 'stable',
-    targets: { windows: true, macAppStore: true },
+    targets: overrides.targets ?? { windows: true, macAppStore: true },
   });
   writeJson(root, 'package.json', { version });
   writeJson(root, 'package-lock.json', {
@@ -119,6 +119,36 @@ test('preflight accepts synchronized metadata and a newer candidate', async () =
       channel: 'stable',
       targets: { windows: true, macAppStore: true },
     });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('preflight accepts either production target independently', async () => {
+  const { checkRelease } = await loadChecker();
+  for (const targets of [
+    { windows: true, macAppStore: false },
+    { windows: false, macAppStore: true },
+  ]) {
+    const root = writeFixture({ targets });
+    try {
+      assert.deepEqual(checkRelease(root), {
+        version: '6.0.2',
+        macBuild: 60017,
+        channel: 'stable',
+        targets,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('preflight rejects a release with no enabled target', async () => {
+  const root = writeFixture({ targets: { windows: false, macAppStore: false } });
+  try {
+    const { checkRelease } = await loadChecker();
+    assert.throws(() => checkRelease(root), /at least one release target must be enabled/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

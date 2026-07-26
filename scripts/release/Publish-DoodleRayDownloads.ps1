@@ -14,21 +14,37 @@ param(
   [Parameter(Mandatory = $true)][ValidateSet('UploadImmutable', 'PromoteLatest')]
   [string]$Mode,
   [string]$ArtifactDir,
+  [ValidatePattern('^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$')]
   [string]$HostName = 'doodleray.clickflare.click',
+  [ValidatePattern('^[A-Za-z_][A-Za-z0-9_-]{0,31}$')]
   [string]$User = 'root',
+  [ValidateRange(1, 65535)]
   [int]$Port = 22,
+  [ValidatePattern('^/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+$')]
   [string]$RemoteRoot = '/srv/doodleray-downloads',
   [string]$SshKeyPath = $env:DOODLERAY_DOWNLOADS_SSH_KEY,
+  [string]$SshKnownHostsPath = $env:DOODLERAY_DOWNLOADS_SSH_KNOWN_HOSTS,
+  [ValidatePattern('^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$')]
   [string]$PublicHostName = 'doodleray.clickflare.click'
 )
 
 $ErrorActionPreference = 'Stop'
 if (-not $SshKeyPath -or -not (Test-Path -LiteralPath $SshKeyPath)) { throw 'A readable SSH key is required' }
+if (-not $SshKnownHostsPath -or -not (Test-Path -LiteralPath $SshKnownHostsPath)) { throw 'A pinned SSH known-hosts file is required' }
+if ($RemoteRoot.Split('/') | Where-Object { $_ -eq '.' -or $_ -eq '..' }) { throw 'RemoteRoot must contain only safe absolute path segments' }
 
-$sshArgs = @('-p', $Port.ToString(), '-o', 'StrictHostKeyChecking=accept-new', '-i', $SshKeyPath)
-$scpArgs = @('-P', $Port.ToString(), '-o', 'StrictHostKeyChecking=accept-new', '-i', $SshKeyPath)
+function ConvertTo-PosixSingleQuotedLiteral([string]$Value) {
+  $quote = [string][char]39
+  $escapedQuote = $quote + [char]34 + $quote + [char]34 + $quote
+  return $quote + $Value.Replace($quote, $escapedQuote) + $quote
+}
+
+$hostKeyArgs = @('-F', '/dev/null', '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes', '-o', 'StrictHostKeyChecking=yes', '-o', "UserKnownHostsFile=$SshKnownHostsPath", '-o', 'GlobalKnownHostsFile=/dev/null')
+$sshArgs = @('-p', $Port.ToString()) + $hostKeyArgs + @('-i', $SshKeyPath)
+$scpArgs = @('-P', $Port.ToString()) + $hostKeyArgs + @('-i', $SshKeyPath)
 $remote = "$User@$HostName"
 $destination = "$RemoteRoot/public/releases/direct/$Version"
+$destinationLiteral = ConvertTo-PosixSingleQuotedLiteral $destination
 
 if ($Mode -eq 'UploadImmutable') {
   if (-not $ArtifactDir -or -not (Test-Path -LiteralPath $ArtifactDir)) { throw 'ArtifactDir is required for UploadImmutable' }
@@ -52,15 +68,17 @@ if ($Mode -eq 'UploadImmutable') {
   }
 
   $remoteArchive = "$RemoteRoot/staging/direct-$Version-$([guid]::NewGuid().ToString('N')).tar.gz"
-  & ssh @sshArgs $remote "mkdir -p '$RemoteRoot/staging'"
+  $remoteArchiveLiteral = ConvertTo-PosixSingleQuotedLiteral $remoteArchive
+  $stagingLiteral = ConvertTo-PosixSingleQuotedLiteral "$RemoteRoot/staging"
+  & ssh @sshArgs $remote "mkdir -p $stagingLiteral"
   if ($LASTEXITCODE -ne 0) { throw 'ssh staging setup failed' }
   & scp @scpArgs $archive "${remote}:$remoteArchive"
   if ($LASTEXITCODE -ne 0) { throw 'artifact upload failed' }
 
   $remoteScript = @"
 set -euo pipefail
-archive='$remoteArchive'
-dest='$destination'
+archive=$remoteArchiveLiteral
+dest=$destinationLiteral
 tmp="`$dest.tmp.$$"
 verify_release_dir() {
   local dir="`$1"
@@ -93,15 +111,15 @@ echo 'immutable release uploaded; latest.json was not promoted'
 
 $promoteScript = @"
 set -euo pipefail
-dest='$destination'
-channel='$RemoteRoot/public/channels/direct'
+dest=$destinationLiteral
+channel=$(ConvertTo-PosixSingleQuotedLiteral "$RemoteRoot/public/channels/direct")
 test -f "`$dest/latest.json"
 test -f "`$dest/provenance.json"
 (cd "`$dest" && sha256sum -c sha256.txt)
 mkdir -p "`$channel"
 cp "`$dest/provenance.json" "`$channel/manifest.json.tmp.$$"
 mv "`$channel/manifest.json.tmp.$$" "`$channel/manifest.json"
-ln -sfn '../../releases/direct/$Version' "`$channel/current"
+ln -sfn $(ConvertTo-PosixSingleQuotedLiteral "../../releases/direct/$Version") "`$channel/current"
 cp "`$dest/latest.json" "`$channel/latest.json.tmp.$$"
 mv "`$channel/latest.json.tmp.$$" "`$channel/latest.json"
 echo 'latest.json promoted last'

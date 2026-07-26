@@ -131,6 +131,8 @@ export function checkRelease(root, { publishedVersion } = {}) {
   if (release.channel !== 'stable') errors.push('release.json channel must be stable');
   if (!sameKeys(release.targets, ['windows', 'macAppStore']) || typeof release.targets.windows !== 'boolean' || typeof release.targets.macAppStore !== 'boolean') {
     errors.push('release.json targets must contain exactly boolean windows and macAppStore values');
+  } else if (!release.targets.windows && !release.targets.macAppStore) {
+    errors.push('at least one release target must be enabled');
   }
 
   const packageJson = readJson(root, 'package.json');

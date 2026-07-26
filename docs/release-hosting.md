@@ -24,7 +24,11 @@ retained set without rebuilding.
 - `PromoteLatest`: verifies the immutable directory and atomically replaces the
   channel manifest, with `latest.json` last.
 
-Required secret: `DOWNLOADS_SSH_PRIVATE_KEY`. Optional variables are
+Required secrets: `DOWNLOADS_SSH_PRIVATE_KEY` and pinned known-hosts content
+in `DOWNLOADS_SSH_KNOWN_HOSTS`. SSH uses only that dedicated known-hosts file
+with strict host-key checking; `accept-new` is forbidden. Store complete
+OpenSSH `known_hosts` line(s), using `[host]:port` for a non-default port, only
+after verifying the fingerprint out of band. Optional variables are
 `DOWNLOADS_SSH_HOST`, `DOWNLOADS_SSH_USER`, `DOWNLOADS_SSH_PORT`, and
 `DOWNLOADS_REMOTE_ROOT`.
 
