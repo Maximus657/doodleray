@@ -5,7 +5,17 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 APP_BUNDLE="${1:-$ROOT_DIR/src-tauri/target/universal-apple-darwin/release/bundle/macos/DoodleRay VPN.app}"
 OUTPUT_DIR="${2:-$ROOT_DIR/dist-app-store}"
-OUTPUT_PKG="$OUTPUT_DIR/DoodleRay-VPN-6.0.0-macOS.pkg"
+read -r RELEASE_VERSION RELEASE_BUILD < <(
+  node -e 'const release = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")); console.log(`${release.version} ${release.macBuild}`);' "$ROOT_DIR/release/release.json"
+)
+OUTPUT_PKG="$OUTPUT_DIR/DoodleRay-VPN-$RELEASE_VERSION-macOS.pkg"
+
+node "$ROOT_DIR/scripts/release/check-release.mjs"
+
+[[ "$RELEASE_BUILD" =~ ^[1-9][0-9]*$ ]] || {
+  printf 'Invalid App Store bundle version: %s\n' "$RELEASE_BUILD" >&2
+  exit 1
+}
 
 "$ROOT_DIR/scripts/macos/verify-app-store-bundle.sh" "$APP_BUNDLE"
 

@@ -15,10 +15,18 @@ EXTENSION_BUNDLE="$MACOS_DIR/DerivedData/Build/Products/Release/DoodleRayVPN.app
 APP_BUNDLE="$ROOT_DIR/src-tauri/target/universal-apple-darwin/release/bundle/macos/DoodleRay VPN.app"
 SIGNING_IDENTITY_NAME="${MACOS_APP_STORE_SIGNING_IDENTITY_NAME:-Apple Distribution}"
 CODE_SIGN_STYLE="${MACOS_APP_STORE_CODE_SIGN_STYLE:-Manual}"
-BUILD_VERSION="$(node -p "require('$ROOT_DIR/src-tauri/tauri.appstore.conf.json').bundle.macOS.bundleVersion")"
+read -r RELEASE_VERSION RELEASE_BUILD < <(
+  node -e 'const release = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")); console.log(`${release.version} ${release.macBuild}`);' "$ROOT_DIR/release/release.json"
+)
 
-[[ "$BUILD_VERSION" =~ ^[1-9][0-9]*$ ]] || {
-  printf 'Invalid App Store bundle version: %s\n' "$BUILD_VERSION" >&2
+node "$ROOT_DIR/scripts/release/check-release.mjs"
+
+[[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+  printf 'Invalid App Store marketing version: %s\n' "$RELEASE_VERSION" >&2
+  exit 1
+}
+[[ "$RELEASE_BUILD" =~ ^[1-9][0-9]*$ ]] || {
+  printf 'Invalid App Store bundle version: %s\n' "$RELEASE_BUILD" >&2
   exit 1
 }
 
@@ -132,7 +140,8 @@ if ! xcodebuild \
   -derivedDataPath "$MACOS_DIR/DerivedData" \
   ARCHS="arm64 x86_64" \
   ONLY_ACTIVE_ARCH=NO \
-  CURRENT_PROJECT_VERSION="$BUILD_VERSION" \
+  MARKETING_VERSION="$RELEASE_VERSION" \
+  CURRENT_PROJECT_VERSION="$RELEASE_BUILD" \
   "${signing_args[@]}" \
   build > /tmp/doodleray-app-store-extension-build.log 2>&1; then
   tail -n 160 /tmp/doodleray-app-store-extension-build.log >&2

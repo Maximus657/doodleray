@@ -11,12 +11,22 @@ HOST_EXECUTABLE="$APP_BUNDLE/Contents/MacOS/DoodleRay"
 HOST_INFO="$APP_BUNDLE/Contents/Info.plist"
 EXTENSION_DSYM="$MACOS_DIR/DerivedData/Build/Products/Release/DoodleRayVPN.appex.dSYM"
 STAMP="$(date +%Y%m%d-%H%M%S)"
-ARCHIVE="$OUTPUT_DIR/DoodleRay-VPN-6.0.0-$STAMP.xcarchive"
 EXPORT_DIR="$OUTPUT_DIR/export-$STAMP"
 EXPORT_OPTIONS="$OUTPUT_DIR/ExportOptions-$STAMP.plist"
 UPLOAD_LOG="$OUTPUT_DIR/upload-$STAMP.log"
 HOST_PROFILE_PLIST="$(mktemp "${TMPDIR:-/tmp}/doodleray-upload-host-profile.XXXXXX")"
 EVIDENCE="$OUTPUT_DIR/upload-evidence-$STAMP.json"
+read -r RELEASE_VERSION RELEASE_BUILD < <(
+  node -e 'const release = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")); console.log(`${release.version} ${release.macBuild}`);' "$ROOT_DIR/release/release.json"
+)
+ARCHIVE="$OUTPUT_DIR/DoodleRay-VPN-$RELEASE_VERSION-$STAMP.xcarchive"
+
+node "$ROOT_DIR/scripts/release/check-release.mjs"
+
+[[ "$RELEASE_BUILD" =~ ^[1-9][0-9]*$ ]] || {
+  printf 'Invalid App Store bundle version: %s\n' "$RELEASE_BUILD" >&2
+  exit 1
+}
 
 git -C "$ROOT_DIR" diff --quiet
 git -C "$ROOT_DIR" diff --cached --quiet
@@ -33,6 +43,8 @@ trap cleanup EXIT
 [ -d "$EXTENSION_DSYM" ] || { printf 'Packet Tunnel dSYM is missing; rebuild the App Store app first.\n' >&2; exit 1; }
 marketing_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$HOST_INFO")"
 build_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$HOST_INFO")"
+[ "$marketing_version" = "$RELEASE_VERSION" ] || { printf 'Host marketing version does not match release metadata.\n' >&2; exit 1; }
+[ "$build_version" = "$RELEASE_BUILD" ] || { printf 'Host bundle version does not match release metadata.\n' >&2; exit 1; }
 
 security cms -D -i "$APP_BUNDLE/Contents/embedded.provisionprofile" > "$HOST_PROFILE_PLIST"
 team_id="$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$HOST_PROFILE_PLIST")"
