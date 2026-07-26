@@ -112,8 +112,8 @@ function UpdateBanner() {
 
   const handleInstall = async () => {
     if (isBusy) return;
-    // store-win32 policy: user-initiated update via Store/support page, no
-    // silent failure and no in-app download when self-update is disabled.
+    // Mac App Store builds delegate installation to Apple; direct Windows
+    // builds keep the signed in-app updater.
     if (!isInAppUpdateEnabled()) {
       await openStoreUpdatePage();
       setUpdateState({ updatePhase: 'available', updateStatus: 'updateOpenStore', updateProgress: null });

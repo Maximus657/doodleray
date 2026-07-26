@@ -383,8 +383,8 @@ export default function Settings() {
         update = await checkForAppUpdate();
       }
       if (update) {
-        // store-win32 policy: show availability, open Store/support page,
-        // never silently download in-app when self-update is disabled.
+        // Keep managed App Store builds on Apple's update flow; direct
+        // Windows builds continue through the signed in-app updater.
         const { isInAppUpdateEnabled, openStoreUpdatePage } = await import('../lib/update-channel');
         if (!isInAppUpdateEnabled()) {
           await openStoreUpdatePage();

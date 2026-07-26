@@ -1,22 +1,22 @@
-type BuildChannel = 'direct' | 'store-win32' | 'app-store' | 'internal-qa';
+type BuildChannel = 'direct' | 'app-store' | 'internal-qa';
+type BuildEnvironment = Readonly<Record<string, string | undefined>>;
 
-const env = import.meta.env as Record<string, string | undefined>;
+const env = (import.meta.env ?? {}) as BuildEnvironment;
 
-export function getBuildChannel(): BuildChannel {
-  const explicit = env.VITE_DOODLERAY_BUILD_CHANNEL || env.VITE_DOODLERAY_UPDATE_CHANNEL;
-  if (explicit === 'store-win32') return 'store-win32';
+export function getBuildChannel(source: BuildEnvironment = env): BuildChannel {
+  const explicit = source.VITE_DOODLERAY_BUILD_CHANNEL || source.VITE_DOODLERAY_UPDATE_CHANNEL;
   if (explicit === 'app-store') return 'app-store';
   if (explicit === 'internal-qa') return 'internal-qa';
   return 'direct';
 }
 
-export function isClosedControlPlaneEnabled(): boolean {
-  return env.VITE_DOODLERAY_CLOSED_CONTROL_PLANE !== '0';
+export function isClosedControlPlaneEnabled(source: BuildEnvironment = env): boolean {
+  return source.VITE_DOODLERAY_CLOSED_CONTROL_PLANE !== '0';
 }
 
-export function isLegacyImportEnabled(): boolean {
-  if (!isClosedControlPlaneEnabled()) return true;
-  return getBuildChannel() === 'internal-qa' && env.VITE_DOODLERAY_ENABLE_LEGACY_IMPORT === '1';
+export function isLegacyImportEnabled(source: BuildEnvironment = env): boolean {
+  if (!isClosedControlPlaneEnabled(source)) return true;
+  return getBuildChannel(source) === 'internal-qa' && source.VITE_DOODLERAY_ENABLE_LEGACY_IMPORT === '1';
 }
 
 /**
@@ -29,12 +29,12 @@ export function isDiagnosticsTelemetryEnabled(): boolean {
 }
 
 /** LaunchAgent-based autostart is not part of the sandboxed App Store flavor. */
-export function isDesktopAutostartAvailable(): boolean {
-  return getBuildChannel() !== 'app-store';
+export function isDesktopAutostartAvailable(source: BuildEnvironment = env): boolean {
+  return getBuildChannel(source) !== 'app-store';
 }
 
-export function isNetworkExtensionOnlyBuild(): boolean {
-  return getBuildChannel() === 'app-store';
+export function isNetworkExtensionOnlyBuild(source: BuildEnvironment = env): boolean {
+  return getBuildChannel(source) === 'app-store';
 }
 
 export function getPrivacyPolicyUrl(): string {
