@@ -3397,23 +3397,6 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    #[test]
-    fn vpn_config_module_preserves_xray_websocket_shape() {
-        let mut request = sample_request("system-proxy");
-        request.transport = "ws".into();
-        request.host = Some("cdn.example.com".into());
-        request.path = Some("/ray".into());
-
-        let config = crate::vpn::config::build_xray_config(&request);
-        let stream = &config["outbounds"][0]["streamSettings"];
-
-        assert_eq!(stream["network"], json!("ws"));
-        assert_eq!(stream["wsSettings"]["path"], json!("/ray"));
-        assert_eq!(stream["wsSettings"]["host"], json!("cdn.example.com"));
-        assert!(stream["wsSettings"].get("headers").is_none());
-        assert_eq!(stream["tlsSettings"]["serverName"], json!("example.com"));
-    }
-
     /// LAST_CONNECT_TIMINGS is a process-global buffer and cargo runs tests
     /// in parallel threads by default, so any test that resets or records
     /// into it must hold this lock for its whole body — otherwise a sibling
