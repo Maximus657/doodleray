@@ -7,6 +7,7 @@ import { checkForAppUpdate, getCachedUpdate, installAppUpdate } from '../lib/app
 import { clearAppCache, diagnosticsReportToText, getStorageReport, runNetworkDiagnostics, type DiagnosticCheck, type NetworkDiagnosticsReport, type StorageReport } from '../lib/diagnostics';
 import { reportConnectionError } from '../lib/workshop-api';
 import { isDesktopAutostartAvailable } from '../lib/build-policy';
+import { desktopBridge } from '../platform/tauri/desktop-bridge.ts';
 
 function Toggle({ checked, onChange, label, description, warning }: { checked: boolean; onChange: (v: boolean) => void; label: string; description?: string; warning?: string }) {
   return (
@@ -237,8 +238,7 @@ export default function Settings() {
   useEffect(() => {
     (async () => {
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        const isExcluded: boolean = await invoke('check_defender_exclusion');
+        const isExcluded = await desktopBridge.checkDefenderExclusion();
         if (isExcluded) {
           setDefenderStatus('✓ DoodleRay is whitelisted in Windows Defender');
         }
@@ -249,8 +249,7 @@ export default function Settings() {
   const handleDefenderExclusion = async () => {
     setDefenderLoading(true);
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      const result: string = await invoke('add_defender_exclusion');
+      const result = await desktopBridge.addDefenderExclusion();
       setDefenderStatus(result);
       const { useToastStore } = await import('../stores/toast-store');
       useToastStore.getState().addToast('Defender exclusion added ✓', 'success');
@@ -267,8 +266,7 @@ export default function Settings() {
     // Optimistically update UI
     setSilentAdminAutostart(val);
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('toggle_silent_autostart', { enable: val });
+      await desktopBridge.toggleSilentAutostart(val);
       // When enabling silent admin autostart, disable regular autostart to avoid duplicates
       if (val) {
         try {
@@ -285,7 +283,7 @@ export default function Settings() {
       // If enabling and not already admin, offer to restart as admin right now
       if (val) {
         try {
-          const isAdmin: boolean = await invoke('is_admin');
+          const isAdmin = await desktopBridge.isAdmin();
           if (!isAdmin) {
             setConfirmModal({
               show: true,
@@ -293,7 +291,7 @@ export default function Settings() {
               message: 'Admin autostart is set for next login.\n\nRestart as Administrator now?\nThis will give full access to Whole computer mode and other admin features immediately.',
               onConfirm: async () => {
                 addLog('info', 'Restarting as administrator...');
-                await invoke('restart_as_admin');
+                await desktopBridge.restartAsAdmin();
                 setConfirmModal(prev => ({ ...prev, show: false }));
               }
             });

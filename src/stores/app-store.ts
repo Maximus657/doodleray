@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware';
 import { mergeLegacyDoodleSubscriptionState } from '../lib/legacy-subscription';
 import { invoke } from '@tauri-apps/api/core';
+import { desktopBridge } from '../platform/tauri/desktop-bridge.ts';
 import {
   buildServerSelectionIndex,
   findMatchingServerInIndex,
@@ -261,7 +262,7 @@ const secureStorage: StateStorage<Promise<void> | void> = {
           ? mergeLegacyDoodleSubscriptionState(secureValue, legacyValue)
           : secureValue;
         if (reconciledValue !== secureValue) {
-          await invoke('secure_store_set', { key: name, value: reconciledValue });
+          await desktopBridge.secureStoreSet(name, reconciledValue);
         }
         persistedValueCache.set(name, reconciledValue);
         if (legacyValue !== null) safeLocalRemove(name);
@@ -269,7 +270,7 @@ const secureStorage: StateStorage<Promise<void> | void> = {
       }
 
       if (legacyValue !== null) {
-        await invoke('secure_store_set', { key: name, value: legacyValue });
+        await desktopBridge.secureStoreSet(name, legacyValue);
         safeLocalRemove(name);
         persistedValueCache.set(name, legacyValue);
         return legacyValue;
@@ -290,7 +291,7 @@ const secureStorage: StateStorage<Promise<void> | void> = {
     const previous = pendingSecureWrites.get(name) ?? Promise.resolve();
     const write = previous.catch(() => { /* keep the queue moving */ }).then(async () => {
       if (persistedValueCache.get(name) === value) return;
-      await invoke('secure_store_set', { key: name, value });
+      await desktopBridge.secureStoreSet(name, value);
       persistedValueCache.set(name, value);
       safeLocalRemove(name);
     });
@@ -311,7 +312,7 @@ const secureStorage: StateStorage<Promise<void> | void> = {
 
     const previous = pendingSecureWrites.get(name) ?? Promise.resolve();
     const remove = previous.catch(() => { /* keep the queue moving */ }).then(async () => {
-      await invoke('secure_store_delete', { key: name });
+      await desktopBridge.secureStoreDelete(name);
       persistedValueCache.delete(name);
       safeLocalRemove(name);
     });

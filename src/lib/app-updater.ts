@@ -1,3 +1,5 @@
+import { desktopBridge } from '../platform/tauri/desktop-bridge.ts';
+
 type UpdateEvent = {
   event: 'Started' | 'Progress' | 'Finished';
   data?: {
@@ -70,10 +72,9 @@ async function disconnectBeforeInstall(onStatus: (status: string) => void) {
   onStatus('updateClosingProcesses');
 
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    await withTimeout(invoke('vpn_disconnect').catch(() => {}), UPDATE_PREPARE_STEP_TIMEOUT_MS, 'VPN disconnect');
-    await withTimeout(invoke('prepare_for_app_update'), UPDATE_PREPARE_STEP_TIMEOUT_MS, 'Update preparation');
-    await withTimeout(invoke('vpn_disconnect').catch(() => {}), UPDATE_PREPARE_STEP_TIMEOUT_MS, 'Final VPN disconnect');
+    await withTimeout(desktopBridge.vpnDisconnect().catch(() => {}), UPDATE_PREPARE_STEP_TIMEOUT_MS, 'VPN disconnect');
+    await withTimeout(desktopBridge.prepareForAppUpdate(), UPDATE_PREPARE_STEP_TIMEOUT_MS, 'Update preparation');
+    await withTimeout(desktopBridge.vpnDisconnect().catch(() => {}), UPDATE_PREPARE_STEP_TIMEOUT_MS, 'Final VPN disconnect');
     await new Promise((resolve) => setTimeout(resolve, 1500));
   } catch (e) {
     console.warn('Could not disconnect VPN before update:', e);

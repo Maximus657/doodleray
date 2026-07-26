@@ -1,4 +1,5 @@
 import type { ProxyMode, SystemProxyMode } from '../stores/app-store';
+import { DesktopBridge } from '../platform/tauri/desktop-bridge.ts';
 
 export type ConnectionHealthSeverity = 'ok' | 'info' | 'warning' | 'error';
 
@@ -125,6 +126,7 @@ export async function waitForConnectionHealth(
   attempts = mode === 'tun' ? 8 : 3,
   delayMs = mode === 'tun' ? 1500 : 700,
 ): Promise<{ health: ConnectionHealthReport | null; socksPort: number; httpPort: number }> {
+  const bridge = new DesktopBridge(invoke);
   let health = initialHealth ?? null;
   let socksPort = fallbackSocksPort;
   let httpPort = fallbackHttpPort;
@@ -136,12 +138,7 @@ export async function waitForConnectionHealth(
     if (isHealthAcceptable(mode, health)) break;
 
     if (attempt > 0 || !health) {
-      health = await invoke('get_connection_health', {
-        proxyMode: mode,
-        systemProxyMode,
-        socksPort,
-        httpPort,
-      }) as ConnectionHealthReport;
+      health = await bridge.getConnectionHealth(mode, systemProxyMode, socksPort, httpPort);
       const latestPorts = extractPortsFromHealth(health);
       socksPort = latestPorts.socksPort ?? socksPort;
       httpPort = latestPorts.httpPort ?? httpPort;
