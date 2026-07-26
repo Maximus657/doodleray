@@ -4,6 +4,18 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const expectedWorkflows = ['ci.yml', 'release-production.yml', 'runtime-updates.yml'];
 const forbiddenWindowsSigning = /WINDOWS_CODESIGN|PFX|THUMBPRINT|AUTHENTICODE|sign-windows-if-configured|sign-all-pe|Get-AuthenticodeSignature|signCommand/i;
+const appleSecrets = [
+  'APPLE_DISTRIBUTION_CERTIFICATE_BASE64',
+  'APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD',
+  'MAC_INSTALLER_DISTRIBUTION_CERTIFICATE_BASE64',
+  'MAC_INSTALLER_DISTRIBUTION_CERTIFICATE_PASSWORD',
+  'MACOS_APP_STORE_HOST_PROFILE_BASE64',
+  'MACOS_APP_STORE_EXTENSION_PROFILE_BASE64',
+  'APPLE_TEAM_ID',
+  'APP_STORE_CONNECT_API_KEY_ID',
+  'APP_STORE_CONNECT_ISSUER_ID',
+  'APP_STORE_CONNECT_PRIVATE_KEY',
+];
 
 function read(root, relativePath) {
   const path = join(root, relativePath);
@@ -64,12 +76,32 @@ export function checkReleaseWorkflows(root) {
     || !/\.verify\(artifact, &signature, false\)/.test(updaterVerifier)) {
     errors.push('Windows staging must cryptographically verify the updater signature with the configured Tauri key');
   }
-  if (!/APPLE_CERTIFICATE/.test(release) || !/upload-app-store\.sh/.test(release)) errors.push('enabled App Store target must retain signing and upload gates');
+  if (!appleSecrets.every((name) => new RegExp(`secrets\\.${name}\\b`).test(release))
+    || /\bAPPLE_CERTIFICATE\b|\bAPPLE_CERTIFICATE_PASSWORD\b|\bAPP_STORE_CONNECT_API_PRIVATE_KEY\b/.test(release)
+    || !/upload-app-store\.sh/.test(release)) {
+    errors.push('enabled App Store target must use the canonical signing, profile, team, and API secret contract');
+  }
   if (!/if \[ "\$windows" != 'true' \] && \[ "\$mac_app_store" != 'true' \]/.test(release)
     || /Production releases require both Windows and macAppStore targets/.test(release)
-    || !/upload_macos_app_store:\r?\n\s+needs: \[preflight, build_macos_app_store\]/.test(release)
-    || !/needs\.preflight\.outputs\.windows == 'true'[\s\S]*needs\.preflight\.outputs\.mac_app_store != 'true'[\s\S]*needs\.upload_macos_app_store\.result == 'success'/.test(release)) {
+    || !/upload_macos_app_store:\r?\n\s+needs: \[preflight, build_macos_app_store, upload_immutable\]/.test(release)
+    || !/needs\.preflight\.outputs\.windows != 'true' \|\| needs\.upload_immutable\.result == 'success'/.test(release)
+    || !/needs\.preflight\.outputs\.mac_app_store != 'true' \|\| needs\.upload_macos_app_store\.result == 'success'/.test(release)) {
     errors.push('production target graph must support Windows-only, App-Store-only, and combined releases');
+  }
+  const productionActions = [...release.matchAll(/^\s*- uses:\s+([^\s#]+)/gm)].map((match) => match[1]);
+  if (productionActions.some((action) => !/@[0-9a-f]{40}$/.test(action))) errors.push('production actions must be pinned to immutable commit SHAs');
+  if (/^ {6}[A-Z0-9_]+:\s*\$\{\{ secrets\./m.test(release)) errors.push('production secrets must be scoped to consuming steps');
+  if ((release.match(/apple-actions\/import-codesign-certs@[0-9a-f]{40}/g) ?? []).length !== 4
+    || (release.match(/create-keychain:\s*false/g) ?? []).length !== 2
+    || (release.match(/install-app-store-profiles\.sh "\$GITHUB_ENV"/g) ?? []).length !== 2
+    || /allowProvisioningUpdates|brew install xcodegen|generate-extension-project\.sh/.test(release)
+    || !/verify-app-store-readiness\.sh --full/.test(release)
+    || !/check-app-store-build\.mjs --require-new-or-existing/.test(release)) {
+    errors.push('App Store build and dry-run must fail closed on exact signing, profile, tool, and release-tuple contracts');
+  }
+  if (!/release-provenance\.json/.test(release) || !/macos-app-store-provenance\.json/.test(release)
+    || !/appleArtifactShaAvailable/.test(release)) {
+    errors.push('GitHub Release must retain target-independent source and macOS digest provenance');
   }
 
   const uploadArtifactCount = (release.match(/actions\/upload-artifact@/g) ?? []).length;
@@ -105,7 +137,19 @@ export function checkReleaseWorkflows(root) {
     errors.push('exact-byte idempotency and latest.json-last contracts must be explicit');
   }
 
-  if (/\bdevelop\b/.test(runtime) || !/BASE_BRANCH:\s*main/.test(runtime) || !/--delete-branch/.test(runtime)) errors.push('runtime updater must target main with a short-lived branch and never develop');
+  if (/\bdevelop\b/.test(runtime) || !/BASE_BRANCH:\s*main/.test(runtime)
+    || (runtime.match(/^\s+run: python3 scripts\/update-runtime-versions\.py\s*$/gm) ?? []).length !== 1
+    || !/runtime-candidate-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/.test(runtime)
+    || !/actions\/upload-artifact@[0-9a-f]{40}/.test(runtime)
+    || (runtime.match(/actions\/download-artifact@[0-9a-f]{40}/g) ?? []).length < 3
+    || /gh pr merge|--auto/.test(runtime)
+    || !/Manual compatibility and trust review required/.test(runtime)) {
+    errors.push('runtime updater must resolve one immutable candidate, target main, and require human merge');
+  }
+  if (/DOWNLOADS_SSH_USER:\s*\$\{\{ vars\.DOWNLOADS_SSH_USER \|\| 'root' \}\}/.test(release)
+    || (release.match(/DOWNLOADS_SSH_USER:\s*\$\{\{ vars\.DOWNLOADS_SSH_USER \}\}/g) ?? []).length !== 2) {
+    errors.push('production CDN SSH user must be explicit and least-privilege');
+  }
 
   for (const path of [
     'src-tauri/sign-windows-if-configured.ps1',

@@ -4,109 +4,46 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 MACOS_DIR="$ROOT_DIR/src-tauri/macos"
-PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
-XCODE_PROFILE_DIR="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
 STAGING_DIR="$MACOS_DIR/profiles"
-HOST_PROFILE_NAME="DoodleRay VPN macOS App Store Host"
-EXTENSION_PROFILE_NAME="DoodleRay VPN macOS App Store Extension"
 HOST_PROFILE_STAGED="$STAGING_DIR/DoodleRayHost.provisionprofile"
 HOST_ENTITLEMENTS_STAGED="$STAGING_DIR/DoodleRayHost.entitlements"
 EXTENSION_BUNDLE="$MACOS_DIR/DerivedData/Build/Products/Release/DoodleRayVPN.appex"
 APP_BUNDLE="$ROOT_DIR/src-tauri/target/universal-apple-darwin/release/bundle/macos/DoodleRay VPN.app"
-SIGNING_IDENTITY_NAME="${MACOS_APP_STORE_SIGNING_IDENTITY_NAME:-Apple Distribution}"
-CODE_SIGN_STYLE="${MACOS_APP_STORE_CODE_SIGN_STYLE:-Manual}"
+EXPECTED_TEAM_ID="${APPLE_TEAM_ID:-}"
 read -r RELEASE_VERSION RELEASE_BUILD < <(
   node -e 'const release = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")); console.log(`${release.version} ${release.macBuild}`);' "$ROOT_DIR/release/release.json"
 )
+release_config="$(node -e 'const release = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")); process.stdout.write(JSON.stringify({version: release.version, bundle: {macOS: {bundleVersion: String(release.macBuild)}}}));' "$ROOT_DIR/release/release.json")"
 
 node "$ROOT_DIR/scripts/release/check-release.mjs"
-
-[[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-  printf 'Invalid App Store marketing version: %s\n' "$RELEASE_VERSION" >&2
-  exit 1
-}
-[[ "$RELEASE_BUILD" =~ ^[1-9][0-9]*$ ]] || {
-  printf 'Invalid App Store bundle version: %s\n' "$RELEASE_BUILD" >&2
-  exit 1
-}
-
-find_profile_by_name() {
-  local expected_name="$1"
-  local profile decoded name
-
-  for profile in "$PROFILE_DIR"/*.provisionprofile; do
-    [ -f "$profile" ] || continue
-    decoded="$(mktemp "${TMPDIR:-/tmp}/doodleray-profile.XXXXXX")"
-    security cms -D -i "$profile" > "$decoded"
-    name="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$decoded")"
-    rm -f "$decoded"
-    if [ "$name" = "$expected_name" ]; then
-      printf '%s\n' "$profile"
-      return 0
-    fi
-  done
-  return 1
-}
-
-find_development_profile_by_bundle_id() {
-  local expected_bundle_id="$1"
-  local profile decoded application_id
-
-  for profile in "$XCODE_PROFILE_DIR"/* "$PROFILE_DIR"/*; do
-    [ -f "$profile" ] || continue
-    decoded="$(mktemp "${TMPDIR:-/tmp}/doodleray-profile.XXXXXX")"
-    security cms -D -i "$profile" > "$decoded" 2>/dev/null || { rm -f "$decoded"; continue; }
-    application_id="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.application-identifier' "$decoded" 2>/dev/null || true)"
-    if [[ "$application_id" == *".$expected_bundle_id" ]] && \
-      /usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices:0' "$decoded" >/dev/null 2>&1; then
-      rm -f "$decoded"
-      printf '%s\n' "$profile"
-      return 0
-    fi
-    rm -f "$decoded"
-  done
-  return 1
-}
+[[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { printf 'Invalid App Store marketing version.\n' >&2; exit 1; }
+[[ "$RELEASE_BUILD" =~ ^[1-9][0-9]*$ ]] || { printf 'Invalid App Store bundle version.\n' >&2; exit 1; }
+[[ "$EXPECTED_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]] || { printf 'APPLE_TEAM_ID is missing or invalid.\n' >&2; exit 1; }
+[ -d "$MACOS_DIR/DoodleRayAppStoreExtensions.xcodeproj" ] || { printf 'Tracked Packet Tunnel Xcode project is missing.\n' >&2; exit 1; }
 
 host_profile="${MACOS_APP_STORE_PROVISIONING_PROFILE:-}"
 extension_profile="${PACKET_TUNNEL_PROVISIONING_PROFILE:-}"
-if [ "$CODE_SIGN_STYLE" = "Automatic" ]; then
-  [ -n "$host_profile" ] || host_profile="$(find_development_profile_by_bundle_id 'com.doodleray.doodleray')"
-  [ -n "$extension_profile" ] || extension_profile="$(find_development_profile_by_bundle_id 'com.doodleray.doodleray.DoodleRayVPN')"
-else
-  [ -n "$host_profile" ] || host_profile="$(find_profile_by_name "$HOST_PROFILE_NAME")"
-  [ -n "$extension_profile" ] || extension_profile="$(find_profile_by_name "$EXTENSION_PROFILE_NAME")"
-fi
 [ -f "$host_profile" ] || { printf 'Host App Store provisioning profile is missing.\n' >&2; exit 1; }
 [ -f "$extension_profile" ] || { printf 'Packet Tunnel provisioning profile is missing.\n' >&2; exit 1; }
 
 mkdir -p "$STAGING_DIR"
 security cms -D -i "$host_profile" > "$STAGING_DIR/host-profile.plist"
 security cms -D -i "$extension_profile" > "$STAGING_DIR/extension-profile.plist"
-
 team_id="$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$STAGING_DIR/host-profile.plist")"
 extension_team_id="$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$STAGING_DIR/extension-profile.plist")"
 host_application_id="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.application-identifier' "$STAGING_DIR/host-profile.plist")"
 extension_application_id="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.application-identifier' "$STAGING_DIR/extension-profile.plist")"
+host_profile_name="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$STAGING_DIR/host-profile.plist")"
 extension_profile_name="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$STAGING_DIR/extension-profile.plist")"
-identity="$(security find-identity -v -p codesigning | sed -n 's/.*"\([^"]*\)"/\1/p' | awk -v prefix="$SIGNING_IDENTITY_NAME:" 'index($0, prefix) == 1 { print; exit }')"
-host_profile_has_devices=false
-extension_profile_has_devices=false
-/usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices:0' "$STAGING_DIR/host-profile.plist" >/dev/null 2>&1 && host_profile_has_devices=true
-/usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices:0' "$STAGING_DIR/extension-profile.plist" >/dev/null 2>&1 && extension_profile_has_devices=true
+identity="$(security find-identity -v -p codesigning | sed -n 's/.*"\([^"]*\)"/\1/p' | rg "^Apple Distribution: .+ \\($EXPECTED_TEAM_ID\\)$" | head -n 1 || true)"
 
-[[ "$team_id" =~ ^[A-Z0-9]+$ ]] || { printf 'Invalid Team ID in host profile.\n' >&2; exit 1; }
+[ "$team_id" = "$EXPECTED_TEAM_ID" ] || { printf 'Host profile Team ID does not match APPLE_TEAM_ID.\n' >&2; exit 1; }
 [ "$team_id" = "$extension_team_id" ] || { printf 'Host and extension profiles belong to different teams.\n' >&2; exit 1; }
 [ "$host_application_id" = "$team_id.com.doodleray.doodleray" ] || { printf 'Host profile does not match the App Store bundle identifier.\n' >&2; exit 1; }
 [ "$extension_application_id" = "$team_id.com.doodleray.doodleray.DoodleRayVPN" ] || { printf 'Extension profile does not match the Packet Tunnel bundle identifier.\n' >&2; exit 1; }
-[ -n "$identity" ] || { printf '%s signing identity is missing.\n' "$SIGNING_IDENTITY_NAME" >&2; exit 1; }
-if [ "$CODE_SIGN_STYLE" = "Automatic" ]; then
-  [ "$host_profile_has_devices" = true ] || { printf 'Automatic signing requires a host development profile.\n' >&2; exit 1; }
-  [ "$extension_profile_has_devices" = true ] || { printf 'Automatic signing requires a Packet Tunnel development profile.\n' >&2; exit 1; }
-else
-  [ "$host_profile_has_devices" = false ] || { printf 'Manual App Store signing requires a host distribution profile.\n' >&2; exit 1; }
-  [ "$extension_profile_has_devices" = false ] || { printf 'Manual App Store signing requires a Packet Tunnel distribution profile.\n' >&2; exit 1; }
-fi
+[ -n "$host_profile_name" ] || { printf 'Host provisioning profile name is missing.\n' >&2; exit 1; }
+[ -n "$extension_profile_name" ] || { printf 'Extension provisioning profile name is missing.\n' >&2; exit 1; }
+[ -n "$identity" ] || { printf 'Apple Distribution identity for APPLE_TEAM_ID is missing.\n' >&2; exit 1; }
 
 cp "$host_profile" "$HOST_PROFILE_STAGED"
 cp "$ROOT_DIR/src-tauri/Entitlements.appstore.plist" "$HOST_ENTITLEMENTS_STAGED"
@@ -116,21 +53,7 @@ cp "$ROOT_DIR/src-tauri/Entitlements.appstore.plist" "$HOST_ENTITLEMENTS_STAGED"
 /usr/libexec/PlistBuddy -c "Add :keychain-access-groups:0 string $host_application_id" "$HOST_ENTITLEMENTS_STAGED"
 
 "$ROOT_DIR/scripts/macos/build-libxray.sh"
-"$ROOT_DIR/scripts/macos/generate-extension-project.sh"
 rustup target add x86_64-apple-darwin >/dev/null
-
-signing_args=(
-  DEVELOPMENT_TEAM="$team_id"
-  CODE_SIGN_STYLE="$CODE_SIGN_STYLE"
-)
-if [ "$CODE_SIGN_STYLE" = "Manual" ]; then
-  signing_args+=(CODE_SIGN_IDENTITY="$identity" PROVISIONING_PROFILE_SPECIFIER="$extension_profile_name")
-elif [ "$CODE_SIGN_STYLE" = "Automatic" ]; then
-  signing_args+=(CODE_SIGN_IDENTITY="$SIGNING_IDENTITY_NAME" -allowProvisioningUpdates)
-elif [ "$CODE_SIGN_STYLE" != "Automatic" ]; then
-  printf 'Unsupported code signing style: %s\n' "$CODE_SIGN_STYLE" >&2
-  exit 1
-fi
 
 if ! xcodebuild \
   -project "$MACOS_DIR/DoodleRayAppStoreExtensions.xcodeproj" \
@@ -142,7 +65,10 @@ if ! xcodebuild \
   ONLY_ACTIVE_ARCH=NO \
   MARKETING_VERSION="$RELEASE_VERSION" \
   CURRENT_PROJECT_VERSION="$RELEASE_BUILD" \
-  "${signing_args[@]}" \
+  DEVELOPMENT_TEAM="$team_id" \
+  CODE_SIGN_STYLE=Manual \
+  CODE_SIGN_IDENTITY="$identity" \
+  PROVISIONING_PROFILE_SPECIFIER="$extension_profile_name" \
   build > /tmp/doodleray-app-store-extension-build.log 2>&1; then
   tail -n 160 /tmp/doodleray-app-store-extension-build.log >&2
   exit 1
@@ -165,6 +91,7 @@ if ! npm run tauri -- build \
   --features app-store \
   --bundles app \
   --config src-tauri/tauri.appstore.conf.json \
+  --config "$release_config" \
   --ci > /tmp/doodleray-app-store-tauri-build.log 2>&1; then
   tail -n 200 /tmp/doodleray-app-store-tauri-build.log >&2
   exit 1

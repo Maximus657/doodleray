@@ -24,8 +24,86 @@ test('production target graph supports Windows-only, macOS-only, and both', () =
   const release = readFileSync(join(repositoryRoot, '.github/workflows/release-production.yml'), 'utf8');
   assert.match(release, /if \[ "\$windows" != 'true' \] && \[ "\$mac_app_store" != 'true' \]/);
   assert.doesNotMatch(release, /Production releases require both Windows and macAppStore targets/);
-  assert.match(release, /upload_macos_app_store:\r?\n\s+needs: \[preflight, build_macos_app_store\]/);
-  assert.match(release, /needs\.preflight\.outputs\.windows == 'true'[\s\S]*needs\.preflight\.outputs\.mac_app_store != 'true'[\s\S]*needs\.upload_macos_app_store\.result == 'success'/);
+  assert.match(release, /upload_macos_app_store:\r?\n\s+needs: \[preflight, build_macos_app_store, upload_immutable\]/);
+  assert.match(release, /needs\.preflight\.outputs\.windows != 'true' \|\| needs\.upload_immutable\.result == 'success'/);
+  assert.match(release, /needs\.preflight\.outputs\.mac_app_store != 'true' \|\| needs\.upload_macos_app_store\.result == 'success'/);
+});
+
+test('combined release uploads immutable Windows bytes before App Store submission', () => {
+  const release = readFileSync(join(repositoryRoot, '.github/workflows/release-production.yml'), 'utf8');
+  assert.match(release, /upload_macos_app_store:\r?\n\s+needs: \[preflight, build_macos_app_store, upload_immutable\]/);
+  assert.match(release, /if: always\(\) && inputs\.dry_run == false && needs\.preflight\.outputs\.mac_app_store == 'true' && needs\.build_macos_app_store\.result == 'success' && \(needs\.preflight\.outputs\.windows != 'true' \|\| needs\.upload_immutable\.result == 'success'\)/);
+});
+
+test('macOS-only release can submit without a Windows upload job', () => {
+  const release = readFileSync(join(repositoryRoot, '.github/workflows/release-production.yml'), 'utf8');
+  assert.match(release, /needs\.preflight\.outputs\.windows != 'true' \|\| needs\.upload_immutable\.result == 'success'/);
+});
+
+test('production actions are immutable and secrets are scoped to consuming steps', () => {
+  const release = readFileSync(join(repositoryRoot, '.github/workflows/release-production.yml'), 'utf8');
+  const uses = [...release.matchAll(/^\s*- uses:\s+([^\s#]+)(?:\s+#.*)?$/gm)].map((match) => match[1]);
+  assert.ok(uses.length > 0);
+  for (const action of uses) assert.match(action, /@[0-9a-f]{40}$/);
+  assert.doesNotMatch(release, /^ {6}[A-Z0-9_]+:\s*\$\{\{ secrets\./m);
+});
+
+test('dry-run validates the complete macOS production contract without publishing', () => {
+  const release = readFileSync(join(repositoryRoot, '.github/workflows/release-production.yml'), 'utf8');
+  for (const name of [
+    'MAC_INSTALLER_DISTRIBUTION_CERTIFICATE_BASE64',
+    'MAC_INSTALLER_DISTRIBUTION_CERTIFICATE_PASSWORD',
+    'APP_STORE_CONNECT_API_KEY_ID',
+    'APP_STORE_CONNECT_ISSUER_ID',
+    'APP_STORE_CONNECT_PRIVATE_KEY',
+  ]) assert.match(release, new RegExp(`secrets\\.${name}\\b`));
+  assert.match(release, /verify-app-store-readiness\.sh --full/);
+  assert.match(release, /check-app-store-build\.mjs --require-new-or-existing/);
+  assert.match(release, /if: inputs\.dry_run == false\r?\n\s+uses: actions\/upload-artifact@/);
+  assert.doesNotMatch(release, /if: inputs\.dry_run == true[\s\S]{0,120}(?:gh release|upload-app-store\.sh|Publish-DoodleRayDownloads)/);
+});
+
+test('macOS-only release creates an immutable GitHub release with provenance', () => {
+  const release = readFileSync(join(repositoryRoot, '.github/workflows/release-production.yml'), 'utf8');
+  assert.match(release, /publish_github_release:\r?\n\s+needs: \[preflight, upload_immutable, upload_macos_app_store\]/);
+  assert.match(release, /needs\.preflight\.outputs\.windows != 'true' \|\| needs\.upload_immutable\.result == 'success'/);
+  assert.match(release, /needs\.preflight\.outputs\.mac_app_store != 'true' \|\| needs\.upload_macos_app_store\.result == 'success'/);
+  assert.match(release, /release-provenance\.json/);
+  assert.match(release, /appleArtifactShaAvailable/);
+  assert.match(release, /promote_latest:[\s\S]*needs\.preflight\.outputs\.windows == 'true'/);
+  assert.match(release, /Promote latest\.json last/);
+});
+
+test('unsigned CI regenerates and checks the tracked extension project', () => {
+  const release = readFileSync(join(repositoryRoot, '.github/workflows/release-production.yml'), 'utf8');
+  const ci = readFileSync(join(repositoryRoot, '.github/workflows/ci.yml'), 'utf8');
+  assert.doesNotMatch(release, /brew install xcodegen|generate-extension-project\.sh/);
+  assert.match(ci, /generate-extension-project\.sh/);
+  assert.match(ci, /git diff --exit-code -- src-tauri\/macos\/DoodleRayAppStoreExtensions\.xcodeproj/);
+});
+
+test('runtime update candidates are resolved once and require human merge', () => {
+  const runtime = readFileSync(join(repositoryRoot, '.github/workflows/runtime-updates.yml'), 'utf8');
+  assert.equal((runtime.match(/^\s+run: python3 scripts\/update-runtime-versions\.py\s*$/gm) ?? []).length, 1);
+  assert.match(runtime, /CANDIDATE_NAME:\s*runtime-candidate-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/);
+  assert.match(runtime, /actions\/upload-artifact@[0-9a-f]{40}/);
+  assert.ok((runtime.match(/actions\/download-artifact@[0-9a-f]{40}/g) ?? []).length >= 3);
+  assert.doesNotMatch(runtime, /gh pr merge|--auto/);
+  assert.match(runtime, /Manual compatibility and trust review required/);
+});
+
+test('CDN deployment requires an explicit least-privilege SSH user', () => {
+  const release = readFileSync(join(repositoryRoot, '.github/workflows/release-production.yml'), 'utf8');
+  assert.doesNotMatch(release, /DOWNLOADS_SSH_USER:\s*\$\{\{ vars\.DOWNLOADS_SSH_USER \|\| 'root' \}\}/);
+  assert.equal((release.match(/DOWNLOADS_SSH_USER:\s*\$\{\{ vars\.DOWNLOADS_SSH_USER \}\}/g) ?? []).length, 2);
+});
+
+test('macOS handoff publishes durable source and digest provenance', () => {
+  const release = readFileSync(join(repositoryRoot, '.github/workflows/release-production.yml'), 'utf8');
+  assert.match(release, /macos-app-store-provenance\.json/);
+  assert.match(release, /DoodleRay-app\.zip[\s\S]{0,240}(?:shasum|sha256)/i);
+  assert.match(release, /appleArtifactShaAvailable/);
+  assert.match(release, /sourceSha/);
 });
 
 test('production SSH uses a pinned dedicated known-hosts file and strict inputs', () => {

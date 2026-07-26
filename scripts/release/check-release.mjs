@@ -74,8 +74,8 @@ function settingValues(source, setting) {
   return [...source.matchAll(new RegExp(`\\b${setting}\\s*[:=]\\s*["']?([^"';\\s]+)`, 'g'))].map((match) => match[1]);
 }
 
-function allEqual(values, expected) {
-  return values.length > 0 && values.every((value) => value === expected);
+function absentOrAllEqual(values, expected) {
+  return values.every((value) => value === expected);
 }
 
 function escapeRegExp(value) {
@@ -144,6 +144,7 @@ export function checkRelease(root, { publishedVersion } = {}) {
   const cargoVersion = tomlPackageVersion(readFileSync(join(root, 'src-tauri/Cargo.toml'), 'utf8'));
   const projectYml = readFileSync(join(root, 'src-tauri/macos/project.yml'), 'utf8');
   const pbxproj = readFileSync(join(root, 'src-tauri/macos/DoodleRayAppStoreExtensions.xcodeproj/project.pbxproj'), 'utf8');
+  const appStoreBuild = readFileSync(join(root, 'scripts/macos/build-app-store.sh'), 'utf8');
   const hostEntitlements = readFileSync(join(root, 'src-tauri/Entitlements.appstore.plist'), 'utf8');
   const extensionEntitlements = readFileSync(join(root, 'src-tauri/macos/PacketTunnelProvider/Entitlements.plist'), 'utf8');
   const extensionBridge = readFileSync(join(root, 'src-tauri/macos/HostBridge/NetworkExtensionBridge.m'), 'utf8');
@@ -156,11 +157,17 @@ export function checkRelease(root, { publishedVersion } = {}) {
   if (packageLock.version !== release.version || packageLock.packages?.['']?.version !== release.version) errors.push('package-lock.json root version must equal release.json version');
   if (cargoVersion !== release.version) errors.push('Cargo package version must equal release.json version');
   if (tauri.version !== release.version) errors.push('base Tauri version must equal release.json version');
-  if (appStore.bundle?.macOS?.bundleVersion !== String(release.macBuild)) errors.push('App Store bundleVersion must equal release.json macBuild');
-  if (!allEqual(settingValues(projectYml, 'MARKETING_VERSION'), release.version)) errors.push('XcodeGen MARKETING_VERSION must equal release.json version');
-  if (!allEqual(settingValues(projectYml, 'CURRENT_PROJECT_VERSION'), String(release.macBuild))) errors.push('XcodeGen CURRENT_PROJECT_VERSION must equal release.json macBuild');
-  if (!allEqual(settingValues(pbxproj, 'MARKETING_VERSION'), release.version)) errors.push('generated pbxproj MARKETING_VERSION must equal release.json version');
-  if (!allEqual(settingValues(pbxproj, 'CURRENT_PROJECT_VERSION'), String(release.macBuild))) errors.push('generated pbxproj CURRENT_PROJECT_VERSION must equal release.json macBuild');
+  if (appStore.bundle?.macOS?.bundleVersion !== undefined
+    && appStore.bundle.macOS.bundleVersion !== String(release.macBuild)) errors.push('App Store bundleVersion must equal release.json macBuild when declared');
+  if (!absentOrAllEqual(settingValues(projectYml, 'MARKETING_VERSION'), release.version)) errors.push('XcodeGen MARKETING_VERSION must equal release.json version when declared');
+  if (!absentOrAllEqual(settingValues(projectYml, 'CURRENT_PROJECT_VERSION'), String(release.macBuild))) errors.push('XcodeGen CURRENT_PROJECT_VERSION must equal release.json macBuild when declared');
+  if (!absentOrAllEqual(settingValues(pbxproj, 'MARKETING_VERSION'), release.version)) errors.push('generated pbxproj MARKETING_VERSION must equal release.json version when declared');
+  if (!absentOrAllEqual(settingValues(pbxproj, 'CURRENT_PROJECT_VERSION'), String(release.macBuild))) errors.push('generated pbxproj CURRENT_PROJECT_VERSION must equal release.json macBuild when declared');
+  if (!/--config\s+"\$release_config"/.test(appStoreBuild)
+    || !/MARKETING_VERSION="\$RELEASE_VERSION"/.test(appStoreBuild)
+    || !/CURRENT_PROJECT_VERSION="\$RELEASE_BUILD"/.test(appStoreBuild)) {
+    errors.push('App Store build must inject release.json version and macBuild into Tauri and Xcode');
+  }
   if (tauri.identifier !== directIdentifier) errors.push(`base Tauri identifier must equal ${directIdentifier}`);
   if (appStore.identifier !== appStoreIdentifier) errors.push(`App Store identifier must equal ${appStoreIdentifier}`);
   const packetTunnelProject = projectTargetBlock(projectYml, 'DoodleRayVPN');

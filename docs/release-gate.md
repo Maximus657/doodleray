@@ -37,11 +37,20 @@ installers are RC-only; they do not need a Windows certificate.
 
 ## macOS evidence
 
-- clean install and App Store 5.9.1 upgrade;
+- portable static readiness prints `STATIC PASS` and the honest
+  `MACOS RELEASE BLOCKED` marker;
+- full readiness on macOS with both distribution identities and both supplied
+  profiles;
+- clean install and a tested transition from 5.9.1. The old direct bundle ID
+  `com.doodlevpn.doodleray` differs from the App Store host
+  `com.doodleray.doodleray`, so container/Keychain migration is unproven;
 - host and Network Extension signature/entitlement validation;
 - session/keychain migration, connect/disconnect, sleep/wake, network change;
 - TestFlight smoke on Intel and Apple Silicon;
 - confirmation that the App Store build has no Tauri self-updater.
+- security regression evidence that arbitrary renderer IPC cannot bypass the
+  closed-control-plane profile authorization and that unused Xray outbounds
+  cannot add excluded routes or direct DNS paths.
 
 ## Publication rule
 

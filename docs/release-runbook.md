@@ -27,16 +27,21 @@ release prerequisite.
 
 The enabled App Store target fails closed without:
 
-- `APPLE_CERTIFICATE` and `APPLE_CERTIFICATE_PASSWORD` (the imported keychain
-  must contain Apple Distribution and Mac Installer Distribution identities);
+- `APPLE_DISTRIBUTION_CERTIFICATE_BASE64` and
+  `APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD`;
+- `MAC_INSTALLER_DISTRIBUTION_CERTIFICATE_BASE64` and
+  `MAC_INSTALLER_DISTRIBUTION_CERTIFICATE_PASSWORD`;
 - `MACOS_APP_STORE_HOST_PROFILE_BASE64`;
 - `MACOS_APP_STORE_EXTENSION_PROFILE_BASE64`;
+- `APPLE_TEAM_ID`;
 - `APP_STORE_CONNECT_API_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, and
-  `APP_STORE_CONNECT_API_PRIVATE_KEY`.
+  `APP_STORE_CONNECT_PRIVATE_KEY`.
 
-CDN publication requires `DOWNLOADS_SSH_PRIVATE_KEY` and the pinned OpenSSH
+CDN publication requires `DOWNLOADS_SSH_PRIVATE_KEY`, the pinned OpenSSH
 known-hosts content in `DOWNLOADS_SSH_KNOWN_HOSTS`. Host/user/port/root may be
-overridden with the documented `DOWNLOADS_*` repository variables. Host-key
+configured with the documented `DOWNLOADS_*` repository variables.
+`DOWNLOADS_SSH_USER` is mandatory and must be a dedicated least-privilege
+deploy account; there is no `root` fallback. Host-key
 learning is disabled: rotate the pin explicitly after verifying the new key out
 of band. The secret contains complete OpenSSH `known_hosts` line(s), including
 the `[host]:port` form when a non-default port is used; an unverified
@@ -49,11 +54,18 @@ and GitHub Release—deploy jobs never rebuild it. A dry run keeps the packaged
 bytes on its ephemeral runner and does not upload artifacts or write caches.
 When both targets are enabled, publication order is:
 
-1. upload or verify the immutable CDN version directory and submit the signed
-   macOS build to App Store Connect;
-2. after both succeed, create or verify the exact tag and publish the GitHub
-   Release;
-3. atomically promote the CDN `latest.json` as the last mutation.
+1. upload or verify the immutable CDN version directory when Windows is
+   enabled;
+2. submit the signed macOS build only after that Windows upload succeeds in a
+   combined release;
+3. after every enabled target succeeds, create or verify the exact tag and
+   GitHub Release, including target/source provenance;
+4. atomically promote the Windows CDN `latest.json` as the last mutation.
+
+A macOS-only release still creates the immutable tag and GitHub Release with
+the signed-handoff digest provenance, and never runs Windows latest promotion.
+Apple exposes build identity but no artifact SHA, so an exact existing
+bundle/version/macBuild rerun is a no-op with that residual limitation.
 
 An existing file set with identical hashes is a no-op. Different hashes for an
 existing version stop the release. Published artifacts are never overwritten;
@@ -61,6 +73,14 @@ rollback is a new SemVer release.
 
 Apple review remains asynchronous. A successful workflow proves submission,
 not App Store approval.
+
+## Runtime component updates
+
+`runtime-updates.yml` resolves each moving upstream release once, stores that
+exact `runtime-versions.json` plus its digest as the workflow handoff, and uses
+the same snapshot for every smoke and update job. It may open a pull request to
+`main`; it never auto-merges or publishes production bytes. A human reviews the
+resolved versions, hashes, tests, and diff before merge.
 
 ## Before production
 

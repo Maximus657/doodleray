@@ -72,6 +72,7 @@ function writeFixture(overrides = {}) {
   writeText(root, 'src-tauri/src/storage/mod.rs', `const SECURE_STORE_SERVICE: &str = "DoodleRay";\nconst RENDERER_STATE_KEY: &str = "doodleray-storage";\nconst APP_API_SESSION_KEY: &str = "app-api-session-v1";\nconst APP_API_DEVICE_KEY: &str = "app-api-device-v1";\n`);
   writeText(root, 'src-tauri/macos/project.yml', `targets:\n  DoodleRayVPN:\n    entitlements:\n      properties:\n        com.apple.security.application-groups:\n          - group.com.doodleray.doodleray\n    settings:\n      base:\n        PRODUCT_BUNDLE_IDENTIFIER: com.doodleray.doodleray.DoodleRayVPN\n        MARKETING_VERSION: "${xcodeVersion}"\n        CURRENT_PROJECT_VERSION: "${macBuild}"\n`);
   writeText(root, 'src-tauri/macos/DoodleRayAppStoreExtensions.xcodeproj/project.pbxproj', `MARKETING_VERSION = ${pbxVersion};\nCURRENT_PROJECT_VERSION = ${macBuild};\nMARKETING_VERSION = ${pbxVersion};\nCURRENT_PROJECT_VERSION = ${macBuild};\n`);
+  writeText(root, 'scripts/macos/build-app-store.sh', 'MARKETING_VERSION="$RELEASE_VERSION" CURRENT_PROJECT_VERSION="$RELEASE_BUILD" npm run tauri -- build --config "$release_config"\n');
   writeText(root, 'src-tauri/Entitlements.appstore.plist', '<key>com.apple.security.application-groups</key>\n<array><string>group.com.doodleray.doodleray</string></array>\n');
   writeText(root, 'src-tauri/macos/PacketTunnelProvider/Entitlements.plist', '<key>com.apple.security.application-groups</key>\n<array><string>group.com.doodleray.doodleray</string></array>\n');
   writeText(root, 'src-tauri/macos/HostBridge/NetworkExtensionBridge.m', 'static NSString *const DoodleRayProviderBundleIdentifier = @"com.doodleray.doodleray.DoodleRayVPN";\n[[NSFileManager defaultManager] containerURLForSecurityApplicationGroupIdentifier:@"group.com.doodleray.doodleray"];\n');
@@ -119,6 +120,36 @@ test('preflight accepts synchronized metadata and a newer candidate', async () =
       channel: 'stable',
       targets: { windows: true, macAppStore: true },
     });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('preflight accepts canonical macOS version injection without tracked duplicates', async () => {
+  const root = writeFixture();
+  try {
+    const appStore = JSON.parse(readFileSync(join(root, 'src-tauri/tauri.appstore.conf.json'), 'utf8'));
+    delete appStore.bundle.macOS.bundleVersion;
+    writeJson(root, 'src-tauri/tauri.appstore.conf.json', appStore);
+    writeText(root, 'src-tauri/macos/project.yml', 'targets:\n  DoodleRayVPN:\n    entitlements:\n      properties:\n        com.apple.security.application-groups:\n          - group.com.doodleray.doodleray\n    settings:\n      base:\n        PRODUCT_BUNDLE_IDENTIFIER: com.doodleray.doodleray.DoodleRayVPN\n');
+    writeText(root, 'src-tauri/macos/DoodleRayAppStoreExtensions.xcodeproj/project.pbxproj', '');
+
+    const { checkRelease } = await loadChecker();
+    assert.equal(checkRelease(root).version, '6.0.2');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('preflight rejects missing macOS release metadata injection', async () => {
+  const root = writeFixture();
+  try {
+    writeText(root, 'scripts/macos/build-app-store.sh', 'npm run tauri -- build\n');
+    const { checkRelease } = await loadChecker();
+    assert.throws(
+      () => checkRelease(root),
+      /App Store build must inject release\.json version and macBuild into Tauri and Xcode/,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

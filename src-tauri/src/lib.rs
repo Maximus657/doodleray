@@ -23,10 +23,6 @@ pub mod sysproxy;
 #[cfg(windows)]
 pub mod windows_net;
 
-#[cfg(target_os = "macos")]
-#[path = "sysproxy_macos.rs"]
-pub mod sysproxy;
-
 #[cfg(test)]
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use reqwest::Url;
@@ -1727,9 +1723,6 @@ fn restore_system_proxy_if_owned(force: bool) {
 
     #[cfg(windows)]
     let _ = sysproxy::restore_previous_proxy_state();
-    #[cfg(target_os = "macos")]
-    let _ = sysproxy::unset_system_proxy();
-
     if let Ok(mut managed) = SYSTEM_PROXY_MANAGED.lock() {
         *managed = false;
     }
@@ -1744,14 +1737,18 @@ fn apply_system_proxy_mode(mode: &str, http_port: u16) -> Result<&'static str, S
     match safe_system_proxy_mode(mode) {
         "set" => {
             #[cfg(windows)]
-            sysproxy::apply_doodleray_proxy(http_port, env!("CARGO_PKG_VERSION"))?;
-            #[cfg(target_os = "macos")]
-            sysproxy::set_system_proxy(http_port)?;
-
-            if let Ok(mut managed) = SYSTEM_PROXY_MANAGED.lock() {
-                *managed = true;
+            {
+                sysproxy::apply_doodleray_proxy(http_port, env!("CARGO_PKG_VERSION"))?;
+                if let Ok(mut managed) = SYSTEM_PROXY_MANAGED.lock() {
+                    *managed = true;
+                }
+                Ok("set")
             }
-            Ok("set")
+            #[cfg(not(windows))]
+            {
+                let _ = http_port;
+                Err("System proxy mode is unavailable on this platform".into())
+            }
         }
         "clear" => {
             repair_stale_system_proxy_only();
@@ -7596,9 +7593,10 @@ fn system_proxy_fetch_client(
     parsed_url: &Url,
     timeout: Duration,
 ) -> Result<Option<reqwest::Client>, String> {
-    let _ = parsed_url;
+    #[cfg(not(windows))]
+    let _ = (parsed_url, timeout);
 
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(windows)]
     {
         let Some(proxy_url) = sysproxy::current_manual_http_proxy_for_url(parsed_url.scheme())?
         else {
@@ -7615,7 +7613,7 @@ fn system_proxy_fetch_client(
             .map_err(|e| format!("system proxy HTTP client error: {}", e))
     }
 
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(not(windows))]
     {
         Ok(None)
     }
@@ -11787,8 +11785,6 @@ pub fn run() {
         } else {
             vpn_log("startup cleanup: preserving active tunnel service state");
         }
-        #[cfg(target_os = "macos")]
-        let _ = sysproxy::unset_system_proxy(); // Restore stale app proxy on macOS
     }
     if let Ok(mut managed) = SYSTEM_PROXY_MANAGED.lock() {
         *managed = false;

@@ -9,7 +9,7 @@ contact details in Git.
 | Field | Proposed value |
 |---|---|
 | Name | `DoodleRay VPN` |
-| Version | `6.0.0` |
+| Version | Read from `release/release.json` for the submitted source SHA |
 | Primary category | Utilities |
 | Secondary category | Productivity |
 | Privacy policy URL | `https://doodlevpn.online/privacy` |
@@ -172,11 +172,12 @@ endpoint, profile, and reviewer information.
 
 - Confirm the legal relationship between the App Store seller and the operator
   named in the policy/terms.
-- Install the Mac Installer Distribution identity and build the signed `.pkg`.
-- Run the real Network Extension QA matrix and prepare accepted-size screenshots.
+- Run the real Network Extension QA matrix, including the unproven transition
+  from direct 5.9.1 (`com.doodlevpn.doodleray`) to the App Store bundle, and
+  prepare accepted-size screenshots.
 - Confirm any external export-reporting obligation.
-- Complete content-rights and reviewer information, upload the build, run
-  TestFlight acceptance, and request App Review.
+- Complete content-rights and reviewer information, upload the exact current
+  build, run TestFlight acceptance, and request App Review.
 
 ## Apple references
 

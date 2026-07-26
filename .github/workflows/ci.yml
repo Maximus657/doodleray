@@ -75,6 +75,7 @@ jobs:
           brew install xcodegen
           scripts/macos/build-libxray.sh
           scripts/macos/generate-extension-project.sh
+          git diff --exit-code -- src-tauri/macos/DoodleRayAppStoreExtensions.xcodeproj
           xcodebuild -project src-tauri/macos/DoodleRayAppStoreExtensions.xcodeproj -scheme DoodleRayVPN \
             -destination 'generic/platform=macOS' -configuration Release -derivedDataPath "$RUNNER_TEMP/DoodleRayExtension" \
             ARCHS='arm64 x86_64' ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO build

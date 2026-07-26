@@ -141,7 +141,6 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = PacketTunnelProvider/Entitlements.plist;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 60017;
 				ENABLE_APP_SANDBOX = YES;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -155,7 +154,6 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
-				MARKETING_VERSION = 6.0.2;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -175,7 +173,6 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = PacketTunnelProvider/Entitlements.plist;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 60017;
 				ENABLE_APP_SANDBOX = YES;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -189,7 +186,6 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
-				MARKETING_VERSION = 6.0.2;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
