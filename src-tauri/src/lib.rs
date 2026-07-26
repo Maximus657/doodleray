@@ -3878,15 +3878,99 @@ fn app_api_invalidate_session_storage(
     }
 }
 
+fn app_api_invalidate_windows_session_storage(
+    keyring_delete: impl FnOnce() -> Result<(), String>,
+    keyring_tombstone: impl FnOnce(&str) -> Result<(), String>,
+    dpapi_delete: impl FnOnce() -> Result<(), String>,
+    dpapi_tombstone: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    let results = [
+        (
+            "Credential Manager",
+            app_api_invalidate_session_storage(keyring_delete, keyring_tombstone),
+        ),
+        (
+            "DPAPI",
+            app_api_invalidate_session_storage(dpapi_delete, dpapi_tombstone),
+        ),
+    ];
+    let errors = results
+        .into_iter()
+        .filter_map(|(backend, result)| result.err().map(|error| format!("{backend}: {error}")))
+        .collect::<Vec<_>>();
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+#[cfg(windows)]
+fn app_api_windows_keyring_get(key: &str) -> Result<Option<String>, String> {
+    match secure_store_entry(key)?.get_password() {
+        Ok(value) => Ok(Some(value)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(error) => Err(format!("Secure storage read failed: {error}")),
+    }
+}
+
+#[cfg(windows)]
+fn app_api_windows_keyring_delete(key: &str) -> Result<(), String> {
+    match secure_store_entry(key)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(format!("Secure storage delete failed: {error}")),
+    }
+}
+
+#[cfg(windows)]
+fn app_api_windows_keyring_delete_session() -> Result<(), String> {
+    if let Ok(Some(value)) = app_api_windows_keyring_get(APP_API_SESSION_KEY) {
+        if let Some(count) = secure_store_chunk_count(&value) {
+            for index in 0..count {
+                let _ = app_api_windows_keyring_delete(&secure_store_chunk_key(
+                    APP_API_SESSION_KEY,
+                    index,
+                ));
+            }
+        }
+    }
+    app_api_windows_keyring_delete(APP_API_SESSION_KEY)
+}
+
+#[cfg(windows)]
+fn app_api_windows_keyring_tombstone_session(value: &str) -> Result<(), String> {
+    if let Ok(Some(current)) = app_api_windows_keyring_get(APP_API_SESSION_KEY) {
+        if let Some(count) = secure_store_chunk_count(&current) {
+            for index in 0..count {
+                let _ = app_api_windows_keyring_delete(&secure_store_chunk_key(
+                    APP_API_SESSION_KEY,
+                    index,
+                ));
+            }
+        }
+    }
+    secure_store_entry(APP_API_SESSION_KEY)?
+        .set_password(value)
+        .map_err(|error| format!("Secure storage write failed: {error}"))
+}
+
 fn app_api_invalidate_session() -> Result<(), String> {
     if let Ok(mut memory) = APP_API_MEMORY_SESSION.lock() {
         *memory = None;
     }
-    // This path reports either Windows backend failing, so a surviving
-    // Credential Manager or DPAPI value is replaced before refresh returns.
+    #[cfg(windows)]
+    {
+        return app_api_invalidate_windows_session_storage(
+            app_api_windows_keyring_delete_session,
+            app_api_windows_keyring_tombstone_session,
+            || app_api_dpapi_delete(APP_API_SESSION_KEY),
+            |value| app_api_dpapi_set(APP_API_SESSION_KEY, value),
+        );
+    }
+    #[cfg(not(windows))]
     app_api_invalidate_session_storage(
-        || secure_store_keyring_delete(APP_API_SESSION_KEY),
-        |value| secure_store_keyring_set(APP_API_SESSION_KEY, value),
+        || secure_store_native_delete(APP_API_SESSION_KEY),
+        |value| secure_store_native_set(APP_API_SESSION_KEY, value),
     )
 }
 
@@ -7499,7 +7583,9 @@ mod tests {
     }
 
     #[test]
-    fn app_api_delete_failure_replaces_stale_fallback_with_tombstone() {
+    fn app_api_dpapi_delete_failure_replaces_stale_fallback_with_tombstone() {
+        use std::cell::RefCell;
+
         let stale = AppApiTokenResponse {
             access_token: String::new(),
             access_expires_at: String::new(),
@@ -7509,21 +7595,59 @@ mod tests {
             device_id: "stale-device".into(),
             subscription: AppApiSubscriptionSummary::default(),
         };
-        let mut fallback = app_api_encode_session_for_disk(&stale).expect("stale session json");
+        let keyring = RefCell::new(Some(
+            app_api_encode_session_for_disk(&stale).expect("keyring session json"),
+        ));
+        let dpapi = RefCell::new(Some(
+            app_api_encode_session_for_disk(&stale).expect("DPAPI session json"),
+        ));
 
-        app_api_invalidate_session_storage(
-            || Err("simulated partial delete".into()),
+        app_api_invalidate_windows_session_storage(
+            || {
+                *keyring.borrow_mut() = None;
+                Ok(())
+            },
+            |_| panic!("deleted keyring must not be tombstoned"),
+            || Err("simulated DPAPI delete failure".into()),
             |value| {
-                fallback = value.to_string();
+                *dpapi.borrow_mut() = Some(value.to_string());
                 Ok(())
             },
         )
-        .expect("tombstone replaces stale fallback");
+        .expect("DPAPI tombstone replaces stale fallback");
 
-        assert_eq!(fallback, APP_API_SESSION_TOMBSTONE);
-        assert!(app_api_decode_session_storage_value(&fallback)
-            .expect("tombstone")
+        assert!(keyring.borrow().is_none());
+        let dpapi = dpapi.borrow();
+        let dpapi = dpapi.as_deref().expect("DPAPI tombstone");
+        assert_eq!(dpapi, APP_API_SESSION_TOMBSTONE);
+        assert!(app_api_decode_session_storage_value(dpapi)
+            .expect("DPAPI tombstone")
             .is_none());
+    }
+
+    #[test]
+    fn app_api_keyring_delete_failure_is_tombstoned_independently() {
+        use std::cell::RefCell;
+
+        let keyring = RefCell::new(Some("stale-session-json".to_string()));
+        let dpapi = RefCell::new(Some("stale-session-json".to_string()));
+
+        app_api_invalidate_windows_session_storage(
+            || Err("simulated keyring delete failure".into()),
+            |value| {
+                *keyring.borrow_mut() = Some(value.to_string());
+                Ok(())
+            },
+            || {
+                *dpapi.borrow_mut() = None;
+                Ok(())
+            },
+            |_| panic!("deleted DPAPI value must not be tombstoned"),
+        )
+        .expect("keyring tombstone replaces stale value");
+
+        assert_eq!(keyring.borrow().as_deref(), Some(APP_API_SESSION_TOMBSTONE));
+        assert!(dpapi.borrow().is_none());
     }
 
     #[test]
