@@ -83,6 +83,19 @@ test('App Store source cannot inherit direct runtimes, dmg, or the updater', () 
   assert.match(rust, /#\[cfg\(not\(feature = "app-store"\)\)\][\s\S]{0,120}tauri_plugin_updater/);
 });
 
+test('App Store connection accepts only an authorized control-plane profile', () => {
+  const rust = read('src-tauri/src/lib.rs');
+  const controlPlane = read('src-tauri/src/control_plane/mod.rs');
+
+  assert.match(
+    rust,
+    /async fn vpn_connect_authorized\(\s*request: ConnectRequest,\s*app: tauri::AppHandle,?\s*\) -> ConnectResult/,
+  );
+  assert.match(rust, /Direct VPN connection is unavailable in Mac App Store builds/);
+  assert.match(controlPlane, /vpn_connect_authorized\(connect_request, app\.clone\(\)\)\.await/);
+  assert.doesNotMatch(controlPlane, /vpn_connect\(connect_request, app\.clone\(\)\)\.await/);
+});
+
 test('release.json supplies both App Store version fields at build and verification time', () => {
   const release = readJson('release/release.json');
   const packageJson = readJson('package.json');

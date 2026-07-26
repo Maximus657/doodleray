@@ -91,16 +91,24 @@ permanent branch.
 
 ## Remaining Mac-only release gates
 
-- close the App Store authorization boundary: renderer-accessible connection
-  commands must accept only a fresh, authorized closed-control-plane profile;
-- reject or strip unused Xray outbounds before Packet Tunnel route/DNS
-  derivation so an unselected outbound cannot create a tunnel-bypass route;
 - build and full verification on a clean current macOS runner;
 - TestFlight clean install and the real 5.9.1 transition path;
 - Intel and Apple Silicon connect/disconnect, DNS/IPv4/IPv6, sleep/wake, network
   change, relaunch, and uninstall checks;
 - App Store Connect metadata/reviewer credentials and legal/export review;
 - explicit human approval after attaching evidence for the exact source SHA.
+
+## Verified source invariants
+
+- The renderer-accessible `vpn_connect` command is fail-closed in an App Store
+  build. Only `app_connect_location` may call the App Store tunnel path after it
+  has obtained and validated a fresh closed-control-plane connection profile.
+  `scripts/macos/app-store-static.test.mjs` verifies this call boundary.
+- A signed routing policy constrains raw Xray configuration before App Store
+  Packet Tunnel preparation: it retains only managed outbounds, removes
+  balancers, and drops rules targeting removed outbounds. The Rust
+  characterization test `managed_full_tunnel_removes_raw_alternate_bypasses`
+  covers an untrusted alternate direct route.
 
 Until those gates exist: **RC only, production blocked.**
 

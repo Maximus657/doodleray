@@ -1,6 +1,6 @@
 use super::{
     default_system_proxy_mode, default_xray_api_port, ping_server_profile, record_connect_timing,
-    redact_support_line, reset_connect_timings, system_proxy_fetch_client, vpn_connect,
+    redact_support_line, reset_connect_timings, system_proxy_fetch_client, vpn_connect_authorized,
     vpn_disconnect, ConnectRequest, ConnectResult, PingResult, RoutingRuleRequest,
     APP_PRODUCT_NAME, APP_ROUTING_ROOT_PUBLIC_KEY_BASE64,
 };
@@ -1915,7 +1915,7 @@ pub(super) async fn app_connect_location(
             }
         };
         let bringup_started = Instant::now();
-        let result = vpn_connect(connect_request, app.clone()).await;
+        let result = vpn_connect_authorized(connect_request, app.clone()).await;
         record_connect_timing("bringup", bringup_started);
         record_connect_timing("total", connect_started);
         let result_body = app_api_connection_result_body(

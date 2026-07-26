@@ -40,6 +40,13 @@ assertEqual(isUpdateManagedByStore(appStore), true);
 assertEqual(isInAppUpdateEnabled(appStore), false);
 assertEqual(getStoreUpdateFallbackUrl(appStore), 'macappstore://showUpdatesPage');
 
+const misconfiguredAppStore = {
+  VITE_DOODLERAY_BUILD_CHANNEL: 'app-store',
+  VITE_DOODLERAY_CLOSED_CONTROL_PLANE: '0',
+};
+assertEqual(isClosedControlPlaneEnabled(misconfiguredAppStore), true);
+assertEqual(isLegacyImportEnabled(misconfiguredAppStore), false);
+
 const internalQa = {
   VITE_DOODLERAY_BUILD_CHANNEL: 'internal-qa',
   VITE_DOODLERAY_UPDATE_CHANNEL: 'direct',

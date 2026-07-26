@@ -6342,8 +6342,14 @@ async fn app_store_connection_health() -> ConnectionHealthReport {
     }
 }
 
-#[tauri::command]
-async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectResult {
+/// Connect using a profile that has already passed the closed control-plane
+/// authorization path. The public `vpn_connect` command deliberately does not
+/// expose the App Store tunnel implementation, because raw renderer input has
+/// not been signed and scoped by the control plane.
+pub(crate) async fn vpn_connect_authorized(
+    request: ConnectRequest,
+    app: tauri::AppHandle,
+) -> ConnectResult {
     #[cfg(all(target_os = "macos", feature = "app-store"))]
     {
         vpn_connect_app_store(request, app).await
@@ -6351,6 +6357,24 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
     #[cfg(not(all(target_os = "macos", feature = "app-store")))]
     {
         vpn_connect_direct(request, app).await
+    }
+}
+
+#[tauri::command]
+async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectResult {
+    #[cfg(all(target_os = "macos", feature = "app-store"))]
+    {
+        let _ = (request, app);
+        ConnectResult {
+            success: false,
+            message: "Direct VPN connection is unavailable in Mac App Store builds. Choose a DoodleVPN location."
+                .to_string(),
+            health: None,
+        }
+    }
+    #[cfg(not(all(target_os = "macos", feature = "app-store")))]
+    {
+        vpn_connect_authorized(request, app).await
     }
 }
 

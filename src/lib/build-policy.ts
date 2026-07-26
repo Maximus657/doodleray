@@ -11,6 +11,7 @@ export function getBuildChannel(source: BuildEnvironment = env): BuildChannel {
 }
 
 export function isClosedControlPlaneEnabled(source: BuildEnvironment = env): boolean {
+  if (getBuildChannel(source) === 'app-store') return true;
   return source.VITE_DOODLERAY_CLOSED_CONTROL_PLANE !== '0';
 }
 
