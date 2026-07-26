@@ -112,6 +112,7 @@ const APP_STORE_TRAFFIC_VERIFY_URLS: [&str; 3] = [
     "https://ddlvpn.lol/healthz",
 ];
 const APP_API_SESSION_KEY: &str = "app-api-session-v1";
+const APP_API_SESSION_TOMBSTONE: &str = "invalidated:v1";
 const APP_API_DEVICE_KEY: &str = "app-api-device-v1";
 
 static APP_API_MEMORY_SESSION: Mutex<Option<AppApiTokenResponse>> = Mutex::new(None);
@@ -3841,6 +3842,15 @@ fn app_api_decode_session_from_disk(encoded: &str) -> Result<AppApiTokenResponse
         .map_err(|e| format!("Stored App API session is invalid: {}", e))
 }
 
+fn app_api_decode_session_storage_value(
+    encoded: &str,
+) -> Result<Option<AppApiTokenResponse>, String> {
+    if encoded == APP_API_SESSION_TOMBSTONE {
+        return Ok(None);
+    }
+    app_api_decode_session_from_disk(encoded).map(Some)
+}
+
 fn app_api_store_session(session: &AppApiTokenResponse) -> Result<(), String> {
     let encoded = app_api_encode_session_for_disk(session)?;
     app_api_native_secret_set(APP_API_SESSION_KEY, &encoded)?;
@@ -3857,6 +3867,29 @@ fn app_api_delete_session() -> Result<(), String> {
     app_api_native_secret_delete(APP_API_SESSION_KEY)
 }
 
+fn app_api_invalidate_session_storage(
+    delete: impl FnOnce() -> Result<(), String>,
+    write_tombstone: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    match delete() {
+        Ok(()) => Ok(()),
+        Err(delete_error) => write_tombstone(APP_API_SESSION_TOMBSTONE)
+            .map_err(|tombstone_error| format!("{delete_error}; {tombstone_error}")),
+    }
+}
+
+fn app_api_invalidate_session() -> Result<(), String> {
+    if let Ok(mut memory) = APP_API_MEMORY_SESSION.lock() {
+        *memory = None;
+    }
+    // This path reports either Windows backend failing, so a surviving
+    // Credential Manager or DPAPI value is replaced before refresh returns.
+    app_api_invalidate_session_storage(
+        || secure_store_keyring_delete(APP_API_SESSION_KEY),
+        |value| secure_store_keyring_set(APP_API_SESSION_KEY, value),
+    )
+}
+
 fn app_api_load_session() -> Result<Option<AppApiTokenResponse>, String> {
     if let Ok(memory) = APP_API_MEMORY_SESSION.lock() {
         if let Some(session) = memory.clone() {
@@ -3867,7 +3900,9 @@ fn app_api_load_session() -> Result<Option<AppApiTokenResponse>, String> {
     let Some(encoded) = app_api_native_secret_get(APP_API_SESSION_KEY)? else {
         return Ok(None);
     };
-    let session = app_api_decode_session_from_disk(&encoded)?;
+    let Some(session) = app_api_decode_session_storage_value(&encoded)? else {
+        return Ok(None);
+    };
     if !session.access_token.is_empty() {
         app_api_native_secret_set(
             APP_API_SESSION_KEY,
@@ -4207,6 +4242,19 @@ fn app_api_refresh_error_is_fatal(status: u16) -> bool {
     matches!(status, 401 | 403)
 }
 
+fn app_api_refresh_error_after_invalidation(
+    error: &AppApiHttpError,
+    invalidation: Result<(), String>,
+) -> String {
+    if let Err(cleanup_error) = invalidation {
+        eprintln!(
+            "[warn] App API session invalidation failed: {}",
+            redact_support_line(&cleanup_error)
+        );
+    }
+    error.to_string()
+}
+
 async fn app_api_refresh_session() -> Result<AppApiTokenResponse, String> {
     let Some(session) = app_api_load_session()? else {
         return Err("DoodleVPN sign-in is required.".into());
@@ -4226,7 +4274,10 @@ async fn app_api_refresh_session() -> Result<AppApiTokenResponse, String> {
         Ok(refreshed) => refreshed,
         Err(error) => {
             if app_api_refresh_error_is_fatal(error.status) {
-                let _ = app_api_delete_session();
+                return Err(app_api_refresh_error_after_invalidation(
+                    &error,
+                    app_api_invalidate_session(),
+                ));
             }
             return Err(error.to_string());
         }
@@ -7421,6 +7472,74 @@ mod tests {
         for status in [0, 500, 503, 200] {
             assert!(!app_api_refresh_error_is_fatal(status));
         }
+    }
+
+    #[test]
+    fn app_api_session_tombstone_cannot_decode_as_stale_session() {
+        let stale = AppApiTokenResponse {
+            access_token: String::new(),
+            access_expires_at: String::new(),
+            expires_in: 0,
+            refresh_token: "stale-refresh-secret".into(),
+            refresh_expires_at: "2026-08-06T10:00:00Z".into(),
+            device_id: "stale-device".into(),
+            subscription: AppApiSubscriptionSummary::default(),
+        };
+        let encoded = app_api_encode_session_for_disk(&stale).expect("stale session json");
+
+        assert!(app_api_decode_session_storage_value(&encoded)
+            .expect("stored session")
+            .is_some());
+        assert!(
+            app_api_decode_session_storage_value(APP_API_SESSION_TOMBSTONE)
+                .expect("tombstone")
+                .is_none()
+        );
+        assert!(!APP_API_SESSION_TOMBSTONE.contains("stale-refresh-secret"));
+    }
+
+    #[test]
+    fn app_api_delete_failure_replaces_stale_fallback_with_tombstone() {
+        let stale = AppApiTokenResponse {
+            access_token: String::new(),
+            access_expires_at: String::new(),
+            expires_in: 0,
+            refresh_token: "stale-refresh-secret".into(),
+            refresh_expires_at: "2026-08-06T10:00:00Z".into(),
+            device_id: "stale-device".into(),
+            subscription: AppApiSubscriptionSummary::default(),
+        };
+        let mut fallback = app_api_encode_session_for_disk(&stale).expect("stale session json");
+
+        app_api_invalidate_session_storage(
+            || Err("simulated partial delete".into()),
+            |value| {
+                fallback = value.to_string();
+                Ok(())
+            },
+        )
+        .expect("tombstone replaces stale fallback");
+
+        assert_eq!(fallback, APP_API_SESSION_TOMBSTONE);
+        assert!(app_api_decode_session_storage_value(&fallback)
+            .expect("tombstone")
+            .is_none());
+    }
+
+    #[test]
+    fn refresh_invalidation_cleanup_keeps_original_http_error() {
+        let error = AppApiHttpError {
+            status: 403,
+            message: "refresh rejected".into(),
+        };
+
+        let returned = app_api_refresh_error_after_invalidation(
+            &error,
+            Err("Native secure storage delete failed".into()),
+        );
+
+        assert_eq!(returned, "App API error 403: refresh rejected");
+        assert!(!returned.contains("storage delete"));
     }
 
     #[test]
