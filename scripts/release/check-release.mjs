@@ -146,7 +146,7 @@ export function checkRelease(root, { publishedVersion } = {}) {
   const extensionEntitlements = readFileSync(join(root, 'src-tauri/macos/PacketTunnelProvider/Entitlements.plist'), 'utf8');
   const extensionBridge = readFileSync(join(root, 'src-tauri/macos/HostBridge/NetworkExtensionBridge.m'), 'utf8');
   const tunnelService = readFileSync(join(root, 'src-tauri/src/tunnel_service.rs'), 'utf8');
-  const secureStore = readFileSync(join(root, 'src-tauri/src/lib.rs'), 'utf8');
+  const secureStore = readFileSync(join(root, 'src-tauri/src/storage/mod.rs'), 'utf8');
   const buildConfig = readFileSync(join(root, 'src-tauri/build_config.rs'), 'utf8');
   const nsisHooks = readFileSync(join(root, 'src-tauri/nsis-hooks.nsh'), 'utf8');
 

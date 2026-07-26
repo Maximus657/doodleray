@@ -69,7 +69,7 @@ function writeFixture(overrides = {}) {
   });
   writeText(root, 'src-tauri/build_config.rs', `pub const WINDOWS_RUNTIME_FILES: &[&str] = &[\n    "DoodleRayService.exe",\n    "sing-box.exe",\n    "wintun.dll",\n    "xray-core/xray.exe",\n];\n`);
   writeText(root, 'src-tauri/src/tunnel_service.rs', `pub const TUNNEL_SERVICE_NAME: &str = "DoodleRayTunnelService";\npub const TUNNEL_SERVICE_DISPLAY_NAME: &str = "DoodleRay Tunnel Service";\n`);
-  writeText(root, 'src-tauri/src/lib.rs', `const SECURE_STORE_SERVICE: &str = "DoodleRay";\nconst RENDERER_STATE_KEY: &str = "doodleray-storage";\nconst APP_API_SESSION_KEY: &str = "app-api-session-v1";\nconst APP_API_DEVICE_KEY: &str = "app-api-device-v1";\n`);
+  writeText(root, 'src-tauri/src/storage/mod.rs', `const SECURE_STORE_SERVICE: &str = "DoodleRay";\nconst RENDERER_STATE_KEY: &str = "doodleray-storage";\nconst APP_API_SESSION_KEY: &str = "app-api-session-v1";\nconst APP_API_DEVICE_KEY: &str = "app-api-device-v1";\n`);
   writeText(root, 'src-tauri/macos/project.yml', `targets:\n  DoodleRayVPN:\n    entitlements:\n      properties:\n        com.apple.security.application-groups:\n          - group.com.doodleray.doodleray\n    settings:\n      base:\n        PRODUCT_BUNDLE_IDENTIFIER: com.doodleray.doodleray.DoodleRayVPN\n        MARKETING_VERSION: "${xcodeVersion}"\n        CURRENT_PROJECT_VERSION: "${macBuild}"\n`);
   writeText(root, 'src-tauri/macos/DoodleRayAppStoreExtensions.xcodeproj/project.pbxproj', `MARKETING_VERSION = ${pbxVersion};\nCURRENT_PROJECT_VERSION = ${macBuild};\nMARKETING_VERSION = ${pbxVersion};\nCURRENT_PROJECT_VERSION = ${macBuild};\n`);
   writeText(root, 'src-tauri/Entitlements.appstore.plist', '<key>com.apple.security.application-groups</key>\n<array><string>group.com.doodleray.doodleray</string></array>\n');
@@ -194,9 +194,21 @@ test('preflight parses runtime inventory without accepting commented files', asy
 test('preflight ignores commented Rust constants when checking secure-store values', async () => {
   const root = writeFixture();
   try {
-    writeText(root, 'src-tauri/src/lib.rs', '// const SECURE_STORE_SERVICE: &str = "DoodleRay";\nconst SECURE_STORE_SERVICE: &str = "WrongStore";\nconst RENDERER_STATE_KEY: &str = "doodleray-storage";\nconst APP_API_SESSION_KEY: &str = "app-api-session-v1";\nconst APP_API_DEVICE_KEY: &str = "app-api-device-v1";\n');
+    writeText(root, 'src-tauri/src/storage/mod.rs', '// const SECURE_STORE_SERVICE: &str = "DoodleRay";\nconst SECURE_STORE_SERVICE: &str = "WrongStore";\nconst RENDERER_STATE_KEY: &str = "doodleray-storage";\nconst APP_API_SESSION_KEY: &str = "app-api-session-v1";\nconst APP_API_DEVICE_KEY: &str = "app-api-device-v1";\n');
     const { checkRelease } = await loadChecker();
     assert.throws(() => checkRelease(root), /secure-store service and keys must retain the compatibility contract/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('preflight reads secure-store compatibility constants from the storage module', async () => {
+  const root = writeFixture();
+  try {
+    writeText(root, 'src-tauri/src/lib.rs', 'mod storage;\n');
+    writeText(root, 'src-tauri/src/storage/mod.rs', `const SECURE_STORE_SERVICE: &str = "DoodleRay";\nconst RENDERER_STATE_KEY: &str = "doodleray-storage";\nconst APP_API_SESSION_KEY: &str = "app-api-session-v1";\nconst APP_API_DEVICE_KEY: &str = "app-api-device-v1";\n`);
+    const { checkRelease } = await loadChecker();
+    assert.doesNotThrow(() => checkRelease(root));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
