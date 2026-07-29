@@ -35,7 +35,7 @@ host_application_id="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple
 extension_application_id="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.application-identifier' "$STAGING_DIR/extension-profile.plist")"
 host_profile_name="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$STAGING_DIR/host-profile.plist")"
 extension_profile_name="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$STAGING_DIR/extension-profile.plist")"
-identity="$(security find-identity -v -p codesigning | sed -n 's/.*"\([^"]*\)"/\1/p' | rg "^Apple Distribution: .+ \\($EXPECTED_TEAM_ID\\)$" | head -n 1 || true)"
+identity="$(security find-identity -v -p codesigning | sed -n 's/.*"\([^"]*\)"/\1/p' | /usr/bin/grep -E "^Apple Distribution: .+ \\($EXPECTED_TEAM_ID\\)$" | head -n 1 || true)"
 
 [ "$team_id" = "$EXPECTED_TEAM_ID" ] || { printf 'Host profile Team ID does not match APPLE_TEAM_ID.\n' >&2; exit 1; }
 [ "$team_id" = "$extension_team_id" ] || { printf 'Host and extension profiles belong to different teams.\n' >&2; exit 1; }
@@ -97,7 +97,7 @@ if ! npm run tauri -- build \
   exit 1
 fi
 
-rg -a -q "$VITE_DOODLERAY_PRIVACY_POLICY_URL" "$ROOT_DIR/dist" || {
+/usr/bin/grep -a -q "$VITE_DOODLERAY_PRIVACY_POLICY_URL" "$ROOT_DIR/dist" || {
   printf 'App Store privacy-policy URL was not baked into the frontend.\n' >&2
   exit 1
 }

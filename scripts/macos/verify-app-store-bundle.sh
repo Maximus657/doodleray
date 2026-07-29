@@ -36,7 +36,7 @@ require_array_contains() {
 }
 
 require_architecture() {
-  lipo -archs "$1" | tr ' ' '\n' | rg -qx "$2" || {
+  lipo -archs "$1" | tr ' ' '\n' | /usr/bin/grep -Fxq "$2" || {
     printf 'FAIL  missing %s architecture in %s\n' "$2" "$1" >&2
     exit 1
   }
@@ -52,8 +52,8 @@ codesign --verify --strict --deep --verbose=2 "$APP_BUNDLE" >/dev/null 2>&1
 codesign --verify --strict --verbose=2 "$EXTENSION_BUNDLE" >/dev/null 2>&1
 for bundle in "$APP_BUNDLE" "$EXTENSION_BUNDLE"; do
   codesign -d --verbose=4 "$bundle" > "$SIGNING_DETAILS" 2>&1
-  rg -Fxq "TeamIdentifier=$EXPECTED_TEAM_ID" "$SIGNING_DETAILS" || { printf 'FAIL  signed Team ID mismatch.\n' >&2; exit 1; }
-  rg -q '^Authority=Apple Distribution:' "$SIGNING_DETAILS" || { printf 'FAIL  Apple Distribution signature is missing.\n' >&2; exit 1; }
+  /usr/bin/grep -Fxq "TeamIdentifier=$EXPECTED_TEAM_ID" "$SIGNING_DETAILS" || { printf 'FAIL  signed Team ID mismatch.\n' >&2; exit 1; }
+  /usr/bin/grep -q '^Authority=Apple Distribution:' "$SIGNING_DETAILS" || { printf 'FAIL  Apple Distribution signature is missing.\n' >&2; exit 1; }
 done
 codesign -d --entitlements :- "$APP_BUNDLE" > "$HOST_ENTITLEMENTS" 2>/dev/null
 codesign -d --entitlements :- "$EXTENSION_BUNDLE" > "$EXTENSION_ENTITLEMENTS" 2>/dev/null
@@ -119,17 +119,17 @@ for executable in "$host_executable" "$extension_executable"; do
   require_architecture "$executable" x86_64
 done
 
-if find "$APP_BUNDLE/Contents" -type f \( -name xray -o -name xray.exe -o -name sing-box -o -name sing-box.exe \) -print | rg -q .; then
+if find "$APP_BUNDLE/Contents" -type f \( -name xray -o -name xray.exe -o -name sing-box -o -name sing-box.exe \) -print | /usr/bin/grep -q .; then
   printf 'FAIL  direct-distribution VPN engine executable is bundled.\n' >&2
   exit 1
 fi
-find "$APP_BUNDLE/Contents/Resources" -type f -name third-party-notices.txt -print | rg -q . || { printf 'FAIL  third-party notices are missing.\n' >&2; exit 1; }
+find "$APP_BUNDLE/Contents/Resources" -type f -name third-party-notices.txt -print | /usr/bin/grep -q . || { printf 'FAIL  third-party notices are missing.\n' >&2; exit 1; }
 privacy_manifest="$APP_BUNDLE/Contents/Resources/PrivacyInfo.xcprivacy"
 [ -f "$privacy_manifest" ] || { printf 'FAIL  PrivacyInfo.xcprivacy is missing.\n' >&2; exit 1; }
 plutil -lint "$privacy_manifest" >/dev/null
 require_equal "$(plist_value "$privacy_manifest" NSPrivacyTracking)" false 'privacy manifest tracking declaration'
 for data_type in UserID DeviceID ProductInteraction OtherDiagnosticData OtherDataTypes; do
-  rg -q "NSPrivacyCollectedDataType$data_type" "$privacy_manifest" || { printf 'FAIL  privacy manifest data inventory is incomplete.\n' >&2; exit 1; }
+  /usr/bin/grep -q "NSPrivacyCollectedDataType$data_type" "$privacy_manifest" || { printf 'FAIL  privacy manifest data inventory is incomplete.\n' >&2; exit 1; }
 done
 
 printf 'PASS  DoodleRay VPN %s (%s) App Store bundle is universal, sandboxed, Apple-signed, exactly provisioned, and contains the Packet Tunnel extension.\n' "$expected_marketing_version" "$expected_build_version"

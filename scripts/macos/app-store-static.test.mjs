@@ -194,7 +194,7 @@ test('readiness separates portable static proof from macOS release evidence', ()
   assert.match(readiness, /MACOS RELEASE BLOCKED/);
   assert.match(readiness, /--full/);
   assert.match(readiness, /verify-app-store-bundle\.sh/);
-  assert.match(readiness, /for command in node rg security codesign xcodebuild xcrun plutil lipo/);
+  assert.match(readiness, /for command in node security codesign xcodebuild xcrun plutil lipo/);
   assert.match(docs, /com\.doodlevpn\.doodleray/);
   assert.match(docs, /com\.doodleray\.doodleray/);
   assert.match(docs, /unproven/i);

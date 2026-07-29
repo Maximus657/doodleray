@@ -23,9 +23,9 @@ node "$ROOT_DIR/scripts/release/check-release.mjs"
 
 "$ROOT_DIR/scripts/macos/verify-app-store-bundle.sh" "$APP_BUNDLE"
 
-installer_identity="$(security find-identity -v -p basic 2>/dev/null | sed -n 's/.*"\(Mac Installer Distribution:.*\)"/\1/p' | rg "\\(${APPLE_TEAM_ID}\\)$" | head -n 1 || true)"
+installer_identity="$(security find-identity -v -p basic 2>/dev/null | sed -n 's/.*"\(Mac Installer Distribution:.*\)"/\1/p' | /usr/bin/grep -E "\\(${APPLE_TEAM_ID}\\)$" | head -n 1 || true)"
 if [ -z "$installer_identity" ]; then
-  installer_identity="$(security find-identity -v -p basic 2>/dev/null | sed -n 's/.*"\(3rd Party Mac Developer Installer:.*\)"/\1/p' | rg "\\(${APPLE_TEAM_ID}\\)$" | head -n 1 || true)"
+  installer_identity="$(security find-identity -v -p basic 2>/dev/null | sed -n 's/.*"\(3rd Party Mac Developer Installer:.*\)"/\1/p' | /usr/bin/grep -E "\\(${APPLE_TEAM_ID}\\)$" | head -n 1 || true)"
 fi
 [ -n "$installer_identity" ] || {
   printf 'Mac Installer Distribution signing identity is missing.\n' >&2

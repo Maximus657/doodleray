@@ -26,7 +26,7 @@ require_command() {
 }
 
 [ "$(uname -s)" = Darwin ] || block 'full verification requires macOS'
-for command in node rg security codesign xcodebuild xcrun plutil lipo; do
+for command in node security codesign xcodebuild xcrun plutil lipo; do
   require_command "$command"
 done
 [ -x /usr/libexec/PlistBuddy ] || block 'PlistBuddy is missing'
@@ -34,8 +34,8 @@ done
 [ -f "${MACOS_APP_STORE_PROVISIONING_PROFILE:-}" ] || block 'host provisioning profile is missing'
 [ -f "${PACKET_TUNNEL_PROVISIONING_PROFILE:-}" ] || block 'extension provisioning profile is missing'
 [ -d "$APP_BUNDLE" ] || block "signed app bundle is missing: $APP_BUNDLE"
-security find-identity -v -p codesigning 2>/dev/null | rg -q "Apple Distribution: .+ \\($APPLE_TEAM_ID\\)" || block 'Apple Distribution identity is missing'
-security find-identity -v -p basic 2>/dev/null | rg -q "(?:Mac Installer Distribution|3rd Party Mac Developer Installer): .+ \\($APPLE_TEAM_ID\\)" || block 'Mac Installer Distribution identity is missing'
+security find-identity -v -p codesigning 2>/dev/null | /usr/bin/grep -Eq "Apple Distribution: .+ \\($APPLE_TEAM_ID\\)" || block 'Apple Distribution identity is missing'
+security find-identity -v -p basic 2>/dev/null | /usr/bin/grep -Eq "(Mac Installer Distribution|3rd Party Mac Developer Installer): .+ \\($APPLE_TEAM_ID\\)" || block 'Mac Installer Distribution identity is missing'
 
 "$ROOT_DIR/scripts/macos/verify-app-store-bundle.sh" "$APP_BUNDLE"
 printf 'MACOS RELEASE PASS: signed bundle, profiles, identities, and platform tools passed local verification.\n'
