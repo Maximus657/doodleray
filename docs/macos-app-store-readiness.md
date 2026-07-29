@@ -1,10 +1,13 @@
 # macOS App Store readiness
 
-Status: **STATIC PASS is reproducible; macOS release remains blocked pending
-signed Mac/TestFlight evidence.**
+Status: **the signed universal 6.0.2 (60017) bundle passed full local App Store
+verification on 2026-07-29; production remains blocked pending external QA and
+the explicit submission handoff.**
 
 This is the canonical macOS release document. Historical build notes are not a
 release gate and must not be treated as evidence for the current source SHA.
+The dated portal and release-state audit is in
+[`audits/macos-app-store-audit-2026-07-29.md`](audits/macos-app-store-audit-2026-07-29.md).
 
 ## Immutable product contracts
 
@@ -66,6 +69,12 @@ Distribution identity, Mac Installer Distribution identity, Team ID, signed
 host, signed extension, exact entitlements, privacy manifest, architectures,
 or release versions are missing or inconsistent.
 
+The 2026-07-29 signed handoff passed full mode for `6.0.2 (60017)`: host and
+Packet Tunnel extension are universal, sandboxed, Apple-signed, exactly
+provisioned, and match the release manifest. This proves the local signing and
+bundle contract only; it does not prove a live VPN connection or an App Review
+outcome.
+
 Production also queries the official App Store Connect API. A new tuple must
 have both a newer SemVer and a higher `macBuild`; an exact existing
 `com.doodleray.doodleray` + version + build in `PROCESSING` or `VALID` state is
@@ -91,10 +100,19 @@ permanent branch.
 
 ## Remaining Mac-only release gates
 
-- build and full verification on a clean current macOS runner;
-- TestFlight clean install and the real 5.9.1 transition path;
+- App Store Connect currently has a `6.0.0 (60012)` manual-release draft while
+  the current `6.0.2 (60017)` build is ready but unassigned in TestFlight.
+  Replace the obsolete draft with a manual-release `6.0.2` draft and attach
+  `60017`; this must not be treated as a release or a tester assignment.
+- TestFlight clean install and the real 5.9.1 transition path on a QA Mac where
+  changing the VPN is safe;
 - Intel and Apple Silicon connect/disconnect, DNS/IPv4/IPv6, sleep/wake, network
   change, relaunch, and uninstall checks;
+- accepted-size screenshots from the exact Store build and completed
+  accessibility labels based on that QA evidence;
+- App Store Connect API access, a scoped API key, and the required CI secrets
+  if automated upload is desired; production currently fails closed without
+  them;
 - App Store Connect metadata/reviewer credentials and legal/export review;
 - explicit human approval after attaching evidence for the exact source SHA.
 
