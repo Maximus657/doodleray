@@ -232,7 +232,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             <div data-tauri-drag-region className="pointer-events-none absolute left-[calc(50%-48px)] top-1/2 -translate-x-1/2 -translate-y-[calc(50%+4px)]">
               <div
                 data-tauri-drag-region
-                className={`flex items-center gap-[11px] ${hasMainContent ? 'v6-brand-enter' : 'v6-brand-hidden'}`}
+                className={`v6-header-brand flex items-center gap-[11px] ${hasMainContent ? 'v6-brand-enter' : 'v6-brand-hidden'}`}
               >
                 <img
                   src="/assets/mascot.png"

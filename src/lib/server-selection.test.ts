@@ -1,4 +1,4 @@
-import { findMatchingServer, getServerSelectionKey, resolveConnectServer, selectPreferredServer } from './server-selection.ts';
+import { findMatchingServer, getServerSelectionKey, rankAutoLocationCandidates, resolveConnectServer, selectPreferredServer } from './server-selection.ts';
 import type { ServerConfig } from '../stores/app-store.ts';
 
 function server(overrides: Partial<ServerConfig>): ServerConfig {
@@ -46,3 +46,8 @@ assertEqual(selectPreferredServer([russia], true), null);
 assertEqual(resolveConnectServer(russia, [russia, germany], true)?.id, russia.id);
 assertEqual(findMatchingServer(russia, [germany]), null);
 assertEqual(findMatchingServer(russia, [russia])?.id, russia.id);
+
+const kazakhstan = server({ id: 'app-location:kz', name: 'Казахстан', countryCode: 'KZ', ping: 5 });
+const netherlands = server({ id: 'app-location:nl', name: 'Нидерланды', countryCode: 'NL', ping: 20 });
+assertEqual(rankAutoLocationCandidates([germany, netherlands])[0]?.id, netherlands.id);
+assertEqual(rankAutoLocationCandidates([kazakhstan, netherlands], ['kz'])[0]?.id, netherlands.id);

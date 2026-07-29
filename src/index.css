@@ -366,11 +366,10 @@
   .v6-compact-mode .v6-panel {
     padding: 14px;
   }
-  /* Compact header keeps the logo at full (wide-mode) size — a shrunk icon
-     read as an afterthought — but drops the wordmark: with the traffic chip
-     and three icon buttons plus native window controls, a ~420px window
-     doesn't have room for logo + "DoodleRay" text too. */
-  .v6-compact-mode .v6-header-brand .v6-brand-word {
+  .v6-compact-mode .v6-header-row {
+    justify-content: flex-end;
+  }
+  .v6-compact-mode .v6-header-brand {
     display: none;
   }
   .v6-compact-mode .v6-header-button {
@@ -388,6 +387,14 @@
     overflow-y: auto;
     padding-right: 2px;
     padding-bottom: 14px;
+  }
+  /* A real flex item keeps the final card clear of the rounded window mask;
+     WebKit can collapse trailing padding on a scrolling flex container. */
+  .v6-compact-mode .v6-dashboard-layout::after {
+    content: '';
+    order: 99;
+    width: 100%;
+    flex: 0 0 14px;
   }
   /* display:contents flattens dashboard-main's children (orb, quick actions,
      events) into direct flex items of the layout, so they can be reordered

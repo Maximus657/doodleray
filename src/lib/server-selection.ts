@@ -178,6 +178,25 @@ export function isAutoSelectCandidate(server: ServerConfig): boolean {
   return !/(^|\s)(россия|russia)(\s|$)/.test(label);
 }
 
+export function rankAutoLocationCandidates(
+  servers: ServerConfig[],
+  deprioritizedLocationIds: readonly string[] = [],
+): ServerConfig[] {
+  const deprioritized = new Set(deprioritizedLocationIds.map(normalizeCaseInsensitivePart));
+  return servers
+    .map((server, index) => ({ server, index }))
+    .sort((a, b) => {
+      const aId = normalizeCaseInsensitivePart(a.server.id).replace(/^app-location:/, '');
+      const bId = normalizeCaseInsensitivePart(b.server.id).replace(/^app-location:/, '');
+      const priority = Number(deprioritized.has(aId)) - Number(deprioritized.has(bId));
+      if (priority !== 0) return priority;
+      const aPing = a.server.ping && a.server.ping > 0 ? a.server.ping : Number.MAX_SAFE_INTEGER;
+      const bPing = b.server.ping && b.server.ping > 0 ? b.server.ping : Number.MAX_SAFE_INTEGER;
+      return aPing - bPing || a.index - b.index;
+    })
+    .map(({ server }) => server);
+}
+
 export function selectPreferredServer(
   servers: ServerConfig[],
   autoSelectFastest: boolean,
