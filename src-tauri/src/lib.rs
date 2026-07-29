@@ -6031,10 +6031,29 @@ fn build_app_store_xray_config(
 mod app_store_config_tests {
     use super::{
         app_store_connection_health_from_response, app_store_network_diagnostics_from_health,
-        app_store_support_bundle_text, prepare_app_store_xray_config,
+        app_store_packet_tunnel_policy, app_store_support_bundle_text,
+        prepare_app_store_xray_config,
     };
-    use crate::app_store_tunnel::TunnelResponse;
+    use crate::{app_store_tunnel::TunnelResponse, AppRoutingAsset, AppRoutingPolicy};
     use serde_json::json;
+
+    #[test]
+    fn packet_tunnel_turns_server_split_policy_into_full_tunnel() {
+        let policy = app_store_packet_tunnel_policy(AppRoutingPolicy {
+            mode: "split".into(),
+            direct_domains: vec!["domain:2ip.ru".into()],
+            local_dns_domains: vec!["domain:2ip.ru".into()],
+            direct_ip_ranges: vec!["203.0.113.0/24".into()],
+            asset: Some(AppRoutingAsset::default()),
+            ..Default::default()
+        });
+
+        assert_eq!(policy.mode, "full_tunnel");
+        assert!(policy.direct_domains.is_empty());
+        assert!(policy.local_dns_domains.is_empty());
+        assert!(policy.direct_ip_ranges.is_empty());
+        assert!(policy.asset.is_none());
+    }
 
     #[test]
     fn network_extension_config_removes_local_api_and_proxy_inbounds() {
@@ -6263,9 +6282,30 @@ fn app_store_connect_stage() -> String {
 }
 
 #[cfg(all(target_os = "macos", feature = "app-store"))]
-async fn vpn_connect_app_store(request: ConnectRequest, app: tauri::AppHandle) -> ConnectResult {
+fn app_store_packet_tunnel_policy(mut policy: AppRoutingPolicy) -> AppRoutingPolicy {
+    // The Packet Tunnel owns the default route. Xray's dynamic direct domains
+    // would re-enter that route unless every resolved IP were excluded first.
+    if policy.mode == "split" {
+        policy.mode = "full_tunnel".into();
+        policy.direct_domains.clear();
+        policy.local_dns_domains.clear();
+        policy.direct_ip_ranges.clear();
+        policy.asset = None;
+    }
+    policy
+}
+
+#[cfg(all(target_os = "macos", feature = "app-store"))]
+async fn vpn_connect_app_store(
+    mut request: ConnectRequest,
+    app: tauri::AppHandle,
+) -> ConnectResult {
     let _runtime_guard = RUNTIME_OP_LOCK.lock().await;
     APP_STORE_CONNECT_CANCELLED.store(false, Ordering::SeqCst);
+    request.routing_policy = request
+        .routing_policy
+        .take()
+        .map(app_store_packet_tunnel_policy);
     set_app_store_connect_stage("preparing routing data");
     if let Ok(mut logs) = CONNECT_LOG.lock() {
         logs.clear();
