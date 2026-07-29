@@ -5920,6 +5920,24 @@ fn prepare_app_store_xray_config(mut config: serde_json::Value) -> serde_json::V
             !targets_removed_outbound && !has_stale_inbound
         });
     }
+    if let Some(servers) = config
+        .get_mut("dns")
+        .and_then(|dns| dns.get_mut("servers"))
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        servers.retain(|server| {
+            server.get("tag").and_then(serde_json::Value::as_str) != Some("dns-direct")
+        });
+    }
+    if let Some(rules) = config
+        .get_mut("routing")
+        .and_then(|routing| routing.get_mut("rules"))
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        rules.retain(|rule| {
+            rule.get("outboundTag").and_then(serde_json::Value::as_str) != Some("direct")
+        });
+    }
     let has_external_geodata = config
         .get("env")
         .and_then(|env| env.get("xray.location.asset"))
@@ -6032,7 +6050,7 @@ mod app_store_config_tests {
     use super::{
         app_store_connection_health_from_response, app_store_network_diagnostics_from_health,
         app_store_packet_tunnel_policy, app_store_support_bundle_text,
-        prepare_app_store_xray_config,
+        prepare_app_store_xray_config, rewrite_app_store_geodata_dependencies,
     };
     use crate::{app_store_tunnel::TunnelResponse, AppRoutingAsset, AppRoutingPolicy};
     use serde_json::json;
@@ -6092,7 +6110,7 @@ mod app_store_config_tests {
 
     #[test]
     fn network_extension_config_does_not_require_external_geodata() {
-        let config = prepare_app_store_xray_config(json!({
+        let mut config = json!({
             "inbounds": [],
             "outbounds": [{ "tag": "proxy", "protocol": "freedom" }],
             "routing": { "rules": [
@@ -6112,7 +6130,8 @@ mod app_store_config_tests {
                     "outboundTag": "block"
                 }
             ] }
-        }));
+        });
+        rewrite_app_store_geodata_dependencies(&mut config, false);
 
         let rules = config["routing"]["rules"].as_array().unwrap();
         assert_eq!(rules.len(), 2);
@@ -6130,6 +6149,37 @@ mod app_store_config_tests {
             .as_str()
             .is_some_and(|value| value.starts_with("geoip:"))));
         assert_eq!(rules[1]["domain"], json!(["domain:example.com"]));
+    }
+
+    #[test]
+    fn network_extension_config_removes_all_direct_egress() {
+        let config = prepare_app_store_xray_config(json!({
+            "dns": { "servers": [
+                { "tag": "dns-direct", "address": "localhost" },
+                { "tag": "dns-remote", "address": "https://1.1.1.1/dns-query" }
+            ] },
+            "inbounds": [],
+            "outbounds": [
+                { "tag": "proxy", "protocol": "vless" },
+                { "tag": "direct", "protocol": "freedom" }
+            ],
+            "routing": { "rules": [
+                { "domain": ["domain:steamcontent.com"], "outboundTag": "direct" },
+                { "inboundTag": ["dns-direct"], "outboundTag": "direct" },
+                { "network": "tcp,udp", "outboundTag": "proxy" }
+            ] }
+        }));
+
+        assert!(config["dns"]["servers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|server| server["tag"] != "dns-direct"));
+        assert!(config["routing"]["rules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|rule| rule["outboundTag"] != "direct"));
     }
 
     #[test]
