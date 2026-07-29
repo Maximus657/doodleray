@@ -37,11 +37,11 @@ install_profile() {
   [[ "$uuid" =~ ^[A-Fa-f0-9-]+$ ]] || { printf '%s profile UUID is invalid.\n' "$label" >&2; exit 1; }
   [ "$team" = "$EXPECTED_TEAM" ] || { printf '%s profile Team ID does not match APPLE_TEAM_ID.\n' "$label" >&2; exit 1; }
   [ "$application_id" = "$EXPECTED_TEAM.$expected_bundle_id" ] || { printf '%s profile bundle identifier is invalid.\n' "$label" >&2; exit 1; }
-  /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.security.application-groups' "$decoded" | rg -Fq 'group.com.doodleray.doodleray' || {
+  /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.security.application-groups' "$decoded" | /usr/bin/grep -Fq 'group.com.doodleray.doodleray' || {
     printf '%s profile does not authorize the App Group.\n' "$label" >&2
     exit 1
   }
-  /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.networking.networkextension' "$decoded" | rg -Fq 'packet-tunnel-provider' || {
+  /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.networking.networkextension' "$decoded" | /usr/bin/grep -Fq 'packet-tunnel-provider' || {
     printf '%s profile does not authorize Packet Tunnel Provider.\n' "$label" >&2
     exit 1
   }
