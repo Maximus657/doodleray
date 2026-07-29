@@ -149,6 +149,10 @@ const APP_STORE_TRAFFIC_VERIFY_URLS: [&str; 3] = [
     "https://api.ipify.org",
     "https://ddlvpn.lol/healthz",
 ];
+#[cfg(all(target_os = "macos", feature = "app-store"))]
+const APP_STORE_TRAFFIC_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
+#[cfg(all(target_os = "macos", feature = "app-store"))]
+const APP_STORE_DATAPLANE_HEALTH_TIMEOUT: Duration = Duration::from_secs(9);
 #[cfg(windows)]
 fn claim_single_app_instance() -> bool {
     use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
@@ -6033,6 +6037,7 @@ mod app_store_config_tests {
         app_store_connection_health_from_response, app_store_network_diagnostics_from_health,
         app_store_support_bundle_text, app_store_traffic_probe_quorum,
         prepare_app_store_xray_config, rewrite_app_store_geodata_dependencies,
+        APP_STORE_DATAPLANE_HEALTH_TIMEOUT, APP_STORE_TRAFFIC_PROBE_TIMEOUT,
     };
     use crate::app_store_tunnel::TunnelResponse;
     use serde_json::json;
@@ -6190,6 +6195,11 @@ mod app_store_config_tests {
             Err("only 1 of 3 independent traffic probes passed".into())
         );
     }
+
+    #[test]
+    fn dataplane_health_deadline_outlives_each_traffic_probe() {
+        assert!(APP_STORE_DATAPLANE_HEALTH_TIMEOUT > APP_STORE_TRAFFIC_PROBE_TIMEOUT);
+    }
 }
 
 #[cfg(all(target_os = "macos", feature = "app-store"))]
@@ -6210,7 +6220,7 @@ async fn verify_app_store_tunnel_traffic() -> Result<(), String> {
     let client = reqwest::Client::builder()
         .no_proxy()
         .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(8))
+        .timeout(APP_STORE_TRAFFIC_PROBE_TIMEOUT)
         .redirect(reqwest::redirect::Policy::limited(2))
         .build()
         .map_err(|_| "could not initialize the traffic verifier".to_string())?;
@@ -6227,7 +6237,11 @@ async fn verify_app_store_tunnel_traffic() -> Result<(), String> {
         probe(&client, APP_STORE_TRAFFIC_VERIFY_URLS[1]),
         probe(&client, APP_STORE_TRAFFIC_VERIFY_URLS[2]),
     );
-    app_store_traffic_probe_quorum([cloudflare, public_ip, control_plane])
+    app_store_traffic_probe_quorum([cloudflare, public_ip, control_plane]).map_err(|error| {
+        format!(
+            "{error}; probes: cloudflare_ip={cloudflare}, public_ip={public_ip}, control_plane={control_plane}"
+        )
+    })
 }
 
 #[cfg(all(target_os = "macos", feature = "app-store"))]
@@ -6248,10 +6262,12 @@ async fn app_store_dataplane_health_check() -> ConnectionHealthCheck {
         .checked_at
         .is_none_or(|checked_at| checked_at.elapsed() >= Duration::from_secs(30))
     {
-        let result =
-            tokio::time::timeout(Duration::from_secs(4), verify_app_store_tunnel_traffic())
-                .await
-                .unwrap_or_else(|_| Err("VPN dataplane probe timed out".into()));
+        let result = tokio::time::timeout(
+            APP_STORE_DATAPLANE_HEALTH_TIMEOUT,
+            verify_app_store_tunnel_traffic(),
+        )
+        .await
+        .unwrap_or_else(|_| Err("VPN dataplane probe timed out".into()));
         cache.checked_at = Some(Instant::now());
         cache.ok = result.is_ok();
         cache.detail = result
