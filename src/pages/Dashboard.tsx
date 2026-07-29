@@ -34,6 +34,7 @@ import {
   appApiExchangeCode,
   appApiExchangeLegacySubscription,
   appApiLogout,
+  appApiSessionStatus,
   buildAppConnectLocationRequestFromState,
   findLegacyDoodleSubscriptionUrls,
   isClosedAutoLocationServer,
@@ -324,7 +325,16 @@ export default function Dashboard() {
       try {
         await waitForPersistedAppState();
         if (disposed) return;
-        let snapshot = await appApiControlPlaneSnapshot();
+        const cachedSession = await appApiSessionStatus();
+        if (disposed) return;
+        if (networkExtensionOnly) {
+          setAppSession(cachedSession);
+          useAppStore.setState({
+            appSessionLoggedIn: cachedSession.logged_in,
+            appSessionDeviceAllowed: cachedSession.logged_in ? cachedSession.subscription?.device_allowed !== false : null,
+          });
+        }
+        let snapshot = await appApiControlPlaneSnapshot(cachedSession);
         if (!snapshot.session.logged_in) {
           const state = useAppStore.getState();
           const legacySubscriptionUrls = findLegacyDoodleSubscriptionUrls(
@@ -393,7 +403,7 @@ export default function Dashboard() {
       disposed = true;
       window.removeEventListener('doodleray:app-logout', handleAppLogout);
     };
-  }, [closedControlPlane, addLog]);
+  }, [closedControlPlane, addLog, networkExtensionOnly]);
 
   const markConnectedIfHealthy = useCallback(async (
     result: any,

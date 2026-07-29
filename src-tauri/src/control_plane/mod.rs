@@ -24,6 +24,8 @@ use reqwest::Url;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::net::IpAddr;
+#[cfg(all(target_os = "macos", feature = "app-store"))]
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -472,11 +474,53 @@ pub(super) fn app_api_endpoint(path: &str) -> Result<Url, String> {
 }
 
 fn app_api_http_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .no_proxy()
-        .timeout(Duration::from_secs(20))
+        .timeout(Duration::from_secs(20));
+    #[cfg(all(target_os = "macos", feature = "app-store"))]
+    let builder = builder.connect_timeout(Duration::from_secs(5));
+    builder
         .build()
         .map_err(|e| format!("App API client init failed: {}", e))
+}
+
+#[cfg(all(target_os = "macos", feature = "app-store"))]
+fn app_api_fallback_http_client(url: &Url) -> Result<Option<reqwest::Client>, String> {
+    const HOST: &str = "ddlvpn.lol";
+    if url.host_str() != Some(HOST) {
+        return Ok(None);
+    }
+    // Keep the hostname for TLS/SNI while moving only the blocked network path
+    // to the independently hosted production origin.
+    reqwest::Client::builder()
+        .no_proxy()
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(20))
+        .resolve(
+            HOST,
+            SocketAddr::from((Ipv4Addr::new(87, 120, 166, 237), 443)),
+        )
+        .build()
+        .map(Some)
+        .map_err(|e| format!("App API fallback client init failed: {}", e))
+}
+
+#[cfg(all(test, target_os = "macos", feature = "app-store"))]
+mod app_store_api_fallback_tests {
+    use super::*;
+
+    #[test]
+    fn fallback_is_limited_to_the_production_api_hostname() {
+        let production = app_api_endpoint("/healthz").expect("production URL");
+        let unrelated = Url::parse("https://example.com/healthz").expect("unrelated URL");
+
+        assert!(app_api_fallback_http_client(&production)
+            .expect("fallback client")
+            .is_some());
+        assert!(app_api_fallback_http_client(&unrelated)
+            .expect("no fallback client")
+            .is_none());
+    }
 }
 
 fn app_api_stored_session(session: &AppApiTokenResponse) -> AppApiStoredSession {
@@ -920,6 +964,21 @@ async fn app_api_send_json<T: DeserializeOwned>(
         Err(e) => e.to_string(),
     };
 
+    #[cfg(all(target_os = "macos", feature = "app-store"))]
+    if let Ok(Some(fallback_client)) = app_api_fallback_http_client(&url) {
+        let fallback_request = app_api_build_request(
+            &fallback_client,
+            &method,
+            &url,
+            bearer,
+            &body_text,
+            &device_headers,
+        );
+        if let Ok(response) = fallback_request.send().await {
+            return app_api_finish_response(response).await;
+        }
+    }
+
     // Some Windows hosts only reach the internet through a configured system
     // proxy; .no_proxy() above is intentional (avoids looping through our own
     // VPN tunnel) but must not be the only path. Retry once through whatever
@@ -947,30 +1006,58 @@ async fn app_api_send_json<T: DeserializeOwned>(
 
 #[cfg(all(target_os = "macos", feature = "app-store"))]
 async fn app_api_send_bytes(path: &str, bearer: &str) -> Result<Vec<u8>, AppApiHttpError> {
-    let client = app_api_http_client().map_err(|message| AppApiHttpError { status: 0, message })?;
     let url = app_api_endpoint(path).map_err(|message| AppApiHttpError { status: 0, message })?;
     let method = reqwest::Method::GET;
-    let mut request = client
-        .get(url)
-        .header("Accept", "application/octet-stream")
-        .header(
-            "User-Agent",
-            format!("DoodleRayPC/{}", env!("CARGO_PKG_VERSION")),
-        )
-        .bearer_auth(bearer);
-    if closed_control_plane_enabled() {
+    let device_headers = if closed_control_plane_enabled() {
         let device = app_api_load_or_create_device()
             .map_err(|message| AppApiHttpError { status: 0, message })?;
         let proof = app_api_device_proof(&device, &method, path, None)
             .map_err(|message| AppApiHttpError { status: 0, message })?;
-        request = request
-            .header("X-Doodle-Device-ID", device.client_device_id)
-            .header("X-Doodle-Device-Proof", proof);
+        Some((device.client_device_id, proof))
+    } else {
+        None
+    };
+    let build_request = |client: &reqwest::Client| {
+        let mut request = client
+            .get(url.clone())
+            .header("Accept", "application/octet-stream")
+            .header(
+                "User-Agent",
+                format!("DoodleRayPC/{}", env!("CARGO_PKG_VERSION")),
+            )
+            .bearer_auth(bearer);
+        if let Some((device_id, proof)) = &device_headers {
+            request = request
+                .header("X-Doodle-Device-ID", device_id)
+                .header("X-Doodle-Device-Proof", proof);
+        }
+        request
+    };
+    let client = app_api_http_client().map_err(|message| AppApiHttpError { status: 0, message })?;
+    let direct_error = match build_request(&client).send().await {
+        Ok(response) => return app_api_finish_bytes_response(response).await,
+        Err(error) => error.to_string(),
+    };
+    if let Ok(Some(fallback_client)) = app_api_fallback_http_client(&url) {
+        if let Ok(response) = build_request(&fallback_client).send().await {
+            return app_api_finish_bytes_response(response).await;
+        }
     }
-    let response = request.send().await.map_err(|error| AppApiHttpError {
+    if let Ok(Some(proxy_client)) = system_proxy_fetch_client(&url, Duration::from_secs(20)) {
+        if let Ok(response) = build_request(&proxy_client).send().await {
+            return app_api_finish_bytes_response(response).await;
+        }
+    }
+    Err(AppApiHttpError {
         status: 0,
-        message: error.to_string(),
-    })?;
+        message: direct_error,
+    })
+}
+
+#[cfg(all(target_os = "macos", feature = "app-store"))]
+async fn app_api_finish_bytes_response(
+    response: reqwest::Response,
+) -> Result<Vec<u8>, AppApiHttpError> {
     let status = response.status();
     if !status.is_success() {
         let text = response.text().await.unwrap_or_default();
