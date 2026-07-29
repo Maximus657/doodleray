@@ -105,7 +105,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const nativeMacWindow = isNetworkExtensionOnlyBuild();
   const hasMainContent = appSessionLoggedIn || serversCount > 0 || status !== 'disconnected';
   // Native App Store windows reserve the top-left corner for macOS traffic
-  // lights even in compact mode, so their brand stays centered.
+  // lights; offset the brand toward that open space, clear of both chrome groups.
   const brandOnLeft = !nativeMacWindow;
 
   useEffect(() => {
@@ -229,7 +229,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               </div>
             </div>
           ) : (
-            <div data-tauri-drag-region className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-[calc(50%+4px)]">
+            <div data-tauri-drag-region className="pointer-events-none absolute left-[calc(50%-48px)] top-1/2 -translate-x-1/2 -translate-y-[calc(50%+4px)]">
               <div
                 data-tauri-drag-region
                 className={`flex items-center gap-[11px] ${hasMainContent ? 'v6-brand-enter' : 'v6-brand-hidden'}`}
