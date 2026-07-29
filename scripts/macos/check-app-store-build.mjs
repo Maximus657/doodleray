@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs';
+import { sign } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import { API_ROOT, createToken, requestAll, requestJson } from './app-store-connect.mjs';
 
 const APP_BUNDLE_ID = 'com.doodleray.doodleray';
+const API_ROOT = 'https://api.appstoreconnect.apple.com/v1';
 
 export function selectAppId(response, bundleId) {
   const matches = (response.data ?? []).filter((app) => app?.attributes?.bundleId === bundleId);
@@ -85,6 +86,37 @@ export function assessRelease(response, marketingVersion, buildVersion, { allowN
     throw new Error(`App Store release ${marketingVersion} (${buildVersion}) must be strictly newer than the existing macOS release tuple.`);
   }
   return 'new';
+}
+
+function createToken(keyId, issuerId, privateKey) {
+  const now = Math.floor(Date.now() / 1000);
+  const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
+  const unsigned = `${encode({ alg: 'ES256', kid: keyId, typ: 'JWT' })}.${encode({
+    iss: issuerId,
+    iat: now,
+    exp: now + 600,
+    aud: 'appstoreconnect-v1',
+  })}`;
+  const signature = sign('sha256', Buffer.from(unsigned), { key: privateKey, dsaEncoding: 'ieee-p1363' });
+  return `${unsigned}.${signature.toString('base64url')}`;
+}
+
+async function requestJson(url, token) {
+  const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!response.ok) throw new Error(`App Store Connect API request failed with HTTP ${response.status}.`);
+  return response.json();
+}
+
+async function requestAll(url, token) {
+  const combined = { data: [], included: [] };
+  let next = url;
+  while (next) {
+    const page = await requestJson(next, token);
+    combined.data.push(...(page.data ?? []));
+    combined.included.push(...(page.included ?? []));
+    next = page.links?.next ?? null;
+  }
+  return combined;
 }
 
 async function main() {
