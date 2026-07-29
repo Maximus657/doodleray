@@ -1,6 +1,6 @@
 # macOS App Store readiness
 
-Status: **the signed universal 6.0.2 (60017) bundle passed full local App Store
+Status: **the signed universal 6.0.2 (60018) bundle passed full local App Store
 verification on 2026-07-29; production remains blocked pending external QA and
 the explicit submission handoff.**
 
@@ -69,7 +69,7 @@ Distribution identity, Mac Installer Distribution identity, Team ID, signed
 host, signed extension, exact entitlements, privacy manifest, architectures,
 or release versions are missing or inconsistent.
 
-The 2026-07-29 signed handoff passed full mode for `6.0.2 (60017)`: host and
+The 2026-07-29 signed handoff passed full mode for `6.0.2 (60018)`: host and
 Packet Tunnel extension are universal, sandboxed, Apple-signed, exactly
 provisioned, and match the release manifest. This proves the local signing and
 bundle contract only; it does not prove a live VPN connection or an App Review
@@ -100,10 +100,10 @@ permanent branch.
 
 ## Remaining Mac-only release gates
 
-- App Store Connect currently has a `6.0.0 (60012)` manual-release draft while
-  the current `6.0.2 (60017)` build is ready but unassigned in TestFlight.
-  Replace the obsolete draft with a manual-release `6.0.2` draft and attach
-  `60017`; this must not be treated as a release or a tester assignment.
+- App Store Connect now has a manual-release `6.0.2` draft with its existing
+  metadata and screenshot preserved. The remote `60017` build is actually
+  `6.0.0`, so it cannot be attached to the `6.0.2` record. Upload the verified
+  `6.0.2 (60018)` build, then attach it; neither action is a release.
 - TestFlight clean install and the real 5.9.1 transition path on a QA Mac where
   changing the VPN is safe;
 - Intel and Apple Silicon connect/disconnect, DNS/IPv4/IPv6, sleep/wake, network

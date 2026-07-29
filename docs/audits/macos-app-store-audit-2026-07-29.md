@@ -1,6 +1,6 @@
 # macOS App Store audit — 2026-07-29
 
-Scope: current source `987fa0d`, release manifest `6.0.2 (60017)`, Apple
+Scope: current source candidate, release manifest `6.0.2 (60018)`, Apple
 Developer and App Store Connect state inspected on 2026-07-29. No build was
 uploaded, no tester group was changed, no App Review submission was made, and
 no release was triggered during this audit.
@@ -8,16 +8,16 @@ no release was triggered during this audit.
 ## Verdict
 
 The source and signed bundle are ready for controlled external QA. They are
-not ready for App Review submission yet because the Store version record is
-stale and the real Network Extension path has not been exercised on a safe QA
-Mac. Windows is isolated: this branch is a draft PR and no release workflow or
-Windows update channel was invoked.
+not ready for App Review submission yet because the verified build is not
+uploaded and the real Network Extension path has not been exercised on a safe
+QA Mac. Windows is isolated: this branch is a draft PR and no release workflow
+or Windows update channel was invoked.
 
 ## Verified
 
 | Area | Evidence | Result |
 |---|---|---|
-| Source identity | `release/release.json`, Cargo, Tauri and npm all declare `6.0.2`; `macBuild` is `60017`. | Pass |
+| Source identity | `release/release.json`, Cargo, Tauri and npm all declare `6.0.2`; `macBuild` is `60018`. | Pass |
 | Store architecture | `verify-app-store-readiness.sh --full` passed a locally signed universal host and Packet Tunnel extension. | Pass |
 | Bundle contract | Both bundles are sandboxed, Apple-signed, precisely provisioned, use the App Group, and the extension has `packet-tunnel-provider`. | Pass |
 | Store restrictions | The Store build has no updater artifacts, no direct tunnel executables, no administrator repair path, and diagnostics use Network Extension health. | Pass |
@@ -32,10 +32,10 @@ Windows update channel was invoked.
 
 | Priority | Gap | Why it matters | Required action |
 |---|---|---|---|
-| P0 | Store version mismatch | App Store Connect has a manual-release `6.0.0 (60012)` draft. The current signed build is `6.0.2 (60017)`. A build can only be submitted with its matching marketing version. | Remove the obsolete `6.0.0` draft, create a manual-release `6.0.2` draft, copy the verified metadata, and attach the existing `60017` build. Do not submit it. |
-| P0 | No safe runtime evidence for `60017` | Static verification cannot prove sign-in, Packet Tunnel permission, routing, DNS, reconnect, or upgrade behavior. The current Mac is intentionally unsuitable because it is already behind a VPN. | Run the QA matrix on an isolated Mac or VM with a dedicated reviewer account. Keep the reviewer service available for Apple. |
-| P1 | Current TestFlight build is unassigned | `60017` is already processed and ready for testing, but has no group, invitation, installation, session, crash, or feedback data. Older builds have unrelated historical QA data. | After a safe QA Mac is available, explicitly choose a private internal group and attach only `60017`; do not use external testers until the internal matrix passes. |
-| P1 | Screenshots are minimal | The listing contains one accepted Mac screenshot. It satisfies the minimum, but it is not an ideal review/marketing set and does not demonstrate the current release. | Capture 4–5 redacted screenshots from `60017`: sign-in disclosure, location selection, connected state, settings, and support/history. Never show a real code, endpoint, account, or profile. |
+| P0 | Remote build mismatch | The existing TestFlight `60017` build has marketing version `6.0.0`; it cannot be attached to the manual-release `6.0.2` draft. The obsolete build attachment was removed and the version record was retitled without changing its manual-release policy or metadata. | Upload verified `6.0.2 (60018)`, wait for processing, then attach it. Do not submit it for review. |
+| P0 | No safe runtime evidence for `60018` | Static verification cannot prove sign-in, Packet Tunnel permission, routing, DNS, reconnect, or upgrade behavior. The current Mac is intentionally unsuitable because it is already behind a VPN. | Run the QA matrix on an isolated Mac or VM with a dedicated reviewer account. Keep the reviewer service available for Apple. |
+| P1 | Current TestFlight build is not available to a private QA audience | The existing internal group has two testers, so assigning a build to it could notify someone other than the intended QA user. No group was changed. | Create or use a private internal group only after confirming the exact Apple ID that will test `60018`; do not use external testers until the internal matrix passes. |
+| P1 | Screenshots are minimal | The listing contains one accepted Mac screenshot. It satisfies the minimum, but it is not an ideal review/marketing set and does not demonstrate the current release. | Capture 4–5 redacted screenshots from `60018`: sign-in disclosure, location selection, connected state, settings, and support/history. Never show a real code, endpoint, account, or profile. |
 | P1 | Accessibility label is empty | App Store Connect has no accessibility nutrition-label declaration. It is optional, but claiming support without testing would be inaccurate. | Validate VoiceOver, keyboard navigation, contrast, dark appearance, text scaling, and reduced motion on the QA Mac; then record only the verified features. |
 | P1 | Automated upload is intentionally unavailable | App Store Connect API access has not been requested, no API key exists, and the GitHub secret names required by `release-production` are absent. The workflow fails closed. | If automation is wanted, request API access, create a narrowly scoped key, and add the exact certificates/profiles/key to GitHub Actions secrets. These are persistent credentials and require explicit approval at the moment of creation/upload. |
 
@@ -58,10 +58,10 @@ Windows update channel was invoked.
 
 ## Safe sequence
 
-1. Obtain explicit approval for deleting the obsolete Store draft and creating
-   the new `6.0.2` manual-release draft. Neither action releases the app.
-2. Attach the already-processed `60017` build, keep manual release selected,
-   and leave TestFlight groups unchanged until a QA device is ready.
+1. The existing Store draft is now a manual-release `6.0.2` record with
+   verified metadata preserved; do not send it for review.
+2. Upload the signed `60018` build, wait for processing, attach it, and assign
+   it only to a private internal group after confirming the QA Apple ID.
 3. Complete the clean-install and direct-5.9.1 migration matrix on a safe Mac;
    collect redacted screenshots and real accessibility evidence.
 4. Obtain explicit approval before requesting App Store Connect API access,
