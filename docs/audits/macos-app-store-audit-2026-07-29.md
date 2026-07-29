@@ -2,17 +2,16 @@
 
 Scope: current source candidate, release manifest `6.0.2 (60018)`, Apple
 Developer and App Store Connect state inspected on 2026-07-29. The signed
-candidate was uploaded to App Store Connect and a one-address external
-TestFlight group was configured; no App Review submission was made, and no
+candidate was uploaded to App Store Connect, processed, and assigned to a
+one-user internal TestFlight group; no App Review submission was made, and no
 release was triggered during this audit.
 
 ## Verdict
 
-The source and signed bundle are ready for controlled external QA. They are
-not ready for App Review submission yet because the uploaded build still needs
-processing and the real Network Extension path has not been exercised on a
-safe QA Mac. Windows is isolated: this branch is a draft PR and no release
-workflow or Windows update channel was invoked.
+The source and signed bundle are ready for controlled internal QA. They are
+not ready for App Review submission because the real Network Extension path
+has not been exercised on a safe QA Mac. Windows is isolated: this branch is a
+draft PR and no release workflow or Windows update channel was invoked.
 
 ## Verified
 
@@ -33,9 +32,8 @@ workflow or Windows update channel was invoked.
 
 | Priority | Gap | Why it matters | Required action |
 |---|---|---|---|
-| P0 | Awaiting build processing | The existing TestFlight `60017` build has marketing version `6.0.0`; it cannot be attached to the manual-release `6.0.2` draft. The verified `6.0.2 (60018)` candidate was uploaded, while the version record retains its manual-release policy and metadata. | Wait until `60018` is valid, then attach it. Do not submit it for review. |
 | P0 | No safe runtime evidence for `60018` | Static verification cannot prove sign-in, Packet Tunnel permission, routing, DNS, reconnect, or upgrade behavior. The current Mac is intentionally unsuitable because it is already behind a VPN. | Run the QA matrix on an isolated Mac or VM with a dedicated reviewer account. Keep the reviewer service available for Apple. |
-| P1 | External TestFlight review pending | The confirmed QA Apple ID is not an App Store Connect team member, so it was added to a one-address external group rather than being granted console access. The group has no build while `60018` processes. | After processing, attach `60018` and submit it for Apple’s separate beta review. Do not send it to App Review or release it. |
+| P1 | Internal TestFlight execution pending | The confirmed QA Apple ID is an App Store Connect user in a one-user internal group. Build `60018` is assigned and marked testing. | Exercise the QA matrix and retain redacted evidence. Do not send the Store draft to App Review or release it. |
 | P1 | Screenshots are minimal | The listing contains one accepted Mac screenshot. It satisfies the minimum, but it is not an ideal review/marketing set and does not demonstrate the current release. | Capture 4–5 redacted screenshots from `60018`: sign-in disclosure, location selection, connected state, settings, and support/history. Never show a real code, endpoint, account, or profile. |
 | P1 | Accessibility label is empty | App Store Connect has no accessibility nutrition-label declaration. It is optional, but claiming support without testing would be inaccurate. | Validate VoiceOver, keyboard navigation, contrast, dark appearance, text scaling, and reduced motion on the QA Mac; then record only the verified features. |
 | P1 | Automated upload credentials | App Store Connect API access is approved. A `Developer`-role team key and all ten required GitHub Actions secrets are configured; no release workflow was run to test them. | Exercise the production workflow only with an explicitly approved release candidate, then verify its signed upload evidence. |
@@ -61,8 +59,8 @@ workflow or Windows update channel was invoked.
 
 1. The existing Store draft is now a manual-release `6.0.2` record with
    verified metadata preserved; do not send it for review.
-2. Wait for the uploaded `60018` build to process, attach it to the
-   one-address external group, and submit only the external beta review.
+2. Exercise the assigned `60018` build through the one-user internal
+   TestFlight group.
 3. Complete the clean-install and direct-5.9.1 migration matrix on a safe Mac;
    collect redacted screenshots and real accessibility evidence.
 4. App Store Connect API access and CI secrets are configured; do not invoke

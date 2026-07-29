@@ -100,14 +100,13 @@ permanent branch.
 
 ## Remaining Mac-only release gates
 
-- App Store Connect now has a manual-release `6.0.2` draft with its existing
+- App Store Connect has a manual-release `6.0.2` draft with its existing
   metadata and screenshot preserved. The remote `60017` build is actually
   `6.0.0`, so it cannot be attached to the `6.0.2` record. The verified
-  `6.0.2 (60018)` build is uploaded and awaiting processing; attach it only
-  after it becomes valid. Neither action is a release.
-- A one-address external TestFlight group is configured for the QA Apple ID.
-  It has no build while `60018` processes; external testing will require
-  Apple’s separate beta review before its invitation becomes usable.
+  `6.0.2 (60018)` build has finished processing and is assigned to the
+  one-user internal TestFlight group. Neither action is a release.
+- The QA Apple ID is an internal App Store Connect user, scoped to DoodleRay
+  VPN, and can test `60018` without external beta review.
 - TestFlight clean install and the real 5.9.1 transition path on a QA Mac where
   changing the VPN is safe;
 - Intel and Apple Silicon connect/disconnect, DNS/IPv4/IPv6, sleep/wake, network
