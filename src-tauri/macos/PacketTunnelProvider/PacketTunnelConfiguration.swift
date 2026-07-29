@@ -154,12 +154,19 @@ enum PacketTunnelConfiguration {
     ) -> [String: Any] {
         var result = config
         guard var dns = result["dns"] as? [String: Any],
-              var servers = dns["servers"] as? [[String: Any]]
+              var servers = dns["servers"] as? [Any]
         else {
             return result
         }
-        for index in servers.indices where servers[index]["address"] as? String == "localhost" {
-            servers[index]["address"] = resolver
+        for index in servers.indices {
+            if var server = servers[index] as? [String: Any],
+               server["address"] as? String == "localhost"
+            {
+                server["address"] = resolver
+                servers[index] = server
+            } else if let server = servers[index] as? String, server == "localhost" {
+                servers[index] = resolver
+            }
         }
         dns["servers"] = servers
         result["dns"] = dns

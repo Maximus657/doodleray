@@ -96,6 +96,14 @@ test('App Store connection accepts only an authorized control-plane profile', ()
   assert.doesNotMatch(controlPlane, /vpn_connect\(connect_request, app\.clone\(\)\)\.await/);
 });
 
+test('Packet Tunnel rewrites localhost in mixed Xray DNS server arrays', () => {
+  const configuration = read('src-tauri/macos/PacketTunnelProvider/PacketTunnelConfiguration.swift');
+
+  assert.match(configuration, /dns\["servers"\] as\? \[Any\]/);
+  assert.match(configuration, /server\["address"\] as\? String == "localhost"/);
+  assert.match(configuration, /server == "localhost"/);
+});
+
 test('App Store UI has no external subscription-purchase CTA', () => {
   const subscriptionStatus = read('src/components/v6/SubscriptionStatusBlock.tsx');
   const dashboard = read('src/pages/Dashboard.tsx');
