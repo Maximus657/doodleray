@@ -5920,24 +5920,6 @@ fn prepare_app_store_xray_config(mut config: serde_json::Value) -> serde_json::V
             !targets_removed_outbound && !has_stale_inbound
         });
     }
-    if let Some(servers) = config
-        .get_mut("dns")
-        .and_then(|dns| dns.get_mut("servers"))
-        .and_then(serde_json::Value::as_array_mut)
-    {
-        servers.retain(|server| {
-            server.get("tag").and_then(serde_json::Value::as_str) != Some("dns-direct")
-        });
-    }
-    if let Some(rules) = config
-        .get_mut("routing")
-        .and_then(|routing| routing.get_mut("rules"))
-        .and_then(serde_json::Value::as_array_mut)
-    {
-        rules.retain(|rule| {
-            rule.get("outboundTag").and_then(serde_json::Value::as_str) != Some("direct")
-        });
-    }
     let has_external_geodata = config
         .get("env")
         .and_then(|env| env.get("xray.location.asset"))
@@ -6049,29 +6031,11 @@ fn build_app_store_xray_config(
 mod app_store_config_tests {
     use super::{
         app_store_connection_health_from_response, app_store_network_diagnostics_from_health,
-        app_store_packet_tunnel_policy, app_store_support_bundle_text,
+        app_store_support_bundle_text, app_store_traffic_probe_quorum,
         prepare_app_store_xray_config, rewrite_app_store_geodata_dependencies,
     };
-    use crate::{app_store_tunnel::TunnelResponse, AppRoutingAsset, AppRoutingPolicy};
+    use crate::app_store_tunnel::TunnelResponse;
     use serde_json::json;
-
-    #[test]
-    fn packet_tunnel_turns_server_split_policy_into_full_tunnel() {
-        let policy = app_store_packet_tunnel_policy(AppRoutingPolicy {
-            mode: "split".into(),
-            direct_domains: vec!["domain:2ip.ru".into()],
-            local_dns_domains: vec!["domain:2ip.ru".into()],
-            direct_ip_ranges: vec!["203.0.113.0/24".into()],
-            asset: Some(AppRoutingAsset::default()),
-            ..Default::default()
-        });
-
-        assert_eq!(policy.mode, "full_tunnel");
-        assert!(policy.direct_domains.is_empty());
-        assert!(policy.local_dns_domains.is_empty());
-        assert!(policy.direct_ip_ranges.is_empty());
-        assert!(policy.asset.is_none());
-    }
 
     #[test]
     fn network_extension_config_removes_local_api_and_proxy_inbounds() {
@@ -6152,37 +6116,6 @@ mod app_store_config_tests {
     }
 
     #[test]
-    fn network_extension_config_removes_all_direct_egress() {
-        let config = prepare_app_store_xray_config(json!({
-            "dns": { "servers": [
-                { "tag": "dns-direct", "address": "localhost" },
-                { "tag": "dns-remote", "address": "https://1.1.1.1/dns-query" }
-            ] },
-            "inbounds": [],
-            "outbounds": [
-                { "tag": "proxy", "protocol": "vless" },
-                { "tag": "direct", "protocol": "freedom" }
-            ],
-            "routing": { "rules": [
-                { "domain": ["domain:steamcontent.com"], "outboundTag": "direct" },
-                { "inboundTag": ["dns-direct"], "outboundTag": "direct" },
-                { "network": "tcp,udp", "outboundTag": "proxy" }
-            ] }
-        }));
-
-        assert!(config["dns"]["servers"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|server| server["tag"] != "dns-direct"));
-        assert!(config["routing"]["rules"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|rule| rule["outboundTag"] != "direct"));
-    }
-
-    #[test]
     fn network_extension_health_does_not_require_direct_proxy_ports() {
         let connected = app_store_connection_health_from_response(&TunnelResponse {
             success: true,
@@ -6248,6 +6181,28 @@ mod app_store_config_tests {
         assert!(!bundle.contains("doodlevpn.online/private-token"));
         assert!(bundle.contains("[redacted-url]"));
     }
+
+    #[test]
+    fn traffic_verifier_requires_two_independent_successes() {
+        assert!(app_store_traffic_probe_quorum([true, true, false]).is_ok());
+        assert_eq!(
+            app_store_traffic_probe_quorum([true, false, false]),
+            Err("only 1 of 3 independent traffic probes passed".into())
+        );
+    }
+}
+
+#[cfg(all(target_os = "macos", feature = "app-store"))]
+fn app_store_traffic_probe_quorum(probes: [bool; 3]) -> Result<(), String> {
+    let successful = probes.into_iter().filter(|passed| *passed).count();
+    if successful >= 2 {
+        Ok(())
+    } else {
+        Err(format!(
+            "only {successful} of {} independent traffic probes passed",
+            probes.len()
+        ))
+    }
 }
 
 #[cfg(all(target_os = "macos", feature = "app-store"))]
@@ -6272,11 +6227,7 @@ async fn verify_app_store_tunnel_traffic() -> Result<(), String> {
         probe(&client, APP_STORE_TRAFFIC_VERIFY_URLS[1]),
         probe(&client, APP_STORE_TRAFFIC_VERIFY_URLS[2]),
     );
-    if cloudflare || public_ip || control_plane {
-        Ok(())
-    } else {
-        Err("all independent traffic probes failed".into())
-    }
+    app_store_traffic_probe_quorum([cloudflare, public_ip, control_plane])
 }
 
 #[cfg(all(target_os = "macos", feature = "app-store"))]
@@ -6332,30 +6283,9 @@ fn app_store_connect_stage() -> String {
 }
 
 #[cfg(all(target_os = "macos", feature = "app-store"))]
-fn app_store_packet_tunnel_policy(mut policy: AppRoutingPolicy) -> AppRoutingPolicy {
-    // The Packet Tunnel owns the default route. Xray's dynamic direct domains
-    // would re-enter that route unless every resolved IP were excluded first.
-    if policy.mode == "split" {
-        policy.mode = "full_tunnel".into();
-        policy.direct_domains.clear();
-        policy.local_dns_domains.clear();
-        policy.direct_ip_ranges.clear();
-        policy.asset = None;
-    }
-    policy
-}
-
-#[cfg(all(target_os = "macos", feature = "app-store"))]
-async fn vpn_connect_app_store(
-    mut request: ConnectRequest,
-    app: tauri::AppHandle,
-) -> ConnectResult {
+async fn vpn_connect_app_store(request: ConnectRequest, app: tauri::AppHandle) -> ConnectResult {
     let _runtime_guard = RUNTIME_OP_LOCK.lock().await;
     APP_STORE_CONNECT_CANCELLED.store(false, Ordering::SeqCst);
-    request.routing_policy = request
-        .routing_policy
-        .take()
-        .map(app_store_packet_tunnel_policy);
     set_app_store_connect_stage("preparing routing data");
     if let Ok(mut logs) = CONNECT_LOG.lock() {
         logs.clear();
