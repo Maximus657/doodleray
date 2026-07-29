@@ -3,7 +3,7 @@ import { sign } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
 const APP_BUNDLE_ID = 'com.doodleray.doodleray';
-const API_ROOT = 'https://api.appstoreconnect.apple.com/v1';
+export const API_ROOT = 'https://api.appstoreconnect.apple.com/v1';
 
 export function selectAppId(response, bundleId) {
   const matches = (response.data ?? []).filter((app) => app?.attributes?.bundleId === bundleId);
@@ -88,7 +88,7 @@ export function assessRelease(response, marketingVersion, buildVersion, { allowN
   return 'new';
 }
 
-function createToken(keyId, issuerId, privateKey) {
+export function createToken(keyId, issuerId, privateKey) {
   const now = Math.floor(Date.now() / 1000);
   const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
   const unsigned = `${encode({ alg: 'ES256', kid: keyId, typ: 'JWT' })}.${encode({
@@ -101,13 +101,16 @@ function createToken(keyId, issuerId, privateKey) {
   return `${unsigned}.${signature.toString('base64url')}`;
 }
 
-async function requestJson(url, token) {
-  const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+export async function requestJson(url, token, options = {}) {
+  const response = await fetch(url, {
+    ...options,
+    headers: { Authorization: `Bearer ${token}`, ...options.headers },
+  });
   if (!response.ok) throw new Error(`App Store Connect API request failed with HTTP ${response.status}.`);
-  return response.json();
+  return response.status === 204 ? undefined : response.json();
 }
 
-async function requestAll(url, token) {
+export async function requestAll(url, token) {
   const combined = { data: [], included: [] };
   let next = url;
   while (next) {
