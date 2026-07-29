@@ -105,6 +105,9 @@ permanent branch.
   `6.0.0`, so it cannot be attached to the `6.0.2` record. The verified
   `6.0.2 (60018)` build is uploaded and awaiting processing; attach it only
   after it becomes valid. Neither action is a release.
+- A one-address external TestFlight group is configured for the QA Apple ID.
+  It has no build while `60018` processes; external testing will require
+  Apple’s separate beta review before its invitation becomes usable.
 - TestFlight clean install and the real 5.9.1 transition path on a QA Mac where
   changing the VPN is safe;
 - Intel and Apple Silicon connect/disconnect, DNS/IPv4/IPv6, sleep/wake, network
