@@ -97,7 +97,7 @@ if ! npm run tauri -- build \
   exit 1
 fi
 
-/usr/bin/grep -a -q "$VITE_DOODLERAY_PRIVACY_POLICY_URL" "$ROOT_DIR/dist" || {
+/usr/bin/grep -aR -q "$VITE_DOODLERAY_PRIVACY_POLICY_URL" "$ROOT_DIR/dist" || {
   printf 'App Store privacy-policy URL was not baked into the frontend.\n' >&2
   exit 1
 }
