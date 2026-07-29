@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const expectedWorkflows = ['ci.yml', 'release-production.yml', 'runtime-updates.yml', 'testflight-macos.yml'];
+const expectedWorkflows = ['attach-testflight-macos.yml', 'ci.yml', 'release-production.yml', 'runtime-updates.yml', 'testflight-macos.yml'];
 const forbiddenWindowsSigning = /WINDOWS_CODESIGN|PFX|THUMBPRINT|AUTHENTICODE|sign-windows-if-configured|sign-all-pe|Get-AuthenticodeSignature|signCommand/i;
 const appleSecrets = [
   'APPLE_DISTRIBUTION_CERTIFICATE_BASE64',
