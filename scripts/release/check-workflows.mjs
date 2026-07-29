@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const expectedWorkflows = ['ci.yml', 'release-production.yml', 'runtime-updates.yml'];
+const expectedWorkflows = ['ci.yml', 'release-production.yml', 'runtime-updates.yml', 'testflight-macos.yml'];
 const forbiddenWindowsSigning = /WINDOWS_CODESIGN|PFX|THUMBPRINT|AUTHENTICODE|sign-windows-if-configured|sign-all-pe|Get-AuthenticodeSignature|signCommand/i;
 const appleSecrets = [
   'APPLE_DISTRIBUTION_CERTIFICATE_BASE64',
@@ -41,6 +41,7 @@ export function checkReleaseWorkflows(root) {
   const release = read(root, '.github/workflows/release-production.yml');
   const ci = read(root, '.github/workflows/ci.yml');
   const runtime = read(root, '.github/workflows/runtime-updates.yml');
+  const testflight = read(root, '.github/workflows/testflight-macos.yml');
   const prepareWindows = read(root, 'scripts/release/Prepare-WindowsRelease.ps1');
   const publishWindows = read(root, 'scripts/release/Publish-DoodleRayDownloads.ps1');
   const updaterVerifier = read(root, 'src-tauri/examples/verify_updater_signature.rs');
@@ -49,6 +50,7 @@ export function checkReleaseWorkflows(root) {
     release,
     ci,
     runtime,
+    testflight,
     read(root, 'src-tauri/tauri.windows.conf.json'),
     publishWindows,
   ].join('\n');
@@ -81,6 +83,20 @@ export function checkReleaseWorkflows(root) {
     || !/upload-app-store\.sh/.test(release)) {
     errors.push('enabled App Store target must use the canonical signing, profile, team, and API secret contract');
   }
+  if (!/^\s*workflow_dispatch:/m.test(testflight)
+    || !/source_sha:/.test(testflight)
+    || !/^permissions:\r?\n\s+contents:\s+read/m.test(testflight)
+    || !/environment:\s*production/.test(testflight)
+    || !/test "\$\(git rev-parse HEAD\)" = "\$SOURCE_SHA"/.test(testflight)
+    || !appleSecrets.every((name) => new RegExp(`secrets\\.${name}\\b`).test(testflight))
+    || !/check-app-store-build\.mjs --require-new-or-existing --allow-next-testflight-build/.test(testflight)
+    || !/verify-app-store-readiness\.sh --full/.test(testflight)
+    || !/upload-app-store\.sh/.test(testflight)
+    || /npx tauri build|release-production|windows-release/i.test(testflight)) {
+    errors.push('TestFlight upload must stay an isolated, signed, exact-source macOS-only path');
+  }
+  const testflightActions = [...testflight.matchAll(/^\s*- uses:\s+([^\s#]+)/gm)].map((match) => match[1]);
+  if (testflightActions.some((action) => !/@[0-9a-f]{40}$/.test(action))) errors.push('TestFlight actions must be pinned to immutable commit SHAs');
   if (!/if \[ "\$windows" != 'true' \] && \[ "\$mac_app_store" != 'true' \]/.test(release)
     || /Production releases require both Windows and macAppStore targets/.test(release)
     || !/upload_macos_app_store:\r?\n\s+needs: \[preflight, build_macos_app_store, upload_immutable\]/.test(release)
