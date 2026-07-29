@@ -26,4 +26,5 @@ test('TestFlight attachment selects the exact macOS build and sole internal grou
   assert.equal(selectInternalGroup(groups).id, 'internal');
   groups.data.push({ id: 'second-internal', attributes: { name: 'Staff', isInternalGroup: true } });
   assert.throws(() => selectInternalGroup(groups), /exactly one internal TestFlight group/);
+  assert.equal(selectInternalGroup(groups, 'Internal QA').id, 'internal');
 });

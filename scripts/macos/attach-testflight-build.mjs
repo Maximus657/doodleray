@@ -30,8 +30,9 @@ export function selectMacBuild(response, marketingVersion, buildVersion) {
   return matches[0];
 }
 
-export function selectInternalGroup(response) {
-  const groups = (response.data ?? []).filter((group) => group?.attributes?.isInternalGroup === true);
+export function selectInternalGroup(response, name) {
+  const groups = (response.data ?? []).filter((group) => group?.attributes?.isInternalGroup === true
+    && (!name || group.attributes?.name === name));
   if (groups.length !== 1) {
     const names = groups.map((group) => group?.attributes?.name ?? 'unnamed').join(', ') || 'none';
     throw new Error(`Expected exactly one internal TestFlight group; found: ${names}.`);
@@ -62,7 +63,10 @@ async function main() {
   const groupsUrl = new URL(`${API_ROOT}/apps/${appId}/betaGroups`);
   groupsUrl.searchParams.set('fields[betaGroups]', 'name,isInternalGroup');
   groupsUrl.searchParams.set('limit', '200');
-  const group = selectInternalGroup(await requestAll(groupsUrl, token));
+  const group = selectInternalGroup(
+    await requestAll(groupsUrl, token),
+    process.env.TESTFLIGHT_INTERNAL_GROUP_NAME,
+  );
 
   const buildsUrl = new URL(`${API_ROOT}/builds`);
   buildsUrl.searchParams.set('filter[app]', appId);
