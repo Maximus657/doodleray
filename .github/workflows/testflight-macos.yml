@@ -1,0 +1,125 @@
+name: TestFlight macOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact commit SHA to build and upload to internal TestFlight
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testflight-macos
+  cancel-in-progress: false
+
+jobs:
+  build_and_upload:
+    runs-on: macos-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.source_sha }}
+
+      - name: Bind the upload to the requested commit
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-07-26
+        with:
+          components: rustfmt
+
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --features app-store
+
+      - name: Require the Apple signing and upload contract
+        env:
+          APPLE_DISTRIBUTION_CERTIFICATE_BASE64: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_BASE64 }}
+          APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+          MAC_INSTALLER_DISTRIBUTION_CERTIFICATE_BASE64: ${{ secrets.MAC_INSTALLER_DISTRIBUTION_CERTIFICATE_BASE64 }}
+          MAC_INSTALLER_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ secrets.MAC_INSTALLER_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+          MACOS_APP_STORE_HOST_PROFILE_BASE64: ${{ secrets.MACOS_APP_STORE_HOST_PROFILE_BASE64 }}
+          MACOS_APP_STORE_EXTENSION_PROFILE_BASE64: ${{ secrets.MACOS_APP_STORE_EXTENSION_PROFILE_BASE64 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          for name in APPLE_DISTRIBUTION_CERTIFICATE_BASE64 APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD MAC_INSTALLER_DISTRIBUTION_CERTIFICATE_BASE64 MAC_INSTALLER_DISTRIBUTION_CERTIFICATE_PASSWORD MACOS_APP_STORE_HOST_PROFILE_BASE64 MACOS_APP_STORE_EXTENSION_PROFILE_BASE64 APPLE_TEAM_ID APP_STORE_CONNECT_API_KEY_ID APP_STORE_CONNECT_ISSUER_ID APP_STORE_CONNECT_PRIVATE_KEY; do
+            test -n "${!name}" || { echo "Required Apple secret is missing: $name" >&2; exit 1; }
+          done
+
+      - name: Import Apple Distribution certificate
+        id: import-apple-distribution
+        uses: apple-actions/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d # v3
+        with:
+          keychain: signing_temp
+          p12-file-base64: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_BASE64 }}
+          p12-password: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+
+      - name: Import Mac Installer Distribution certificate
+        uses: apple-actions/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d # v3
+        with:
+          keychain: signing_temp
+          create-keychain: false
+          keychain-password: ${{ steps.import-apple-distribution.outputs.keychain-password }}
+          p12-file-base64: ${{ secrets.MAC_INSTALLER_DISTRIBUTION_CERTIFICATE_BASE64 }}
+          p12-password: ${{ secrets.MAC_INSTALLER_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+
+      - name: Install App Store profiles
+        env:
+          MACOS_APP_STORE_HOST_PROFILE_BASE64: ${{ secrets.MACOS_APP_STORE_HOST_PROFILE_BASE64 }}
+          MACOS_APP_STORE_EXTENSION_PROFILE_BASE64: ${{ secrets.MACOS_APP_STORE_EXTENSION_PROFILE_BASE64 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: scripts/macos/install-app-store-profiles.sh "$GITHUB_ENV"
+
+      - name: Verify the next TestFlight build tuple
+        env:
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          key_path="$RUNNER_TEMP/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"
+          trap 'rm -f "$key_path"' EXIT
+          printf '%s\n' "$APP_STORE_CONNECT_PRIVATE_KEY" > "$key_path"
+          chmod 600 "$key_path"
+          APP_STORE_CONNECT_API_KEY_PATH="$key_path" node scripts/macos/check-app-store-build.mjs --require-new-or-existing --allow-next-testflight-build
+
+      - name: Build and verify the signed App Store bundle
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          scripts/macos/build-app-store.sh
+          scripts/macos/verify-app-store-readiness.sh --full
+
+      - name: Upload to internal TestFlight
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+          APP_STORE_TESTFLIGHT_UPLOAD: '1'
+        run: |
+          set -euo pipefail
+          key_path="$RUNNER_TEMP/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"
+          trap 'rm -f "$key_path"' EXIT
+          printf '%s\n' "$APP_STORE_CONNECT_PRIVATE_KEY" > "$key_path"
+          chmod 600 "$key_path"
+          export APP_STORE_CONNECT_API_KEY_PATH="$key_path"
+          scripts/macos/upload-app-store.sh
