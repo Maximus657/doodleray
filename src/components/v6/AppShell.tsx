@@ -16,15 +16,6 @@ gsap.registerPlugin(useGSAP);
 
 type WindowMode = 'wide' | 'compact';
 
-// The centered header lockup exists only because macOS's native traffic
-// lights sit top-left and leave no room for a left-aligned logo there.
-// Windows (and any other platform) has no such constraint, so the brand
-// belongs on the left like a normal app header.
-function isMacPlatform(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  return /Mac/i.test(navigator.userAgent);
-}
-
 async function resizeNativeWindow(mode: WindowMode): Promise<void> {
   if (typeof (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ === 'undefined') return;
 
@@ -113,7 +104,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const [windowTransitioning, setWindowTransitioning] = useState(false);
   const nativeMacWindow = isNetworkExtensionOnlyBuild();
   const hasMainContent = appSessionLoggedIn || serversCount > 0 || status !== 'disconnected';
-  const brandOnLeft = windowMode === 'compact' || !isMacPlatform();
+  // Native App Store windows reserve the top-left corner for macOS traffic
+  // lights even in compact mode, so their brand stays centered.
+  const brandOnLeft = !nativeMacWindow;
 
   useEffect(() => {
     try { localStorage.setItem('doodleray_window_mode', windowMode); } catch { /* non-critical preference */ }

@@ -417,12 +417,16 @@
     order: 2;
     display: block;
     width: 100%;
+    padding-inline: 24px;
   }
-  .v6-compact-mode .v6-quick-actions-row {
+  .v6-compact-mode .v6-split-routing-entry {
     order: 4;
   }
-  .v6-compact-mode .v6-diagnostics-drawer {
+  .v6-compact-mode .v6-quick-actions-row {
     order: 5;
+  }
+  .v6-compact-mode .v6-diagnostics-drawer {
+    order: 6;
   }
   .v6-compact-mode .v6-diagnostics-drawer .v6-glass {
     background: none;

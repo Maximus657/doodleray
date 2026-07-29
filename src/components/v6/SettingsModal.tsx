@@ -98,17 +98,25 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
   const closedControlPlane = isClosedControlPlaneEnabled();
   const desktopAutostartAvailable = isDesktopAutostartAvailable();
   const networkExtensionOnly = isNetworkExtensionOnlyBuild();
+  const launchAtLoginAvailable = desktopAutostartAvailable || networkExtensionOnly;
   const storeManagedUpdates = isUpdateManagedByStore();
 
   const launchOn = autoStart || silentAdminAutostart;
   const toggleLaunch = async () => {
     if (silentAdminAutostart) return; // managed by admin autostart; leave as-is
     const next = !autoStart;
-    useAppStore.setState({ autoStart: next });
     try {
+      if (networkExtensionOnly) {
+        useAppStore.setState({ autoStart: await desktopBridge.command<boolean>('set_app_store_autostart', { enabled: next }) });
+        return;
+      }
+      useAppStore.setState({ autoStart: next });
       if (next) await enable(); else await disable();
-    } catch {
+    } catch (err) {
       useAppStore.setState({ autoStart: !next });
+      const message = err instanceof Error ? err.message : String(err);
+      addLog('error', `Launch at startup failed: ${message}`);
+      useToastStore.getState().addToast(message, 'error');
     }
   };
 
@@ -279,7 +287,7 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
           )}
 
           {/* General */}
-          {desktopAutostartAvailable && (
+          {launchAtLoginAvailable && (
             <Row title={t('v6SetLaunch' as never)} sub={t('v6SetLaunchSub' as never)} onClick={toggleLaunch} pressed={launchOn} right={<Toggle on={launchOn} label={t('v6SetLaunch' as never)} />} />
           )}
           <Row title={t('v6SetAutoConnect' as never)} sub={t('v6SetAutoConnectSub' as never)} onClick={() => setAutoConnectOnStartup(!autoConnectOnStartup)} pressed={autoConnectOnStartup} right={<Toggle on={autoConnectOnStartup} label={t('v6SetAutoConnect' as never)} />} />

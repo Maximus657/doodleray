@@ -30,6 +30,7 @@ fn main() {
             .compile("doodleray_network_extension_bridge");
         println!("cargo:rustc-link-lib=framework=Foundation");
         println!("cargo:rustc-link-lib=framework=NetworkExtension");
+        println!("cargo:rustc-link-lib=framework=ServiceManagement");
     }
 
     tauri_build::build()

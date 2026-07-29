@@ -11592,6 +11592,31 @@ fn check_defender_exclusion() -> bool {
 // ═══════════════════════════════════════════════════════════
 
 #[tauri::command]
+fn app_store_autostart_enabled() -> Result<bool, String> {
+    #[cfg(all(target_os = "macos", feature = "app-store"))]
+    {
+        app_store_tunnel::autostart_enabled()
+    }
+    #[cfg(not(all(target_os = "macos", feature = "app-store")))]
+    {
+        Err("App Store autostart is only supported by the macOS App Store build".into())
+    }
+}
+
+#[tauri::command]
+fn set_app_store_autostart(enabled: bool) -> Result<bool, String> {
+    #[cfg(all(target_os = "macos", feature = "app-store"))]
+    {
+        app_store_tunnel::set_autostart_enabled(enabled)
+    }
+    #[cfg(not(all(target_os = "macos", feature = "app-store")))]
+    {
+        let _ = enabled;
+        Err("App Store autostart is only supported by the macOS App Store build".into())
+    }
+}
+
+#[tauri::command]
 async fn toggle_silent_autostart(_enable: bool) -> Result<String, String> {
     #[cfg(windows)]
     {
@@ -12064,6 +12089,8 @@ pub fn run() {
             quit_app,
             confirm_secure_storage_flushed,
             workshop_api,
+            app_store_autostart_enabled,
+            set_app_store_autostart,
             toggle_silent_autostart,
             check_silent_autostart,
             restart_as_admin,

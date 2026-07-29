@@ -50,6 +50,8 @@ import { displayServerName } from '../components/v6/ServerRow';
 import LocationList from '../components/v6/LocationList';
 import TrafficStats from '../components/v6/TrafficStats';
 import SubscriptionStatusBlock from '../components/v6/SubscriptionStatusBlock';
+import SplitRoutingToggle from '../components/v6/SplitRoutingToggle';
+import SplitRoutingModal from '../components/v6/SplitRoutingModal';
 import DiagnosticsDrawer from '../components/v6/DiagnosticsDrawer';
 import DiagnosticPanel from '../components/v6/DiagnosticPanel';
 import QuickAddPanel from '../components/v6/QuickAddPanel';
@@ -221,6 +223,7 @@ export default function Dashboard() {
   const [quickImporting, setQuickImporting] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showDiagModal, setShowDiagModal] = useState(false);
+  const [showSplitModal, setShowSplitModal] = useState(false);
   const [connectionStep, setConnectionStep] = useState<string | null>(null);
   const [activeSystemProxyMode, setActiveSystemProxyMode] = useState<SystemProxyMode | null>(null);
   const [appSession, setAppSession] = useState<AppApiSessionStatus | null>(null);
@@ -1804,7 +1807,7 @@ export default function Dashboard() {
             t={t}
           />
 
-          {/* RIGHT: connect core, bottom row (mode + exceptions now live in Settings) */}
+          {/* RIGHT: connect core, quick access to Windows exceptions, bottom row */}
           <div className="v6-dashboard-main flex min-h-0 min-w-0 flex-1 flex-col gap-4">
             <ConnectOrb
               state={orbState}
@@ -1828,6 +1831,12 @@ export default function Dashboard() {
               t={t}
               className="v6-orb-sub-status"
             />
+
+            {!networkExtensionOnly && (
+              <div className="v6-split-routing-entry shrink-0">
+                <SplitRoutingToggle protectedMode={productMode === 'protected'} onOpen={() => setShowSplitModal(true)} t={t} />
+              </div>
+            )}
 
             {!networkExtensionOnly && showStats && (
               <div className="v6-quick-actions-row flex shrink-0 gap-3.5">
@@ -1854,6 +1863,14 @@ export default function Dashboard() {
         <DiagnosticPanel
           onClose={() => setShowDiagModal(false)}
           onExportSupportBundle={handleExportSupportBundle}
+          t={t}
+        />
+      )}
+
+      {!networkExtensionOnly && showSplitModal && (
+        <SplitRoutingModal
+          protectedMode={productMode === 'protected'}
+          onClose={() => setShowSplitModal(false)}
           t={t}
         />
       )}
