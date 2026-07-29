@@ -55,7 +55,7 @@ function compareSemver(left, right) {
   return 0;
 }
 
-export function assessRelease(response, marketingVersion, buildVersion) {
+export function assessRelease(response, marketingVersion, buildVersion, { allowNextTestFlightBuild = false } = {}) {
   if (classifyBuildResponse(response, marketingVersion, buildVersion) === 'exists') return 'exists';
   if (!/^\d+$/.test(buildVersion)) throw new Error('release.macBuild must be a decimal integer.');
 
@@ -75,6 +75,13 @@ export function assessRelease(response, marketingVersion, buildVersion) {
     .sort((a, b) => compareSemver(b, a))[0];
   const latestBuildVersion = tuples.map((tuple) => BigInt(tuple.buildVersion))
     .reduce((maximum, value) => value > maximum ? value : maximum);
+  if (allowNextTestFlightBuild && compareSemver(marketingVersion, latestMarketingVersion) === 0) {
+    const latestBuildForMarketingVersion = tuples
+      .filter((tuple) => tuple.marketingVersion === marketingVersion)
+      .map((tuple) => BigInt(tuple.buildVersion))
+      .reduce((maximum, value) => value > maximum ? value : maximum);
+    if (BigInt(buildVersion) > latestBuildForMarketingVersion) return 'new';
+  }
   if (compareSemver(marketingVersion, latestMarketingVersion) <= 0 || BigInt(buildVersion) <= latestBuildVersion) {
     throw new Error(`App Store release ${marketingVersion} (${buildVersion}) must be strictly newer than the existing macOS release tuple.`);
   }
@@ -136,7 +143,9 @@ async function main() {
   buildsUrl.searchParams.set('include', 'preReleaseVersion');
   buildsUrl.searchParams.set('limit', '200');
   const allBuilds = await requestAll(buildsUrl, token);
-  process.stdout.write(assessRelease(allBuilds, release.version, String(release.macBuild)));
+  process.stdout.write(assessRelease(allBuilds, release.version, String(release.macBuild), {
+    allowNextTestFlightBuild: process.argv.includes('--allow-next-testflight-build'),
+  }));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

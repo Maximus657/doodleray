@@ -73,7 +73,11 @@ installer_sha="$(security find-identity -v -p basic | awk -v team="$EXPECTED_TEA
 [ -n "$signing_sha" ] || { printf 'Apple Distribution signing identity is missing.\n' >&2; exit 1; }
 [ -n "$installer_sha" ] || { printf 'Mac Installer Distribution signing identity is missing.\n' >&2; exit 1; }
 
-build_status="$(node "$ROOT_DIR/scripts/macos/check-app-store-build.mjs" --require-new-or-existing)"
+check_args=(--require-new-or-existing)
+if [ "${APP_STORE_TESTFLIGHT_UPLOAD:-}" = '1' ]; then
+  check_args+=(--allow-next-testflight-build)
+fi
+build_status="$(node "$ROOT_DIR/scripts/macos/check-app-store-build.mjs" "${check_args[@]}")"
 if [ "$build_status" = exists ]; then
   printf 'App Store Connect already contains exact build com.doodleray.doodleray %s (%s); upload is a no-op. Apple does not expose artifact SHA for byte comparison.\n' "$RELEASE_VERSION" "$RELEASE_BUILD"
   exit 0

@@ -170,6 +170,8 @@ test('workflow uses one exact fail-closed Apple secret and profile contract', ()
   assert.match(verify, /require_array_contains/);
   assert.match(profileInstaller, /Library\/MobileDevice\/Provisioning Profiles/);
   assert.match(upload, /check-app-store-build\.mjs/);
+  assert.match(upload, /APP_STORE_TESTFLIGHT_UPLOAD/);
+  assert.match(upload, /--allow-next-testflight-build/);
   assert.doesNotMatch(upload, /DoodleRay VPN macOS App Store Host|DoodleRay VPN macOS App Store Extension/);
 });
 
