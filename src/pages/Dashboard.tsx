@@ -416,7 +416,7 @@ export default function Dashboard() {
     setSocksPort(effectiveSocksPort);
     setHttpPort(effectiveHttpPort);
 
-    if (!isHealthAcceptable(mode, health) && mode === 'tun') {
+    if (!networkExtensionOnly && !isHealthAcceptable(mode, health) && mode === 'tun') {
       addLog('warning', `Protected mode health is ${health?.verdict ?? 'missing'}; running automatic repair once...`);
       try {
         const repairMessage = await invoke('repair_windows_runtime') as string;
@@ -445,13 +445,18 @@ export default function Dashboard() {
       const failureSummary = summarizeHealthFailures(health);
       addLog('error', `Connection started but health quorum failed: ${failureSummary}`);
       try {
-        const bundlePath = await invoke('export_support_bundle', {
-          proxyMode: mode,
-          systemProxyMode: nextSystemProxyMode,
-          socksPort: effectiveSocksPort,
-          httpPort: effectiveHttpPort,
-          failureMarker: `connect_health_failed: ${failureSummary}`,
-        }) as string;
+        const bundlePath = await invoke(
+          networkExtensionOnly ? 'export_app_store_support_bundle' : 'export_support_bundle',
+          networkExtensionOnly
+            ? { failureMarker: `connect_health_failed: ${failureSummary}` }
+            : {
+              proxyMode: mode,
+              systemProxyMode: nextSystemProxyMode,
+              socksPort: effectiveSocksPort,
+              httpPort: effectiveHttpPort,
+              failureMarker: `connect_health_failed: ${failureSummary}`,
+            },
+        ) as string;
         addLog('info', `${t('supportBundleExported')}: ${bundlePath}`);
       } catch (bundleErr: any) {
         addLog('warning', `${t('supportBundleExportFailed')}: ${bundleErr?.message || bundleErr}`);
@@ -475,7 +480,7 @@ export default function Dashboard() {
     setStatus('connected');
     setConnectedAt(Date.now());
     return true;
-  }, [addLog, setConnectedAt, setConnectionStep, setHttpPort, setSocksPort, setStatus, t]);
+  }, [addLog, networkExtensionOnly, setConnectedAt, setConnectionStep, setHttpPort, setSocksPort, setStatus, t]);
 
   const connectionOpRef = useRef(0);
   const serverSelectionIndex = useMemo(() => buildServerSelectionIndex(servers), [servers]);
@@ -553,6 +558,7 @@ export default function Dashboard() {
             if (healthPorts.httpPort) setHttpPort(healthPorts.httpPort);
 
             if (
+              !networkExtensionOnly &&
               proxyMode === 'tun' &&
               effectiveSystemProxyMode === 'set'
             ) {
@@ -627,6 +633,7 @@ export default function Dashboard() {
         if (healthPorts.httpPort) setHttpPort(healthPorts.httpPort);
 
         if (
+          !networkExtensionOnly &&
           proxyMode === 'tun' &&
           needsProtectedRuntimeRepair(health) &&
           !runtimeRepairRef.current.inFlight &&
@@ -665,7 +672,7 @@ export default function Dashboard() {
           }
         }
 
-        const compatibilityNeedsRepair = proxyMode === 'tun' &&
+        const compatibilityNeedsRepair = !networkExtensionOnly && proxyMode === 'tun' &&
           effectiveSystemProxyMode === 'set' &&
           (hasWinInetCompatibilityWarning(health) ||
             (health.service_degraded_checks ?? []).some(check => /Windows proxy compatibility/i.test(check)));
@@ -711,13 +718,18 @@ export default function Dashboard() {
           healthFailRef.current = 0;
           addLog('error', `Whole computer mode stopped: ${failureSummary}`);
           try {
-            const bundlePath = await invoke('export_support_bundle', {
-              proxyMode,
-              systemProxyMode: effectiveSystemProxyMode,
-              socksPort,
-              httpPort,
-              failureMarker: `health_fatal: ${failureSummary}`,
-            }) as string;
+            const bundlePath = await invoke(
+              networkExtensionOnly ? 'export_app_store_support_bundle' : 'export_support_bundle',
+              networkExtensionOnly
+                ? { failureMarker: `health_fatal: ${failureSummary}` }
+                : {
+                  proxyMode,
+                  systemProxyMode: effectiveSystemProxyMode,
+                  socksPort,
+                  httpPort,
+                  failureMarker: `health_fatal: ${failureSummary}`,
+                },
+            ) as string;
             addLog('info', `${t('supportBundleExported')}: ${bundlePath}`);
           } catch (bundleErr: any) {
             addLog('warning', `${t('supportBundleExportFailed')}: ${bundleErr?.message || bundleErr}`);
@@ -771,7 +783,7 @@ export default function Dashboard() {
       }
     }, 30000);
     return () => clearInterval(healthCheck);
-  }, [status, socksPort, httpPort, proxyMode, systemProxyMode, getEffectiveHealthSystemProxyMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [status, socksPort, httpPort, proxyMode, systemProxyMode, networkExtensionOnly, getEffectiveHealthSystemProxyMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fast protected-mode fatal watchdog. The normal health monitor is broader
   // and intentionally gentle; this one only consumes service-owned runtime
@@ -1243,12 +1255,17 @@ export default function Dashboard() {
     try {
 
       const effectiveSystemProxyMode = await getEffectiveHealthSystemProxyMode();
-      const path = await invoke('export_support_bundle', {
-        proxyMode,
-        systemProxyMode: effectiveSystemProxyMode,
-        socksPort,
-        httpPort,
-      }) as string;
+      const path = await invoke(
+        networkExtensionOnly ? 'export_app_store_support_bundle' : 'export_support_bundle',
+        networkExtensionOnly
+          ? {}
+          : {
+            proxyMode,
+            systemProxyMode: effectiveSystemProxyMode,
+            socksPort,
+            httpPort,
+          },
+      ) as string;
       addLog('success', `${t('supportBundleExported')}: ${path}`);
 
       useToastStore.getState().addToast(`${t('supportBundleExported')}: ${path}`, 'success');
@@ -1257,7 +1274,7 @@ export default function Dashboard() {
 
       useToastStore.getState().addToast(`${t('supportBundleExportFailed')}: ${err?.message || err}`, 'error');
     }
-  }, [addLog, getEffectiveHealthSystemProxyMode, httpPort, proxyMode, socksPort, t]);
+  }, [addLog, getEffectiveHealthSystemProxyMode, httpPort, networkExtensionOnly, proxyMode, socksPort, t]);
 
   const handleQaSimulatedTunFailure = useCallback(async (reason: string) => {
     ++connectionOpRef.current;

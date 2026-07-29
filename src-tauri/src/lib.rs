@@ -77,9 +77,11 @@ pub use control_plane::{
     AppRoutingAsset, AppRoutingPolicy, AppRoutingSignature,
 };
 use storage::{secure_store_delete, secure_store_get, secure_store_set};
+#[cfg(not(all(target_os = "macos", feature = "app-store")))]
+use vpn::config::is_supported_proxy_protocol;
 use vpn::config::{
-    build_xray_config, inject_xray_inbounds, is_supported_proxy_protocol,
-    routing_policy_xray_dns_domains, routing_policy_xray_domains, uses_xray_engine,
+    build_xray_config, inject_xray_inbounds, routing_policy_xray_dns_domains,
+    routing_policy_xray_domains, uses_xray_engine,
 };
 #[cfg(all(target_os = "macos", feature = "app-store"))]
 use vpn::config::{has_effective_xray_rule_fields, remove_empty_xray_rule_array};
@@ -125,6 +127,9 @@ struct AppStoreDataplaneProbeCache {
 #[cfg(all(target_os = "macos", feature = "app-store"))]
 static APP_STORE_DATAPLANE_PROBE: LazyLock<tokio::sync::Mutex<AppStoreDataplaneProbeCache>> =
     LazyLock::new(|| tokio::sync::Mutex::new(AppStoreDataplaneProbeCache::default()));
+#[cfg(all(target_os = "macos", feature = "app-store"))]
+static APP_STORE_CONNECT_STAGE: LazyLock<Mutex<String>> =
+    LazyLock::new(|| Mutex::new("idle".into()));
 
 const WORKSHOP_API_HOSTS: &[&str] = &[
     "doodleraydb-doodleray-ic3y6k-c7350f-94-241-172-101.traefik.me",
@@ -1035,6 +1040,41 @@ fn diagnostics_summary(checks: &[serde_json::Value]) -> &'static str {
     }
 }
 
+#[cfg(all(target_os = "macos", feature = "app-store"))]
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn run_network_diagnostics(
+    subscription_url: Option<String>,
+    socks_port: u16,
+    http_port: u16,
+    active_server_address: Option<String>,
+    active_server_port: Option<u16>,
+    active_server_protocol: Option<String>,
+    proxy_mode: Option<String>,
+    app_status: Option<String>,
+    active_routing_rule_count: Option<usize>,
+    system_proxy_mode: Option<String>,
+    dns_mode: Option<String>,
+    network_stack: Option<String>,
+) -> serde_json::Value {
+    let _ = (
+        subscription_url,
+        socks_port,
+        http_port,
+        active_server_address,
+        active_server_port,
+        active_server_protocol,
+        proxy_mode,
+        app_status,
+        active_routing_rule_count,
+        system_proxy_mode,
+        dns_mode,
+        network_stack,
+    );
+    app_store_network_diagnostics_from_health(&app_store_connection_health().await)
+}
+
+#[cfg(not(all(target_os = "macos", feature = "app-store")))]
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn run_network_diagnostics(
@@ -5989,7 +6029,10 @@ fn build_app_store_xray_config(
 
 #[cfg(all(test, target_os = "macos", feature = "app-store"))]
 mod app_store_config_tests {
-    use super::{app_store_connection_health_from_response, prepare_app_store_xray_config};
+    use super::{
+        app_store_connection_health_from_response, app_store_network_diagnostics_from_health,
+        app_store_support_bundle_text, prepare_app_store_xray_config,
+    };
     use crate::app_store_tunnel::TunnelResponse;
     use serde_json::json;
 
@@ -6100,6 +6143,42 @@ mod app_store_config_tests {
         });
         assert_eq!(disconnected.verdict, "failed");
     }
+
+    #[test]
+    fn app_store_diagnostics_report_network_extension_not_loopback_ports() {
+        let health = app_store_connection_health_from_response(&TunnelResponse {
+            success: true,
+            status: "connected".into(),
+            message: String::new(),
+        });
+        let diagnostics = app_store_network_diagnostics_from_health(&health);
+        assert_eq!(diagnostics["summary"], "ok");
+        let checks = diagnostics["checks"].as_array().expect("diagnostic checks");
+        assert!(checks
+            .iter()
+            .any(|check| check["code"] == "network_extension"));
+        assert!(!checks.iter().any(|check| {
+            check["code"]
+                .as_str()
+                .is_some_and(|code| code.contains("socks") || code.contains("http"))
+        }));
+    }
+
+    #[test]
+    fn app_store_support_bundle_redacts_failure_url() {
+        let health = app_store_connection_health_from_response(&TunnelResponse {
+            success: false,
+            status: "invalid".into(),
+            message: "extension failed at https://doodlevpn.online/private-token".into(),
+        });
+        let bundle = app_store_support_bundle_text(
+            &health,
+            Some("connect failed at https://doodlevpn.online/private-token"),
+        );
+        assert!(bundle.contains("DoodleRay App Store Support Bundle"));
+        assert!(!bundle.contains("doodlevpn.online/private-token"));
+        assert!(bundle.contains("[redacted-url]"));
+    }
 }
 
 #[cfg(all(target_os = "macos", feature = "app-store"))]
@@ -6169,9 +6248,25 @@ async fn app_store_dataplane_health_check() -> ConnectionHealthCheck {
 }
 
 #[cfg(all(target_os = "macos", feature = "app-store"))]
+fn set_app_store_connect_stage(stage: &str) {
+    if let Ok(mut current) = APP_STORE_CONNECT_STAGE.lock() {
+        *current = stage.into();
+    }
+}
+
+#[cfg(all(target_os = "macos", feature = "app-store"))]
+fn app_store_connect_stage() -> String {
+    APP_STORE_CONNECT_STAGE
+        .lock()
+        .map(|stage| stage.clone())
+        .unwrap_or_else(|_| "unknown".into())
+}
+
+#[cfg(all(target_os = "macos", feature = "app-store"))]
 async fn vpn_connect_app_store(request: ConnectRequest, app: tauri::AppHandle) -> ConnectResult {
     let _runtime_guard = RUNTIME_OP_LOCK.lock().await;
     APP_STORE_CONNECT_CANCELLED.store(false, Ordering::SeqCst);
+    set_app_store_connect_stage("preparing routing data");
     if let Ok(mut logs) = CONNECT_LOG.lock() {
         logs.clear();
     }
@@ -6180,6 +6275,7 @@ async fn vpn_connect_app_store(request: ConnectRequest, app: tauri::AppHandle) -
     let asset_directory = match prepare_app_store_routing_asset(&request).await {
         Ok(path) => path,
         Err(message) => {
+            set_app_store_connect_stage("routing data preparation failed");
             vpn_log("App Store routing asset preparation failed");
             return ConnectResult {
                 success: false,
@@ -6189,8 +6285,10 @@ async fn vpn_connect_app_store(request: ConnectRequest, app: tauri::AppHandle) -
         }
     };
     let config = build_app_store_xray_config(&request, asset_directory.as_deref());
+    set_app_store_connect_stage("requesting Network Extension");
     match wait_for_app_store_tunnel_connected(app_store_tunnel::start(config).await).await {
         Ok(response) => {
+            set_app_store_connect_stage("verifying VPN traffic");
             let verification = tokio::select! {
                 result = verify_app_store_tunnel_traffic() => result,
                 _ = async {
@@ -6200,6 +6298,7 @@ async fn vpn_connect_app_store(request: ConnectRequest, app: tauri::AppHandle) -
                 } => Err("connection cancelled".into()),
             };
             if let Err(error) = verification {
+                set_app_store_connect_stage("VPN traffic verification failed");
                 vpn_log("App Store tunnel failed end-to-end traffic verification; disconnecting");
                 let _ = wait_for_app_store_tunnel_disconnected().await;
                 if let Ok(mut state) = CONNECTION_STATE.lock() {
@@ -6218,6 +6317,7 @@ async fn vpn_connect_app_store(request: ConnectRequest, app: tauri::AppHandle) -
                 };
             }
             record_app_store_dataplane_probe(&verification).await;
+            set_app_store_connect_stage("connected");
             if let Ok(mut state) = CONNECTION_STATE.lock() {
                 *state = true;
             }
@@ -6233,6 +6333,7 @@ async fn vpn_connect_app_store(request: ConnectRequest, app: tauri::AppHandle) -
             }
         }
         Err(error) => {
+            set_app_store_connect_stage("Network Extension start failed");
             let _ = wait_for_app_store_tunnel_disconnected().await;
             vpn_log("App Store Network Extension did not reach connected state");
             ConnectResult {
@@ -6341,15 +6442,111 @@ async fn app_store_connection_health() -> ConnectionHealthReport {
                 }
                 health.checks.push(dataplane);
             }
+            health.checks.push(health_check(
+                "app_store_connect_stage",
+                "info",
+                "App Store connection stage",
+                app_store_connect_stage(),
+            ));
             health
         }
         Err(error) => {
-            app_store_connection_health_from_response(&app_store_tunnel::TunnelResponse {
-                success: false,
-                status: "unknown".into(),
-                message: error,
-            })
+            let mut health =
+                app_store_connection_health_from_response(&app_store_tunnel::TunnelResponse {
+                    success: false,
+                    status: "unknown".into(),
+                    message: error,
+                });
+            health.checks.push(health_check(
+                "app_store_connect_stage",
+                "info",
+                "App Store connection stage",
+                app_store_connect_stage(),
+            ));
+            health
         }
+    }
+}
+
+#[cfg(all(target_os = "macos", feature = "app-store"))]
+fn app_store_network_diagnostics_from_health(health: &ConnectionHealthReport) -> serde_json::Value {
+    let summary = if health.checks.iter().any(|check| check.severity == "error") {
+        "errors_found"
+    } else if health
+        .checks
+        .iter()
+        .any(|check| check.severity == "warning")
+    {
+        "warnings_found"
+    } else {
+        "ok"
+    };
+    serde_json::json!({
+        "summary": summary,
+        "subscriptionHost": serde_json::Value::Null,
+        "resolvedIps": [],
+        "conflicts": [],
+        "checks": &health.checks,
+    })
+}
+
+#[cfg(all(target_os = "macos", feature = "app-store"))]
+fn app_store_support_bundle_text(
+    health: &ConnectionHealthReport,
+    failure_marker: Option<&str>,
+) -> String {
+    let mut sections = vec![
+        "# DoodleRay App Store Support Bundle".to_string(),
+        format!("generated_at_ms={}", unix_ms()),
+        format!("app_version={}", env!("CARGO_PKG_VERSION")),
+        "platform=macos-app-store".to_string(),
+    ];
+    if let Some(marker) = failure_marker {
+        sections.push(format!("failure_marker={}", redact_support_line(marker)));
+    }
+    sections.push("\n## Network Extension Health".to_string());
+    sections.push(redact_support_text(
+        &serde_json::to_string_pretty(health)
+            .unwrap_or_else(|_| "<health serialization failed>".into()),
+    ));
+    sections.push("\n## App Log Tail".to_string());
+    let app_log_tail = CONNECT_LOG
+        .lock()
+        .map(|logs| {
+            logs.iter()
+                .rev()
+                .take(120)
+                .cloned()
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_else(|_| "<app log unavailable>".into());
+    sections.push(redact_support_text(&app_log_tail));
+    sections.join("\n")
+}
+
+#[tauri::command]
+async fn export_app_store_support_bundle(failure_marker: Option<String>) -> Result<String, String> {
+    #[cfg(all(target_os = "macos", feature = "app-store"))]
+    {
+        let health = app_store_connection_health().await;
+        let dir = std::env::temp_dir().join("DoodleRay");
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        let path = dir.join(format!("doodleray-app-store-support-{}.txt", unix_ms()));
+        std::fs::write(
+            &path,
+            app_store_support_bundle_text(&health, failure_marker.as_deref()),
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(path.to_string_lossy().to_string())
+    }
+    #[cfg(not(all(target_os = "macos", feature = "app-store")))]
+    {
+        let _ = failure_marker;
+        Err("App Store support bundles are only available in the macOS App Store build.".into())
     }
 }
 
@@ -7374,9 +7571,11 @@ async fn vpn_connect_direct(mut request: ConnectRequest, app: tauri::AppHandle) 
 async fn vpn_disconnect_app_store(app: tauri::AppHandle) -> ConnectResult {
     let _runtime_guard = RUNTIME_OP_LOCK.lock().await;
     let was_connected = CONNECTION_STATE.lock().map(|state| *state).unwrap_or(false);
+    set_app_store_connect_stage("disconnecting");
 
     match wait_for_app_store_tunnel_disconnected().await {
         Ok(response) if response.success => {
+            set_app_store_connect_stage("disconnected");
             if let Ok(mut state) = CONNECTION_STATE.lock() {
                 *state = false;
             }
@@ -7394,20 +7593,26 @@ async fn vpn_disconnect_app_store(app: tauri::AppHandle) -> ConnectResult {
                 health: None,
             }
         }
-        Ok(response) => ConnectResult {
-            success: false,
-            message: if response.message.is_empty() {
-                "Network Extension could not stop the VPN".into()
-            } else {
-                response.message
-            },
-            health: None,
-        },
-        Err(error) => ConnectResult {
-            success: false,
-            message: error,
-            health: None,
-        },
+        Ok(response) => {
+            set_app_store_connect_stage("Network Extension disconnect failed");
+            ConnectResult {
+                success: false,
+                message: if response.message.is_empty() {
+                    "Network Extension could not stop the VPN".into()
+                } else {
+                    response.message
+                },
+                health: None,
+            }
+        }
+        Err(error) => {
+            set_app_store_connect_stage("Network Extension disconnect failed");
+            ConnectResult {
+                success: false,
+                message: error,
+                health: None,
+            }
+        }
     }
 }
 
@@ -11870,6 +12075,7 @@ pub fn run() {
             repair_active_tunnel_compatibility_proxy,
             repair_active_tunnel_runtime,
             export_support_bundle,
+            export_app_store_support_bundle,
             run_network_diagnosis,
             list_running_apps,
             list_dir_exes,

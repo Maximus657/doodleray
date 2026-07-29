@@ -17,7 +17,7 @@ import { resolveConnectServer } from './lib/server-selection';
 import { checkForAppUpdate, installAppUpdate } from './lib/app-updater';
 import { isInAppUpdateEnabled, openStoreUpdatePage } from './lib/update-channel';
 import { buildAppConnectLocationRequestFromState, isClosedLocationServer } from './lib/app-control-plane';
-import { isClosedControlPlaneEnabled, isDesktopAutostartAvailable } from './lib/build-policy';
+import { isClosedControlPlaneEnabled, isDesktopAutostartAvailable, isNetworkExtensionOnlyBuild } from './lib/build-policy';
 import { reportConnectionError } from './lib/workshop-api';
 import { desktopBridge } from './platform/tauri/desktop-bridge';
 import './index.css';
@@ -273,7 +273,7 @@ function App() {
     }
 
     async function repairRuntimeOnStartup() {
-      if (!isTauriRuntime()) return;
+      if (!isTauriRuntime() || isNetworkExtensionOnlyBuild()) return;
       try {
         const message = await invoke('repair_windows_runtime');
         const firstLine = typeof message === 'string' ? message.split('\n')[0] : null;

@@ -131,6 +131,7 @@ test('workflow uses one exact fail-closed Apple secret and profile contract', ()
   assert.equal(existsSync(profileInstallerPath), true, 'profile installer is missing');
   if (!existsSync(profileInstallerPath)) return;
   const profileInstaller = read('scripts/macos/install-app-store-profiles.sh');
+  const verify = read('scripts/macos/verify-app-store-bundle.sh');
   const upload = read('scripts/macos/upload-app-store.sh');
   const docs = `${read('docs/release-runbook.md')}\n${read('docs/macos-app-store-readiness.md')}`;
 
@@ -152,6 +153,11 @@ test('workflow uses one exact fail-closed Apple secret and profile contract', ()
   assert.doesNotMatch(`${workflow}\n${upload}`, /allowProvisioningUpdates/);
   assert.match(profileInstaller, /TeamIdentifier:0/);
   assert.match(profileInstaller, /Entitlements:com\.apple\.application-identifier/);
+  assert.match(profileInstaller, /Entitlements:get-task-allow/);
+  assert.match(verify, /distribution profile get-task-allow/);
+  assert.match(verify, /SIGNING_DETAILS=/);
+  assert.doesNotMatch(verify, /codesign -d --verbose=4 "\$bundle" 2>&1 \| rg/);
+  assert.match(verify, /require_array_contains/);
   assert.match(profileInstaller, /Library\/MobileDevice\/Provisioning Profiles/);
   assert.match(upload, /check-app-store-build\.mjs/);
   assert.doesNotMatch(upload, /DoodleRay VPN macOS App Store Host|DoodleRay VPN macOS App Store Extension/);

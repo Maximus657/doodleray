@@ -191,12 +191,17 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const exportSupportBundle = async () => {
     const s = useAppStore.getState();
     try {
-      await desktopBridge.command('export_support_bundle', {
-        proxyMode: s.proxyMode,
-        systemProxyMode: s.systemProxyMode,
-        socksPort: s.socksPort,
-        httpPort: s.httpPort,
-      });
+      await desktopBridge.command(
+        nativeMacWindow ? 'export_app_store_support_bundle' : 'export_support_bundle',
+        nativeMacWindow
+          ? {}
+          : {
+            proxyMode: s.proxyMode,
+            systemProxyMode: s.systemProxyMode,
+            socksPort: s.socksPort,
+            httpPort: s.httpPort,
+          },
+      );
       s.addLog('success', t('supportBundleExported' as never));
       useToastStore.getState().addToast(t('supportBundleExported' as never), 'success');
     } catch (err) {
