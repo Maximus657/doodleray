@@ -96,6 +96,16 @@ test('App Store connection accepts only an authorized control-plane profile', ()
   assert.doesNotMatch(controlPlane, /vpn_connect\(connect_request, app\.clone\(\)\)\.await/);
 });
 
+test('App Store UI has no external subscription-purchase CTA', () => {
+  const subscriptionStatus = read('src/components/v6/SubscriptionStatusBlock.tsx');
+  const dashboard = read('src/pages/Dashboard.tsx');
+
+  assert.match(subscriptionStatus, /const canOfferExternalRenewal = !isNetworkExtensionOnlyBuild\(\);/);
+  assert.equal((subscriptionStatus.match(/canOfferExternalRenewal &&/g) ?? []).length, 2);
+  assert.match(subscriptionStatus, /\{canOfferExternalRenewal && \(\s*<button[\s\S]*?v6RenewCta/);
+  assert.match(dashboard, /\{!networkExtensionOnly && \(\s*<button[\s\S]*?v6AppLoginSourceWebLabel/);
+});
+
 test('release.json supplies both App Store version fields at build and verification time', () => {
   const release = readJson('release/release.json');
   const packageJson = readJson('package.json');

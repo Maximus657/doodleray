@@ -1667,18 +1667,20 @@ export default function Dashboard() {
                         {t('v6AppLoginSourceBotSteps' as never)}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={openDoodleVpnAccount}
-                      className="v6-glass-inset v6-hover-bright flex w-full items-start gap-2.5 rounded-[14px] px-3.5 py-3 text-left v6-focus"
-                    >
-                      <Globe className="mt-0.5 h-4 w-4 shrink-0 text-[#FFAE57]/85" strokeWidth={2} />
-                      <span className="text-[11.5px] leading-relaxed text-white/58">
-                        <span className="font-medium text-white/78">{t('v6AppLoginSourceWebLabel' as never)}</span>{' '}
-                        {t('v6AppLoginSourceWebSteps' as never)}
-                      </span>
-                      <ExternalLink className="ml-auto mt-0.5 h-3.5 w-3.5 shrink-0 text-white/35" strokeWidth={2} />
-                    </button>
+                    {!networkExtensionOnly && (
+                      <button
+                        type="button"
+                        onClick={openDoodleVpnAccount}
+                        className="v6-glass-inset v6-hover-bright flex w-full items-start gap-2.5 rounded-[14px] px-3.5 py-3 text-left v6-focus"
+                      >
+                        <Globe className="mt-0.5 h-4 w-4 shrink-0 text-[#FFAE57]/85" strokeWidth={2} />
+                        <span className="text-[11.5px] leading-relaxed text-white/58">
+                          <span className="font-medium text-white/78">{t('v6AppLoginSourceWebLabel' as never)}</span>{' '}
+                          {t('v6AppLoginSourceWebSteps' as never)}
+                        </span>
+                        <ExternalLink className="ml-auto mt-0.5 h-3.5 w-3.5 shrink-0 text-white/35" strokeWidth={2} />
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
