@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { X, Plus, Trash2, ShieldCheck, AlertTriangle, AppWindow, ArrowLeft, Check, Loader2, Search } from 'lucide-react';
 import { useWorkshopStore, isGamingMinPingPreset, type RoutingRule } from '../../stores/workshop-store';
 import Toggle from './Toggle';
+import { desktopBridge } from '../../platform/tauri/desktop-bridge';
 
 type T = (key: never) => string;
 
@@ -77,8 +78,7 @@ export default function SplitRoutingModal({ protectedMode, onClose, t }: Props) 
   const openPicker = async () => {
     setPicker({ apps: null, checked: new Set(), search: '' });
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      const apps = await invoke<RunningApp[]>('list_running_apps');
+      const apps = await desktopBridge.command<RunningApp[]>('list_running_apps');
       setPicker((p) => (p ? { ...p, apps } : p));
     } catch {
       setPicker((p) => (p ? { ...p, apps: [] } : p));
@@ -89,8 +89,7 @@ export default function SplitRoutingModal({ protectedMode, onClose, t }: Props) 
     const main = app.path.replace(/^.*[\\/]/, '');
     setPicker((p) => (p ? { ...p, selected: app, exes: undefined, checked: new Set([main]) } : p));
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      const exes = await invoke<string[]>('list_dir_exes', { exePath: app.path });
+      const exes = await desktopBridge.command<string[]>('list_dir_exes', { exePath: app.path });
       setPicker((p) => (p && p.selected?.path === app.path ? { ...p, exes: exes.length > 0 ? exes : [main] } : p));
     } catch {
       setPicker((p) => (p && p.selected?.path === app.path ? { ...p, exes: [main] } : p));

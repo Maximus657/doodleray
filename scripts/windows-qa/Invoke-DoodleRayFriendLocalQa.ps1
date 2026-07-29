@@ -1,5 +1,5 @@
 param(
-    [string] $InstallerPath = "C:\DoodleRayQA\artifacts\DoodleRay_5.9.0_x64-setup.exe",
+    [string] $InstallerPath = "C:\DoodleRayQA\artifacts\DoodleRay_6.0.0_x64-setup.exe",
     [string] $SubscriptionPath = "C:\DoodleRayQA\secrets\doodlevpn-test-subscription-url.txt",
     [string] $EvidenceRoot = "C:\DoodleRayQA\evidence\friend-lan",
     [switch] $SkipInstall

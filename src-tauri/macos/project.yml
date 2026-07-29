@@ -57,8 +57,6 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.doodleray.doodleray.DoodleRayVPN
         PRODUCT_NAME: DoodleRayVPN
         PRODUCT_MODULE_NAME: DoodleRayVPN
-        MARKETING_VERSION: "6.0.0"
-        CURRENT_PROJECT_VERSION: "60017"
         SKIP_INSTALL: YES
         ENABLE_APP_SANDBOX: YES
         CODE_SIGN_ENTITLEMENTS: PacketTunnelProvider/Entitlements.plist

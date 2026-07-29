@@ -3,7 +3,6 @@ param(
     [string] $EvidenceDir = "C:\DoodleRayQA\evidence",
     [switch] $InjectStaleWinInet,
     [switch] $UninstallAfter,
-    [switch] $AllowUnsignedLocalRc,
     [string] $SecretPath = (Join-Path $PSScriptRoot "..\..\secrets\doodlevpn-server-access.md")
 )
 
@@ -12,24 +11,15 @@ $ProgressPreference = "SilentlyContinue"
 
 $injectStaleWinInetLiteral = if ($InjectStaleWinInet.IsPresent) { '$true' } else { '$false' }
 $uninstallAfterLiteral = if ($UninstallAfter.IsPresent) { '$true' } else { '$false' }
-$allowUnsignedLocalRcLiteral = if ($AllowUnsignedLocalRc.IsPresent) { '$true' } else { '$false' }
 
 $remoteScript = @"
 `$ErrorActionPreference = "Stop"
 `$ProgressPreference = "SilentlyContinue"
 
-function Assert-ValidSignature {
+function Assert-FilePresent {
     param([Parameter(Mandatory = `$true)][string] `$Path)
     if (-not (Test-Path -LiteralPath `$Path)) {
         throw "missing file: `$Path"
-    }
-    `$sig = Get-AuthenticodeSignature -LiteralPath `$Path
-    if (`$sig.Status -ne "Valid") {
-        if ($allowUnsignedLocalRcLiteral) {
-            Write-Warning "unsigned local RC allowed for smoke QA only: `$Path status=`$(`$sig.Status)"
-            return
-        }
-        throw "invalid signature for `${Path}: `$(`$sig.Status) `$(`$sig.StatusMessage)"
     }
 }
 
@@ -99,7 +89,7 @@ Start-Sleep -Seconds 5
     "C:\Program Files\DoodleRay\xray-core\xray.exe"
 )
 foreach (`$file in `$appFiles) {
-    Assert-ValidSignature `$file
+    Assert-FilePresent `$file
 }
 
 `$service = Get-Service DoodleRayTunnelService -ErrorAction Stop

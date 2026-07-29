@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '../../stores/app-store';
 import { getActiveRoutingRules, resolveSystemProxyModeForRouting } from '../../lib/connect-helpers';
+import { desktopBridge } from '../../platform/tauri/desktop-bridge';
 
 type T = (key: never) => string;
 
@@ -99,8 +100,7 @@ export default function DiagnosticPanel({ onClose, onExportSupportBundle, t }: P
         s.systemProxyMode,
         routingRules,
       );
-      const { invoke } = await import('@tauri-apps/api/core');
-      const result = await invoke<NetworkDiagnosisReport>('run_network_diagnosis', {
+      const result = await desktopBridge.command<NetworkDiagnosisReport>('run_network_diagnosis', {
         proxyMode: s.proxyMode,
         systemProxyMode,
         socksPort: s.socksPort,
@@ -122,8 +122,7 @@ export default function DiagnosticPanel({ onClose, onExportSupportBundle, t }: P
     if (repairing) return;
     setRepairing(true);
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      const message = await invoke('repair_windows_runtime') as string;
+      const message = await desktopBridge.command<string>('repair_windows_runtime');
       useAppStore.getState().addLog('info', message.split('\n')[0]);
     } catch (err) {
       useAppStore.getState().addLog('error', `Repair failed: ${err instanceof Error ? err.message : String(err)}`);

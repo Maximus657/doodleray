@@ -1,0 +1,9 @@
+{
+  "version": "6.0.2",
+  "macBuild": 60017,
+  "channel": "stable",
+  "targets": {
+    "windows": true,
+    "macAppStore": true
+  }
+}

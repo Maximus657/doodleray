@@ -2,9 +2,9 @@ param(
     # Optional local installer to publish first; otherwise the RC already at
     # C:\DoodleRayQA\artifacts\DoodleRay-v6-rc-setup.exe is used.
     [string] $LocalInstaller,
-    [switch] $AllowUnsignedLocalRc,
     [switch] $SkipUpdatePath,
-    [string] $SecretPath = (Join-Path $PSScriptRoot "..\..\secrets\doodlevpn-server-access.md")
+    [string] $SecretPath = (Join-Path $PSScriptRoot "..\..\secrets\doodlevpn-server-access.md"),
+    [string] $SubscriptionSecretPath = (Join-Path $PSScriptRoot "..\..\secrets\doodlevpn-test-subscription-url.txt")
 )
 
 # One-command full QA pass for a (possibly fresh) Windows QA stand.
@@ -30,9 +30,6 @@ function Invoke-Stage {
         exit $LASTEXITCODE
     }
 }
-
-$unsignedArgs = @{}
-if ($AllowUnsignedLocalRc) { $unsignedArgs.AllowUnsignedLocalRc = $true }
 
 # --- Stage 0: bootstrap stand QA scaffolding --------------------------------
 $bootstrap = @'
@@ -75,7 +72,7 @@ if ($LocalInstaller) {
 
 # --- Stage 2: install gate with stale WinINet injection ----------------------
 Invoke-Stage "install-gate" {
-    & (Join-Path $PSScriptRoot "Invoke-DoodleRayV6QaGate.ps1") -InjectStaleWinInet @unsignedArgs -SecretPath $SecretPath
+    & (Join-Path $PSScriptRoot "Invoke-DoodleRayV6QaGate.ps1") -InjectStaleWinInet -SecretPath $SecretPath
 }
 
 # --- Stage 3: unclean-shutdown marker crash simulation -----------------------
@@ -87,30 +84,37 @@ Invoke-Stage "unclean-shutdown-marker" {
 if (-not $SkipUpdatePath) {
     foreach ($from in @("5.4.3", "5.4.4")) {
         Invoke-Stage "update-path-$from" {
-            & (Join-Path $PSScriptRoot "Invoke-DoodleRayUpdatePathQa.ps1") -FromVersion $from @unsignedArgs -SecretPath $SecretPath
+            & (Join-Path $PSScriptRoot "Invoke-DoodleRayUpdatePathQa.ps1") -FromVersion $from -SecretPath $SecretPath
         }
     }
     Invoke-Stage "update-path-5.4.5-broken-state" {
-        & (Join-Path $PSScriptRoot "Invoke-DoodleRayUpdatePathQa.ps1") -FromVersion 5.4.5 -InjectStaleWinInet -InjectCorporatePac @unsignedArgs -SecretPath $SecretPath
+        & (Join-Path $PSScriptRoot "Invoke-DoodleRayUpdatePathQa.ps1") -FromVersion 5.4.5 -InjectStaleWinInet -InjectCorporatePac -SecretPath $SecretPath
+    }
+    Invoke-Stage "update-path-5.9.1-current-production" {
+        & (Join-Path $PSScriptRoot "Invoke-DoodleRayUpdatePathQa.ps1") -FromVersion 5.9.1 -InjectStaleWinInet -InjectCorporatePac -SecretPath $SecretPath -SubscriptionSecretPath $SubscriptionSecretPath
     }
 }
 
 # --- Stage 5: active-VPN-during-update ---------------------------------------
 Invoke-Stage "import-subscription-before-active-update" {
-    & (Join-Path $PSScriptRoot "Import-DoodleRayQaSubscription.ps1") -SecretPath $SecretPath
+    & (Join-Path $PSScriptRoot "Import-DoodleRayQaSubscription.ps1") -SecretPath $SecretPath -SubscriptionSecretPath $SubscriptionSecretPath
 }
 
 Invoke-Stage "active-vpn-during-update" {
-    & (Join-Path $PSScriptRoot "Invoke-DoodleRayActiveUpdateQa.ps1") @unsignedArgs -SecretPath $SecretPath
+    & (Join-Path $PSScriptRoot "Invoke-DoodleRayActiveUpdateQa.ps1") -SecretPath $SecretPath
 }
 
 # --- Stage 6: full UI pass over CDP ------------------------------------------
 Invoke-Stage "import-subscription-before-ui-pass" {
-    & (Join-Path $PSScriptRoot "Import-DoodleRayQaSubscription.ps1") -SecretPath $SecretPath
+    & (Join-Path $PSScriptRoot "Import-DoodleRayQaSubscription.ps1") -SecretPath $SecretPath -SubscriptionSecretPath $SubscriptionSecretPath
 }
 
 Invoke-Stage "rc-ui-cdp-pass" {
     & (Join-Path $PSScriptRoot "Invoke-DoodleRayRc3UiCdpPass.ps1") -SecretPath $SecretPath
+}
+
+Invoke-Stage "dual-stack-split-routing" {
+    & (Join-Path $PSScriptRoot "Invoke-Play2GoPowerShell.ps1") -ScriptPath (Join-Path $PSScriptRoot "Invoke-DoodleRaySplitRoutingDnsQa.ps1") -SecretPath $SecretPath
 }
 
 # --- Stage 7: targeted reliability scenarios ---------------------------------

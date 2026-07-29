@@ -26,6 +26,7 @@ import { describeSubscriptionSource } from '../lib/redaction';
 import { isClosedControlPlaneEnabled, isLegacyImportEnabled, legacyImportDisabledMessage } from '../lib/build-policy';
 import { appApiControlPlaneSnapshot, syncClosedLocationsToStore } from '../lib/app-control-plane';
 import { FlagIcon } from '../components/v6/ServerRow';
+import { desktopBridge } from '../platform/tauri/desktop-bridge';
 
 export default function Servers() {
   const {
@@ -76,8 +77,7 @@ export default function Servers() {
     let cancelled = false;
     (async () => {
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        await pingServersWithLimit(unpinged, invoke, {
+        await pingServersWithLimit(unpinged, desktopBridge.command.bind(desktopBridge), {
           isCancelled: () => cancelled,
           onBatch: (updates) => updateServerPings(updates),
         });
@@ -159,8 +159,7 @@ export default function Servers() {
         if (session.logged_in) addLog('success', 'DoodleVPN locations refreshed');
         return;
       }
-      const { invoke } = await import('@tauri-apps/api/core');
-      await pingServersWithLimit(groupServers, invoke, {
+      await pingServersWithLimit(groupServers, desktopBridge.command.bind(desktopBridge), {
         onBatch: (updates) => useAppStore.getState().updateServerPings(updates),
       });
     } finally {

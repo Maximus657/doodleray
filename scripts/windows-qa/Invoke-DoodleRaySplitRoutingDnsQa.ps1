@@ -140,6 +140,18 @@ $dnsServers = Get-DnsClientServerAddress -ErrorAction SilentlyContinue |
     Select-Object InterfaceAlias, AddressFamily, ServerAddresses
 $ipv6Default = Get-NetRoute -AddressFamily IPv6 -DestinationPrefix "::/0" -ErrorAction SilentlyContinue |
     Select-Object InterfaceAlias, InterfaceIndex, NextHop, RouteMetric, State
+$ipv6Canaries = @("2606:4700:4700::1111", "2001:4860:4860::8888")
+$ipv6CanaryRoutes = @($ipv6Canaries | ForEach-Object {
+    $canary = $_
+    $route = Find-NetRoute -RemoteIPAddress $canary -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($route) {
+        [pscustomobject]@{ Canary = $canary; InterfaceAlias = $route.InterfaceAlias; InterfaceIndex = $route.InterfaceIndex }
+    }
+})
+$ipv6UsesTun = (
+    $ipv6CanaryRoutes.Count -eq $ipv6Canaries.Count -and
+    @($ipv6CanaryRoutes | Where-Object { $_.InterfaceAlias -ne "DoodleRay Tunnel" }).Count -eq 0
+)
 
 $authCompact = $authProbe.output -replace "\s+", " "
 if ($authCompact.Length -gt 600) {
@@ -153,6 +165,7 @@ $result = [pscustomobject]@{
         $directIp -and
         $tunIp -and
         $tunIp -ne $directIp -and
+        $ipv6UsesTun -and
         $edgeIp -eq $directIp -and
         -not $authDnsError -and
         $status.service.proxy_compat_state -eq "disabled_for_direct_app_exclusions"
@@ -170,6 +183,8 @@ $result = [pscustomobject]@{
     wininet = $wininet
     dnsServers = $dnsServers
     ipv6Default = $ipv6Default
+    ipv6CanaryRoutes = $ipv6CanaryRoutes
+    ipv6UsesTun = $ipv6UsesTun
     status = $status
     connect = $connect
     evidence = $evidence

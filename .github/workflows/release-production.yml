@@ -1,0 +1,574 @@
+name: release-production
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact commit SHA currently at main
+        required: true
+        type: string
+      dry_run:
+        description: Build and validate without tags, uploads, releases, or manifest changes
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-production
+  cancel-in-progress: false
+
+env:
+  SOURCE_SHA: ${{ inputs.source_sha }}
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      windows: ${{ steps.release.outputs.windows }}
+      mac_app_store: ${{ steps.release.outputs.mac_app_store }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.source_sha }}
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Bind dispatch to the exact current main SHA
+        run: |
+          set -euo pipefail
+          test '${{ github.ref }}' = 'refs/heads/main'
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags origin main
+          resolved="$(git rev-parse HEAD)"
+          main_sha="$(git rev-parse refs/remotes/origin/main)"
+          test "$resolved" = "$SOURCE_SHA"
+          git merge-base --is-ancestor "$SOURCE_SHA" origin/main
+          test "$SOURCE_SHA" = "$main_sha"
+
+      - name: Validate tests, workflow policy, version, and compatibility contracts
+        id: release
+        run: |
+          set -euo pipefail
+          npm ci
+          npm test
+          node --test scripts/release/check-workflows.test.mjs
+          version="$(node -p "require('./release/release.json').version")"
+          windows="$(node -p "String(require('./release/release.json').targets.windows)")"
+          mac_app_store="$(node -p "String(require('./release/release.json').targets.macAppStore)")"
+          if [ "$windows" != 'true' ] && [ "$mac_app_store" != 'true' ]; then
+            echo 'At least one production target must be enabled' >&2
+            exit 1
+          fi
+          if [ "$windows" = 'true' ]; then
+            published_version="$(curl --fail --silent --show-error https://doodleray.clickflare.click/channels/direct/latest.json | node -e 'let value=""; process.stdin.on("data", chunk => value += chunk); process.stdin.on("end", () => process.stdout.write(JSON.parse(value).version));')"
+            if [ "$version" = "$published_version" ]; then
+              npm run release:check
+              idempotent_rerun=true
+            else
+              npm run release:check -- --published-version "$published_version"
+              idempotent_rerun=false
+            fi
+          else
+            npm run release:check
+            published_version='not applicable (Windows target disabled)'
+            idempotent_rerun=false
+          fi
+          tag="v$version"
+          existing="$(git ls-remote --tags origin "refs/tags/$tag^{}" | cut -f1)"
+          if [ -z "$existing" ]; then
+            existing="$(git ls-remote --tags origin "refs/tags/$tag" | cut -f1)"
+          fi
+          if [ -n "$existing" ] && [ "$existing" != "$SOURCE_SHA" ]; then
+            echo "Tag $tag exists at another commit" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "windows=$windows" >> "$GITHUB_OUTPUT"
+          echo "mac_app_store=$mac_app_store" >> "$GITHUB_OUTPUT"
+          {
+            echo '## Release preflight'
+            echo "- Source: \`$SOURCE_SHA\` (exact current \`main\`)"
+            echo "- Version: \`$version\` (published: \`$published_version\`)"
+            echo "- Idempotent rerun: \`$idempotent_rerun\`"
+            echo "- Dry run: \`${{ inputs.dry_run }}\`"
+            echo "- Targets: Windows=\`$windows\`, macAppStore=\`$mac_app_store\`"
+            echo '- Windows signing certificate: not a release prerequisite'
+            echo '- Tauri updater signing: mandatory for the Windows target'
+            echo '- Apple signing: mandatory for the App Store target'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build_windows:
+    needs: preflight
+    if: needs.preflight.outputs.windows == 'true'
+    runs-on: windows-latest
+    env:
+      DOODLERAY_CLOSED_CONTROL_PLANE: '1'
+      VITE_DOODLERAY_CLOSED_CONTROL_PLANE: '1'
+      VITE_DOODLERAY_BUILD_CHANNEL: direct
+      VITE_DOODLERAY_UPDATE_CHANNEL: direct
+      VITE_DOODLERAY_DIAGNOSTICS_TELEMETRY: '0'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-07-26
+        with:
+          components: rustfmt
+
+      - name: Require updater signing key
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            throw 'TAURI_SIGNING_PRIVATE_KEY is required; Tauri updater signatures cannot be disabled'
+          }
+
+      - name: Test application sources
+        shell: pwsh
+        run: |
+          npm ci
+          npm test
+          npm run build
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+          cargo test --manifest-path src-tauri/Cargo.toml --lib
+          cargo test --manifest-path src-tauri/Cargo.toml --example verify_updater_signature
+          cargo test --manifest-path src-tauri/Cargo.toml --bin DoodleRayService --features windows-service
+          cargo check --manifest-path src-tauri/Cargo.toml --bin DoodleRay
+          cargo check --manifest-path src-tauri/Cargo.toml --bin DoodleRayService --features windows-service
+
+      - name: Download SHA-256-pinned Windows runtimes
+        shell: pwsh
+        run: |
+          $runtime = Get-Content runtime-versions.json -Raw | ConvertFrom-Json
+          $xray = $runtime.xray.assets.windows_amd64
+          Invoke-WebRequest "https://github.com/XTLS/Xray-core/releases/download/$($runtime.xray.version)/$($xray.name)" -OutFile xray.zip
+          if ((Get-FileHash xray.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $xray.sha256) { throw 'Xray archive checksum mismatch' }
+          Expand-Archive xray.zip xray-core-tmp
+          New-Item -ItemType Directory -Force src-tauri/xray-core | Out-Null
+          Copy-Item xray-core-tmp/xray.exe, xray-core-tmp/geoip.dat, xray-core-tmp/geosite.dat src-tauri/xray-core/
+
+          Invoke-WebRequest "https://www.wintun.net/builds/$($runtime.wintun.asset)" -OutFile wintun.zip
+          if ((Get-FileHash wintun.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $runtime.wintun.sha256) { throw 'Wintun archive checksum mismatch' }
+          Expand-Archive wintun.zip wintun-tmp
+          Copy-Item wintun-tmp/wintun/bin/amd64/wintun.dll src-tauri/xray-core/
+          Copy-Item wintun-tmp/wintun/bin/amd64/wintun.dll src-tauri/
+
+          $singBox = $runtime.sing_box.assets.windows_amd64
+          Invoke-WebRequest "https://github.com/SagerNet/sing-box/releases/download/v$($runtime.sing_box.version)/$($singBox.name)" -OutFile sing-box.zip
+          if ((Get-FileHash sing-box.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $singBox.sha256) { throw 'sing-box archive checksum mismatch' }
+          Expand-Archive sing-box.zip sing-box-tmp
+          $singBoxExe = Get-ChildItem sing-box-tmp -Recurse -Filter sing-box.exe | Select-Object -First 1
+          if (-not $singBoxExe) { throw 'sing-box.exe not found' }
+          Copy-Item $singBoxExe.FullName src-tauri/sing-box.exe
+
+      - name: Build tunnel service
+        shell: pwsh
+        run: |
+          if (-not (Test-Path src-tauri/DoodleRayService.exe)) { New-Item -ItemType File src-tauri/DoodleRayService.exe | Out-Null }
+          cargo build --release --manifest-path src-tauri/Cargo.toml --bin DoodleRayService --features windows-service
+          Copy-Item src-tauri/target/release/DoodleRayService.exe src-tauri/ -Force
+
+      - name: Build Windows updater bytes once
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx tauri build --bundles nsis --config src-tauri/tauri.windows.conf.json
+
+      - name: Verify and package exact updater bytes
+        shell: pwsh
+        run: |
+          ./scripts/release/Prepare-WindowsRelease.ps1 `
+            -SourceSha '${{ inputs.source_sha }}' `
+            -BundleDir src-tauri/target/release/bundle/nsis `
+            -OutputDir windows-release `
+            -TauriConfigPath src-tauri/tauri.conf.json
+          $signatures = @(Get-ChildItem windows-release -File -Filter '*.sig')
+          if ($signatures.Count -ne 1 -or $signatures[0].Name -notlike '*.nsis.zip.sig') {
+            throw 'The Tauri NSIS updater .nsis.zip.sig file is mandatory'
+          }
+
+      - name: Retain exact Windows release bytes
+        if: inputs.dry_run == false
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-release-${{ needs.preflight.outputs.version }}-${{ inputs.source_sha }}
+          path: windows-release/
+          if-no-files-found: error
+          retention-days: 30
+
+  build_macos_app_store:
+    needs: preflight
+    if: needs.preflight.outputs.mac_app_store == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.26.x'
+          cache: false
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-07-26
+
+      - name: Install build dependencies without signing material
+        run: npm ci
+
+      - name: Require complete App Store secret contract
+        env:
+          APPLE_DISTRIBUTION_CERTIFICATE_BASE64: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_BASE64 }}
+          APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+          MAC_INSTALLER_DISTRIBUTION_CERTIFICATE_BASE64: ${{ secrets.MAC_INSTALLER_DISTRIBUTION_CERTIFICATE_BASE64 }}
+          MAC_INSTALLER_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ secrets.MAC_INSTALLER_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+          MACOS_APP_STORE_HOST_PROFILE_BASE64: ${{ secrets.MACOS_APP_STORE_HOST_PROFILE_BASE64 }}
+          MACOS_APP_STORE_EXTENSION_PROFILE_BASE64: ${{ secrets.MACOS_APP_STORE_EXTENSION_PROFILE_BASE64 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          for name in APPLE_DISTRIBUTION_CERTIFICATE_BASE64 APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD MAC_INSTALLER_DISTRIBUTION_CERTIFICATE_BASE64 MAC_INSTALLER_DISTRIBUTION_CERTIFICATE_PASSWORD MACOS_APP_STORE_HOST_PROFILE_BASE64 MACOS_APP_STORE_EXTENSION_PROFILE_BASE64 APPLE_TEAM_ID APP_STORE_CONNECT_API_KEY_ID APP_STORE_CONNECT_ISSUER_ID APP_STORE_CONNECT_PRIVATE_KEY; do
+            test -n "${!name}" || { echo "Required Apple secret is missing: $name" >&2; exit 1; }
+          done
+
+      - name: Import Apple Distribution certificate
+        id: import-apple-distribution
+        uses: apple-actions/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d # v3
+        with:
+          keychain: signing_temp
+          p12-file-base64: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_BASE64 }}
+          p12-password: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+
+      - name: Import Mac Installer Distribution certificate into the same keychain
+        uses: apple-actions/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d # v3
+        with:
+          keychain: signing_temp
+          create-keychain: false
+          keychain-password: ${{ steps.import-apple-distribution.outputs.keychain-password }}
+          p12-file-base64: ${{ secrets.MAC_INSTALLER_DISTRIBUTION_CERTIFICATE_BASE64 }}
+          p12-password: ${{ secrets.MAC_INSTALLER_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+
+      - name: Install and verify both provisioning profiles
+        env:
+          MACOS_APP_STORE_HOST_PROFILE_BASE64: ${{ secrets.MACOS_APP_STORE_HOST_PROFILE_BASE64 }}
+          MACOS_APP_STORE_EXTENSION_PROFILE_BASE64: ${{ secrets.MACOS_APP_STORE_EXTENSION_PROFILE_BASE64 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          scripts/macos/install-app-store-profiles.sh "$GITHUB_ENV"
+
+      - name: Validate App Store Connect tuple and monotonic version gate
+        env:
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          key_path="$RUNNER_TEMP/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"
+          trap 'rm -f "$key_path"' EXIT
+          printf '%s\n' "$APP_STORE_CONNECT_PRIVATE_KEY" > "$key_path"
+          chmod 600 "$key_path"
+          APP_STORE_CONNECT_API_KEY_PATH="$key_path" node scripts/macos/check-app-store-build.mjs --require-new-or-existing
+
+      - name: Build signed App Store bundle
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          scripts/macos/build-app-store.sh
+
+      - name: Verify all macOS release prerequisites
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: scripts/macos/verify-app-store-readiness.sh --full
+
+      - name: Preserve signed build for upload job
+        run: |
+          set -euo pipefail
+          mkdir -p macos-handoff
+          ditto -c -k --sequesterRsrc --keepParent 'src-tauri/target/universal-apple-darwin/release/bundle/macos/DoodleRay VPN.app' macos-handoff/DoodleRay-app.zip
+          ditto -c -k --sequesterRsrc --keepParent 'src-tauri/macos/DerivedData/Build/Products/Release/DoodleRayVPN.appex.dSYM' macos-handoff/DoodleRayVPN-dSYM.zip
+          app_sha="$(shasum -a 256 macos-handoff/DoodleRay-app.zip | awk '{print $1}')"
+          dsym_sha="$(shasum -a 256 macos-handoff/DoodleRayVPN-dSYM.zip | awk '{print $1}')"
+          SOURCE_SHA="$SOURCE_SHA" APP_SHA="$app_sha" DSYM_SHA="$dsym_sha" node - <<'NODE'
+          const { readFileSync, writeFileSync } = require('node:fs');
+          const release = JSON.parse(readFileSync('release/release.json', 'utf8'));
+          writeFileSync('macos-handoff/macos-app-store-provenance.json', `${JSON.stringify({
+            sourceSha: process.env.SOURCE_SHA,
+            bundleId: 'com.doodleray.doodleray',
+            extensionBundleId: 'com.doodleray.doodleray.DoodleRayVPN',
+            version: release.version,
+            macBuild: release.macBuild,
+            artifacts: {
+              'DoodleRay-app.zip': { sha256: process.env.APP_SHA },
+              'DoodleRayVPN-dSYM.zip': { sha256: process.env.DSYM_SHA },
+            },
+            appleArtifactShaAvailable: false,
+          }, null, 2)}\n`);
+          NODE
+
+      - name: Retain exact signed App Store build
+        if: inputs.dry_run == false
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-app-store-${{ needs.preflight.outputs.version }}-${{ inputs.source_sha }}
+          path: macos-handoff/
+          if-no-files-found: error
+          retention-days: 30
+
+  upload_immutable:
+    needs: [preflight, build_windows]
+    if: inputs.dry_run == false && needs.preflight.outputs.windows == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: windows-release-${{ needs.preflight.outputs.version }}-${{ inputs.source_sha }}
+          path: windows-release
+
+      - name: Upload immutable CDN directory
+        shell: pwsh
+        env:
+          DOWNLOADS_SSH_PRIVATE_KEY: ${{ secrets.DOWNLOADS_SSH_PRIVATE_KEY }}
+          DOWNLOADS_SSH_KNOWN_HOSTS: ${{ secrets.DOWNLOADS_SSH_KNOWN_HOSTS }}
+          DOWNLOADS_SSH_HOST: ${{ vars.DOWNLOADS_SSH_HOST || 'doodleray.clickflare.click' }}
+          DOWNLOADS_SSH_USER: ${{ vars.DOWNLOADS_SSH_USER }}
+          DOWNLOADS_SSH_PORT: ${{ vars.DOWNLOADS_SSH_PORT || '22' }}
+          DOWNLOADS_REMOTE_ROOT: ${{ vars.DOWNLOADS_REMOTE_ROOT || '/srv/doodleray-downloads' }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:DOWNLOADS_SSH_PRIVATE_KEY)) { throw 'DOWNLOADS_SSH_PRIVATE_KEY is required' }
+          if ([string]::IsNullOrWhiteSpace($env:DOWNLOADS_SSH_KNOWN_HOSTS)) { throw 'DOWNLOADS_SSH_KNOWN_HOSTS is required' }
+          $key = Join-Path $env:RUNNER_TEMP 'downloads_ed25519'
+          $knownHosts = Join-Path $env:RUNNER_TEMP 'downloads_known_hosts'
+          ($env:DOWNLOADS_SSH_PRIVATE_KEY -replace "`r", '').TrimEnd("`n") + "`n" | Set-Content -LiteralPath $key -NoNewline -Encoding utf8NoBOM
+          ($env:DOWNLOADS_SSH_KNOWN_HOSTS -replace "`r", '').TrimEnd("`n") + "`n" | Set-Content -LiteralPath $knownHosts -NoNewline -Encoding utf8NoBOM
+          chmod 600 $key $knownHosts
+          ./scripts/release/Publish-DoodleRayDownloads.ps1 `
+            -Version '${{ needs.preflight.outputs.version }}' -Mode UploadImmutable -ArtifactDir windows-release `
+            -HostName $env:DOWNLOADS_SSH_HOST -User $env:DOWNLOADS_SSH_USER -Port ([int]$env:DOWNLOADS_SSH_PORT) `
+            -RemoteRoot $env:DOWNLOADS_REMOTE_ROOT -SshKeyPath $key -SshKnownHostsPath $knownHosts
+
+  upload_macos_app_store:
+    needs: [preflight, build_macos_app_store, upload_immutable]
+    if: always() && inputs.dry_run == false && needs.preflight.outputs.mac_app_store == 'true' && needs.build_macos_app_store.result == 'success' && (needs.preflight.outputs.windows != 'true' || needs.upload_immutable.result == 'success')
+    runs-on: macos-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Import Apple Distribution certificate
+        id: import-apple-distribution
+        uses: apple-actions/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d # v3
+        with:
+          keychain: signing_temp
+          p12-file-base64: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_BASE64 }}
+          p12-password: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+
+      - name: Import Mac Installer Distribution certificate into the same keychain
+        uses: apple-actions/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d # v3
+        with:
+          keychain: signing_temp
+          create-keychain: false
+          keychain-password: ${{ steps.import-apple-distribution.outputs.keychain-password }}
+          p12-file-base64: ${{ secrets.MAC_INSTALLER_DISTRIBUTION_CERTIFICATE_BASE64 }}
+          p12-password: ${{ secrets.MAC_INSTALLER_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+
+      - name: Install and verify both provisioning profiles
+        env:
+          MACOS_APP_STORE_HOST_PROFILE_BASE64: ${{ secrets.MACOS_APP_STORE_HOST_PROFILE_BASE64 }}
+          MACOS_APP_STORE_EXTENSION_PROFILE_BASE64: ${{ secrets.MACOS_APP_STORE_EXTENSION_PROFILE_BASE64 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: scripts/macos/install-app-store-profiles.sh "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: macos-app-store-${{ needs.preflight.outputs.version }}-${{ inputs.source_sha }}
+          path: macos-handoff
+
+      - name: Restore signed App Store build
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const { createHash } = require('node:crypto');
+          const { readFileSync } = require('node:fs');
+          const provenance = JSON.parse(readFileSync('macos-handoff/macos-app-store-provenance.json', 'utf8'));
+          for (const [name, entry] of Object.entries(provenance.artifacts)) {
+            const actual = createHash('sha256').update(readFileSync(`macos-handoff/${name}`)).digest('hex');
+            if (actual !== entry.sha256) throw new Error(`macOS handoff digest mismatch: ${name}`);
+          }
+          NODE
+          mkdir -p 'src-tauri/target/universal-apple-darwin/release/bundle/macos' 'src-tauri/macos/DerivedData/Build/Products/Release'
+          ditto -x -k macos-handoff/DoodleRay-app.zip 'src-tauri/target/universal-apple-darwin/release/bundle/macos'
+          ditto -x -k macos-handoff/DoodleRayVPN-dSYM.zip 'src-tauri/macos/DerivedData/Build/Products/Release'
+
+      - name: Upload exact signed build to App Store Connect
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          for name in APPLE_TEAM_ID APP_STORE_CONNECT_API_KEY_ID APP_STORE_CONNECT_ISSUER_ID APP_STORE_CONNECT_PRIVATE_KEY; do
+            test -n "${!name}" || { echo "Required Apple upload secret is missing: $name" >&2; exit 1; }
+          done
+          key_path="$RUNNER_TEMP/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"
+          trap 'rm -f "$key_path"' EXIT
+          printf '%s\n' "$APP_STORE_CONNECT_PRIVATE_KEY" > "$key_path"
+          chmod 600 "$key_path"
+          export APP_STORE_CONNECT_API_KEY_PATH="$key_path"
+          scripts/macos/upload-app-store.sh
+
+  publish_github_release:
+    needs: [preflight, upload_immutable, upload_macos_app_store]
+    if: always() && inputs.dry_run == false && (needs.preflight.outputs.windows != 'true' || needs.upload_immutable.result == 'success') && (needs.preflight.outputs.mac_app_store != 'true' || needs.upload_macos_app_store.result == 'success')
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.source_sha }}
+
+      - name: Download exact Windows release bytes
+        if: needs.preflight.outputs.windows == 'true'
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: windows-release-${{ needs.preflight.outputs.version }}-${{ inputs.source_sha }}
+          path: windows-release
+
+      - name: Download macOS App Store provenance handoff
+        if: needs.preflight.outputs.mac_app_store == 'true'
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: macos-app-store-${{ needs.preflight.outputs.version }}-${{ inputs.source_sha }}
+          path: macos-handoff
+
+      - name: Create or verify tag and publish exact assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+          WINDOWS_TARGET: ${{ needs.preflight.outputs.windows }}
+          MACOS_TARGET: ${{ needs.preflight.outputs.mac_app_store }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets "$RUNNER_TEMP/github-assets"
+          if [ "$WINDOWS_TARGET" = true ]; then
+            (cd windows-release && sha256sum -c sha256.txt)
+            cp windows-release/* release-assets/
+          fi
+          if [ "$MACOS_TARGET" = true ]; then
+            node - <<'NODE'
+          const { createHash } = require('node:crypto');
+          const { readFileSync } = require('node:fs');
+          const provenance = JSON.parse(readFileSync('macos-handoff/macos-app-store-provenance.json', 'utf8'));
+          for (const [name, entry] of Object.entries(provenance.artifacts)) {
+            const actual = createHash('sha256').update(readFileSync(`macos-handoff/${name}`)).digest('hex');
+            if (actual !== entry.sha256) throw new Error(`macOS handoff digest mismatch: ${name}`);
+          }
+          NODE
+            cp macos-handoff/macos-app-store-provenance.json release-assets/
+          fi
+          WINDOWS_TARGET="$WINDOWS_TARGET" MACOS_TARGET="$MACOS_TARGET" node - <<'NODE'
+          const { readFileSync, writeFileSync } = require('node:fs');
+          const release = JSON.parse(readFileSync('release/release.json', 'utf8'));
+          writeFileSync('release-assets/release-provenance.json', `${JSON.stringify({
+            sourceSha: process.env.SOURCE_SHA,
+            version: release.version,
+            macBuild: release.macBuild,
+            targets: { windows: process.env.WINDOWS_TARGET === 'true', macAppStore: process.env.MACOS_TARGET === 'true' },
+            appleArtifactShaAvailable: false,
+          }, null, 2)}\n`);
+          NODE
+          tag="v$VERSION"
+          existing="$(git ls-remote --tags origin "refs/tags/$tag^{}" | cut -f1)"
+          if [ -z "$existing" ]; then existing="$(git ls-remote --tags origin "refs/tags/$tag" | cut -f1)"; fi
+          if [ -n "$existing" ] && [ "$existing" != "$SOURCE_SHA" ]; then echo "Tag points at another SHA" >&2; exit 1; fi
+          if [ -z "$existing" ]; then git tag "$tag" "$SOURCE_SHA" && git push origin "refs/tags/$tag"; fi
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --draft --verify-tag --title "DoodleRay $VERSION" --notes "Production artifacts for DoodleRay $VERSION."
+          fi
+          while IFS= read -r existing_name; do
+            test -f "release-assets/$existing_name" || {
+              echo "GitHub Release contains unexpected asset: $existing_name" >&2
+              exit 1
+            }
+          done < <(gh release view "$tag" --json assets --jq '.assets[].name')
+          for file in release-assets/*; do
+            name="$(basename "$file")"
+            if gh release view "$tag" --json assets --jq '.assets[].name' | grep -Fxq "$name"; then
+              gh release download "$tag" --pattern "$name" --dir "$RUNNER_TEMP/github-assets"
+              test "$(sha256sum "$file" | cut -d' ' -f1)" = "$(sha256sum "$RUNNER_TEMP/github-assets/$name" | cut -d' ' -f1)" || {
+                echo "different hashes: hard fail for existing GitHub asset $name" >&2; exit 1;
+              }
+              echo "same hashes: no-op for existing GitHub asset $name"
+            else
+              gh release upload "$tag" "$file"
+            fi
+          done
+          gh release edit "$tag" --draft=false --latest
+
+  promote_latest:
+    needs: [preflight, publish_github_release]
+    if: inputs.dry_run == false && needs.preflight.outputs.windows == 'true' && needs.publish_github_release.result == 'success'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+
+      - name: Promote latest.json last
+        shell: pwsh
+        env:
+          DOWNLOADS_SSH_PRIVATE_KEY: ${{ secrets.DOWNLOADS_SSH_PRIVATE_KEY }}
+          DOWNLOADS_SSH_KNOWN_HOSTS: ${{ secrets.DOWNLOADS_SSH_KNOWN_HOSTS }}
+          DOWNLOADS_SSH_HOST: ${{ vars.DOWNLOADS_SSH_HOST || 'doodleray.clickflare.click' }}
+          DOWNLOADS_SSH_USER: ${{ vars.DOWNLOADS_SSH_USER }}
+          DOWNLOADS_SSH_PORT: ${{ vars.DOWNLOADS_SSH_PORT || '22' }}
+          DOWNLOADS_REMOTE_ROOT: ${{ vars.DOWNLOADS_REMOTE_ROOT || '/srv/doodleray-downloads' }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:DOWNLOADS_SSH_PRIVATE_KEY)) { throw 'DOWNLOADS_SSH_PRIVATE_KEY is required' }
+          if ([string]::IsNullOrWhiteSpace($env:DOWNLOADS_SSH_KNOWN_HOSTS)) { throw 'DOWNLOADS_SSH_KNOWN_HOSTS is required' }
+          $key = Join-Path $env:RUNNER_TEMP 'downloads_ed25519'
+          $knownHosts = Join-Path $env:RUNNER_TEMP 'downloads_known_hosts'
+          ($env:DOWNLOADS_SSH_PRIVATE_KEY -replace "`r", '').TrimEnd("`n") + "`n" | Set-Content -LiteralPath $key -NoNewline -Encoding utf8NoBOM
+          ($env:DOWNLOADS_SSH_KNOWN_HOSTS -replace "`r", '').TrimEnd("`n") + "`n" | Set-Content -LiteralPath $knownHosts -NoNewline -Encoding utf8NoBOM
+          chmod 600 $key $knownHosts
+          ./scripts/release/Publish-DoodleRayDownloads.ps1 `
+            -Version '${{ needs.preflight.outputs.version }}' -Mode PromoteLatest `
+            -HostName $env:DOWNLOADS_SSH_HOST -User $env:DOWNLOADS_SSH_USER -Port ([int]$env:DOWNLOADS_SSH_PORT) `
+            -RemoteRoot $env:DOWNLOADS_REMOTE_ROOT -SshKeyPath $key -SshKnownHostsPath $knownHosts
+          # Exact-byte rule: same hashes are a no-op; different hashes hard fail; latest.json is promoted last.

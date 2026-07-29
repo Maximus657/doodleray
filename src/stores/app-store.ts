@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware';
-import { invoke } from '@tauri-apps/api/core';
+import { mergeLegacyDoodleSubscriptionState } from '../lib/legacy-subscription';
+import { desktopBridge } from '../platform/tauri/desktop-bridge.ts';
 import {
   buildServerSelectionIndex,
   findMatchingServerInIndex,
@@ -114,6 +115,8 @@ export interface AppState {
   productMode: ProductMode;
   proxyMode: ProxyMode;
   systemProxyMode: SystemProxyMode;
+  /** Bridge for Settings (rendered outside Dashboard) to trigger Dashboard's real mode-switch/reconnect flow. Registered by Dashboard on mount, never persisted. */
+  requestModeSwitch: ((mode: ProductMode) => void) | null;
 
   servers: ServerConfig[];
   subscriptions: Subscription[];
@@ -150,6 +153,7 @@ export interface AppState {
   setStatus: (status: ConnectionStatus) => void;
   setActiveServer: (server: ServerConfig | null) => void;
   setProductMode: (mode: ProductMode) => void;
+  setRequestModeSwitch: (fn: ((mode: ProductMode) => void) | null) => void;
   setProxyMode: (mode: ProxyMode) => void;
   setSystemProxyMode: (mode: SystemProxyMode) => void;
 
@@ -216,6 +220,19 @@ const persistedValueCache = new Map<string, string>();
 const volatileBrowserStorage = new Map<string, string>();
 const pendingSecureWrites = new Map<string, Promise<void>>();
 
+/**
+ * Awaits every in-flight secure-storage write (Settings changes persist via
+ * an async Tauri invoke, e.g. a custom port committed just before the user
+ * quits from the tray). Called before the app is allowed to actually exit —
+ * see the `doodleray:flush-before-exit` listener in App.tsx — so the last
+ * change isn't dropped mid round-trip when the process tears down.
+ */
+export async function flushPendingSecureWrites(): Promise<void> {
+  while (pendingSecureWrites.size > 0) {
+    await Promise.allSettled(Array.from(pendingSecureWrites.values()));
+  }
+}
+
 export function detectInitialLanguage(): SupportedLanguage {
   if (typeof navigator === 'undefined') return 'en';
 
@@ -238,15 +255,21 @@ const secureStorage: StateStorage<Promise<void> | void> = {
 
     const legacyValue = safeLocalGet(name);
     try {
-      const secureValue = await invoke<string | null>('secure_store_get', { key: name });
+      const secureValue = await desktopBridge.command<string | null>('secure_store_get', { key: name });
       if (secureValue !== null) {
-        persistedValueCache.set(name, secureValue);
+        const reconciledValue = name === 'doodleray-storage' && legacyValue !== null
+          ? mergeLegacyDoodleSubscriptionState(secureValue, legacyValue)
+          : secureValue;
+        if (reconciledValue !== secureValue) {
+          await desktopBridge.secureStoreSet(name, reconciledValue);
+        }
+        persistedValueCache.set(name, reconciledValue);
         if (legacyValue !== null) safeLocalRemove(name);
-        return secureValue;
+        return reconciledValue;
       }
 
       if (legacyValue !== null) {
-        await invoke('secure_store_set', { key: name, value: legacyValue });
+        await desktopBridge.secureStoreSet(name, legacyValue);
         safeLocalRemove(name);
         persistedValueCache.set(name, legacyValue);
         return legacyValue;
@@ -267,7 +290,7 @@ const secureStorage: StateStorage<Promise<void> | void> = {
     const previous = pendingSecureWrites.get(name) ?? Promise.resolve();
     const write = previous.catch(() => { /* keep the queue moving */ }).then(async () => {
       if (persistedValueCache.get(name) === value) return;
-      await invoke('secure_store_set', { key: name, value });
+      await desktopBridge.secureStoreSet(name, value);
       persistedValueCache.set(name, value);
       safeLocalRemove(name);
     });
@@ -288,7 +311,7 @@ const secureStorage: StateStorage<Promise<void> | void> = {
 
     const previous = pendingSecureWrites.get(name) ?? Promise.resolve();
     const remove = previous.catch(() => { /* keep the queue moving */ }).then(async () => {
-      await invoke('secure_store_delete', { key: name });
+      await desktopBridge.secureStoreDelete(name);
       persistedValueCache.delete(name);
       safeLocalRemove(name);
     });
@@ -458,6 +481,7 @@ export const useAppStore = create<AppState>()(
       productMode: 'protected',
       proxyMode: 'tun',
       systemProxyMode: 'set',
+      requestModeSwitch: null,
 
       servers: [],
       subscriptions: [],
@@ -487,7 +511,7 @@ export const useAppStore = create<AppState>()(
       updateStatus: '',
       updateProgress: null,
       showStats: false,
-      diagnosticsConsent: false,
+      diagnosticsConsent: true,
       appSessionLoggedIn: false,
       appSessionDeviceAllowed: null,
 
@@ -497,6 +521,7 @@ export const useAppStore = create<AppState>()(
         lastSelectedServerKey: server ? getServerSelectionKey(server) : null,
       }),
       setProductMode: (mode) => set(transportForProductMode(mode)),
+      setRequestModeSwitch: (fn) => set({ requestModeSwitch: fn }),
       setProxyMode: (mode) => set((state) => ({
         proxyMode: mode,
         systemProxyMode: normalizeSystemProxyMode(state.systemProxyMode, mode),

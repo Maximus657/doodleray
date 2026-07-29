@@ -50,6 +50,19 @@ fn open_tunnel_pipe() -> std::io::Result<File> {
     }
 }
 
+/// Retry backoff for the SCM-running-before-pipe-listening race. The pipe is
+/// usually accepting within tens of milliseconds, so the early retries are
+/// cheap; the tail keeps the original budget for a genuinely slow start.
+#[cfg(windows)]
+fn pipe_retry_delay_ms(attempt: u32) -> u64 {
+    match attempt {
+        0 => 25,
+        1 => 50,
+        2 => 100,
+        _ => 200,
+    }
+}
+
 #[cfg(windows)]
 pub fn send_tunnel_command(command: &TunnelCommand) -> Result<TunnelResponse, String> {
     let payload = serde_json::to_vec(command).map_err(|e| format!("IPC encode failed: {}", e))?;
@@ -57,14 +70,19 @@ pub fn send_tunnel_command(command: &TunnelCommand) -> Result<TunnelResponse, St
         return Err("IPC payload is too large".into());
     }
 
+    // A just-(re)started service reports Running to SCM before its pipe
+    // server is actually listening, so the very first connect attempt after
+    // a start can transiently fail with "file not found" even though the
+    // service is healthy a moment later. Retry generously; a genuinely dead
+    // service still fails the same way, just a couple seconds later.
     let mut last_error = String::new();
-    for attempt in 0..3 {
+    for attempt in 0..15u32 {
         match send_tunnel_payload_with_timeout(payload.clone(), Duration::from_secs(6)) {
             Ok(response) => return Ok(response),
             Err(error) => {
                 last_error = error;
-                if attempt < 2 {
-                    std::thread::sleep(std::time::Duration::from_millis(120));
+                if attempt < 14 {
+                    std::thread::sleep(Duration::from_millis(pipe_retry_delay_ms(attempt)));
                 }
             }
         }
@@ -155,4 +173,22 @@ pub fn send_tunnel_command(
     _: &crate::tunnel_service::TunnelCommand,
 ) -> Result<crate::tunnel_service::TunnelResponse, String> {
     Err("Tunnel service is only available on Windows".into())
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::pipe_retry_delay_ms;
+
+    #[test]
+    fn pipe_retry_backoff_starts_short_and_settles_at_200ms() {
+        let delays: Vec<u64> = (0..15).map(pipe_retry_delay_ms).collect();
+        assert_eq!(&delays[..4], &[25, 50, 100, 200]);
+        assert!(
+            delays[4..].iter().all(|delay| *delay == 200),
+            "tail must stay at 200ms: {delays:?}"
+        );
+        // Must not spend more wall clock than the previous flat 14 x 200ms.
+        let total: u64 = delays[..14].iter().sum();
+        assert!(total <= 14 * 200, "backoff budget grew to {total}ms");
+    }
 }

@@ -1,13 +1,20 @@
 import { useState } from 'react';
 import { X, LogOut, RefreshCw, Trash2, DownloadCloud, Wrench, Loader2, Send } from 'lucide-react';
+import { disable, enable } from '@tauri-apps/plugin-autostart';
 import { useAppStore, type SupportedLanguage } from '../../stores/app-store';
+import { useToastStore } from '../../stores/toast-store';
 import { refreshSubscription } from '../../lib/subscription';
+import { checkForAppUpdate } from '../../lib/app-updater';
 import { isClosedControlPlaneEnabled, isDesktopAutostartAvailable, isNetworkExtensionOnlyBuild } from '../../lib/build-policy';
 import { appApiLogout } from '../../lib/app-control-plane';
 import { isUpdateManagedByStore, openStoreUpdatePage } from '../../lib/update-channel';
 import { diagnosticsReportToText, runNetworkDiagnostics } from '../../lib/diagnostics';
 import { reportConnectionError } from '../../lib/workshop-api';
 import Toggle from './Toggle';
+import SplitRoutingToggle from './SplitRoutingToggle';
+import SplitRoutingModal from './SplitRoutingModal';
+import ModeSelector from './ModeCard';
+import { desktopBridge } from '../../platform/tauri/desktop-bridge';
 
 type T = (key: never) => string;
 
@@ -73,8 +80,12 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
     subscriptions, updateSubscription, removeSubscription,
     wipeData, addLog, appSessionLoggedIn,
     diagnosticsConsent, setDiagnosticsConsent,
+    productMode, requestModeSwitch, status,
   } = useAppStore();
 
+  const modeSwitchBusy = status === 'connecting' || status === 'disconnecting';
+
+  const [showSplitModal, setShowSplitModal] = useState(false);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
   const [armedDeleteId, setArmedDeleteId] = useState<string | null>(null);
   const [updateStatus, setUpdateStatus] = useState<string | null>(null);
@@ -95,7 +106,6 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
     const next = !autoStart;
     useAppStore.setState({ autoStart: next });
     try {
-      const { enable, disable } = await import('@tauri-apps/plugin-autostart');
       if (next) await enable(); else await disable();
     } catch {
       useAppStore.setState({ autoStart: !next });
@@ -126,7 +136,6 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
         return;
       }
 
-      const { checkForAppUpdate } = await import('../../lib/app-updater');
       const update = await checkForAppUpdate();
       if (update) {
         useAppStore.getState().setUpdateState({
@@ -150,10 +159,8 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
     if (!isTauri() || repairing) return;
     setRepairing(true);
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      const message = await invoke('repair_windows_runtime') as string;
+      const message = await desktopBridge.command<string>('repair_windows_runtime');
       addLog('info', message.split('\n')[0]);
-      const { useToastStore } = await import('../../stores/toast-store');
       useToastStore.getState().addToast(message.split('\n')[0], 'success');
     } catch (err) {
       addLog('error', `Repair failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -168,8 +175,7 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
       setLoggingOut(true);
       try {
         if (isTauri()) {
-          const { invoke } = await import('@tauri-apps/api/core');
-          await invoke('vpn_disconnect').catch(() => {});
+          await desktopBridge.vpnDisconnect().catch(() => {});
         }
         let logoutError: unknown = null;
         await appApiLogout().catch((err) => { logoutError = err; });
@@ -189,9 +195,8 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
     }
 
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('vpn_disconnect').catch(() => {});
-      await invoke('quit_app');
+      await desktopBridge.vpnDisconnect().catch(() => {});
+      await desktopBridge.command('quit_app');
     } catch {
       window.close();
     }
@@ -248,7 +253,7 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
         onClick={(e) => e.stopPropagation()}
         className="v6-modal flex max-h-[calc(100vh-88px)] w-[min(460px,calc(100vw-48px))] flex-col rounded-[28px] p-[26px] pt-[22px]"
       >
-        <div className="mb-1 flex shrink-0 items-center justify-between">
+        <div className="mb-4 flex shrink-0 items-center justify-between">
           <span className="text-[18px] font-semibold text-white">{t('settings' as never)}</span>
           <button
             type="button"
@@ -261,6 +266,18 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
         </div>
 
         <div className="-mr-3 min-h-0 flex-1 overflow-y-auto pr-3">
+          {/* Connection mode + exceptions, at the top so they're the first thing seen */}
+          {!networkExtensionOnly && (
+            <>
+              <div className="pb-4">
+                <ModeSelector current={productMode} onSelect={(mode) => requestModeSwitch?.(mode)} disabled={modeSwitchBusy || !requestModeSwitch} t={t} />
+              </div>
+              <div className="pb-2">
+                <SplitRoutingToggle protectedMode={productMode === 'protected'} onOpen={() => setShowSplitModal(true)} t={t} />
+              </div>
+            </>
+          )}
+
           {/* General */}
           {desktopAutostartAvailable && (
             <Row title={t('v6SetLaunch' as never)} sub={t('v6SetLaunchSub' as never)} onClick={toggleLaunch} pressed={launchOn} right={<Toggle on={launchOn} label={t('v6SetLaunch' as never)} />} />
@@ -438,6 +455,16 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
           )}
         </div>
       </div>
+
+      {showSplitModal && (
+        <div onClick={(e) => e.stopPropagation()}>
+          <SplitRoutingModal
+            protectedMode={productMode === 'protected'}
+            onClose={() => setShowSplitModal(false)}
+            t={t}
+          />
+        </div>
+      )}
     </div>
   );
 }

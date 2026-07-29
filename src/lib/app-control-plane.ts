@@ -1,11 +1,11 @@
-import { invoke } from '@tauri-apps/api/core';
 import type { ServerConfig, Subscription, SystemProxyMode } from '../stores/app-store';
 import { useAppStore } from '../stores/app-store';
 import { isClosedControlPlaneEnabled } from './build-policy';
 import { getActiveRoutingRules, resolveSystemProxyModeForRouting } from './connect-helpers';
 import { getServerSelectionKey, isAutoSelectCandidate } from './server-selection';
+import { desktopBridge } from '../platform/tauri/desktop-bridge';
 
-export { findLegacyDoodleSubscriptionUrl } from './legacy-subscription';
+export { findLegacyDoodleSubscriptionUrl, findLegacyDoodleSubscriptionUrls } from './legacy-subscription';
 
 const CLOSED_SUBSCRIPTION_ID = 'doodlevpn-app';
 const LOCATION_ID_PREFIX = 'app-location:';
@@ -76,6 +76,18 @@ export function closedLocationIdFromServer(server: ServerConfig): string {
     : server.id;
 }
 
+const ANTI_JAMMER_NAME_RE = /обход|блокиров|white|whitelist|bypass|резерв|reserve/i;
+
+/** True when `server` is the "Обход БС" or "Резерв" special location, in either the closed control-plane model (id-based) or legacy subscriptions (name-based). */
+export function isAntiJammerOrReserveServer(server: ServerConfig | null | undefined): boolean {
+  if (!server) return false;
+  if (isClosedLocationServer(server)) {
+    const id = closedLocationIdFromServer(server);
+    return id === 'bypass' || id === 'reserve';
+  }
+  return ANTI_JAMMER_NAME_RE.test(server.name);
+}
+
 function parseExpireSeconds(value?: string | null): number | undefined {
   if (!value) return undefined;
   const ms = Date.parse(value);
@@ -92,9 +104,11 @@ function locationToServer(location: AppApiLocation): ServerConfig {
     : /^[A-Z]{2}$/.test(countryCode)
       ? new Intl.DisplayNames([language], { type: 'region' }).of(countryCode)
       : undefined;
-  const autoName = id === AUTO_LOCATION_ID
-    ? language === 'ru' ? '⚡ Автовыбор' : language === 'zh' ? '⚡ 自动选择' : '⚡ Auto select'
-    : undefined;
+  // The auto-location row's user-facing text is resolved reactively via
+  // t('v6AutoLocationName') in ServerRow so a live language change doesn't
+  // leave a stale baked-in name until the next location fetch. Only the
+  // leading emoji from this stored name is still used, for the row icon.
+  const autoName = id === AUTO_LOCATION_ID ? '⚡ Auto' : undefined;
   const name = String(autoName || localizedCountry || location.title || countryCode || id).slice(0, 128);
   return {
     id: `${LOCATION_ID_PREFIX}${id}`,
@@ -187,7 +201,7 @@ function localPreviewLocations(): AppApiLocationsResponse {
 
 export async function appApiSessionStatus(): Promise<AppApiSessionStatus> {
   if (!isTauriRuntime()) return localPreviewSession();
-  return await invoke<AppApiSessionStatus>('app_api_session_status');
+  return await desktopBridge.appApiSessionStatus();
 }
 
 export async function appApiExchangeCode(code: string): Promise<AppApiSessionStatus> {
@@ -199,7 +213,7 @@ export async function appApiExchangeCode(code: string): Promise<AppApiSessionSta
     localPreviewLoggedIn = true;
     return localPreviewSession(true);
   }
-  return await invoke<AppApiSessionStatus>('app_api_exchange_code', { request: { code: normalizedCode } });
+  return await desktopBridge.appApiExchangeCode(normalizedCode);
 }
 
 export async function appApiExchangeLegacySubscription(subscriptionUrl: string): Promise<AppApiSessionStatus> {
@@ -207,14 +221,12 @@ export async function appApiExchangeLegacySubscription(subscriptionUrl: string):
     localPreviewLoggedIn = true;
     return localPreviewSession(true);
   }
-  return await invoke<AppApiSessionStatus>('app_api_exchange_legacy_subscription', {
-    request: { subscription_url: subscriptionUrl },
-  });
+  return await desktopBridge.appApiExchangeLegacySubscription(subscriptionUrl);
 }
 
 export async function appApiRefresh(): Promise<AppApiSessionStatus> {
   if (!isTauriRuntime()) return localPreviewSession();
-  return await invoke<AppApiSessionStatus>('app_api_refresh');
+  return await desktopBridge.appApiRefresh();
 }
 
 export async function appApiLogout(): Promise<void> {
@@ -238,7 +250,7 @@ export async function appApiLogout(): Promise<void> {
     return;
   }
   try {
-    await invoke('app_api_logout');
+    await desktopBridge.appApiLogout();
   } finally {
     useAppStore.setState({
       status: 'disconnected',
@@ -260,12 +272,12 @@ export async function appApiLogout(): Promise<void> {
 
 export async function appApiLocations(): Promise<AppApiLocationsResponse> {
   if (!isTauriRuntime()) return localPreviewLocations();
-  return await invoke<AppApiLocationsResponse>('app_api_locations');
+  return await desktopBridge.appApiLocations();
 }
 
 export async function appApiSubscriptionStatus(): Promise<AppApiSubscriptionSummary> {
   if (!isTauriRuntime()) return localPreviewSession(true).subscription!;
-  return await invoke<AppApiSubscriptionSummary>('app_api_subscription_status');
+  return await desktopBridge.appApiSubscriptionStatus();
 }
 
 export async function appApiControlPlaneSnapshot(
@@ -368,5 +380,5 @@ export async function buildAppConnectLocationRequestFromState(
 
 export async function appConnectLocation(server: ServerConfig) {
   const request = await buildAppConnectLocationRequestFromState(server);
-  return await invoke('app_connect_location', { request });
+  return await desktopBridge.appConnectLocation(request);
 }

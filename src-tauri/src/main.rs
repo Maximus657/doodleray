@@ -2,6 +2,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    if let Some(message) = tauri_app_lib::runtime_guard::message(
+        option_env!("DOODLERAY_RUNTIME_RESOURCES_SUPPRESSED") == Some("1"),
+    ) {
+        eprintln!("{message}");
+        std::process::exit(1);
+    }
+
     #[cfg(windows)]
     {
         let args = std::env::args().collect::<Vec<_>>();

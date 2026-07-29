@@ -39,13 +39,13 @@ For v6 Windows protected-mode RCs, upload and gate the installer before manual
 UI testing:
 
 ```powershell
-.\scripts\windows-qa\Publish-DoodleRayQaInstaller.ps1 -LocalInstaller .\src-tauri\target\release\bundle\nsis\DoodleRay_5.9.0_x64-setup.exe
+.\scripts\windows-qa\Publish-DoodleRayQaInstaller.ps1 -LocalInstaller .\src-tauri\target\release\bundle\nsis\DoodleRay_6.0.0_x64-setup.exe
 .\scripts\windows-qa\Invoke-DoodleRayV6QaGate.ps1 -InjectStaleWinInet
 .\scripts\windows-qa\Invoke-Play2GoPowerShell.ps1 -ScriptPath .\scripts\windows-qa\Get-DoodleRayDeepQaSnapshot.ps1
 ```
 
-The v6 gate verifies silent install, service registration, Authenticode status
-for installed app/service/core binaries, service JSON status, and absence of
+The v6 gate verifies silent install, service registration, records Windows
+signature status as informational evidence, checks service JSON status and absence of
 `xray api statsquery` orphans. Use `-UninstallAfter` only on disposable
 installer-cleanup passes.
 
@@ -53,9 +53,10 @@ For the previous-version update path, run the dedicated update harness for each
 supported source version:
 
 ```powershell
-.\scripts\windows-qa\Invoke-DoodleRayUpdatePathQa.ps1 -FromVersion 5.4.3 -InjectStaleWinInet -InjectCorporatePac -AllowUnsignedLocalRc
-.\scripts\windows-qa\Invoke-DoodleRayUpdatePathQa.ps1 -FromVersion 5.4.4 -AllowUnsignedLocalRc
-.\scripts\windows-qa\Invoke-DoodleRayUpdatePathQa.ps1 -FromVersion 5.4.5 -AllowUnsignedLocalRc
+.\scripts\windows-qa\Invoke-DoodleRayUpdatePathQa.ps1 -FromVersion 5.4.3 -InjectStaleWinInet -InjectCorporatePac
+.\scripts\windows-qa\Invoke-DoodleRayUpdatePathQa.ps1 -FromVersion 5.4.4
+.\scripts\windows-qa\Invoke-DoodleRayUpdatePathQa.ps1 -FromVersion 5.4.5
+.\scripts\windows-qa\Invoke-DoodleRayUpdatePathQa.ps1 -FromVersion 5.9.1 -InjectStaleWinInet -InjectCorporatePac
 ```
 
 The update harness downloads the public installer for the source version from
@@ -88,7 +89,7 @@ UI language does not matter):
 
 ```powershell
 .\scripts\windows-qa\Invoke-DoodleRayRc3UiCdpPass.ps1
-.\scripts\windows-qa\Invoke-DoodleRayActiveUpdateQa.ps1 -AllowUnsignedLocalRc
+.\scripts\windows-qa\Invoke-DoodleRayActiveUpdateQa.ps1
 ```
 
 The UI pass covers: launch from `C:\Program Files\DoodleRay`, version check,
@@ -106,12 +107,12 @@ For a fresh stand or a full RC evidence pass, use the one-command runner
 all harnesses; see `docs/windows-vm-qa-matrix.md`):
 
 ```powershell
-.\scripts\windows-qa\Invoke-DoodleRayFullStandQa.ps1 -LocalInstaller <setup.exe> -AllowUnsignedLocalRc
+.\scripts\windows-qa\Invoke-DoodleRayFullStandQa.ps1 -LocalInstaller <setup.exe>
 ```
 
-For local unsigned RC smoke testing only, add `-AllowUnsignedLocalRc`. Never use
-that switch for production release approval; signed CI artifacts must pass the
-default gate without it.
+Local unsigned RCs are supported for smoke testing; Windows signature status is
+recorded only as diagnostics and does not gate release readiness. Production
+approval instead requires Tauri updater signatures and exact artifact hashes.
 
 The gate intentionally does not print the canonical subscription URL or server
 credentials. Subscription import/connect/speed evidence must use the ignored

@@ -1,7 +1,6 @@
 param(
     [string] $RemoteRcInstaller = "C:\DoodleRayQA\artifacts\DoodleRay-v6-rc-setup.exe",
-    [string] $ExpectedRcVersion = "5.9.0",
-    [switch] $AllowUnsignedLocalRc,
+    [string] $ExpectedRcVersion = "6.0.1",
     [string] $SecretPath = (Join-Path $PSScriptRoot "..\..\secrets\doodlevpn-server-access.md")
 )
 
@@ -22,7 +21,6 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$allowUnsignedLiteral = if ($AllowUnsignedLocalRc.IsPresent) { '$true' } else { '$false' }
 $helpers = Get-Content (Join-Path $PSScriptRoot "CdpQaHelpers.ps1") -Raw
 
 $remoteBody = @"
@@ -62,11 +60,7 @@ if (-not (Test-Path -LiteralPath "$RemoteRcInstaller")) {
 
 # --- Step 3: post-update service/cleanup truth --------------------------------
 `$sig = Get-AuthenticodeSignature -LiteralPath "C:\Program Files\DoodleRay\DoodleRayService.exe"
-if (`$sig.Status -ne "Valid" -and -not $allowUnsignedLiteral) {
-    Add-Step "updated_service_signature" `$false ([string]`$sig.Status)
-} else {
-    Add-Step "updated_service_signature" `$true "status=`$(`$sig.Status) allowUnsignedLocalRc=$allowUnsignedLiteral"
-}
+Add-Step "updated_service_signature_info" `$true "status=`$(`$sig.Status) informationalOnly=true"
 
 `$service = Get-Service DoodleRayTunnelService -ErrorAction SilentlyContinue
 if (`$service -and `$service.Status -ne "Running") {

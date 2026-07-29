@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
-import { AlertTriangle, ChevronDown, ClipboardPaste, ExternalLink, Loader2, Plus, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, Bot, ChevronDown, ClipboardPaste, ExternalLink, Globe, Loader2, Plus, ShieldCheck } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../stores/app-store';
+import { useWorkshopStore } from '../stores/workshop-store';
 import { formatTime } from '../lib/utils';
 import { refreshSubscription, fetchSubscription } from '../lib/subscription';
 import { parseProxyLink } from '../lib/parser';
@@ -25,42 +27,43 @@ import {
 } from '../lib/connection-health';
 import { buildServerSelectionIndex, findMatchingServer, findMatchingServerInIndex, resolveConnectServer } from '../lib/server-selection';
 import { getSubscriptionById, getSubscriptionTrafficStatus } from '../lib/subscription-status';
-import { pingServersWithLimit } from '../lib/ping-runner';
 import { describeSubscriptionSource } from '../lib/redaction';
 import { getPrivacyPolicyUrl, isClosedControlPlaneEnabled, isLegacyImportEnabled, isNetworkExtensionOnlyBuild, legacyImportDisabledMessage } from '../lib/build-policy';
 import {
   appApiControlPlaneSnapshot,
   appApiExchangeCode,
   appApiExchangeLegacySubscription,
+  appApiLogout,
   buildAppConnectLocationRequestFromState,
-  findLegacyDoodleSubscriptionUrl,
+  findLegacyDoodleSubscriptionUrls,
   isClosedAutoLocationServer,
   isClosedLocationServer,
   syncClosedLocationsToStore,
   type AppApiSessionStatus,
 } from '../lib/app-control-plane';
+import { desktopBridge } from '../platform/tauri/desktop-bridge';
 
 // v6 DoodleVPN design UI
 import type { ProductMode, SystemProxyMode } from '../stores/app-store';
 import ConnectOrb from '../components/v6/ConnectOrb';
 import { displayServerName } from '../components/v6/ServerRow';
-import ModeSelector from '../components/v6/ModeCard';
 import LocationList from '../components/v6/LocationList';
 import TrafficStats from '../components/v6/TrafficStats';
-import SplitRoutingToggle from '../components/v6/SplitRoutingToggle';
-import SplitRoutingModal from '../components/v6/SplitRoutingModal';
+import SubscriptionStatusBlock from '../components/v6/SubscriptionStatusBlock';
 import DiagnosticsDrawer from '../components/v6/DiagnosticsDrawer';
 import DiagnosticPanel from '../components/v6/DiagnosticPanel';
 import QuickAddPanel from '../components/v6/QuickAddPanel';
 import LoginFlightOverlay from '../components/v6/LoginFlightOverlay';
 import { deriveOrbState, ORB_LABEL_KEY } from '../components/v6/status';
+import { selectDashboardState } from './dashboard-state';
 
 const TRAFFIC_LIMIT_EOF_WINDOW_MS = 12_000;
 const TRAFFIC_LIMIT_EOF_THRESHOLD = 4;
 const TRAFFIC_LIMIT_NOTICE_COOLDOWN_MS = 60_000;
 const CONNECT_TIMEOUT_MS = 45_000;
 const TUN_CONNECT_TIMEOUT_MS = 120_000;
-const DOODLEVPN_BOT_URL = 'https://t.me/doodlevpn_bot';
+const DOODLEVPN_ACCOUNT_URL = 'https://doodlevpn.online/account';
+const invoke = <T,>(command: string, args?: Record<string, unknown>) => desktopBridge.command<T>(command, args);
 
 function normalizeAppLoginCode(value: string): string {
   return value.replace(/\D/g, '').slice(0, 8);
@@ -178,12 +181,12 @@ function isTauriRuntime() {
   return typeof tauriInternals?.invoke === 'function';
 }
 
-async function openDoodleVpnBot() {
+async function openDoodleVpnAccount() {
   try {
     const { openUrl } = await import('@tauri-apps/plugin-opener');
-    await openUrl(DOODLEVPN_BOT_URL);
+    await openUrl(DOODLEVPN_ACCOUNT_URL);
   } catch {
-    window.open(DOODLEVPN_BOT_URL, '_blank', 'noopener,noreferrer');
+    window.open(DOODLEVPN_ACCOUNT_URL, '_blank', 'noopener,noreferrer');
   }
 }
 
@@ -201,15 +204,15 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
 export default function Dashboard() {
   const {
     status, setStatus, activeServer, servers, setActiveServer,
-    proxyMode, setProxyMode, systemProxyMode, setSystemProxyMode, productMode, currentDownload, currentUpload,
+    proxyMode, setProxyMode, systemProxyMode, setSystemProxyMode, productMode, setRequestModeSwitch, currentDownload, currentUpload,
     addTraffic, resetTraffic, addSpeedPoint, setCurrentSpeed,
     logs, addLog, clearLogs, socksPort, httpPort, subscriptions,
     updateSubscription, autoSelectFastest,
     subAutoUpdateMinutes, connectedAt, setConnectedAt,
     addSubscription, addServer,
-    updateServerPings, setSocksPort, setHttpPort, showStats,
-    appSessionDeviceAllowed,
-  } = useAppStore();
+    setSocksPort, setHttpPort, showStats,
+    appSessionDeviceAllowed, language,
+  } = useAppStore(useShallow(selectDashboardState));
   const { t } = useTranslation();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -217,7 +220,6 @@ export default function Dashboard() {
   const [quickInput, setQuickInput] = useState('');
   const [quickImporting, setQuickImporting] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [showSplitModal, setShowSplitModal] = useState(false);
   const [showDiagModal, setShowDiagModal] = useState(false);
   const [connectionStep, setConnectionStep] = useState<string | null>(null);
   const [activeSystemProxyMode, setActiveSystemProxyMode] = useState<SystemProxyMode | null>(null);
@@ -225,8 +227,9 @@ export default function Dashboard() {
   const [appLoginCode, setAppLoginCode] = useState('');
   const [appLoginBusy, setAppLoginBusy] = useState(false);
   const [appLoginError, setAppLoginError] = useState<string | null>(null);
-  const [appLocationsLoading, setAppLocationsLoading] = useState(false);
+  const [appLocationsLoading, setAppLocationsLoading] = useState(isClosedControlPlaneEnabled());
   const [privacyDetailsOpen, setPrivacyDetailsOpen] = useState(false);
+  const [codeSourceOpen, setCodeSourceOpen] = useState(false);
   const [postLoginFlight, setPostLoginFlight] = useState(false);
   const [postLoginFlightSettled, setPostLoginFlightSettled] = useState(false);
   const legacyImportEnabled = isLegacyImportEnabled();
@@ -256,7 +259,7 @@ export default function Dashboard() {
   const refreshTunnelServiceHealth = useCallback(async () => {
     if (!isTauriRuntime()) return false;
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
+
       await invoke('tunnel_service_health');
       return true;
     } catch {
@@ -320,15 +323,32 @@ export default function Dashboard() {
         if (disposed) return;
         let snapshot = await appApiControlPlaneSnapshot();
         if (!snapshot.session.logged_in) {
-          const legacySubscriptionUrl = findLegacyDoodleSubscriptionUrl(useAppStore.getState().subscriptions);
-          if (legacySubscriptionUrl) {
-            try {
-              const restoredSession = await appApiExchangeLegacySubscription(legacySubscriptionUrl);
-              snapshot = await appApiControlPlaneSnapshot(restoredSession);
-              addLog('success', 'DoodleVPN account restored from the previous version');
-            } catch {
-              addLog('warning', 'Automatic DoodleVPN account restore was unavailable');
+          const state = useAppStore.getState();
+          const legacySubscriptionUrls = findLegacyDoodleSubscriptionUrls(
+            state.subscriptions,
+            state.activeServer?.subscriptionId,
+          );
+          let restored = false;
+          let restoreFailure = '';
+          for (const legacySubscriptionUrl of legacySubscriptionUrls) {
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+              try {
+                const restoredSession = await appApiExchangeLegacySubscription(legacySubscriptionUrl);
+                snapshot = await appApiControlPlaneSnapshot(restoredSession);
+                restored = true;
+                addLog('success', 'DoodleVPN account restored from the previous version');
+                break;
+              } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                restoreFailure = message.replace(/https?:\/\/\S+/gi, '[URL]').slice(0, 240);
+                if (attempt === 0) await new Promise((resolve) => window.setTimeout(resolve, 750));
+              }
             }
+            if (restored) break;
+            // A stale DoodleVPN entry must not prevent another saved subscription from restoring.
+          }
+          if (legacySubscriptionUrls.length > 0 && !restored) {
+            addLog('warning', `Automatic DoodleVPN account restore was unavailable${restoreFailure ? `: ${restoreFailure}` : ''}`);
           }
         }
         if (disposed) return;
@@ -339,6 +359,18 @@ export default function Dashboard() {
           appSessionDeviceAllowed: session.logged_in ? session.subscription?.device_allowed !== false : null,
         });
         syncClosedLocationsToStore(session, locations);
+        if (session.logged_in) {
+          if (loginFlightTimerRef.current !== null) {
+            window.clearTimeout(loginFlightTimerRef.current);
+          }
+          setPostLoginFlightSettled(false);
+          setPostLoginFlight(true);
+          loginFlightTimerRef.current = window.setTimeout(() => {
+            setPostLoginFlightSettled(true);
+            setPostLoginFlight(false);
+            loginFlightTimerRef.current = null;
+          }, 2400);
+        }
       } catch (err) {
         if (!disposed) {
           if (isTauriInvokeUnavailableError(err)) {
@@ -446,10 +478,7 @@ export default function Dashboard() {
   }, [addLog, setConnectedAt, setConnectionStep, setHttpPort, setSocksPort, setStatus, t]);
 
   const connectionOpRef = useRef(0);
-  const [pingingServerIds, setPingingServerIds] = useState<Set<string>>(() => new Set());
   const serverSelectionIndex = useMemo(() => buildServerSelectionIndex(servers), [servers]);
-  const serverIdentityKey = useMemo(() => servers.map((server) => server.id).join('\0'), [servers]);
-  const autoPingStartedRef = useRef<Set<string>>(new Set());
   const autoSubRefreshStartedRef = useRef(false);
   const trafficLimitNoticeKeyRef = useRef<string | null>(null);
   const eofBurstRef = useRef({ count: 0, windowStartedAt: 0, lastNoticeAt: 0 });
@@ -482,30 +511,6 @@ export default function Dashboard() {
   //  Effects
   // ═══════════════════════════════════════════════════
 
-  // Auto-ping unpinged servers after persisted state/subscriptions are loaded.
-  useEffect(() => {
-    const unpinged = servers.filter(
-      s => !isClosedAutoLocationServer(s) && (s.ping === undefined || (s.ping > 0 && s.ping <= 5)) && !autoPingStartedRef.current.has(s.id)
-    );
-    if (unpinged.length === 0) return;
-    for (const server of unpinged) {
-      autoPingStartedRef.current.add(server.id);
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        await pingServersWithLimit(unpinged, invoke, {
-          isCancelled: () => cancelled,
-          onActiveIdsChange: setPingingServerIds,
-          onBatch: (updates) => updateServerPings(updates),
-        });
-      } catch { /* not in tauri env */ }
-      finally { setPingingServerIds(new Set()); }
-    })();
-    return () => { cancelled = true; };
-  }, [serverIdentityKey, updateServerPings]);
-
   // Connection time counter
   const [connectTime, setConnectTime] = useState(0);
   useEffect(() => {
@@ -530,7 +535,7 @@ export default function Dashboard() {
   useEffect(() => {
     (async () => {
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+
         const running: boolean = await invoke('vpn_status');
         if (running && status !== 'connected') {
           const effectiveSystemProxyMode = await getEffectiveHealthSystemProxyMode();
@@ -603,8 +608,9 @@ export default function Dashboard() {
     const healthCheck = setInterval(async () => {
       if (healthInFlightRef.current) return;
       healthInFlightRef.current = true;
+      const healthCheckOpId = connectionOpRef.current;
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+
         const effectiveSystemProxyMode = await getEffectiveHealthSystemProxyMode();
         let health = await withTimeout(
           invoke('get_connection_health', {
@@ -693,7 +699,13 @@ export default function Dashboard() {
 
         const healthy = isHealthAcceptable(proxyMode, health);
         setHealthVerdict(getUserVisibleHealthVerdict(health));
+        // A manual connect/switch/disconnect that started after this tick
+        // began owns the connection now; the health snapshot we just
+        // awaited can describe a server switch's normal transient teardown,
+        // not a real failure. Never tear down or surface it as an error.
+        const staleTick = connectionOpRef.current !== healthCheckOpId;
         if (healthy) { healthFailRef.current = 0; }
+        else if (staleTick) { /* ignore: superseded by a newer connect operation */ }
         else if (isHealthFatal(proxyMode, health)) {
           const failureSummary = summarizeHealthFailures(health);
           healthFailRef.current = 0;
@@ -715,8 +727,8 @@ export default function Dashboard() {
           setActiveSystemProxyMode(null);
           setConnectionStep(null);
           setConnectedAt(null);
-          const toastStoreModule = await import('../stores/toast-store');
-          toastStoreModule.useToastStore.getState().addToast('Whole computer mode stopped; reconnect to repair it.', 'error');
+
+          useToastStore.getState().addToast('Whole computer mode stopped; reconnect to repair it.', 'error');
           const activeHealthServer = useAppStore.getState().activeServer;
           reportConnectionError({
             eventType: 'health_fatal', serverName: activeHealthServer?.name,
@@ -733,8 +745,8 @@ export default function Dashboard() {
               ? 'Protected-mode health quorum is unstable; keeping the tunnel up and monitoring...'
               : 'Proxy health check is unstable; keeping the connection up and monitoring...';
             addLog('warning', healthMessage);
-            const toastStoreModule = await import('../stores/toast-store');
-            toastStoreModule.useToastStore.getState().addToast('Connection health is unstable; monitoring...', 'warning');
+
+            useToastStore.getState().addToast('Connection health is unstable; monitoring...', 'warning');
             const activeHealthServer = useAppStore.getState().activeServer;
             reportConnectionError({
               eventType: 'health_drop', serverName: activeHealthServer?.name,
@@ -772,7 +784,7 @@ export default function Dashboard() {
       if (disposed || fatalWatchdogRef.current || healthInFlightRef.current) return;
       healthInFlightRef.current = true;
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+
         const effectiveSystemProxyMode = await getEffectiveHealthSystemProxyMode();
         const health = await withTimeout(
           invoke('get_connection_health', {
@@ -795,8 +807,8 @@ export default function Dashboard() {
         setActiveSystemProxyMode(null);
         setConnectionStep(null);
         setConnectedAt(null);
-        const toastStoreModule = await import('../stores/toast-store');
-        toastStoreModule.useToastStore.getState().addToast('Whole computer mode stopped; reconnect to repair it.', 'error');
+
+        useToastStore.getState().addToast('Whole computer mode stopped; reconnect to repair it.', 'error');
       } catch {
         // The slower monitor handles repeated timeouts. Avoid noisy duplicate logs here.
       } finally {
@@ -825,7 +837,7 @@ export default function Dashboard() {
     if (status !== 'connected') return;
     const poll = setInterval(async () => {
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+
         const lines: string[] = await invoke('get_proxy_logs');
         for (const line of lines) {
           if (!line.trim() || line.match(/tunneling request to tcp|accepted (?:tcp|udp)/)) continue;
@@ -851,7 +863,7 @@ export default function Dashboard() {
                 : tRef.current('subscriptionMaybeLimitedLog');
               burst.lastNoticeAt = now;
               addLog('warning', message);
-              const { useToastStore } = await import('../stores/toast-store');
+
               useToastStore.getState().addToast(message, 'warning');
             }
             continue;
@@ -890,9 +902,7 @@ export default function Dashboard() {
     const message = `${trafficStatus.reason === 'expired' ? t('subscriptionExpiredLog') : t('subscriptionTrafficLimitedLog')}: ${activeSub.name}`;
     eofBurstRef.current.lastNoticeAt = Date.now();
     addLog('warning', message);
-    import('../stores/toast-store').then(({ useToastStore }) => {
-      useToastStore.getState().addToast(message, 'warning');
-    }).catch(() => {});
+    useToastStore.getState().addToast(message, 'warning');
   }, [status, activeServer?.subscriptionId, subscriptions, addLog, t]);
 
   // Poll traffic stats
@@ -900,7 +910,7 @@ export default function Dashboard() {
     if (status !== 'connected') return;
     const interval = setInterval(async () => {
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+
         const stats: any = await invoke('get_traffic_stats');
         const dl = stats.download || 0;
         const ul = stats.upload || 0;
@@ -1020,7 +1030,7 @@ export default function Dashboard() {
           },
         });
         try {
-          const { useToastStore } = await import('../stores/toast-store');
+
           useToastStore.getState().addToast(t('splitTunnelingNeedsTun'), 'warning');
         } catch { /* ignore */ }
       }
@@ -1042,10 +1052,10 @@ export default function Dashboard() {
       }
 
       setConnectedAt(null);
-      addLog('info', `Starting connection to ${srv.name}...`);
+      addLog('info', t('v6LogConnectingTo' as never).replace('{name}', srv.name));
 
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+
         setConnectionStep(t('connectionCheckingServer'));
         const request = closedControlPlane && isClosedLocationServer(srv)
           ? await buildAppConnectLocationRequestFromState(srv)
@@ -1105,7 +1115,7 @@ export default function Dashboard() {
           if (result.message.toLowerCase().includes('full computer components')) {
             const serviceHealthy = await refreshTunnelServiceHealth();
             if (!serviceHealthy) {
-              addLog('warning', 'Tunnel service is not ready. Please reinstall or repair DoodleRay from the installer/settings diagnostics.');
+              addLog('warning', t('v6LogTunnelNotReady' as never));
             }
           }
           reportConnectionError({ eventType: 'connect_fail', serverName: srv!.name, serverAddress: srv!.address, serverPort: srv!.port, protocol: srv!.protocol, errorMessage: result.message });
@@ -1117,9 +1127,9 @@ export default function Dashboard() {
         if (opId !== connectionOpRef.current) return;
         if (isTauriRuntime()) {
           const message = err.message || String(err);
-          addLog('error', `Connection failed: ${message}`);
+          addLog('error', t('v6LogConnectFailed' as never).replace('{message}', message));
           try {
-            const { invoke: cleanupInvoke } = await import('@tauri-apps/api/core');
+            const cleanupInvoke = invoke;
             await cleanupInvoke('vpn_disconnect');
           } catch { /* best effort cleanup */ }
           reportConnectionError({
@@ -1147,18 +1157,18 @@ export default function Dashboard() {
       setStatus('disconnecting');
       setConnectionStep(t('connectionDisconnecting'));
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+
         const result: any = await invoke('vpn_disconnect');
         addLog(result.success ? 'info' : 'error', result.message);
       } catch { addLog('info', '[SIM] Disconnected'); }
       setStatus('disconnected'); setActiveSystemProxyMode(null); setConnectionStep(null); setConnectedAt(null); setCurrentSpeed(0, 0); resetTraffic();
     } else if (status === 'connected') {
-      addLog('info', 'Disconnecting...');
+      addLog('info', t('v6LogDisconnecting' as never));
       ++connectionOpRef.current;
       setStatus('disconnecting');
       setConnectionStep(t('connectionDisconnecting'));
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+
         const result: any = await invoke('vpn_disconnect');
         addLog(result.success ? 'info' : 'error', result.message);
       } catch { addLog('info', '[SIM] Disconnected'); }
@@ -1181,11 +1191,11 @@ export default function Dashboard() {
     if (systemProxyChanged) setSystemProxyMode(normalizedSystemProxyMode);
     addLog('debug', `Режим подключения: ${mode === 'tun' ? t('fullDeviceMode') : t('systemProxy')}`);
     if (status === 'connected') {
-      addLog('info', 'Reconnecting to apply new routing mode...');
+      addLog('info', t('v6LogReconnectingMode' as never));
       setStatus('connecting');
       setConnectionStep(t('connectionSecuringTraffic'));
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+
         await invoke('vpn_disconnect');
         await new Promise(r => setTimeout(r, 2000));
         const srv = activeServer;
@@ -1220,11 +1230,8 @@ export default function Dashboard() {
         } else { setStatus('disconnected'); setActiveSystemProxyMode(null); setConnectionStep(null); }
       } catch (err: any) {
         const message = err.message || String(err);
-        addLog('error', `Reconnect failed: ${message}`);
-        try {
-          const { invoke: cleanupInvoke } = await import('@tauri-apps/api/core');
-          await cleanupInvoke('vpn_disconnect');
-        } catch { /* best effort cleanup */ }
+        addLog('error', t('v6LogReconnectFailed' as never).replace('{message}', message));
+        try { await invoke('vpn_disconnect'); } catch { /* best effort cleanup */ }
         setStatus('disconnected');
         setActiveSystemProxyMode(null);
         setConnectionStep(null);
@@ -1234,7 +1241,7 @@ export default function Dashboard() {
 
   const handleExportSupportBundle = useCallback(async () => {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
+
       const effectiveSystemProxyMode = await getEffectiveHealthSystemProxyMode();
       const path = await invoke('export_support_bundle', {
         proxyMode,
@@ -1243,11 +1250,11 @@ export default function Dashboard() {
         httpPort,
       }) as string;
       addLog('success', `${t('supportBundleExported')}: ${path}`);
-      const { useToastStore } = await import('../stores/toast-store');
+
       useToastStore.getState().addToast(`${t('supportBundleExported')}: ${path}`, 'success');
     } catch (err: any) {
       addLog('error', `${t('supportBundleExportFailed')}: ${err?.message || err}`);
-      const { useToastStore } = await import('../stores/toast-store');
+
       useToastStore.getState().addToast(`${t('supportBundleExportFailed')}: ${err?.message || err}`, 'error');
     }
   }, [addLog, getEffectiveHealthSystemProxyMode, httpPort, proxyMode, socksPort, t]);
@@ -1276,7 +1283,7 @@ export default function Dashboard() {
     let unlisten: (() => void) | undefined;
     (async () => {
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+
         const enabled = await invoke<boolean>('qa_control_enabled').catch(() => false);
         if (!enabled || disposed) return;
         const publishFrontendSnapshot = async () => {
@@ -1289,6 +1296,8 @@ export default function Dashboard() {
               system_proxy_mode: state.systemProxyMode,
               subscriptions_count: state.subscriptions.length,
               servers_count: state.servers.length,
+              app_session_logged_in: state.appSessionLoggedIn,
+              app_session_device_allowed: state.appSessionDeviceAllowed,
               active_server_present: !!state.activeServer,
               active_server_name: state.activeServer?.name ?? null,
               active_server_protocol: state.activeServer?.protocol ?? null,
@@ -1323,15 +1332,17 @@ export default function Dashboard() {
               if (current.status !== 'disconnected') {
                 await current.handleConnect();
               }
+            } else if (action === 'logout') {
+              await appApiLogout();
+              window.dispatchEvent(new CustomEvent('doodleray:app-logout'));
             } else if (action === 'switch-mode') {
               const mode = query.get('mode');
               if (mode === 'tun') await current.handleModeSwitch('tun', 'set');
               else if (mode === 'browsers') await current.handleModeSwitch('system-proxy', 'set');
               else if (mode === 'manual') await current.handleModeSwitch('system-proxy', 'unchanged');
             } else if (action === 'refresh-subscription') {
-              const { refreshSubscription } = await import('../lib/subscription');
-              const storeModule = await import('../stores/app-store');
-              const state = storeModule.useAppStore.getState();
+
+              const state = useAppStore.getState();
               for (const sub of state.subscriptions) {
                 const updated = await refreshSubscription(sub);
                 state.updateSubscription(sub.id, updated);
@@ -1340,12 +1351,11 @@ export default function Dashboard() {
             } else if (action === 'import-subscription') {
               const url = query.get('url');
               if (url) {
-                const { fetchSubscription } = await import('../lib/subscription');
-                const storeModule = await import('../stores/app-store');
-                const state = storeModule.useAppStore.getState();
+
+                const state = useAppStore.getState();
                 const existing = state.subscriptions.find((sub) => sub.url === url);
                 if (existing) {
-                  const { refreshSubscription } = await import('../lib/subscription');
+
                   state.updateSubscription(existing.id, await refreshSubscription(existing));
                   addLog('success', '[QA-control] existing subscription refreshed');
                 } else {
@@ -1362,7 +1372,7 @@ export default function Dashboard() {
                   ? 'block'
                   : 'direct';
               if (value) {
-                const { useWorkshopStore } = await import('../stores/workshop-store');
+
                 useWorkshopStore.getState().addRule({
                   id: crypto.randomUUID(),
                   type: ruleType,
@@ -1373,7 +1383,7 @@ export default function Dashboard() {
                 addLog('success', `[QA-control] routing rule added: ${ruleType}:${value}:${routeAction}`);
               }
             } else if (action === 'clear-custom-routing-rules') {
-              const { useWorkshopStore } = await import('../stores/workshop-store');
+
               const state = useWorkshopStore.getState();
               for (const rule of state.myRules) state.removeRule(rule.id);
               addLog('success', '[QA-control] custom routing rules cleared');
@@ -1406,12 +1416,12 @@ export default function Dashboard() {
       setStatus('connecting');
       setConnectionStep(t('connectionCheckingServer'));
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+
         // Network Extension and the Windows service both own OS routes. Stop
         // the old session first so a country switch cannot reuse its profile.
         await withTimeout(
           invoke('vpn_disconnect'),
-          15_000,
+          30_000,
           'Previous VPN session did not stop in time',
         );
         if (opId !== connectionOpRef.current) return;
@@ -1443,7 +1453,7 @@ export default function Dashboard() {
       } catch (err: any) {
         if (opId !== connectionOpRef.current) return;
         try {
-          const { invoke } = await import('@tauri-apps/api/core');
+
           await invoke('vpn_disconnect');
         } catch { /* best effort network restoration */ }
         addLog('error', `Server switch failed: ${err.message || err}`);
@@ -1496,19 +1506,6 @@ export default function Dashboard() {
     try { const text = await navigator.clipboard.readText(); setQuickInput(text); } catch { /* */ }
   }, []);
 
-  const handlePingAll = useCallback(async () => {
-    const toPing = servers.filter((s) => s.address && !isClosedAutoLocationServer(s));
-    if (toPing.length === 0) return;
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await pingServersWithLimit(toPing, invoke, {
-        onActiveIdsChange: setPingingServerIds,
-        onBatch: (updates) => useAppStore.getState().updateServerPings(updates),
-      });
-    } catch { /* not in tauri env */ }
-    finally { setPingingServerIds(new Set()); }
-  }, [servers]);
-
   const canConnect = !hasDeviceLimit && (!!activeServer || servers.length > 0);
   const hasDashboardContent = closedControlPlane
     ? appSession?.logged_in === true
@@ -1551,11 +1548,24 @@ export default function Dashboard() {
     : t(ORB_LABEL_KEY[orbState] as never);
   const activeSub = getSubscriptionById(subscriptions, activeServer?.subscriptionId) ?? subscriptions[0] ?? null;
 
-  const handleModeSelect = (mode: ProductMode) => {
+  const handleModeSelect = useCallback((mode: ProductMode) => {
     if (mode === 'protected') handleModeSwitch('tun', 'set');
     else if (mode === 'compatibility') handleModeSwitch('system-proxy', 'set');
     else handleModeSwitch('system-proxy', 'unchanged');
-  };
+  }, [handleModeSwitch]);
+
+  // The mode selector now lives in Settings, which AppShell renders as a
+  // sibling of Dashboard rather than a child — it can't receive this handler
+  // as a prop, so Dashboard registers it on the store instead. Registered
+  // once via a ref-backed stable wrapper so handler identity changes never
+  // re-register the store callback or create a setter/effect loop.
+  const handleModeSelectRef = useRef(handleModeSelect);
+  useEffect(() => { handleModeSelectRef.current = handleModeSelect; });
+  useEffect(() => {
+    setRequestModeSwitch((mode: ProductMode) => handleModeSelectRef.current(mode));
+    return () => setRequestModeSwitch(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
@@ -1573,7 +1583,7 @@ export default function Dashboard() {
           {!networkExtensionOnly && (
             <button
               type="button"
-              onClick={openDoodleVpnBot}
+              onClick={openDoodleVpnAccount}
               className="v6-focus flex shrink-0 items-center gap-1.5 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-[11.5px] font-semibold text-white transition-colors hover:bg-white/15"
             >
               {t('v6DeviceLimitAction' as never)}
@@ -1617,6 +1627,42 @@ export default function Dashboard() {
             <p className="mx-auto mt-2 max-w-[360px] text-[14px] leading-relaxed text-white/60">
               {legacyImportEnabled ? t('welcomeHint') : t('v6AppLoginHint' as never)}
             </p>
+            {!legacyImportEnabled && (
+              <div className="mt-4 text-left">
+                <button
+                  type="button"
+                  aria-expanded={codeSourceOpen}
+                  onClick={() => setCodeSourceOpen((open) => !open)}
+                  className="v6-focus mx-auto flex items-center gap-1.5 rounded-xl px-2 py-1 text-[12.5px] font-medium text-[#FFAE57]/85 transition-colors hover:text-[#FFAE57]"
+                >
+                  <span>{t('v6AppLoginWhereToGetCode' as never)}</span>
+                  <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${codeSourceOpen ? 'rotate-180' : ''}`} strokeWidth={2.2} />
+                </button>
+                {codeSourceOpen && (
+                  <div className="mt-2.5 space-y-2">
+                    <div className="v6-glass-inset flex items-start gap-2.5 rounded-[14px] px-3.5 py-3">
+                      <Bot className="mt-0.5 h-4 w-4 shrink-0 text-[#FFAE57]/85" strokeWidth={2} />
+                      <p className="text-[11.5px] leading-relaxed text-white/58">
+                        <span className="font-medium text-white/78">{t('v6AppLoginSourceBotLabel' as never)}</span>{' '}
+                        {t('v6AppLoginSourceBotSteps' as never)}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={openDoodleVpnAccount}
+                      className="v6-glass-inset v6-hover-bright flex w-full items-start gap-2.5 rounded-[14px] px-3.5 py-3 text-left v6-focus"
+                    >
+                      <Globe className="mt-0.5 h-4 w-4 shrink-0 text-[#FFAE57]/85" strokeWidth={2} />
+                      <span className="text-[11.5px] leading-relaxed text-white/58">
+                        <span className="font-medium text-white/78">{t('v6AppLoginSourceWebLabel' as never)}</span>{' '}
+                        {t('v6AppLoginSourceWebSteps' as never)}
+                      </span>
+                      <ExternalLink className="ml-auto mt-0.5 h-3.5 w-3.5 shrink-0 text-white/35" strokeWidth={2} />
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
             {legacyImportEnabled && (
               <>
                 <div className="mt-6 flex gap-2.5">
@@ -1648,7 +1694,13 @@ export default function Dashboard() {
                 </button>
               </>
             )}
-            {!legacyImportEnabled && (
+            {!legacyImportEnabled && appLocationsLoading && (
+              <div className="mt-6 flex min-h-[154px] flex-col items-center justify-center gap-3 text-white/55">
+                <Loader2 className="h-5 w-5 v6-orb-spin" aria-hidden="true" />
+                <p className="text-[12px] leading-relaxed">{t('v6RestoringSession' as never)}</p>
+              </div>
+            )}
+            {!legacyImportEnabled && !appLocationsLoading && (
               <div className="mt-6 text-left">
                 <label className="mb-2.5 block text-[13px] font-medium text-white/72">
                   {t('v6AppLoginCode' as never)}
@@ -1677,9 +1729,9 @@ export default function Dashboard() {
                 >
                   {appLoginBusy ? t('loading') : t('v6AppSignIn' as never)}
                 </button>
-                {(appLoginError || appLocationsLoading) && (
-                  <p className={`mt-3 text-center text-[12px] leading-relaxed ${appLoginError ? 'text-[#ff8b7d]' : 'text-white/45'}`}>
-                    {appLoginError || t('v6RestoringSession' as never)}
+                {appLoginError && (
+                  <p className="mt-3 text-center text-[12px] leading-relaxed text-[#ff8b7d]">
+                    {appLoginError}
                   </p>
                 )}
                 <div className="mt-6 border-t border-white/[0.08] pt-4">
@@ -1727,28 +1779,24 @@ export default function Dashboard() {
             servers={servers}
             activeServer={activeServer}
             activeSub={activeSub}
-            pingingServerIds={pingingServerIds}
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
             onSelect={handleServerSelect}
             onAdd={() => { if (legacyImportEnabled) setShowAddModal(true); }}
             canAdd={legacyImportEnabled}
-            onPingAll={handlePingAll}
             t={t}
           />
 
-          {/* RIGHT: modes, connect core, bottom row */}
+          {/* RIGHT: connect core, bottom row (mode + exceptions now live in Settings) */}
           <div className="v6-dashboard-main flex min-h-0 min-w-0 flex-1 flex-col gap-4">
-            {!networkExtensionOnly && (
-              <ModeSelector current={productMode} onSelect={handleModeSelect} disabled={busy} t={t} />
-            )}
-
             <ConnectOrb
               state={orbState}
               primaryLabel={orbPrimary}
               subLabel={orbSub}
               statusLabel={orbStatusLabel}
-              serverName={activeServer ? displayServerName(activeServer) : null}
+              serverName={activeServer
+                ? (isClosedAutoLocationServer(activeServer) ? t('v6AutoLocationName' as never) : displayServerName(activeServer, language))
+                : null}
               serverRawName={activeServer?.name ?? null}
               serverCountryCode={activeServer?.countryCode ?? null}
               disabled={status === 'disconnected' && !canConnect}
@@ -1757,19 +1805,23 @@ export default function Dashboard() {
               diagnoseLabel={t('v6DiagIssueCta' as never)}
             />
 
-            <div className="flex shrink-0 gap-3.5">
-              {!networkExtensionOnly && (
-                <SplitRoutingToggle protectedMode={productMode === 'protected'} onOpen={() => setShowSplitModal(true)} t={t} />
-              )}
-              {!networkExtensionOnly && showStats && (
+            <SubscriptionStatusBlock
+              activeSub={activeSub}
+              activeServer={activeServer}
+              t={t}
+              className="v6-orb-sub-status"
+            />
+
+            {!networkExtensionOnly && showStats && (
+              <div className="v6-quick-actions-row flex shrink-0 gap-3.5">
                 <TrafficStats
                   connected={connected}
                   currentDownload={currentDownload}
                   currentUpload={currentUpload}
                   t={t}
                 />
-              )}
-            </div>
+              </div>
+            )}
 
             <DiagnosticsDrawer
               logs={logs}
@@ -1789,13 +1841,6 @@ export default function Dashboard() {
         />
       )}
 
-      {!networkExtensionOnly && showSplitModal && (
-        <SplitRoutingModal
-          protectedMode={productMode === 'protected'}
-          onClose={() => setShowSplitModal(false)}
-          t={t}
-        />
-      )}
     </div>
   );
 }

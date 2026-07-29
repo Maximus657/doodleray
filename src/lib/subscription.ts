@@ -1,6 +1,7 @@
 import type { Subscription, ServerConfig } from '../stores/app-store';
 import { parseMultipleLinks, detectCountry } from './parser';
 import { getServerIdentityKey, stableServerId } from './server-selection';
+import { desktopBridge } from '../platform/tauri/desktop-bridge';
 
 /// Attach the subscription id, dedupe deterministically by normalized
 /// identity (payload order preserved, first occurrence wins), and replace
@@ -394,9 +395,8 @@ async function fetchSubscriptionText(url: string): Promise<FetchedSubscriptionPa
     }).__TAURI_INTERNALS__?.invoke === 'function';
 
   if (isTauri) {
-    const { invoke } = await import('@tauri-apps/api/core');
     try {
-      const result = await invoke<{
+      const result = await desktopBridge.command<{
         body: string;
         subscription_userinfo?: string | null;
         profile_title?: string | null;
@@ -409,7 +409,7 @@ async function fetchSubscriptionText(url: string): Promise<FetchedSubscriptionPa
         contentDisposition: result.content_disposition || undefined,
       };
     } catch {
-      const text = await invoke<string>('fetch_url', { url });
+      const text = await desktopBridge.command<string>('fetch_url', { url });
       return { text };
     }
   }

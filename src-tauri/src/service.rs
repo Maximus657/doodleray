@@ -8,7 +8,7 @@ mod windows_service_main {
     use std::fs::OpenOptions;
     use std::hash::{Hash, Hasher};
     use std::mem::{size_of, zeroed};
-    use std::net::{Ipv4Addr, TcpStream};
+    use std::net::{Ipv4Addr, Ipv6Addr, TcpStream};
     use std::os::windows::io::AsRawHandle;
     use std::os::windows::process::CommandExt;
     use std::path::{Path, PathBuf};
@@ -29,9 +29,8 @@ mod windows_service_main {
     use tokio::net::windows::named_pipe::{PipeMode, ServerOptions};
     use windows_service::define_windows_service;
     use windows_service::service::{
-        PowerEventParam, ServiceAccess, ServiceAction, ServiceActionType, ServiceControl,
-        ServiceControlAccept, ServiceErrorControl, ServiceExitCode, ServiceFailureActions,
-        ServiceFailureResetPeriod, ServiceInfo, ServiceSidType, ServiceStartType, ServiceState,
+        PowerEventParam, ServiceAccess, ServiceControl, ServiceControlAccept, ServiceErrorControl,
+        ServiceExitCode, ServiceInfo, ServiceSidType, ServiceStartType, ServiceState,
         ServiceStatus, ServiceType,
     };
     use windows_service::service_control_handler::{
@@ -60,6 +59,7 @@ mod windows_service_main {
     static STATE: OnceLock<Mutex<TunnelRuntime>> = OnceLock::new();
     static SINGBOX_VALIDATION_CACHE: OnceLock<Mutex<Option<SingboxValidationCache>>> =
         OnceLock::new();
+    static XRAY_VALIDATION_CACHE: OnceLock<Mutex<Option<u64>>> = OnceLock::new();
     static STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
     static OP_GENERATION: AtomicU64 = AtomicU64::new(0);
     const PIPE_WORKERS: usize = 16;
@@ -92,6 +92,7 @@ mod windows_service_main {
         last_repair_action: Option<String>,
         network_event_seq: u64,
         previous_unclean_shutdown: Option<String>,
+        ghost_scan_done_since_start: bool,
         last_start_request: Option<StartTunnelRequest>,
         last_rotation_seq: u64,
         error: Option<String>,
@@ -99,6 +100,7 @@ mod windows_service_main {
         powershell_fallback_count: u32,
         singbox_check_ms: Option<u64>,
         xray_spawn_ms: Option<u64>,
+        xray_check_ms: Option<u64>,
         adapter_probe_backend: Option<String>,
         route_probe_backend: Option<String>,
         native_probe_ms: Vec<(String, u64)>,
@@ -135,6 +137,7 @@ mod windows_service_main {
                 last_repair_action: None,
                 network_event_seq: 0,
                 previous_unclean_shutdown: None,
+                ghost_scan_done_since_start: false,
                 last_start_request: None,
                 last_rotation_seq: 0,
                 error: None,
@@ -142,6 +145,7 @@ mod windows_service_main {
                 powershell_fallback_count: 0,
                 singbox_check_ms: None,
                 xray_spawn_ms: None,
+                xray_check_ms: None,
                 adapter_probe_backend: None,
                 route_probe_backend: None,
                 native_probe_ms: Vec::new(),
@@ -303,6 +307,7 @@ mod windows_service_main {
             while !stopped.load(Ordering::SeqCst) && !STOP_REQUESTED.load(Ordering::SeqCst) {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
+            let _ = set_service_status(&status_handle, ServiceState::StopPending, 1);
             for worker in workers {
                 worker.abort();
             }
@@ -317,16 +322,25 @@ mod windows_service_main {
         state: ServiceState,
         checkpoint: u32,
     ) -> windows_service::Result<()> {
+        let controls_accepted = if state == ServiceState::Running {
+            ServiceControlAccept::STOP
+                | ServiceControlAccept::POWER_EVENT
+                | ServiceControlAccept::PARAM_CHANGE
+                | ServiceControlAccept::NETBIND_CHANGE
+        } else {
+            ServiceControlAccept::empty()
+        };
         handle.set_service_status(ServiceStatus {
             service_type: ServiceType::OWN_PROCESS,
             current_state: state,
-            controls_accepted: ServiceControlAccept::STOP
-                | ServiceControlAccept::POWER_EVENT
-                | ServiceControlAccept::PARAM_CHANGE
-                | ServiceControlAccept::NETBIND_CHANGE,
+            controls_accepted,
             exit_code: ServiceExitCode::Win32(0),
             checkpoint,
-            wait_hint: Duration::from_secs(2),
+            wait_hint: if state == ServiceState::StopPending {
+                Duration::from_secs(10)
+            } else {
+                Duration::from_secs(2)
+            },
             process_id: None,
         })
     }
@@ -999,6 +1013,7 @@ mod windows_service_main {
             powershell_fallback_count: runtime.powershell_fallback_count,
             singbox_check_ms: runtime.singbox_check_ms,
             xray_spawn_ms: runtime.xray_spawn_ms,
+            xray_check_ms: runtime.xray_check_ms,
             adapter_probe_backend: runtime.adapter_probe_backend.clone(),
             route_probe_backend: runtime.route_probe_backend.clone(),
             native_probe_ms: runtime.native_probe_ms.clone(),
@@ -1503,7 +1518,7 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             write_json_file(&xray_config_path, xray_config)?;
             let xray_log_path = runtime_dir.join("xray.log");
             let xray_exe = xray_exe_path()?;
-            check_xray_config(&xray_exe, &xray_config_path)?;
+            check_xray_config(&xray_exe, &xray_config_path, xray_config)?;
             let spawn_started = Instant::now();
             let child = spawn_engine(xray_exe, &["run", "-c"], &xray_config_path, &xray_log_path)?;
             set_xray_spawn_ms(elapsed_ms(spawn_started));
@@ -1568,17 +1583,18 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             }
         }
         set_phase("singbox_ready", started, generation)?;
-        wait_for_doodleray_ipv4_interface(Duration::from_secs(20), generation)?;
-        set_phase("ipv4_ready", started, generation)?;
+        wait_for_doodleray_dual_stack_interface(Duration::from_secs(20), generation)?;
+        set_phase("dual_stack_ready", started, generation)?;
         apply_doodleray_dns_client_policy(generation);
         wait_for_doodleray_route_preferred(Duration::from_secs(20), generation)?;
         mark_route_ready();
         set_phase("routes_ready", started, generation)?;
-        wait_for_doodleray_ipv6_policy_ready(Duration::from_secs(8), generation)?;
-        set_phase("ipv6_ready", started, generation)?;
-        wait_for_windows_system_resolver_ready(Duration::from_secs(20), generation)?;
         mark_dns_policy_ready();
         set_phase("dns_ready", started, generation)?;
+        // The resolver canary no longer gates bring-up (see
+        // spawn_nonfatal_policy_checks): it only proves two specific
+        // third-party domains are reachable, so it now runs in the
+        // background instead of blocking connect for up to 20s.
         spawn_nonfatal_policy_checks(generation);
         if let Some(path) = xray_log_path.as_deref() {
             ensure_xray_alive(path)?;
@@ -1646,12 +1662,10 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
 
         ensure_current_generation(generation)?;
         refresh_adapter_snapshot_required()?;
-        wait_for_doodleray_ipv4_interface(Duration::from_secs(8), generation)?;
+        wait_for_doodleray_dual_stack_interface(Duration::from_secs(8), generation)?;
         apply_doodleray_dns_client_policy(generation);
         wait_for_doodleray_route_preferred(Duration::from_secs(8), generation)?;
         mark_route_ready();
-        wait_for_doodleray_ipv6_policy_ready(Duration::from_secs(8), generation)?;
-        wait_for_windows_system_resolver_ready(Duration::from_secs(12), generation)?;
         mark_dns_policy_ready();
         spawn_nonfatal_policy_checks(generation);
         wait_for_port(socks_port, Duration::from_secs(5), generation)?;
@@ -1752,12 +1766,12 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         // honest cleanup_pending instead of a silent idle. We never touch
         // non-DoodleRay adapters here.
         let mut adapter_still_present = doodleray_adapter_snapshot().is_some();
-        for _ in 0..6 {
-            if !adapter_still_present {
-                break;
+        if should_wait_for_adapter_cleanup(reason) {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while adapter_still_present && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(100));
+                adapter_still_present = doodleray_adapter_snapshot().is_some();
             }
-            std::thread::sleep(Duration::from_millis(500));
-            adapter_still_present = doodleray_adapter_snapshot().is_some();
         }
         if adapter_still_present {
             let mut runtime = state().lock().unwrap();
@@ -1768,14 +1782,65 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             );
             log_service_event("cleanup pending: DoodleRay Tunnel adapter still present after stop");
         }
-        for action in repair_stale_wintun_ghost_devices(reason) {
-            log_service_event(&action);
-            if action.contains("removed=") && !action.contains("removed=0") {
-                let mut runtime = state().lock().unwrap();
-                runtime.warning_checks.push(action);
+        let already_scanned = state().lock().unwrap().ghost_scan_done_since_start;
+        if should_scan_wintun_ghosts(reason, adapter_still_present, already_scanned) {
+            for action in repair_stale_wintun_ghost_devices(reason) {
+                log_service_event(&action);
+                if action.contains("removed=") && !action.contains("removed=0") {
+                    let mut runtime = state().lock().unwrap();
+                    runtime.warning_checks.push(action);
+                }
             }
+            state().lock().unwrap().ghost_scan_done_since_start = true;
+        } else {
+            log_service_event(&format!(
+                "stale Wintun ghost repair ({}) skipped: already verified clean this service run",
+                reason
+            ));
         }
         Ok(())
+    }
+
+    /// Whether to spend up to 3s proving the Wintun adapter disappeared after
+    /// stopping our children. That proof exists so a tunnel that comes to rest
+    /// "disconnected" reports an honest cleanup_pending instead of a silent
+    /// idle — so it is only worth paying for when we are actually coming to
+    /// rest. On `replace_tunnel` we are mid-restart and about to bring a new
+    /// tunnel up immediately; bring-up has its own adapter-readiness wait, and
+    /// the state never settles as "disconnected" for a user to see. Measured on
+    /// the stand: the adapter never vanished inside the window anyway, so a
+    /// country switch burned ~2.5s here on top of ~3s on the preceding stop.
+    fn should_wait_for_adapter_cleanup(reason: &str) -> bool {
+        reason != "replace_tunnel"
+    }
+
+    /// Whether to pay for the PowerShell Get-PnpDevice ghost-device scan on
+    /// this stop. Real-world timing showed this scan costs ~3s per connect
+    /// even when it finds nothing (seen=0 removed=0), because bring-up always
+    /// stops any prior runtime first. A stale Wintun ghost can only appear
+    /// from a crash this service process didn't witness (checked once, right
+    /// after start) or from this stop's own cleanup not finishing cleanly
+    /// (adapter_still_present, checked fresh every time) — so skipping is
+    /// safe once one full scan has proven the machine clean for this service
+    /// run and neither signal is currently active.
+    ///
+    /// `replace_tunnel` never scans. It runs at the start of every connect,
+    /// right after killing sing-box, when the adapter has essentially always
+    /// not vanished yet — so `adapter_still_present` is true for an entirely
+    /// benign reason and would force a rescan on every single connect (~2.4s
+    /// measured on the stand, every time reporting seen=0). A ghost that
+    /// genuinely blocks adapter creation still gets cleaned: bring-up attempt 1
+    /// fails, and the retry path calls stop_owned_processes("tun_adapter_repair"),
+    /// which does scan.
+    fn should_scan_wintun_ghosts(
+        reason: &str,
+        adapter_still_present: bool,
+        already_scanned: bool,
+    ) -> bool {
+        if reason == "replace_tunnel" {
+            return false;
+        }
+        adapter_still_present || !already_scanned
     }
 
     fn set_failed(message: &str) {
@@ -1845,6 +1910,10 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
 
     fn set_xray_spawn_ms(value: u64) {
         state().lock().unwrap().xray_spawn_ms = Some(value);
+    }
+
+    fn set_xray_check_ms(value: u64) {
+        state().lock().unwrap().xray_check_ms = Some(value);
     }
 
     fn start_network_watchers_for_connect() {
@@ -2026,14 +2095,26 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         ))
     }
 
-    fn check_xray_config(exe: &Path, config_path: &Path) -> Result<(), String> {
+    fn check_xray_config(exe: &Path, config_path: &Path, config: &Value) -> Result<(), String> {
+        let config_hash = hash_json_value(config)?;
+        if *xray_validation_cache().lock().unwrap() == Some(config_hash) {
+            set_xray_check_ms(0);
+            log_service_event(
+                "xray config check skipped: effective config hash was already validated",
+            );
+            return Ok(());
+        }
+
+        let started = Instant::now();
         let output = Command::new(exe)
             .args(["run", "-test", "-c"])
             .arg(config_path)
             .creation_flags(0x08000000)
             .output()
             .map_err(|error| format!("xray config check failed to run: {error}"))?;
+        set_xray_check_ms(elapsed_ms(started));
         if output.status.success() {
+            *xray_validation_cache().lock().unwrap() = Some(config_hash);
             return Ok(());
         }
         Err(format!(
@@ -2045,6 +2126,10 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
 
     fn singbox_validation_cache() -> &'static Mutex<Option<SingboxValidationCache>> {
         SINGBOX_VALIDATION_CACHE.get_or_init(|| Mutex::new(None))
+    }
+
+    fn xray_validation_cache() -> &'static Mutex<Option<u64>> {
+        XRAY_VALIDATION_CACHE.get_or_init(|| Mutex::new(None))
     }
 
     fn hash_json_value(value: &Value) -> Result<u64, String> {
@@ -2295,54 +2380,35 @@ $summary -join "`n"
         if !is_current_generation(generation) {
             return;
         }
-        let output = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                r#"
-$ErrorActionPreference = 'Stop'
-$adapter = Get-NetAdapter -Name 'DoodleRay Tunnel' -ErrorAction Stop | Select-Object -First 1
-$wanted = @('1.1.1.1','8.8.8.8')
-$metricChanged = $false
-try {
-  $ipInterface = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction Stop
-  if ([int]$ipInterface.InterfaceMetric -gt 5) {
-    Set-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -InterfaceMetric 1 -ErrorAction Stop
-    $metricChanged = $true
-  }
-} catch {
-  Write-Output ("metric_warning=" + $_.Exception.Message)
-}
-$current = @(Get-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-  ForEach-Object { $_.ServerAddresses } |
-  Where-Object { $_ })
-$needsSet = $current.Count -ne $wanted.Count
-if (-not $needsSet) {
-  for ($i = 0; $i -lt $wanted.Count; $i++) {
-    if ($current[$i] -ne $wanted[$i]) { $needsSet = $true; break }
-  }
-}
-if ($needsSet) {
-  Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ServerAddresses $wanted -ErrorAction Stop
-  Clear-DnsClientCache -ErrorAction SilentlyContinue
-}
-Set-DnsClient -InterfaceIndex $adapter.ifIndex -RegisterThisConnectionsAddress $false -ErrorAction SilentlyContinue
-$after = @(Get-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-  ForEach-Object { $_.ServerAddresses } |
-  Where-Object { $_ })
-$metric = (Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).InterfaceMetric
-"adapter_dns_ipv4=" + ($after -join ',') + "; interface_metric=" + $metric + "; metric_changed=" + $metricChanged
-"#,
-            ])
-            .creation_flags(0x08000000)
-            .output();
+        let native_started = Instant::now();
+        let result =
+            windows_net::apply_dns_client_policy("DoodleRay Tunnel", &["1.1.1.1", "8.8.8.8"]);
+        let outcome = match result {
+            Ok(detail) => {
+                record_native_probe("dns_policy", native_started);
+                set_adapter_probe_backend("native_iphelper");
+                Ok(detail)
+            }
+            Err(native_error) => {
+                let fallback_started = Instant::now();
+                match apply_doodleray_dns_client_policy_powershell() {
+                    Ok(detail) => {
+                        record_fallback_probe("dns_policy", fallback_started);
+                        set_adapter_probe_backend("powershell_fallback");
+                        Ok(detail)
+                    }
+                    Err(fallback_error) => Err(format!(
+                        "native: {native_error}; powershell fallback: {fallback_error}"
+                    )),
+                }
+            }
+        };
 
         let mut runtime = state().lock().unwrap();
-        match output {
-            Ok(output) if output.status.success() => {
+        match outcome {
+            Ok(detail) => {
                 let detail = format!(
-                    "DoodleRay Tunnel DNS client policy pinned to IPv4 resolvers ({})",
-                    redact(String::from_utf8_lossy(&output.stdout).trim())
+                    "DoodleRay Tunnel DNS client policy pinned to IPv4 resolvers ({detail})"
                 );
                 log_service_event(&detail);
                 if !runtime
@@ -2351,22 +2417,6 @@ $metric = (Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IP
                     .any(|existing| existing == &detail)
                 {
                     runtime.route_explanations.push(detail);
-                }
-            }
-            Ok(output) => {
-                let detail = format!(
-                    "Windows DNS client policy could not be pinned to the DoodleRay Tunnel adapter: {}{}",
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
-                );
-                log_service_event(&detail);
-                let detail = redact(&detail);
-                if !runtime
-                    .degraded_checks
-                    .iter()
-                    .any(|existing| existing == &detail)
-                {
-                    runtime.degraded_checks.push(detail);
                 }
             }
             Err(error) => {
@@ -2387,6 +2437,39 @@ $metric = (Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IP
         }
     }
 
+    /// Fallback for apply_doodleray_dns_client_policy when the native
+    /// SetInterfaceDnsSettings call fails. Only sets DNS servers and disables
+    /// registration — the interface metric is handled separately by
+    /// apply_doodleray_interface_metric, so it is not duplicated here.
+    fn apply_doodleray_dns_client_policy_powershell() -> Result<String, String> {
+        let output = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                r#"
+$ErrorActionPreference = 'Stop'
+$adapter = Get-NetAdapter -Name 'DoodleRay Tunnel' -ErrorAction Stop | Select-Object -First 1
+Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ServerAddresses @('1.1.1.1','8.8.8.8') -ErrorAction Stop
+Set-DnsClient -InterfaceIndex $adapter.ifIndex -RegisterThisConnectionsAddress $false -ErrorAction SilentlyContinue
+$after = @(Get-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+  ForEach-Object { $_.ServerAddresses } |
+  Where-Object { $_ })
+"adapter_dns_ipv4=" + ($after -join ',') + "; registration_enabled=false"
+"#,
+            ])
+            .creation_flags(0x08000000)
+            .output()
+            .map_err(|error| format!("failed to run: {error}"))?;
+        if output.status.success() {
+            return Ok(redact(String::from_utf8_lossy(&output.stdout).trim()));
+        }
+        Err(redact(&format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )))
+    }
+
     fn mark_dns_policy_ready() {
         let mut runtime = state().lock().unwrap();
         runtime.dns_ready = Some(true);
@@ -2397,12 +2480,20 @@ $metric = (Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IP
     }
 
     fn windows_system_resolver_canary() -> Result<String, String> {
+        // auth.openai.com is a known-bad choice as a hard gate: OpenAI
+        // actively blocks huge ranges of VPN/datacenter exit IPs regardless
+        // of whether the tunnel's own DNS/routing is healthy, so a block on
+        // this one domain is not evidence of a real local problem. Try both
+        // targets — never stop at the first failure — and only report the
+        // canary as failed when *neither* target is reachable, matching
+        // this function's own intent ("this exit simply not routing to that
+        // one domain" must not fail the whole check).
         let targets = [
             ("auth.openai.com", "https://auth.openai.com"),
             ("api.ipify.org", "https://api.ipify.org"),
         ];
         let mut ok = Vec::new();
-        let mut last_error = None;
+        let mut errors = Vec::new();
         for (host, url) in targets {
             let output = Command::new("curl.exe")
                 .args([
@@ -2441,7 +2532,7 @@ $metric = (Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IP
                 || lower.contains("getaddrinfo")
                 || lower.contains("enotfound")
                 || lower.contains("name or service not known");
-            last_error = Some(if dns_like {
+            errors.push(if dns_like {
                 format!(
                     "Windows system resolver canary failed after TUN route setup for {}: {}",
                     host,
@@ -2454,16 +2545,15 @@ $metric = (Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IP
                     redact(combined.trim())
                 )
             });
-            break;
         }
 
-        if ok.len() == targets.len() {
+        if !ok.is_empty() {
             Ok(format!(
-                "Windows system resolver canaries passed through TUN ({})",
+                "Windows system resolver canary passed through TUN ({})",
                 ok.join(", ")
             ))
         } else {
-            Err(last_error.unwrap_or_else(|| {
+            Err(errors.into_iter().next().unwrap_or_else(|| {
                 "Windows system resolver canary failed after TUN route setup".into()
             }))
         }
@@ -2497,16 +2587,47 @@ $metric = (Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IP
         Err(last_error)
     }
 
+    // The resolver canary only proves two specific third-party domains are
+    // reachable through the tunnel. The adapter, dual-stack interface and
+    // routes are already confirmed healthy by the time this runs, so a
+    // canary miss (a slow network, or this exit simply not routing to that
+    // one domain) must not block or tear down an otherwise-working TUN
+    // connection — it just downgrades to a degraded_checks entry, from the
+    // background, same as the QUIC policy check below.
+    fn record_windows_system_resolver_canary(generation: u64) {
+        if let Err(error) =
+            wait_for_windows_system_resolver_ready(Duration::from_secs(20), generation)
+        {
+            if !is_current_generation(generation) {
+                return;
+            }
+            log_service_event(&format!(
+                "resolver canary degraded, tunnel stays active: {}",
+                error
+            ));
+            let mut runtime = state().lock().unwrap();
+            let detail = format!(
+                "Windows system resolver canary did not pass through TUN (tunnel stays active): {}",
+                error
+            );
+            if !runtime
+                .degraded_checks
+                .iter()
+                .any(|existing| existing == &detail)
+            {
+                runtime.degraded_checks.push(detail);
+            }
+        }
+    }
+
     fn spawn_nonfatal_policy_checks(generation: u64) {
         std::thread::spawn(move || {
             if !is_current_generation(generation) {
                 return;
             }
             mark_ipv6_policy_status();
-            if !is_current_generation(generation) {
-                return;
-            }
             mark_quic_policy_status();
+            record_windows_system_resolver_canary(generation);
         });
     }
 
@@ -2539,7 +2660,6 @@ $metric = (Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IP
             }
         }
     }
-
     fn mark_quic_policy_status() {
         let mut runtime = state().lock().unwrap();
         let check = "QUIC/HTTP3 is not verified by a controlled probe in this build; no QUIC claim";
@@ -2588,7 +2708,7 @@ $metric = (Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IP
         let native_started = Instant::now();
         match windows_net::apply_interface_metric("DoodleRay Tunnel", 50) {
             Ok(message) => {
-                record_native_probe("ipv4_metric", native_started);
+                record_native_probe("dual_stack_metric", native_started);
                 set_adapter_probe_backend("native_iphelper");
                 Ok(message)
             }
@@ -2618,21 +2738,24 @@ if (-not $tunIface) {
   Write-Output ("DoodleRay Tunnel IPv4 interface is not ready: ifIndex={0}, adapterStatus={1}, ipv4Binding={2}" -f $adapter.ifIndex, $adapter.Status, $bindingState)
   exit 2
 }
+$tunIfaceV6 = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -ErrorAction SilentlyContinue
+if (-not $tunIfaceV6) {
+  Write-Output ("DoodleRay Tunnel IPv6 interface is not ready: ifIndex={0}, adapterStatus={1}" -f $adapter.ifIndex, $adapter.Status)
+  exit 2
+}
 
 $targetMetric = 50
 Set-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -AutomaticMetric Disabled -InterfaceMetric $targetMetric -ErrorAction Stop
-$ipv6Iface = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -ErrorAction SilentlyContinue
-if ($ipv6Iface) {
-  Set-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -AutomaticMetric Disabled -InterfaceMetric $targetMetric -ErrorAction SilentlyContinue
-}
+Set-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -AutomaticMetric Disabled -InterfaceMetric $targetMetric -ErrorAction Stop
 
 $tunIface = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction Stop
-if ([int]$tunIface.InterfaceMetric -ne $targetMetric) {
-  Write-Output ("DoodleRay Tunnel IPv4 metric was not applied: ifIndex={0}, metric={1}" -f $adapter.ifIndex, $tunIface.InterfaceMetric)
+$tunIfaceV6 = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -ErrorAction Stop
+if ([int]$tunIface.InterfaceMetric -ne $targetMetric -or [int]$tunIfaceV6.InterfaceMetric -ne $targetMetric) {
+  Write-Output ("DoodleRay Tunnel dual-stack metric was not applied: ifIndex={0}, ipv4={1}, ipv6={2}" -f $adapter.ifIndex, $tunIface.InterfaceMetric, $tunIfaceV6.InterfaceMetric)
   exit 3
 }
 
-Write-Output ("DoodleRay Tunnel IPv4 ready: ifIndex={0}, metric={1}, state={2}, mtu={3}" -f $adapter.ifIndex, $tunIface.InterfaceMetric, $tunIface.ConnectionState, $tunIface.NlMtu)
+Write-Output ("DoodleRay Tunnel dual-stack ready: ifIndex={0}, ipv4_metric={1}, ipv6_metric={2}, state={3}, mtu={4}" -f $adapter.ifIndex, $tunIface.InterfaceMetric, $tunIfaceV6.InterfaceMetric, $tunIface.ConnectionState, $tunIface.NlMtu)
 "#;
         match Command::new("powershell")
             .args(["-NoProfile", "-Command", script])
@@ -2651,9 +2774,13 @@ Write-Output ("DoodleRay Tunnel IPv4 ready: ifIndex={0}, metric={1}, state={2}, 
         }
     }
 
-    fn wait_for_doodleray_ipv4_interface(timeout: Duration, generation: u64) -> Result<(), String> {
+    fn wait_for_doodleray_dual_stack_interface(
+        timeout: Duration,
+        generation: u64,
+    ) -> Result<(), String> {
         let deadline = Instant::now() + timeout;
-        let mut last_error = "DoodleRay Tunnel IPv4 interface did not become ready".to_string();
+        let mut last_error =
+            "DoodleRay Tunnel dual-stack interface did not become ready".to_string();
         while Instant::now() < deadline {
             ensure_current_generation(generation)?;
             let cursor = windows_net::network_event_cursors();
@@ -2671,7 +2798,7 @@ Write-Output ("DoodleRay Tunnel IPv4 ready: ifIndex={0}, metric={1}, state={2}, 
         }
         let fallback_started = Instant::now();
         if let Ok(message) = apply_doodleray_interface_metric_powershell() {
-            record_fallback_probe("ipv4_metric_final", fallback_started);
+            record_fallback_probe("dual_stack_metric_final", fallback_started);
             set_adapter_probe_backend("powershell_fallback");
             log_service_event(&format!(
                 "applied DoodleRay Tunnel interface metric via final fallback: {}",
@@ -2680,19 +2807,27 @@ Write-Output ("DoodleRay Tunnel IPv4 ready: ifIndex={0}, metric={1}, state={2}, 
             return Ok(());
         }
         Err(format!(
-            "DoodleRay Tunnel IPv4 readiness failed: {}",
+            "DoodleRay Tunnel dual-stack readiness failed: {}",
             last_error
         ))
     }
 
     fn ensure_doodleray_route_preferred_native() -> Result<String, String> {
-        let canaries = [
+        let ipv4_canaries = [
             Ipv4Addr::new(104, 26, 13, 205),
             Ipv4Addr::new(142, 251, 20, 113),
             Ipv4Addr::new(162, 159, 136, 232),
         ];
+        let ipv6_canaries = [
+            Ipv6Addr::new(0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1111),
+            Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888),
+        ];
         let started = Instant::now();
-        match windows_net::route_canaries_prefer_adapter("DoodleRay Tunnel", &canaries) {
+        match windows_net::route_canaries_prefer_adapter(
+            "DoodleRay Tunnel",
+            &ipv4_canaries,
+            &ipv6_canaries,
+        ) {
             Ok(message) => {
                 record_native_probe("route_canaries", started);
                 set_route_probe_backend("native_getbestroute2");
@@ -2715,6 +2850,11 @@ if (-not $tunIface) {
   $binding = Get-NetAdapterBinding -Name $adapter.Name -ComponentID 'ms_tcpip' -ErrorAction SilentlyContinue
   $bindingState = if ($binding) { $binding.Enabled } else { 'unknown' }
   Write-Output ("DoodleRay Tunnel IPv4 interface is not ready: ifIndex={0}, adapterStatus={1}, ipv4Binding={2}" -f $adapter.ifIndex, $adapter.Status, $bindingState)
+  exit 2
+}
+$tunIfaceV6 = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -ErrorAction SilentlyContinue
+if (-not $tunIfaceV6) {
+  Write-Output ("DoodleRay Tunnel IPv6 interface is not ready: ifIndex={0}, adapterStatus={1}" -f $adapter.ifIndex, $adapter.Status)
   exit 2
 }
 
@@ -2768,10 +2908,23 @@ if ($routeShape -eq 'default' -and $bestOther -and $tunEffective -ge [int]$bestO
   exit 3
 }
 
+$tunV6DefaultRoute = Get-NetRoute -AddressFamily IPv6 -DestinationPrefix '::/0' -InterfaceIndex $adapter.ifIndex -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
+$tunV6SplitRoutes = @(
+  Get-NetRoute -AddressFamily IPv6 -DestinationPrefix '::/1' -InterfaceIndex $adapter.ifIndex -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
+  Get-NetRoute -AddressFamily IPv6 -DestinationPrefix '8000::/1' -InterfaceIndex $adapter.ifIndex -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
+) | Where-Object { $_ }
+$routeShapeV6 = if ($tunV6DefaultRoute) { 'default' } elseif ($tunV6SplitRoutes.Count -eq 2) { 'split' } else { 'none' }
+if ($routeShapeV6 -eq 'none') {
+  Write-Output ("DoodleRay Tunnel IPv6 routes are missing: default=0 split={0}" -f $tunV6SplitRoutes.Count)
+  exit 2
+}
+
 $routeCanaries = @(
   '104.26.13.205',
   '142.251.20.113',
-  '162.159.136.232'
+  '162.159.136.232',
+  '2606:4700:4700::1111',
+  '2001:4860:4860::8888'
 )
 $bypassedCanaries = @()
 foreach ($ip in $routeCanaries) {
@@ -2789,7 +2942,7 @@ if ($bypassedCanaries.Count -gt 0) {
   exit 3
 }
 
-Write-Output ("DoodleRay Tunnel route preferred: shape={0}, tun={1}, best_other={2}, canaries=ok" -f $routeShape, $tunEffective, $(if ($bestOther) { "$($bestOther.Alias):$($bestOther.Effective)" } else { 'none' }))
+Write-Output ("DoodleRay Tunnel dual-stack route preferred: ipv4_shape={0}, ipv6_shape={1}, tun={2}, best_other={3}, canaries=ok" -f $routeShape, $routeShapeV6, $tunEffective, $(if ($bestOther) { "$($bestOther.Alias):$($bestOther.Effective)" } else { 'none' }))
 "#;
         match Command::new("powershell")
             .args(["-NoProfile", "-Command", script])
@@ -2883,26 +3036,6 @@ Write-Output ("DoodleRay Tunnel IPv6 route preferred: ifIndex={0}, canaries=ok" 
                 error
             )),
         }
-    }
-
-    fn wait_for_doodleray_ipv6_policy_ready(
-        timeout: Duration,
-        generation: u64,
-    ) -> Result<(), String> {
-        let deadline = Instant::now() + timeout;
-        let mut last_error = "DoodleRay Tunnel IPv6 policy did not become ready".to_string();
-        while Instant::now() < deadline {
-            ensure_current_generation(generation)?;
-            match ensure_doodleray_ipv6_policy() {
-                Ok(message) => {
-                    log_service_event(&format!("IPv6 readiness ok: {}", message));
-                    return Ok(());
-                }
-                Err(error) => last_error = error,
-            }
-            std::thread::sleep(Duration::from_millis(500));
-        }
-        Err(last_error)
     }
 
     fn wait_for_doodleray_route_preferred(
@@ -3068,29 +3201,48 @@ Write-Output ("DoodleRay Tunnel IPv6 route preferred: ifIndex={0}, canaries=ok" 
         service: &windows_service::service::Service,
     ) -> windows_service::Result<()> {
         service.set_config_service_sid_info(ServiceSidType::Unrestricted)?;
-        service.update_failure_actions(ServiceFailureActions {
-            reset_period: ServiceFailureResetPeriod::After(Duration::from_secs(24 * 60 * 60)),
-            reboot_msg: None,
-            command: None,
-            actions: Some(vec![
-                ServiceAction {
-                    action_type: ServiceActionType::Restart,
-                    delay: Duration::from_secs(2),
-                },
-                ServiceAction {
-                    action_type: ServiceActionType::Restart,
-                    delay: Duration::from_secs(5),
-                },
-                ServiceAction {
-                    action_type: ServiceActionType::None,
-                    delay: Duration::from_secs(0),
-                },
-            ]),
-        })?;
-        service.set_failure_actions_on_non_crash_failures(false)?;
+        configure_service_failure_actions()
+            .map_err(|e| windows_service::Error::Winapi(std::io::Error::other(e)))?;
         grant_builtin_users_start()
             .map_err(|e| windows_service::Error::Winapi(std::io::Error::other(e)))?;
         Ok(())
+    }
+
+    fn configure_service_failure_actions() -> Result<(), String> {
+        let failure = Command::new("sc.exe")
+            .args([
+                "failure",
+                TUNNEL_SERVICE_NAME,
+                "reset=",
+                "86400",
+                "actions=",
+                "restart/2000/restart/5000/\"\"/0",
+            ])
+            .creation_flags(0x08000000)
+            .output()
+            .map_err(|e| format!("Failed to configure tunnel service recovery: {e}"))?;
+        if !failure.status.success() {
+            return Err(format!(
+                "Failed to configure tunnel service recovery: {}{}",
+                String::from_utf8_lossy(&failure.stdout),
+                String::from_utf8_lossy(&failure.stderr)
+            ));
+        }
+
+        let flag = Command::new("sc.exe")
+            .args(["failureflag", TUNNEL_SERVICE_NAME, "0"])
+            .creation_flags(0x08000000)
+            .output()
+            .map_err(|e| format!("Failed to configure tunnel service recovery scope: {e}"))?;
+        if flag.status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "Failed to configure tunnel service recovery scope: {}{}",
+                String::from_utf8_lossy(&flag.stdout),
+                String::from_utf8_lossy(&flag.stderr)
+            ))
+        }
     }
 
     fn grant_builtin_users_start() -> Result<(), String> {
@@ -3298,6 +3450,65 @@ Write-Output ("DoodleRay Tunnel IPv6 route preferred: ifIndex={0}, canaries=ok" 
         .map_err(|e| format!("prepare-update IPC failed: {}", e))?;
         println!("{}", serde_json::to_string_pretty(&response)?);
         Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn xray_config_check_cache_hit_skips_the_subprocess() {
+            let config = serde_json::json!({ "outbounds": [{ "tag": "proxy" }] });
+            let hash = hash_json_value(&config).expect("hash config");
+            *xray_validation_cache().lock().unwrap() = Some(hash);
+
+            // Paths that cannot possibly execute: only a cache hit returns Ok.
+            let missing_exe = Path::new(r"Z:\doodleray-nonexistent\xray.exe");
+            let config_path = Path::new(r"Z:\doodleray-nonexistent\xray_config.json");
+            assert!(check_xray_config(missing_exe, config_path, &config).is_ok());
+
+            // A config that was never validated must still attempt the spawn.
+            let other = serde_json::json!({ "outbounds": [{ "tag": "direct" }] });
+            let error = check_xray_config(missing_exe, config_path, &other)
+                .expect_err("uncached config must attempt to spawn xray");
+            assert!(
+                error.contains("failed to run"),
+                "expected a spawn failure, got: {error}"
+            );
+        }
+
+        #[test]
+        fn adapter_cleanup_wait_is_skipped_only_when_replacing_the_tunnel() {
+            // Mid-restart: bring-up waits for the adapter itself, and the state
+            // never rests as "disconnected", so the proof buys nothing.
+            assert!(!should_wait_for_adapter_cleanup("replace_tunnel"));
+            // Coming to rest: cleanup_pending must stay honest.
+            assert!(should_wait_for_adapter_cleanup("stop_tunnel"));
+            assert!(should_wait_for_adapter_cleanup("service_stop"));
+            assert!(should_wait_for_adapter_cleanup("failed_cleanup"));
+        }
+
+        #[test]
+        fn wintun_ghost_scan_runs_once_per_service_run_when_clean() {
+            // First stop this service run: always scan, clean or not.
+            assert!(should_scan_wintun_ghosts("stop_tunnel", false, false));
+            assert!(should_scan_wintun_ghosts("stop_tunnel", true, false));
+            // After one clean scan, skip further scans while nothing is wrong.
+            assert!(!should_scan_wintun_ghosts("stop_tunnel", false, true));
+            // Fresh evidence of trouble always forces a rescan, regardless of
+            // whether this service run already scanned once before.
+            assert!(should_scan_wintun_ghosts("stop_tunnel", true, true));
+        }
+
+        #[test]
+        fn wintun_ghost_scan_never_runs_on_the_connect_hot_path() {
+            // replace_tunnel runs on every connect with the adapter still
+            // lingering for benign reasons; the bring-up retry path
+            // (tun_adapter_repair) is what cleans a real ghost.
+            assert!(!should_scan_wintun_ghosts("replace_tunnel", true, false));
+            assert!(!should_scan_wintun_ghosts("replace_tunnel", true, true));
+            assert!(should_scan_wintun_ghosts("tun_adapter_repair", true, true));
+        }
     }
 }
 

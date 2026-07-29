@@ -1,5 +1,5 @@
-import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '../stores/app-store';
+import { desktopBridge } from '../platform/tauri/desktop-bridge';
 import { getActiveRoutingRules, resolveSystemProxyModeForRouting } from './connect-helpers';
 import { sanitizeDiagnosticText } from './redaction';
 
@@ -57,7 +57,7 @@ export async function runNetworkDiagnostics(subscriptionUrl?: string | null) {
     state.systemProxyMode,
     routingRules,
   );
-  return invoke<NetworkDiagnosticsReport>('run_network_diagnostics', {
+  return desktopBridge.command<NetworkDiagnosticsReport>('run_network_diagnostics', {
     subscriptionUrl: subscriptionUrl || null,
     socksPort: state.socksPort,
     httpPort: state.httpPort,
@@ -74,11 +74,11 @@ export async function runNetworkDiagnostics(subscriptionUrl?: string | null) {
 }
 
 export async function getStorageReport() {
-  return invoke<StorageReport>('get_storage_report');
+  return desktopBridge.command<StorageReport>('get_storage_report');
 }
 
 export async function clearAppCache() {
-  return invoke<CacheClearReport>('clear_app_cache');
+  return desktopBridge.command<CacheClearReport>('clear_app_cache');
 }
 
 export function diagnosticsReportToText(report: NetworkDiagnosticsReport): string {

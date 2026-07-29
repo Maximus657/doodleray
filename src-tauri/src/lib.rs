@@ -1,9 +1,17 @@
 #![cfg_attr(all(target_os = "macos", feature = "app-store"), allow(dead_code))]
 
+mod control_plane;
+pub mod runtime_guard;
 pub mod singbox;
+mod storage;
 pub mod tun;
 pub mod tunnel_service;
+mod vpn;
 pub mod xray;
+
+#[cfg(test)]
+#[path = "../build_config.rs"]
+mod build_config;
 
 #[cfg(all(target_os = "macos", feature = "app-store"))]
 mod app_store_tunnel;
@@ -15,14 +23,11 @@ pub mod sysproxy;
 #[cfg(windows)]
 pub mod windows_net;
 
-#[cfg(target_os = "macos")]
-#[path = "sysproxy_macos.rs"]
-pub mod sysproxy;
-
+#[cfg(test)]
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use reqwest::Url;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
+#[cfg(all(target_os = "macos", feature = "app-store"))]
 use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
@@ -36,11 +41,52 @@ use std::sync::atomic::AtomicIsize;
 #[cfg(any(windows, all(target_os = "macos", feature = "app-store")))]
 use std::sync::atomic::Ordering;
 use std::sync::{LazyLock, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
     Manager,
+};
+
+#[cfg(all(target_os = "macos", feature = "app-store"))]
+use control_plane::app_api_authorized_bytes;
+#[cfg(test)]
+use control_plane::{
+    app_api_body_sha256, app_api_client_capabilities, app_api_core_version,
+    app_api_decode_session_from_disk, app_api_decode_session_storage_value, app_api_device_proof,
+    app_api_encode_session_for_disk, app_api_error_message, app_api_exchange_code_body,
+    app_api_generate_device_state, app_api_hwid_from_machine_seed,
+    app_api_invalidate_windows_session_storage, app_api_profile_error_is_terminal,
+    app_api_profile_to_connect_request, app_api_refresh_error_after_invalidation,
+    app_api_refresh_error_is_fatal, app_api_sanitize_diagnostic_value,
+    app_api_validated_routing_policy, app_connection_location_ids,
+    legacy_auto_exchange_failure_message, legacy_subscription_token,
+    legacy_subscription_urls_from_renderer_state, validate_app_routing_policy, AppApiHttpError,
+    AppApiProfileLeaseResponse, APP_API_CONNECTION_PROFILE_PATH, APP_API_DEFAULT_BASE_URL,
+    APP_API_SESSION_TOMBSTONE,
+};
+use control_plane::{
+    app_api_exchange_code, app_api_exchange_legacy_subscription, app_api_locations, app_api_logout,
+    app_api_refresh, app_api_session_status, app_api_submit_diagnostics,
+    app_api_subscription_status, app_connect_location, app_disconnect, app_ping_location,
+};
+pub use control_plane::{
+    AppApiAntiJammerSummary, AppApiDiagnosticsSubmission, AppApiExchangeCodeRequest,
+    AppApiExchangeLegacySubscriptionRequest, AppApiLocation, AppApiLocationsResponse,
+    AppApiSessionStatus, AppApiSubscriptionSummary, AppApiTokenResponse, AppConnectLocationRequest,
+    AppRoutingAsset, AppRoutingPolicy, AppRoutingSignature,
+};
+use storage::{secure_store_delete, secure_store_get, secure_store_set};
+use vpn::config::{
+    build_xray_config, inject_xray_inbounds, is_supported_proxy_protocol,
+    routing_policy_xray_dns_domains, routing_policy_xray_domains, uses_xray_engine,
+};
+#[cfg(all(target_os = "macos", feature = "app-store"))]
+use vpn::config::{has_effective_xray_rule_fields, remove_empty_xray_rule_array};
+#[cfg(test)]
+use vpn::config::{
+    sanitize_xray_routing_rules, xray_rule_has_default_direct_domains,
+    DEFAULT_DIRECT_DOMAIN_SUFFIXES,
 };
 
 // Global connection state
@@ -85,31 +131,19 @@ const WORKSHOP_API_HOSTS: &[&str] = &[
     "94-241-172-101.sslip.io",
 ];
 const APP_MANAGED_PORTS: &[u16] = &[10808, 10809, 10813];
-const SECURE_STORE_SERVICE: &str = "DoodleRay";
-const SECURE_STORE_CHUNK_BYTES: usize = 1800;
-const SECURE_STORE_CHUNK_PREFIX: &str = "chunked:v1:";
 const APP_IDENTIFIER: &str = match option_env!("DOODLERAY_APP_IDENTIFIER") {
     Some(identifier) => identifier,
     None => "com.doodlevpn.doodleray",
 };
 const APP_PRODUCT_NAME: &str = "DoodleRay VPN";
 const PROFILE_PING_URL: &str = "https://captive.apple.com/hotspot-detect.html";
-const APP_API_DEFAULT_BASE_URL: &str = "https://ddlvpn.lol/v1/mobile";
-const APP_API_CONNECTION_PROFILE_PATH: &str = "/connection-profile";
-const APP_ROUTING_ROOT_KID: &str = "dogfood-20260513-ed25519";
 const APP_ROUTING_ROOT_PUBLIC_KEY_BASE64: &str = "wXPEoRe8eSiTD9a3x21WhgDAYayS0XxB_2ajIcjUtiw";
-const APP_ROUTING_ASSET_CANONICAL_RULE_VERSION: &str = "routing_asset.v1.lines";
 #[cfg(all(target_os = "macos", feature = "app-store"))]
 const APP_STORE_TRAFFIC_VERIFY_URLS: [&str; 3] = [
     "https://1.1.1.1/cdn-cgi/trace",
     "https://api.ipify.org",
     "https://ddlvpn.lol/healthz",
 ];
-const APP_API_SESSION_KEY: &str = "app-api-session-v1";
-const APP_API_DEVICE_KEY: &str = "app-api-device-v1";
-
-static APP_API_MEMORY_SESSION: Mutex<Option<AppApiTokenResponse>> = Mutex::new(None);
-
 #[cfg(windows)]
 fn claim_single_app_instance() -> bool {
     use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
@@ -1689,9 +1723,6 @@ fn restore_system_proxy_if_owned(force: bool) {
 
     #[cfg(windows)]
     let _ = sysproxy::restore_previous_proxy_state();
-    #[cfg(target_os = "macos")]
-    let _ = sysproxy::unset_system_proxy();
-
     if let Ok(mut managed) = SYSTEM_PROXY_MANAGED.lock() {
         *managed = false;
     }
@@ -1706,14 +1737,18 @@ fn apply_system_proxy_mode(mode: &str, http_port: u16) -> Result<&'static str, S
     match safe_system_proxy_mode(mode) {
         "set" => {
             #[cfg(windows)]
-            sysproxy::apply_doodleray_proxy(http_port, env!("CARGO_PKG_VERSION"))?;
-            #[cfg(target_os = "macos")]
-            sysproxy::set_system_proxy(http_port)?;
-
-            if let Ok(mut managed) = SYSTEM_PROXY_MANAGED.lock() {
-                *managed = true;
+            {
+                sysproxy::apply_doodleray_proxy(http_port, env!("CARGO_PKG_VERSION"))?;
+                if let Ok(mut managed) = SYSTEM_PROXY_MANAGED.lock() {
+                    *managed = true;
+                }
+                Ok("set")
             }
-            Ok("set")
+            #[cfg(not(windows))]
+            {
+                let _ = http_port;
+                Err("System proxy mode is unavailable on this platform".into())
+            }
         }
         "clear" => {
             repair_stale_system_proxy_only();
@@ -1808,8 +1843,7 @@ fn direct_dns_server() -> serde_json::Value {
             "tag": "dns-direct",
             "type": "udp",
             "server": server,
-            "server_port": 53,
-            "detour": "direct"
+            "server_port": 53
         });
     }
     serde_json::json!({
@@ -1950,28 +1984,6 @@ fn xray_tun_bridge_udp_rule() -> serde_json::Value {
     })
 }
 
-const DEFAULT_DIRECT_DOMAIN_SUFFIXES: &[&str] = &[
-    "2ip.ru",
-    "vk.com",
-    "vk.ru",
-    "ok.ru",
-    "mail.ru",
-    "yandex.ru",
-    "yandex.com",
-    "yandex.net",
-    "ya.ru",
-    "dzen.ru",
-    "rutube.ru",
-    "gosuslugi.ru",
-    "mos.ru",
-    "nalog.gov.ru",
-    "sberbank.ru",
-    "sber.ru",
-    "tbank.ru",
-    "tinkoff.ru",
-    "alfabank.ru",
-];
-
 #[cfg(test)]
 const DEFAULT_DIRECT_SINGBOX_DOMAIN_REGEXES: &[&str] = &[
     r"(^|\.)[^.]+\.ru$",
@@ -1980,25 +1992,6 @@ const DEFAULT_DIRECT_SINGBOX_DOMAIN_REGEXES: &[&str] = &[
     r"(^|\.)[^.]+\.xn--p1acf$",
     r"(^|\.)[^.]+\.moscow$",
     r"(^|\.)[^.]+\.xn--80adxhks$",
-];
-
-const DEFAULT_DIRECT_XRAY_DOMAIN_REGEXES: &[&str] = &[
-    r"regexp:.*\.ru$",
-    r"regexp:.*\.su$",
-    r"regexp:.*\.xn--p1ai$",
-    r"regexp:.*\.xn--p1acf$",
-    r"regexp:.*\.moscow$",
-    r"regexp:.*\.xn--80adxhks$",
-];
-
-const STEAM_DIRECT_XRAY_DOMAINS: &[&str] = &[
-    "domain:steampowered.com",
-    "domain:steamcommunity.com",
-    "domain:steamgames.com",
-    "domain:steamusercontent.com",
-    "domain:steamcontent.com",
-    "domain:steamstatic.com",
-    "full:steamcdn-a.akamaihd.net",
 ];
 
 const STEAM_DIRECT_PROCESS_NAMES: &[&str] = &[
@@ -2028,36 +2021,6 @@ fn routing_policy_is_full_tunnel(req: &ConnectRequest) -> bool {
     req.routing_policy
         .as_ref()
         .is_some_and(|policy| policy.mode == "full_tunnel")
-}
-
-fn with_steam_direct_domains(mut domains: Vec<String>) -> Vec<String> {
-    domains.extend(
-        STEAM_DIRECT_XRAY_DOMAINS
-            .iter()
-            .map(|domain| (*domain).to_string()),
-    );
-    domains.sort();
-    domains.dedup();
-    domains
-}
-
-fn routing_policy_xray_domains(req: &ConnectRequest) -> Vec<String> {
-    with_steam_direct_domains(match req.routing_policy.as_ref() {
-        Some(policy) if policy.mode == "split" => policy.direct_domains.clone(),
-        Some(_) => Vec::new(),
-        None => default_direct_xray_domains(),
-    })
-}
-
-fn routing_policy_xray_dns_domains(req: &ConnectRequest) -> Vec<String> {
-    with_steam_direct_domains(match req.routing_policy.as_ref() {
-        Some(policy) if policy.mode == "split" && !policy.local_dns_domains.is_empty() => {
-            policy.local_dns_domains.clone()
-        }
-        Some(policy) if policy.mode == "split" => policy.direct_domains.clone(),
-        Some(_) => Vec::new(),
-        None => default_direct_xray_domains(),
-    })
 }
 
 fn routing_policy_singbox_domains(req: &ConnectRequest) -> (Vec<String>, Vec<String>, Vec<String>) {
@@ -2123,440 +2086,6 @@ fn xray_tun_bridge_dns_config_for_request(
 ) -> serde_json::Value {
     let (domains, suffixes, regexes) = routing_policy_singbox_dns_domains(req);
     singbox_dns_config_with_direct_rules("realip", &domains, &suffixes, &regexes, direct_processes)
-}
-
-fn default_direct_xray_domains() -> Vec<String> {
-    DEFAULT_DIRECT_XRAY_DOMAIN_REGEXES
-        .iter()
-        .map(|value| (*value).to_string())
-        .chain(
-            DEFAULT_DIRECT_DOMAIN_SUFFIXES
-                .iter()
-                .map(|value| format!("domain:{}", value)),
-        )
-        .collect()
-}
-
-fn xray_rule_has_default_direct_domains(rule: &serde_json::Value) -> bool {
-    rule.get("outboundTag").and_then(|value| value.as_str()) == Some("direct")
-        && rule
-            .get("domain")
-            .and_then(|value| value.as_array())
-            .map(|domains| {
-                domains
-                    .iter()
-                    .any(|value| value.as_str() == Some("domain:2ip.ru"))
-            })
-            .unwrap_or(false)
-}
-
-fn ensure_xray_direct_outbound(config: &mut serde_json::Value) {
-    let direct_outbound = serde_json::json!({
-        "tag": "direct",
-        "protocol": "freedom"
-    });
-
-    let Some(outbounds) = config
-        .get_mut("outbounds")
-        .and_then(|value| value.as_array_mut())
-    else {
-        config["outbounds"] = serde_json::json!([direct_outbound]);
-        return;
-    };
-
-    let has_direct = outbounds
-        .iter()
-        .any(|outbound| outbound.get("tag").and_then(|value| value.as_str()) == Some("direct"));
-    if !has_direct {
-        outbounds.push(direct_outbound);
-    }
-}
-
-fn ensure_xray_dns_outbound(config: &mut serde_json::Value) {
-    let dns_outbound = serde_json::json!({ "tag": "dns-out", "protocol": "dns" });
-    let Some(outbounds) = config
-        .get_mut("outbounds")
-        .and_then(serde_json::Value::as_array_mut)
-    else {
-        config["outbounds"] = serde_json::json!([dns_outbound]);
-        return;
-    };
-    if !outbounds
-        .iter()
-        .any(|outbound| outbound.get("tag").and_then(serde_json::Value::as_str) == Some("dns-out"))
-    {
-        outbounds.push(dns_outbound);
-    }
-}
-
-fn ensure_xray_api_outbound(config: &mut serde_json::Value) {
-    let api_outbound = serde_json::json!({ "tag": "api", "protocol": "blackhole" });
-    let Some(outbounds) = config
-        .get_mut("outbounds")
-        .and_then(serde_json::Value::as_array_mut)
-    else {
-        config["outbounds"] = serde_json::json!([api_outbound]);
-        return;
-    };
-    if !outbounds
-        .iter()
-        .any(|outbound| outbound.get("tag").and_then(serde_json::Value::as_str) == Some("api"))
-    {
-        outbounds.push(api_outbound);
-    }
-}
-
-fn constrain_xray_config_to_managed_policy(config: &mut serde_json::Value, req: &ConnectRequest) {
-    if req.routing_policy.is_none() {
-        return;
-    }
-
-    let mut allowed_tags = HashSet::new();
-    if let Some(outbounds) = config
-        .get_mut("outbounds")
-        .and_then(serde_json::Value::as_array_mut)
-    {
-        outbounds.retain(|outbound| {
-            let tag = outbound
-                .get("tag")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default();
-            let protocol = outbound
-                .get("protocol")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default();
-            let keep = tag == "proxy"
-                || (tag == "direct" && protocol == "freedom")
-                || tag == "dns-out"
-                || tag == "api"
-                || protocol == "blackhole";
-            if keep && !tag.is_empty() {
-                allowed_tags.insert(tag.to_string());
-            }
-            keep
-        });
-        if let Some(index) = outbounds.iter().position(|outbound| {
-            outbound.get("tag").and_then(serde_json::Value::as_str) == Some("proxy")
-        }) {
-            if index != 0 {
-                let proxy = outbounds.remove(index);
-                outbounds.insert(0, proxy);
-            }
-        }
-    }
-
-    if let Some(routing) = config
-        .get_mut("routing")
-        .and_then(serde_json::Value::as_object_mut)
-    {
-        routing.remove("balancers");
-        if let Some(rules) = routing
-            .get_mut("rules")
-            .and_then(serde_json::Value::as_array_mut)
-        {
-            rules.retain(|rule| {
-                if rule.get("balancerTag").is_some() {
-                    return false;
-                }
-                rule.get("outboundTag")
-                    .and_then(serde_json::Value::as_str)
-                    .is_none_or(|tag| allowed_tags.contains(tag))
-            });
-        }
-    }
-}
-
-fn apply_xray_routing_policy(
-    config: &mut serde_json::Value,
-    req: &ConnectRequest,
-    include_legacy_default_split: bool,
-) {
-    if !config
-        .get("routing")
-        .map(|value| value.is_object())
-        .unwrap_or(false)
-    {
-        config["routing"] = serde_json::json!({});
-    }
-    if !config["routing"]
-        .get("rules")
-        .map(|value| value.is_array())
-        .unwrap_or(false)
-    {
-        config["routing"]["rules"] = serde_json::json!([]);
-    }
-
-    let Some(rules) = config["routing"]["rules"].as_array_mut() else {
-        return;
-    };
-
-    rules.retain(|rule| {
-        let inbound = rule
-            .get("inboundTag")
-            .and_then(serde_json::Value::as_array)
-            .is_some_and(|tags| {
-                tags.iter()
-                    .any(|tag| matches!(tag.as_str(), Some("dns-direct" | "dns-remote")))
-            });
-        if inbound {
-            return false;
-        }
-        if req.routing_policy.is_none() {
-            return true;
-        }
-        rule.get("outboundTag").and_then(serde_json::Value::as_str) != Some("direct")
-    });
-
-    if !rules.iter().any(|rule| {
-        rule.get("inboundTag")
-            .and_then(serde_json::Value::as_array)
-            .is_some_and(|tags| tags.iter().any(|tag| tag.as_str() == Some("api")))
-    }) {
-        rules.insert(
-            0,
-            serde_json::json!({
-                "type": "field",
-                "inboundTag": ["api"],
-                "outboundTag": "api"
-            }),
-        );
-    }
-
-    let insert_at = rules
-        .iter()
-        .position(|rule| {
-            rule.get("inboundTag")
-                .and_then(|value| value.as_array())
-                .map(|tags| tags.iter().any(|tag| tag.as_str() == Some("api")))
-                .unwrap_or(false)
-        })
-        .map(|index| index + 1)
-        .unwrap_or(0);
-    let mut additions = Vec::new();
-    let managed_dns = req.routing_policy.is_some() || include_legacy_default_split;
-    let dns_domains = if managed_dns {
-        routing_policy_xray_dns_domains(req)
-    } else {
-        Vec::new()
-    };
-    if !dns_domains.is_empty() {
-        additions.push(serde_json::json!({
-            "type": "field",
-            "inboundTag": ["dns-direct"],
-            "outboundTag": "direct"
-        }));
-    }
-    if managed_dns {
-        additions.push(serde_json::json!({
-            "type": "field",
-            "inboundTag": ["dns-remote"],
-            "outboundTag": "proxy"
-        }));
-    }
-    // Resolver-originated DNS traffic must be classified before the generic
-    // port-53 interception rule. Otherwise a local resolver query is sent back
-    // into dns-out recursively and direct domains such as .ru never resolve.
-    if !rules.iter().any(|rule| {
-        rule.get("port").and_then(serde_json::Value::as_str) == Some("53")
-            && rule.get("outboundTag").and_then(serde_json::Value::as_str) == Some("dns-out")
-    }) {
-        additions.push(serde_json::json!({
-            "type": "field",
-            "port": "53",
-            "outboundTag": "dns-out"
-        }));
-    }
-    let direct_domains = if req.routing_policy.is_some() || include_legacy_default_split {
-        routing_policy_xray_domains(req)
-    } else {
-        Vec::new()
-    };
-    if !direct_domains.is_empty()
-        && !rules
-            .iter()
-            .any(|rule| req.routing_policy.is_none() && xray_rule_has_default_direct_domains(rule))
-    {
-        additions.push(serde_json::json!({
-            "type": "field",
-            "domain": direct_domains,
-            "outboundTag": "direct"
-        }));
-    }
-    if include_legacy_default_split
-        && req.routing_policy.is_none()
-        && !rules.iter().any(|rule| {
-            rule.get("outboundTag").and_then(serde_json::Value::as_str) == Some("direct")
-                && rule
-                    .get("ip")
-                    .and_then(serde_json::Value::as_array)
-                    .is_some_and(|values| {
-                        values
-                            .iter()
-                            .any(|value| value.as_str() == Some("geoip:private"))
-                    })
-        })
-    {
-        additions.push(serde_json::json!({
-            "type": "field",
-            "ip": ["geoip:private"],
-            "outboundTag": "direct"
-        }));
-    }
-    if let Some(policy) = req
-        .routing_policy
-        .as_ref()
-        .filter(|policy| policy.mode == "split")
-    {
-        if !policy.direct_ip_ranges.is_empty() {
-            additions.push(serde_json::json!({
-                "type": "field",
-                "ip": policy.direct_ip_ranges,
-                "outboundTag": "direct"
-            }));
-        }
-    }
-    for (offset, rule) in additions.into_iter().enumerate() {
-        rules.insert(insert_at + offset, rule);
-    }
-    if req.routing_policy.is_some() {
-        rules.push(serde_json::json!({
-            "type": "field",
-            "network": "tcp,udp",
-            "outboundTag": "proxy"
-        }));
-    }
-}
-
-fn xray_dns_config(req: &ConnectRequest) -> serde_json::Value {
-    let mut servers = Vec::new();
-    let direct_domains = routing_policy_xray_dns_domains(req);
-    if !direct_domains.is_empty() {
-        servers.push(serde_json::json!({
-            "address": "localhost",
-            "domains": direct_domains,
-            "skipFallback": true,
-            "tag": "dns-direct"
-        }));
-    }
-    servers.push(serde_json::json!({
-        "address": "https://1.1.1.1/dns-query",
-        "tag": "dns-remote"
-    }));
-    serde_json::json!({
-        "servers": servers,
-        "queryStrategy": "UseIPv4",
-        "disableFallbackIfMatch": true
-    })
-}
-
-fn xray_tunnel_dns_config() -> serde_json::Value {
-    serde_json::json!({
-        "queryStrategy": "UseIPv4",
-        "servers": [{
-            "address": "https://1.1.1.1/dns-query",
-            "tag": "dns-remote"
-        }]
-    })
-}
-
-fn xray_engine_transport(transport: &str) -> bool {
-    matches!(transport, "xhttp" | "ws")
-}
-
-fn xray_engine_protocol(protocol: &str) -> bool {
-    matches!(protocol, "vless" | "vmess" | "trojan" | "shadowsocks")
-}
-
-fn uses_xray_engine(req: &ConnectRequest) -> bool {
-    req.raw_xray_config.is_some()
-        || xray_engine_transport(req.transport.as_str())
-        || xray_engine_protocol(req.protocol.as_str())
-}
-
-fn xray_transport_host(req: &ConnectRequest) -> String {
-    req.host
-        .as_ref()
-        .filter(|value| !value.trim().is_empty())
-        .or(req.sni.as_ref().filter(|value| !value.trim().is_empty()))
-        .cloned()
-        .unwrap_or_else(|| req.server_address.clone())
-}
-
-fn xray_tls_settings(req: &ConnectRequest) -> serde_json::Value {
-    let mut settings = serde_json::json!({
-        "serverName": req.sni.clone().unwrap_or(req.server_address.clone()),
-        "fingerprint": req.fingerprint.clone().unwrap_or("chrome".into())
-    });
-    if let Some(ref alpn) = req.alpn {
-        if !alpn.is_empty() {
-            settings["alpn"] = serde_json::json!(alpn);
-        }
-    }
-    settings
-}
-
-fn xray_reality_settings(req: &ConnectRequest) -> serde_json::Value {
-    serde_json::json!({
-        "serverName": req.sni.clone().unwrap_or(req.server_address.clone()),
-        "publicKey": req.public_key.clone().unwrap_or_default(),
-        "shortId": req.short_id.clone().unwrap_or_default(),
-        "fingerprint": req.fingerprint.clone().unwrap_or("chrome".into())
-    })
-}
-
-fn apply_xray_stream_security_settings(
-    stream_settings: &mut serde_json::Value,
-    req: &ConnectRequest,
-) {
-    if req.security == "reality" {
-        stream_settings["realitySettings"] = xray_reality_settings(req);
-    } else if req.security == "tls" {
-        stream_settings["tlsSettings"] = xray_tls_settings(req);
-    }
-}
-
-fn normalize_xray_transport_settings(config: &mut serde_json::Value) {
-    let Some(outbounds) = config
-        .get_mut("outbounds")
-        .and_then(|value| value.as_array_mut())
-    else {
-        return;
-    };
-
-    for outbound in outbounds {
-        let Some(stream_settings) = outbound
-            .get_mut("streamSettings")
-            .and_then(|value| value.as_object_mut())
-        else {
-            continue;
-        };
-        let Some(ws_settings) = stream_settings
-            .get_mut("wsSettings")
-            .and_then(|value| value.as_object_mut())
-        else {
-            continue;
-        };
-
-        let header_host = {
-            let headers = ws_settings
-                .get_mut("headers")
-                .and_then(|value| value.as_object_mut());
-            headers.and_then(|headers| headers.remove("Host").or_else(|| headers.remove("host")))
-        };
-
-        if let Some(host) = header_host {
-            ws_settings.entry("host").or_insert(host);
-        }
-
-        let remove_headers = ws_settings
-            .get("headers")
-            .and_then(|value| value.as_object())
-            .map(|headers| headers.is_empty())
-            .unwrap_or(false);
-        if remove_headers {
-            ws_settings.remove("headers");
-        }
-    }
 }
 
 const SYSTEM_BYPASS_PROCESS_NAMES: &[&str] = &[
@@ -2779,1898 +2308,6 @@ fn write_private_file(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<(
     Ok(())
 }
 
-fn validate_secure_store_key(key: &str) -> Result<(), String> {
-    if key.is_empty() || key.len() > 60 {
-        return Err("Invalid secure storage key length".into());
-    }
-    if !key
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
-    {
-        return Err("Secure storage key contains unsupported characters".into());
-    }
-    Ok(())
-}
-
-fn is_reserved_secure_store_key(key: &str) -> bool {
-    [APP_API_SESSION_KEY, APP_API_DEVICE_KEY]
-        .iter()
-        .any(|reserved| key == *reserved || key.starts_with(&format!("{}.chunk.", reserved)))
-}
-
-fn validate_renderer_secure_store_key(key: &str) -> Result<(), String> {
-    validate_secure_store_key(key)?;
-    if is_reserved_secure_store_key(key) {
-        return Err(
-            "This secure storage key is reserved for native DoodleVPN account state.".into(),
-        );
-    }
-    Ok(())
-}
-
-#[cfg(not(target_os = "macos"))]
-fn secure_store_entry(key: &str) -> Result<keyring::Entry, String> {
-    keyring::Entry::new(SECURE_STORE_SERVICE, key)
-        .map_err(|e| format!("Secure storage unavailable: {}", e))
-}
-
-#[cfg(target_os = "macos")]
-fn secure_store_macos_options(key: &str) -> security_framework::passwords::PasswordOptions {
-    let mut options = security_framework::passwords::PasswordOptions::new_generic_password(
-        SECURE_STORE_SERVICE,
-        key,
-    );
-    options.use_protected_keychain();
-    options.set_access_synchronized(Some(false));
-    options
-}
-
-#[cfg(target_os = "macos")]
-fn secure_store_native_get(key: &str) -> Result<Option<String>, String> {
-    use security_framework::passwords::generic_password;
-
-    match generic_password(secure_store_macos_options(key)) {
-        Ok(bytes) => String::from_utf8(bytes)
-            .map(Some)
-            .map_err(|_| "Secure storage entry is not valid UTF-8".to_string()),
-        Err(error) if error.code() == -25300 => {
-            // One-way migration from the legacy SecKeychain backend used by
-            // early macOS builds. App Store builds use the sandbox-compatible
-            // Data Protection Keychain above.
-            let legacy = keyring::Entry::new(SECURE_STORE_SERVICE, key)
-                .map_err(|e| format!("Secure storage unavailable: {}", e))?;
-            match legacy.get_password() {
-                Ok(value) => {
-                    secure_store_native_set(key, &value)?;
-                    let _ = legacy.delete_credential();
-                    Ok(Some(value))
-                }
-                Err(keyring::Error::NoEntry) => Ok(None),
-                Err(e) => Err(format!("Legacy secure storage read failed: {}", e)),
-            }
-        }
-        Err(error) => Err(format!("Secure storage read failed: {}", error)),
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn secure_store_native_get(key: &str) -> Result<Option<String>, String> {
-    match secure_store_entry(key)?.get_password() {
-        Ok(value) => Ok(Some(value)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(format!("Secure storage read failed: {}", e)),
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn secure_store_native_set(key: &str, value: &str) -> Result<(), String> {
-    security_framework::passwords::set_generic_password_options(
-        value.as_bytes(),
-        secure_store_macos_options(key),
-    )
-    .map_err(|e| format!("Secure storage write failed: {}", e))
-}
-
-#[cfg(not(target_os = "macos"))]
-fn secure_store_native_set(key: &str, value: &str) -> Result<(), String> {
-    secure_store_entry(key)?
-        .set_password(value)
-        .map_err(|e| format!("Secure storage write failed: {}", e))
-}
-
-#[cfg(target_os = "macos")]
-fn secure_store_native_delete(key: &str) -> Result<(), String> {
-    use security_framework::passwords::delete_generic_password_options;
-
-    let modern_result = match delete_generic_password_options(secure_store_macos_options(key)) {
-        Ok(()) => Ok(()),
-        Err(error) if error.code() == -25300 => Ok(()),
-        Err(error) => Err(format!("Secure storage delete failed: {}", error)),
-    };
-    if let Ok(legacy) = keyring::Entry::new(SECURE_STORE_SERVICE, key) {
-        let _ = legacy.delete_credential();
-    }
-    modern_result
-}
-
-#[cfg(not(target_os = "macos"))]
-fn secure_store_native_delete(key: &str) -> Result<(), String> {
-    match secure_store_entry(key)?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(format!("Secure storage delete failed: {}", e)),
-    }
-}
-
-fn secure_store_chunk_key(key: &str, index: usize) -> String {
-    format!("{}.chunk.{}", key, index)
-}
-
-fn secure_store_chunk_count(value: &str) -> Option<usize> {
-    value
-        .strip_prefix(SECURE_STORE_CHUNK_PREFIX)
-        .and_then(|raw| raw.parse::<usize>().ok())
-}
-
-fn secure_store_chunks(value: &str) -> Vec<String> {
-    let mut chunks = Vec::new();
-    let mut current = String::new();
-
-    for ch in value.chars() {
-        if !current.is_empty() && current.len() + ch.len_utf8() > SECURE_STORE_CHUNK_BYTES {
-            chunks.push(current);
-            current = String::new();
-        }
-        current.push(ch);
-    }
-
-    if !current.is_empty() {
-        chunks.push(current);
-    }
-
-    chunks
-}
-
-fn delete_secure_store_entry(key: &str) -> Result<(), String> {
-    secure_store_native_delete(key)
-}
-
-fn delete_secure_store_chunks(key: &str, manifest: &str) {
-    let Some(count) = secure_store_chunk_count(manifest) else {
-        return;
-    };
-
-    for index in 0..count {
-        let _ = delete_secure_store_entry(&secure_store_chunk_key(key, index));
-    }
-}
-
-fn secure_store_fallback_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Secure storage fallback path unavailable: {}", e))?
-        .join("secure-storage");
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("Secure storage fallback init failed: {}", e))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
-    }
-    Ok(dir)
-}
-
-fn secure_store_fallback_path(
-    app: &tauri::AppHandle,
-    key: &str,
-) -> Result<std::path::PathBuf, String> {
-    Ok(secure_store_fallback_dir(app)?.join(format!("{}.store", key)))
-}
-
-fn secure_store_fallback_get(app: &tauri::AppHandle, key: &str) -> Result<Option<String>, String> {
-    let path = secure_store_fallback_path(app, key)?;
-    match std::fs::read_to_string(&path) {
-        Ok(value) => Ok(Some(value)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!("Secure storage fallback read failed: {}", e)),
-    }
-}
-
-fn secure_store_fallback_delete(app: &tauri::AppHandle, key: &str) -> Result<(), String> {
-    let path = secure_store_fallback_path(app, key)?;
-    match std::fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(format!("Secure storage fallback delete failed: {}", e)),
-    }
-}
-
-fn secure_store_keyring_get(key: &str) -> Result<Option<String>, String> {
-    match secure_store_native_get(key)? {
-        Some(value) => {
-            let Some(count) = secure_store_chunk_count(&value) else {
-                return Ok(Some(value));
-            };
-
-            let mut restored = String::new();
-            for index in 0..count {
-                let chunk = secure_store_native_get(&secure_store_chunk_key(key, index))?
-                    .ok_or_else(|| "Secure storage chunk is missing".to_string())?;
-                restored.push_str(&chunk);
-            }
-            Ok(Some(restored))
-        }
-        None => Ok(None),
-    }
-}
-
-fn secure_store_keyring_set(key: &str, value: &str) -> Result<(), String> {
-    if let Some(old_value) = secure_store_native_get(key)? {
-        delete_secure_store_chunks(key, &old_value);
-    }
-
-    if value.len() > SECURE_STORE_CHUNK_BYTES {
-        let chunks = secure_store_chunks(value);
-        for (index, chunk) in chunks.iter().enumerate() {
-            secure_store_native_set(&secure_store_chunk_key(key, index), chunk)
-                .map_err(|e| format!("Secure storage chunk write failed: {}", e))?;
-        }
-
-        return secure_store_native_set(
-            key,
-            &format!("{}{}", SECURE_STORE_CHUNK_PREFIX, chunks.len()),
-        );
-    }
-
-    secure_store_native_set(key, value)
-}
-
-fn secure_store_keyring_delete(key: &str) -> Result<(), String> {
-    if let Some(value) = secure_store_native_get(key)? {
-        delete_secure_store_chunks(key, &value);
-    }
-    delete_secure_store_entry(key)
-}
-
-#[tauri::command(async)]
-fn secure_store_get(app: tauri::AppHandle, key: String) -> Result<Option<String>, String> {
-    validate_renderer_secure_store_key(&key)?;
-    match secure_store_keyring_get(&key) {
-        Ok(Some(value)) => {
-            // Remove the legacy plaintext mirror once Keychain/Credential
-            // Manager is confirmed readable.
-            if let Err(fallback_error) = secure_store_fallback_delete(&app, &key) {
-                eprintln!(
-                    "[warn] legacy secure storage fallback cleanup failed: {}",
-                    fallback_error
-                );
-            }
-            Ok(Some(value))
-        }
-        Ok(None) => {
-            // One-way migration for builds that mirrored the renderer state
-            // into app data as plaintext. Never create or refresh this file.
-            let Some(legacy_value) = secure_store_fallback_get(&app, &key)? else {
-                return Ok(None);
-            };
-            secure_store_keyring_set(&key, &legacy_value)
-                .map_err(|error| format!("Legacy secure storage migration failed: {}", error))?;
-            secure_store_fallback_delete(&app, &key)?;
-            Ok(Some(legacy_value))
-        }
-        Err(keyring_error) => Err(keyring_error),
-    }
-}
-
-#[tauri::command(async)]
-fn secure_store_set(app: tauri::AppHandle, key: String, value: String) -> Result<(), String> {
-    validate_renderer_secure_store_key(&key)?;
-    secure_store_keyring_set(&key, &value)?;
-    if let Err(fallback_error) = secure_store_fallback_delete(&app, &key) {
-        eprintln!(
-            "[warn] legacy secure storage fallback cleanup failed: {}",
-            fallback_error
-        );
-    }
-    Ok(())
-}
-
-#[tauri::command(async)]
-fn secure_store_delete(app: tauri::AppHandle, key: String) -> Result<(), String> {
-    validate_renderer_secure_store_key(&key)?;
-    let keyring_result = secure_store_keyring_delete(&key);
-    let fallback_result = secure_store_fallback_delete(&app, &key);
-
-    match (keyring_result, fallback_result) {
-        (Ok(()), Ok(())) => Ok(()),
-        (Err(keyring_error), Ok(())) => Err(keyring_error),
-        (Ok(()), Err(fallback_error)) => Err(fallback_error),
-        (Err(keyring_error), Err(fallback_error)) => {
-            Err(format!("{}; {}", keyring_error, fallback_error))
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct AppApiAntiJammerSummary {
-    #[serde(default)]
-    pub limit_bytes: u64,
-    #[serde(default)]
-    pub used_bytes: u64,
-    #[serde(default)]
-    pub remaining_bytes: u64,
-    #[serde(default)]
-    pub low_balance: bool,
-    #[serde(default)]
-    pub exhausted: bool,
-    #[serde(default)]
-    pub state: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct AppApiSubscriptionSummary {
-    #[serde(default)]
-    pub active: bool,
-    #[serde(default)]
-    pub device_allowed: Option<bool>,
-    #[serde(default)]
-    pub remnawave_status: String,
-    #[serde(default)]
-    pub expires_at: String,
-    #[serde(default)]
-    pub reason: Option<String>,
-    #[serde(default)]
-    pub user_uuid: Option<String>,
-    #[serde(default)]
-    pub username: Option<String>,
-    #[serde(default)]
-    pub anti_jammer: Option<AppApiAntiJammerSummary>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AppApiTokenResponse {
-    pub access_token: String,
-    pub access_expires_at: String,
-    #[serde(default)]
-    pub expires_in: i64,
-    pub refresh_token: String,
-    pub refresh_expires_at: String,
-    pub device_id: String,
-    pub subscription: AppApiSubscriptionSummary,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct AppApiStoredSession {
-    pub refresh_token: String,
-    pub refresh_expires_at: String,
-    pub device_id: String,
-    pub subscription: AppApiSubscriptionSummary,
-}
-
-#[derive(Debug, Serialize)]
-pub struct AppApiSessionStatus {
-    pub logged_in: bool,
-    pub device_id: Option<String>,
-    pub access_expires_at: Option<String>,
-    pub refresh_expires_at: Option<String>,
-    pub subscription: Option<AppApiSubscriptionSummary>,
-    pub api_base_url: String,
-    pub closed_control_plane_enabled: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct AppApiDeviceState {
-    client_device_id: String,
-    hwid: String,
-    public_key: String,
-    #[serde(default)]
-    public_key_jwk: serde_json::Value,
-    #[serde(default)]
-    private_key_seed: String,
-    #[serde(default)]
-    key_alg: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AppApiExchangeCodeRequest {
-    pub code: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AppApiExchangeLegacySubscriptionRequest {
-    pub subscription_url: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AppApiLocation {
-    pub id: String,
-    pub country_code: String,
-    pub title: String,
-    #[serde(default)]
-    pub available: bool,
-    #[serde(default)]
-    pub sort: i32,
-    #[serde(default)]
-    pub available_nodes_count: i32,
-    #[serde(default)]
-    pub healthy_nodes_count: Option<i32>,
-    #[serde(default)]
-    pub capacity_label: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Default)]
-pub struct AppApiLocationsResponse {
-    #[serde(default)]
-    pub locations: Vec<AppApiLocation>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AppApiDiagnosticsSubmission {
-    #[serde(default)]
-    manual: bool,
-    #[serde(default)]
-    events: Vec<serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
-pub struct AppRoutingSignature {
-    #[serde(default)]
-    pub kid: String,
-    #[serde(default)]
-    pub alg: String,
-    #[serde(default)]
-    pub value: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
-pub struct AppRoutingAsset {
-    #[serde(default)]
-    pub url: String,
-    #[serde(default)]
-    pub sha256: String,
-    #[serde(default)]
-    pub size_bytes: u64,
-    #[serde(default)]
-    pub etag: String,
-    #[serde(default)]
-    pub version: String,
-    #[serde(default)]
-    pub canonical_rule_version: String,
-    #[serde(default)]
-    pub signature: Option<AppRoutingSignature>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
-pub struct AppRoutingPolicy {
-    #[serde(default)]
-    pub mode: String,
-    #[serde(default)]
-    pub version: String,
-    #[serde(default)]
-    pub direct_domains: Vec<String>,
-    #[serde(default)]
-    pub local_dns_domains: Vec<String>,
-    #[serde(default)]
-    pub direct_ip_ranges: Vec<String>,
-    #[serde(default)]
-    pub asset: Option<AppRoutingAsset>,
-}
-
-fn app_routing_asset_signing_bytes(asset: &AppRoutingAsset) -> Vec<u8> {
-    format!(
-        "doodleray-routing-asset-v1\n{}\n{}\n{}\n{}\n{}\n{}",
-        asset.url,
-        asset.sha256,
-        asset.size_bytes,
-        asset.etag,
-        asset.version,
-        asset.canonical_rule_version,
-    )
-    .into_bytes()
-}
-
-fn verify_app_routing_asset(asset: &AppRoutingAsset) -> Result<(), String> {
-    let signature = asset
-        .signature
-        .as_ref()
-        .ok_or_else(|| "DoodleVPN routing data is not signed.".to_string())?;
-    if signature.kid != APP_ROUTING_ROOT_KID
-        || signature.alg != "EdDSA"
-        || asset.canonical_rule_version != APP_ROUTING_ASSET_CANONICAL_RULE_VERSION
-    {
-        return Err("DoodleVPN routing data has unsupported signature metadata.".into());
-    }
-    let public_key = URL_SAFE_NO_PAD
-        .decode(APP_ROUTING_ROOT_PUBLIC_KEY_BASE64)
-        .map_err(|_| "DoodleVPN routing verifier is invalid.".to_string())?;
-    let public_key: [u8; 32] = public_key
-        .try_into()
-        .map_err(|_| "DoodleVPN routing verifier is invalid.".to_string())?;
-    let verifying_key = VerifyingKey::from_bytes(&public_key)
-        .map_err(|_| "DoodleVPN routing verifier is invalid.".to_string())?;
-    let signature_bytes = URL_SAFE_NO_PAD
-        .decode(&signature.value)
-        .map_err(|_| "DoodleVPN routing signature is invalid.".to_string())?;
-    let signature = Signature::from_slice(&signature_bytes)
-        .map_err(|_| "DoodleVPN routing signature is invalid.".to_string())?;
-    verifying_key
-        .verify(&app_routing_asset_signing_bytes(asset), &signature)
-        .map_err(|_| "DoodleVPN routing data signature verification failed.".to_string())
-}
-
-fn validate_app_routing_policy(mut policy: AppRoutingPolicy) -> Result<AppRoutingPolicy, String> {
-    if !matches!(policy.mode.as_str(), "full_tunnel" | "split") {
-        return Err(
-            "DoodleVPN returned an unsupported routing policy. Update the app and try again."
-                .into(),
-        );
-    }
-    if policy.version.len() > 128
-        || policy.direct_domains.len() > 4096
-        || policy.local_dns_domains.len() > 4096
-        || policy.direct_ip_ranges.len() > 512
-    {
-        return Err("DoodleVPN returned an invalid routing policy.".into());
-    }
-
-    let valid_selector = |value: &String| {
-        !value.is_empty()
-            && value.len() <= 512
-            && !value.chars().any(char::is_whitespace)
-            && !value.chars().any(char::is_control)
-    };
-    if !policy.direct_domains.iter().all(valid_selector)
-        || !policy.local_dns_domains.iter().all(valid_selector)
-    {
-        return Err("DoodleVPN returned an invalid routing domain selector.".into());
-    }
-    if !policy.direct_ip_ranges.iter().all(|value| {
-        let Some((address, prefix)) = value.split_once('/') else {
-            return false;
-        };
-        let Ok(address) = address.parse::<IpAddr>() else {
-            return false;
-        };
-        let Ok(prefix) = prefix.parse::<u8>() else {
-            return false;
-        };
-        prefix <= if address.is_ipv4() { 32 } else { 128 }
-    }) {
-        return Err("DoodleVPN returned an invalid routing IP range.".into());
-    }
-
-    for values in [
-        &mut policy.direct_domains,
-        &mut policy.local_dns_domains,
-        &mut policy.direct_ip_ranges,
-    ] {
-        values.sort();
-        values.dedup();
-    }
-    if policy.mode == "full_tunnel" {
-        policy.direct_domains.clear();
-        policy.local_dns_domains.clear();
-        policy.direct_ip_ranges.clear();
-    }
-
-    if let Some(asset) = policy.asset.as_ref() {
-        let valid_hash =
-            asset.sha256.len() == 64 && asset.sha256.bytes().all(|byte| byte.is_ascii_hexdigit());
-        if !asset.url.starts_with('/')
-            || asset.url.starts_with("//")
-            || asset.url.contains("..")
-            || !valid_hash
-            || asset.size_bytes == 0
-            || asset.size_bytes > 64 * 1024 * 1024
-        {
-            return Err("DoodleVPN returned an invalid routing asset.".into());
-        }
-        verify_app_routing_asset(asset)?;
-    }
-    Ok(policy)
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct AppApiProfileLeaseResponse {
-    #[serde(default)]
-    schema_version: i32,
-    profile_id: String,
-    lease_id: String,
-    expires_at: String,
-    location_id: String,
-    #[serde(default)]
-    route_kind: String,
-    #[serde(default)]
-    first_hop: String,
-    #[serde(default)]
-    target_country_id: String,
-    #[serde(default)]
-    entry_role: String,
-    #[serde(default)]
-    routing_rules_version: String,
-    #[serde(default)]
-    routing_policy: Option<AppRoutingPolicy>,
-    #[serde(default)]
-    native_profile: serde_json::Value,
-    #[serde(default)]
-    profile: Option<serde_json::Value>,
-    #[serde(default)]
-    transport_capability: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AppConnectLocationRequest {
-    pub location_id: String,
-    #[serde(default)]
-    pub fallback_location_ids: Vec<String>,
-    #[serde(default = "default_app_proxy_mode")]
-    pub proxy_mode: String,
-    #[serde(default = "default_system_proxy_mode")]
-    pub system_proxy_mode: String,
-    #[serde(default = "default_app_socks_port")]
-    pub socks_port: u16,
-    #[serde(default = "default_app_http_port")]
-    pub http_port: u16,
-    #[serde(default = "default_app_network_stack")]
-    pub network_stack: String,
-    #[serde(default = "default_app_dns_mode")]
-    pub dns_mode: String,
-    #[serde(default = "default_app_strict_route")]
-    pub strict_route: bool,
-    #[serde(default)]
-    pub kill_switch: bool,
-    #[serde(default)]
-    pub routing_rules: Vec<RoutingRuleRequest>,
-}
-
-fn app_connection_location_ids(request: &AppConnectLocationRequest) -> Vec<String> {
-    let mut ids = Vec::new();
-    for location_id in std::iter::once(&request.location_id).chain(&request.fallback_location_ids) {
-        let location_id = location_id.trim().to_ascii_lowercase();
-        if !location_id.is_empty() && !ids.contains(&location_id) {
-            ids.push(location_id);
-        }
-        if ids.len() == 3 {
-            break;
-        }
-    }
-    ids
-}
-
-#[derive(Debug)]
-struct AppApiHttpError {
-    status: u16,
-    message: String,
-}
-
-impl std::fmt::Display for AppApiHttpError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "App API error {}: {}", self.status, self.message)
-    }
-}
-
-fn app_api_error_message(status: reqwest::StatusCode, text: &str) -> String {
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(text) {
-        for key in ["error", "message"] {
-            if let Some(message) = value.get(key).and_then(serde_json::Value::as_str) {
-                if !message.trim().is_empty() {
-                    return message.trim().chars().take(500).collect();
-                }
-            }
-        }
-    }
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        status.to_string()
-    } else if trimmed.starts_with('<') || trimmed.to_ascii_lowercase().contains("<html") {
-        "DoodleVPN API returned an incompatible response. Update the app and try again.".into()
-    } else {
-        trimmed.chars().take(500).collect()
-    }
-}
-
-fn default_app_proxy_mode() -> String {
-    "tun".into()
-}
-
-fn default_app_socks_port() -> u16 {
-    10808
-}
-
-fn default_app_http_port() -> u16 {
-    10809
-}
-
-fn default_app_network_stack() -> String {
-    "system".into()
-}
-
-fn default_app_dns_mode() -> String {
-    "fakeip".into()
-}
-
-fn default_app_strict_route() -> bool {
-    true
-}
-
-fn closed_control_plane_enabled() -> bool {
-    option_env!("DOODLERAY_CLOSED_CONTROL_PLANE") == Some("1")
-}
-
-fn ensure_closed_control_plane_enabled() -> Result<(), String> {
-    if closed_control_plane_enabled() {
-        Ok(())
-    } else {
-        Err("DoodleVPN account sign-in is not enabled in this build.".into())
-    }
-}
-
-fn app_api_base_url() -> String {
-    option_env!("DOODLERAY_APP_API_BASE_URL")
-        .unwrap_or(APP_API_DEFAULT_BASE_URL)
-        .trim_end_matches('/')
-        .to_string()
-}
-
-fn app_api_endpoint(path: &str) -> Result<Url, String> {
-    let base = format!("{}/", app_api_base_url());
-    let mut base_url = Url::parse(&base).map_err(|e| format!("Invalid App API base URL: {}", e))?;
-    let path = path.trim_start_matches('/');
-    if path.starts_with("v1/mobile/") {
-        base_url.set_path(&format!("/{path}"));
-        return Ok(base_url);
-    }
-    base_url
-        .join(path)
-        .map_err(|e| format!("Invalid App API endpoint path: {}", e))
-}
-
-fn app_api_http_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .no_proxy()
-        .timeout(Duration::from_secs(20))
-        .build()
-        .map_err(|e| format!("App API client init failed: {}", e))
-}
-
-fn app_api_stored_session(session: &AppApiTokenResponse) -> AppApiStoredSession {
-    AppApiStoredSession {
-        refresh_token: session.refresh_token.clone(),
-        refresh_expires_at: session.refresh_expires_at.clone(),
-        device_id: session.device_id.clone(),
-        subscription: session.subscription.clone(),
-    }
-}
-
-fn app_api_session_from_stored(stored: AppApiStoredSession) -> AppApiTokenResponse {
-    AppApiTokenResponse {
-        access_token: String::new(),
-        access_expires_at: String::new(),
-        expires_in: 0,
-        refresh_token: stored.refresh_token,
-        refresh_expires_at: stored.refresh_expires_at,
-        device_id: stored.device_id,
-        subscription: stored.subscription,
-    }
-}
-
-fn app_api_encode_session_for_disk(session: &AppApiTokenResponse) -> Result<String, String> {
-    serde_json::to_string(&app_api_stored_session(session))
-        .map_err(|e| format!("App API session serialize failed: {}", e))
-}
-
-fn app_api_decode_session_from_disk(encoded: &str) -> Result<AppApiTokenResponse, String> {
-    if let Ok(stored) = serde_json::from_str::<AppApiStoredSession>(encoded) {
-        return Ok(app_api_session_from_stored(stored));
-    }
-
-    // One-way migration for early v6 RCs that persisted the whole token
-    // response. The loaded access token stays in memory for this process only;
-    // app_api_load_session rewrites the disk entry without it.
-    serde_json::from_str::<AppApiTokenResponse>(encoded)
-        .map_err(|e| format!("Stored App API session is invalid: {}", e))
-}
-
-fn app_api_store_session(session: &AppApiTokenResponse) -> Result<(), String> {
-    let encoded = app_api_encode_session_for_disk(session)?;
-    secure_store_keyring_set(APP_API_SESSION_KEY, &encoded)?;
-    if let Ok(mut memory) = APP_API_MEMORY_SESSION.lock() {
-        *memory = Some(session.clone());
-    }
-    Ok(())
-}
-
-fn app_api_delete_session() -> Result<(), String> {
-    if let Ok(mut memory) = APP_API_MEMORY_SESSION.lock() {
-        *memory = None;
-    }
-    secure_store_keyring_delete(APP_API_SESSION_KEY)
-}
-
-fn app_api_load_session() -> Result<Option<AppApiTokenResponse>, String> {
-    if let Ok(memory) = APP_API_MEMORY_SESSION.lock() {
-        if let Some(session) = memory.clone() {
-            return Ok(Some(session));
-        }
-    }
-
-    let Some(encoded) = secure_store_keyring_get(APP_API_SESSION_KEY)? else {
-        return Ok(None);
-    };
-    let session = app_api_decode_session_from_disk(&encoded)?;
-    if !session.access_token.is_empty() {
-        secure_store_keyring_set(
-            APP_API_SESSION_KEY,
-            &app_api_encode_session_for_disk(&session)?,
-        )?;
-    }
-    if let Ok(mut memory) = APP_API_MEMORY_SESSION.lock() {
-        *memory = Some(session.clone());
-    }
-    Ok(Some(session))
-}
-
-fn app_api_public_session(session: Option<AppApiTokenResponse>) -> AppApiSessionStatus {
-    let access_expires_at = session.as_ref().and_then(|s| {
-        (!s.access_expires_at.trim().is_empty()).then(|| s.access_expires_at.clone())
-    });
-    AppApiSessionStatus {
-        logged_in: session.is_some(),
-        device_id: session.as_ref().map(|s| s.device_id.clone()),
-        access_expires_at,
-        refresh_expires_at: session.as_ref().map(|s| s.refresh_expires_at.clone()),
-        subscription: session.as_ref().map(|s| s.subscription.clone()),
-        api_base_url: app_api_base_url(),
-        closed_control_plane_enabled: closed_control_plane_enabled(),
-    }
-}
-
-fn app_api_ed25519_jwk_from_seed(seed: &[u8; 32]) -> (String, serde_json::Value) {
-    let signing_key = SigningKey::from_bytes(seed);
-    let public_key = signing_key.verifying_key().to_bytes();
-    let encoded_public = URL_SAFE_NO_PAD.encode(public_key);
-    let jwk = serde_json::json!({
-        "kty": "OKP",
-        "crv": "Ed25519",
-        "x": encoded_public,
-    });
-    (encoded_public, jwk)
-}
-
-fn app_api_generate_device_state() -> Result<AppApiDeviceState, String> {
-    let mut seed = [0u8; 32];
-    getrandom::getrandom(&mut seed)
-        .map_err(|e| format!("App API device key generation failed: {}", e))?;
-    let (public_key, public_key_jwk) = app_api_ed25519_jwk_from_seed(&seed);
-    Ok(AppApiDeviceState {
-        client_device_id: format!("pc-{}", uuid::Uuid::new_v4()),
-        hwid: format!("pc-hwid-{}", uuid::Uuid::new_v4()),
-        public_key,
-        public_key_jwk,
-        private_key_seed: URL_SAFE_NO_PAD.encode(seed),
-        key_alg: "Ed25519".into(),
-    })
-}
-
-fn app_api_device_state_is_usable(device: &AppApiDeviceState) -> bool {
-    !device.client_device_id.trim().is_empty()
-        && !device.hwid.trim().is_empty()
-        && device.key_alg == "Ed25519"
-        && !device.public_key.trim().is_empty()
-        && device.public_key_jwk.get("kty").and_then(|v| v.as_str()) == Some("OKP")
-        && device.public_key_jwk.get("crv").and_then(|v| v.as_str()) == Some("Ed25519")
-        && !device.private_key_seed.trim().is_empty()
-}
-
-fn app_api_signing_key(device: &AppApiDeviceState) -> Result<SigningKey, String> {
-    let decoded = URL_SAFE_NO_PAD
-        .decode(device.private_key_seed.trim())
-        .map_err(|e| format!("Stored App API device key is invalid: {}", e))?;
-    let seed: [u8; 32] = decoded
-        .try_into()
-        .map_err(|_| "Stored App API device key has invalid length".to_string())?;
-    Ok(SigningKey::from_bytes(&seed))
-}
-
-fn app_api_body_sha256(body: Option<&str>) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(body.unwrap_or("").as_bytes());
-    URL_SAFE_NO_PAD.encode(hasher.finalize())
-}
-
-fn app_api_device_proof(
-    device: &AppApiDeviceState,
-    method: &reqwest::Method,
-    path: &str,
-    body: Option<&str>,
-) -> Result<String, String> {
-    let signing_key = app_api_signing_key(device)?;
-    let iat = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| format!("System clock is not valid for App API proof: {}", e))?
-        .as_secs();
-    let jti = uuid::Uuid::new_v4().to_string();
-    let normalized_path = format!("/{}", path.trim_start_matches('/'));
-    let body_sha256 = app_api_body_sha256(body);
-    let signing_input = format!(
-        "DoodleVPN-PC-Proof-v1\n{}\n{}\n{}\n{}\n{}\n{}",
-        method.as_str(),
-        normalized_path,
-        body_sha256,
-        iat,
-        jti,
-        device.client_device_id
-    );
-    let signature = signing_key.sign(signing_input.as_bytes());
-    let proof = serde_json::json!({
-        "typ": "doodlevpn-device-proof-v1",
-        "alg": "EdDSA",
-        "device_id": device.client_device_id,
-        "public_key_jwk": device.public_key_jwk,
-        "htm": method.as_str(),
-        "htu": normalized_path,
-        "iat": iat,
-        "jti": jti,
-        "body_sha256": body_sha256,
-        "sig": URL_SAFE_NO_PAD.encode(signature.to_bytes()),
-    });
-    Ok(URL_SAFE_NO_PAD.encode(proof.to_string()))
-}
-
-fn app_api_load_or_create_device() -> Result<AppApiDeviceState, String> {
-    if let Some(encoded) = secure_store_keyring_get(APP_API_DEVICE_KEY)? {
-        if let Ok(device) = serde_json::from_str::<AppApiDeviceState>(&encoded) {
-            if app_api_device_state_is_usable(&device) {
-                return Ok(device);
-            }
-        }
-    }
-
-    // v6 keeps the private key below the React/Tauri renderer boundary. A later
-    // Windows-only hardening pass should move this seed into a CNG persisted key.
-    let device = app_api_generate_device_state()?;
-    let encoded = serde_json::to_string(&device)
-        .map_err(|e| format!("App API device serialize failed: {}", e))?;
-    secure_store_keyring_set(APP_API_DEVICE_KEY, &encoded)?;
-    Ok(device)
-}
-
-async fn app_api_send_json<T: DeserializeOwned>(
-    method: reqwest::Method,
-    path: &str,
-    bearer: Option<&str>,
-    body: Option<serde_json::Value>,
-) -> Result<T, AppApiHttpError> {
-    let client = app_api_http_client().map_err(|message| AppApiHttpError { status: 0, message })?;
-    let url = app_api_endpoint(path).map_err(|message| AppApiHttpError { status: 0, message })?;
-    let body_text = body.as_ref().map(|body| body.to_string());
-    let mut request = client
-        .request(method.clone(), url)
-        .header("Accept", "application/json")
-        .header(
-            "User-Agent",
-            format!("DoodleRayPC/{}", env!("CARGO_PKG_VERSION")),
-        );
-    if closed_control_plane_enabled() {
-        let device = app_api_load_or_create_device()
-            .map_err(|message| AppApiHttpError { status: 0, message })?;
-        let proof = app_api_device_proof(&device, &method, path, body_text.as_deref())
-            .map_err(|message| AppApiHttpError { status: 0, message })?;
-        request = request
-            .header("X-Doodle-Device-ID", device.client_device_id)
-            .header("X-Doodle-Device-Proof", proof);
-    }
-    if let Some(token) = bearer {
-        request = request.bearer_auth(token);
-    }
-    if let Some(body) = body_text {
-        request = request
-            .header("Content-Type", "application/json")
-            .body(body);
-    }
-
-    let response = request.send().await.map_err(|e| AppApiHttpError {
-        status: 0,
-        message: e.to_string(),
-    })?;
-    let status = response.status();
-    let text = response.text().await.unwrap_or_default();
-    if !status.is_success() {
-        return Err(AppApiHttpError {
-            status: status.as_u16(),
-            message: app_api_error_message(status, &text),
-        });
-    }
-    serde_json::from_str::<T>(&text).map_err(|e| AppApiHttpError {
-        status: status.as_u16(),
-        message: format!("App API JSON parse failed: {}", e),
-    })
-}
-
-#[cfg(all(target_os = "macos", feature = "app-store"))]
-async fn app_api_send_bytes(path: &str, bearer: &str) -> Result<Vec<u8>, AppApiHttpError> {
-    let client = app_api_http_client().map_err(|message| AppApiHttpError { status: 0, message })?;
-    let url = app_api_endpoint(path).map_err(|message| AppApiHttpError { status: 0, message })?;
-    let method = reqwest::Method::GET;
-    let mut request = client
-        .get(url)
-        .header("Accept", "application/octet-stream")
-        .header(
-            "User-Agent",
-            format!("DoodleRayPC/{}", env!("CARGO_PKG_VERSION")),
-        )
-        .bearer_auth(bearer);
-    if closed_control_plane_enabled() {
-        let device = app_api_load_or_create_device()
-            .map_err(|message| AppApiHttpError { status: 0, message })?;
-        let proof = app_api_device_proof(&device, &method, path, None)
-            .map_err(|message| AppApiHttpError { status: 0, message })?;
-        request = request
-            .header("X-Doodle-Device-ID", device.client_device_id)
-            .header("X-Doodle-Device-Proof", proof);
-    }
-    let response = request.send().await.map_err(|error| AppApiHttpError {
-        status: 0,
-        message: error.to_string(),
-    })?;
-    let status = response.status();
-    if !status.is_success() {
-        let text = response.text().await.unwrap_or_default();
-        return Err(AppApiHttpError {
-            status: status.as_u16(),
-            message: app_api_error_message(status, &text),
-        });
-    }
-    if response
-        .content_length()
-        .is_some_and(|size| size > 64 * 1024 * 1024)
-    {
-        return Err(AppApiHttpError {
-            status: status.as_u16(),
-            message: "routing asset is too large".into(),
-        });
-    }
-    let bytes = response.bytes().await.map_err(|error| AppApiHttpError {
-        status: status.as_u16(),
-        message: error.to_string(),
-    })?;
-    if bytes.len() > 64 * 1024 * 1024 {
-        return Err(AppApiHttpError {
-            status: status.as_u16(),
-            message: "routing asset is too large".into(),
-        });
-    }
-    Ok(bytes.to_vec())
-}
-
-async fn app_api_refresh_session() -> Result<AppApiTokenResponse, String> {
-    let Some(session) = app_api_load_session()? else {
-        return Err("DoodleVPN sign-in is required.".into());
-    };
-    let body = serde_json::json!({
-        "refresh_token": session.refresh_token,
-        "device_id": session.device_id,
-    });
-    let refreshed = app_api_send_json::<AppApiTokenResponse>(
-        reqwest::Method::POST,
-        "/auth/refresh",
-        None,
-        Some(body),
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-    app_api_store_session(&refreshed)?;
-    Ok(refreshed)
-}
-
-async fn app_api_authorized_json<T: DeserializeOwned>(
-    method: reqwest::Method,
-    path: &str,
-    body: Option<serde_json::Value>,
-) -> Result<T, String> {
-    app_api_authorized_json_http(method, path, body)
-        .await
-        .map_err(|error| error.to_string())
-}
-
-async fn app_api_authorized_json_http<T: DeserializeOwned>(
-    method: reqwest::Method,
-    path: &str,
-    body: Option<serde_json::Value>,
-) -> Result<T, AppApiHttpError> {
-    let Some(session) =
-        app_api_load_session().map_err(|message| AppApiHttpError { status: 0, message })?
-    else {
-        return Err(AppApiHttpError {
-            status: 401,
-            message: "DoodleVPN sign-in is required.".into(),
-        });
-    };
-    if session.access_token.trim().is_empty() {
-        let refreshed = app_api_refresh_session()
-            .await
-            .map_err(|message| AppApiHttpError { status: 0, message })?;
-        return app_api_send_json::<T>(method, path, Some(&refreshed.access_token), body).await;
-    }
-    match app_api_send_json::<T>(
-        method.clone(),
-        path,
-        Some(&session.access_token),
-        body.clone(),
-    )
-    .await
-    {
-        Ok(value) => Ok(value),
-        Err(err) if err.status == 401 => {
-            let refreshed = app_api_refresh_session()
-                .await
-                .map_err(|message| AppApiHttpError { status: 0, message })?;
-            app_api_send_json::<T>(method, path, Some(&refreshed.access_token), body).await
-        }
-        Err(err) => Err(err),
-    }
-}
-
-#[cfg(all(target_os = "macos", feature = "app-store"))]
-async fn app_api_authorized_bytes(path: &str) -> Result<Vec<u8>, String> {
-    let Some(session) = app_api_load_session()? else {
-        return Err("DoodleVPN sign-in is required.".into());
-    };
-    let session = if session.access_token.trim().is_empty() {
-        app_api_refresh_session().await?
-    } else {
-        session
-    };
-    match app_api_send_bytes(path, &session.access_token).await {
-        Ok(bytes) => Ok(bytes),
-        Err(error) if error.status == 401 => {
-            let refreshed = app_api_refresh_session().await?;
-            app_api_send_bytes(path, &refreshed.access_token)
-                .await
-                .map_err(|error| error.to_string())
-        }
-        Err(error) => Err(error.to_string()),
-    }
-}
-
-fn app_api_diagnostic_key_is_sensitive(key: &str) -> bool {
-    let key = key.to_ascii_lowercase();
-    [
-        "token",
-        "password",
-        "secret",
-        "private",
-        "credential",
-        "uuid",
-        "address",
-        "endpoint",
-        "profile",
-        "public_key",
-        "short_id",
-        "subscription",
-        "packet",
-        "dns_query",
-        "destination_ip",
-        "config",
-        "domain",
-        "host",
-        "url",
-    ]
-    .iter()
-    .any(|needle| key.contains(needle))
-}
-
-fn app_api_redact_diagnostic_text(value: &str) -> String {
-    value
-        .chars()
-        .take(4_000)
-        .collect::<String>()
-        .split_whitespace()
-        .map(|word| {
-            let trimmed = word.trim_matches(|c: char| {
-                !c.is_ascii_alphanumeric() && c != '.' && c != ':' && c != '-'
-            });
-            if trimmed.contains("://") {
-                return "[url]".to_string();
-            }
-            if trimmed.parse::<IpAddr>().is_ok() {
-                return "[ip]".to_string();
-            }
-            let uuid_like = trimmed.len() == 36
-                && trimmed
-                    .as_bytes()
-                    .iter()
-                    .filter(|byte| **byte == b'-')
-                    .count()
-                    == 4;
-            if uuid_like {
-                return "[id]".to_string();
-            }
-            let looks_like_domain = trimmed.rsplit_once('.').is_some_and(|(_, suffix)| {
-                suffix.len() >= 2 && suffix.chars().all(|c| c.is_ascii_alphabetic())
-            });
-            if looks_like_domain {
-                return "[domain]".to_string();
-            }
-            word.to_string()
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn app_api_sanitize_diagnostic_value(value: serde_json::Value, depth: usize) -> serde_json::Value {
-    if depth > 5 {
-        return serde_json::Value::String("[truncated]".into());
-    }
-    match value {
-        serde_json::Value::String(value) => {
-            serde_json::Value::String(app_api_redact_diagnostic_text(&value))
-        }
-        serde_json::Value::Array(values) => serde_json::Value::Array(
-            values
-                .into_iter()
-                .take(50)
-                .map(|value| app_api_sanitize_diagnostic_value(value, depth + 1))
-                .collect(),
-        ),
-        serde_json::Value::Object(values) => serde_json::Value::Object(
-            values
-                .into_iter()
-                .filter(|(key, _)| !app_api_diagnostic_key_is_sensitive(key))
-                .take(50)
-                .map(|(key, value)| (key, app_api_sanitize_diagnostic_value(value, depth + 1)))
-                .collect(),
-        ),
-        other => other,
-    }
-}
-
-fn app_api_profile_to_connect_request(
-    profile: &serde_json::Value,
-    request: &AppConnectLocationRequest,
-) -> Result<ConnectRequest, String> {
-    let profile_type = profile
-        .get("type")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default();
-    if profile_type == "xray" {
-        return app_api_xray_profile_to_connect_request(profile, request);
-    }
-    let security = profile
-        .get("security")
-        .and_then(|v| v.as_str())
-        .unwrap_or("reality");
-    if profile_type != "vless" || security != "reality" {
-        return Err(format!(
-            "Unsupported DoodleVPN profile type for PC runtime: type={} security={}",
-            profile_type, security
-        ));
-    }
-
-    let address = profile
-        .get("connect_address")
-        .or_else(|| profile.get("address"))
-        .and_then(|v| v.as_str())
-        .filter(|v| !v.trim().is_empty())
-        .ok_or_else(|| "DoodleVPN profile is missing connect address".to_string())?
-        .to_string();
-    let port = profile
-        .get("port")
-        .and_then(|v| v.as_u64())
-        .filter(|port| *port > 0 && *port <= u16::MAX as u64)
-        .unwrap_or(443) as u16;
-    let uuid = profile
-        .get("uuid")
-        .and_then(|v| v.as_str())
-        .filter(|v| !v.trim().is_empty())
-        .ok_or_else(|| "DoodleVPN profile is missing user id".to_string())?
-        .to_string();
-
-    let transport = match profile.get("transport").and_then(|v| v.as_str()) {
-        Some("reality_tcp") | Some("tcp") | None => "tcp".to_string(),
-        Some(other) => other.to_string(),
-    };
-
-    Ok(ConnectRequest {
-        server_address: address,
-        server_port: port,
-        protocol: "vless".into(),
-        uuid: Some(uuid),
-        password: None,
-        transport,
-        security: "reality".into(),
-        sni: profile
-            .get("server_name")
-            .and_then(|v| v.as_str())
-            .map(|v| v.to_string()),
-        host: None,
-        path: None,
-        fingerprint: profile
-            .get("fingerprint")
-            .and_then(|v| v.as_str())
-            .map(|v| v.to_string()),
-        public_key: profile
-            .get("public_key")
-            .and_then(|v| v.as_str())
-            .map(|v| v.to_string()),
-        short_id: profile
-            .get("short_id")
-            .and_then(|v| v.as_str())
-            .map(|v| v.to_string()),
-        flow: profile
-            .get("flow")
-            .and_then(|v| v.as_str())
-            .map(|v| v.to_string()),
-        proxy_mode: request.proxy_mode.clone(),
-        system_proxy_mode: request.system_proxy_mode.clone(),
-        socks_port: request.socks_port,
-        http_port: request.http_port,
-        api_port: default_xray_api_port(),
-        network_stack: request.network_stack.clone(),
-        dns_mode: request.dns_mode.clone(),
-        strict_route: request.strict_route,
-        kill_switch: request.kill_switch,
-        routing_rules: request.routing_rules.clone(),
-        obfs_type: None,
-        obfs_password: None,
-        up_mbps: None,
-        down_mbps: None,
-        congestion_control: None,
-        udp_relay_mode: None,
-        alpn: None,
-        private_key: None,
-        peer_public_key: None,
-        pre_shared_key: None,
-        local_address: None,
-        reserved: None,
-        mtu: None,
-        workers: None,
-        encryption: None,
-        raw_xray_config: None,
-        routing_policy: None,
-    })
-}
-
-fn app_api_xray_profile_to_connect_request(
-    profile: &serde_json::Value,
-    request: &AppConnectLocationRequest,
-) -> Result<ConnectRequest, String> {
-    if profile.get("format").and_then(|v| v.as_str()) != Some("xray-outbound-v1") {
-        return Err("Unsupported DoodleVPN Xray profile format".into());
-    }
-    let config = profile
-        .get("config")
-        .filter(|value| value.is_object())
-        .ok_or_else(|| "DoodleVPN Xray profile is missing config".to_string())?
-        .clone();
-    let outbounds = config
-        .get("outbounds")
-        .and_then(|value| value.as_array())
-        .ok_or_else(|| "DoodleVPN Xray profile is missing outbounds".to_string())?;
-    let proxy = outbounds
-        .iter()
-        .find(|outbound| outbound.get("tag").and_then(|value| value.as_str()) == Some("proxy"))
-        .ok_or_else(|| "DoodleVPN Xray profile is missing proxy outbound".to_string())?;
-    if proxy.get("protocol").and_then(|value| value.as_str()) != Some("vless") {
-        return Err("Unsupported DoodleVPN Xray outbound protocol".into());
-    }
-    let address = profile
-        .get("connect_address")
-        .and_then(|value| value.as_str())
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "DoodleVPN Xray profile is missing connect address".to_string())?
-        .to_string();
-    let port = profile
-        .get("port")
-        .and_then(|value| value.as_u64())
-        .filter(|value| *value > 0 && *value <= u16::MAX as u64)
-        .ok_or_else(|| "DoodleVPN Xray profile has an invalid port".to_string())?
-        as u16;
-
-    Ok(ConnectRequest {
-        server_address: address,
-        server_port: port,
-        protocol: "vless".into(),
-        uuid: None,
-        password: None,
-        transport: "xhttp".into(),
-        security: "tls".into(),
-        sni: None,
-        host: None,
-        path: None,
-        fingerprint: None,
-        public_key: None,
-        short_id: None,
-        flow: None,
-        proxy_mode: request.proxy_mode.clone(),
-        system_proxy_mode: request.system_proxy_mode.clone(),
-        socks_port: request.socks_port,
-        http_port: request.http_port,
-        api_port: default_xray_api_port(),
-        network_stack: request.network_stack.clone(),
-        dns_mode: request.dns_mode.clone(),
-        strict_route: request.strict_route,
-        kill_switch: request.kill_switch,
-        routing_rules: request.routing_rules.clone(),
-        obfs_type: None,
-        obfs_password: None,
-        up_mbps: None,
-        down_mbps: None,
-        congestion_control: None,
-        udp_relay_mode: None,
-        alpn: None,
-        private_key: None,
-        peer_public_key: None,
-        pre_shared_key: None,
-        local_address: None,
-        reserved: None,
-        mtu: None,
-        workers: None,
-        encryption: None,
-        raw_xray_config: Some(config),
-        routing_policy: None,
-    })
-}
-
-fn app_api_connection_result_body(
-    lease: &AppApiProfileLeaseResponse,
-    session: &AppApiTokenResponse,
-    success: bool,
-    latency_ms: i64,
-    message: &str,
-) -> serde_json::Value {
-    serde_json::json!({
-        "profile_id": lease.profile_id,
-        "device_id": session.device_id,
-        "app_version": env!("CARGO_PKG_VERSION"),
-        "core_version": app_api_core_version(),
-        "success": success,
-        "error_code": if success { "" } else { "pc_connect_failed" },
-        "latency_ms": latency_ms.max(0),
-        "transport": lease.route_kind,
-        "last_error": if success { String::new() } else { redact_support_line(message) }
-    })
-}
-
-fn app_api_platform() -> &'static str {
-    #[cfg(target_os = "macos")]
-    {
-        "macos"
-    }
-    #[cfg(windows)]
-    {
-        "windows"
-    }
-    #[cfg(all(not(windows), not(target_os = "macos")))]
-    {
-        "desktop"
-    }
-}
-
-fn app_api_core_version() -> &'static str {
-    #[cfg(target_os = "macos")]
-    {
-        "macos-v6"
-    }
-    #[cfg(windows)]
-    {
-        "pc-v6"
-    }
-    #[cfg(all(not(windows), not(target_os = "macos")))]
-    {
-        "desktop-v6"
-    }
-}
-
-fn app_api_client_capabilities() -> serde_json::Value {
-    serde_json::json!({
-        "windows": cfg!(windows),
-        "macos": cfg!(target_os = "macos"),
-        "tun": true,
-        "network_extension": cfg!(all(target_os = "macos", feature = "app-store")),
-        "xray_reality": true,
-        "dns_hijack": true
-    })
-}
-
-fn app_api_device_body(device: &AppApiDeviceState, computer_name: &str) -> serde_json::Value {
-    serde_json::json!({
-        "device_id": device.client_device_id,
-        "platform": app_api_platform(),
-        "model": computer_name,
-        "app_version": env!("CARGO_PKG_VERSION"),
-        "hwid": device.hwid,
-        "public_key": device.public_key
-    })
-}
-
-fn app_api_exchange_code_body(
-    code: &str,
-    device: &AppApiDeviceState,
-    computer_name: &str,
-) -> serde_json::Value {
-    serde_json::json!({
-        "code": code,
-        "device": app_api_device_body(device, computer_name)
-    })
-}
-
-fn legacy_subscription_token(subscription_url: &str) -> Result<String, String> {
-    let parsed = Url::parse(subscription_url.trim())
-        .map_err(|_| "Stored DoodleVPN subscription URL is invalid.".to_string())?;
-    if parsed.scheme() != "https" {
-        return Err("Stored DoodleVPN subscription must use HTTPS.".into());
-    }
-    let host = parsed.host_str().unwrap_or_default().to_ascii_lowercase();
-    if !matches!(
-        host.as_str(),
-        "ddlvpn.lol"
-            | "www.ddlvpn.lol"
-            | "doodlevpn.online"
-            | "www.doodlevpn.online"
-            | "sub.brewsandrologistics.fun"
-    ) {
-        return Err("Stored subscription is not a DoodleVPN subscription.".into());
-    }
-    let segments = parsed
-        .path_segments()
-        .map(|segments| {
-            segments
-                .filter(|segment| !segment.is_empty())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    if segments.len() != 2 || !matches!(segments[0], "s" | "sub") {
-        return Err("Stored DoodleVPN subscription URL is not supported.".into());
-    }
-    let token = segments[1].trim();
-    if token.len() < 8
-        || token.len() > 256
-        || !token
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || "-_.~=".contains(ch))
-    {
-        return Err("Stored DoodleVPN subscription token is invalid.".into());
-    }
-    Ok(token.to_string())
-}
-
-#[tauri::command(async)]
-fn app_api_session_status() -> Result<AppApiSessionStatus, String> {
-    if !closed_control_plane_enabled() {
-        return Ok(app_api_public_session(None));
-    }
-    app_api_load_session().map(app_api_public_session)
-}
-
-#[tauri::command]
-async fn app_api_exchange_code(
-    request: AppApiExchangeCodeRequest,
-) -> Result<AppApiSessionStatus, String> {
-    ensure_closed_control_plane_enabled()?;
-    let code = request.code.trim();
-    if code.is_empty() {
-        return Err("Enter the DoodleVPN sign-in code.".into());
-    }
-    let device = app_api_load_or_create_device()?;
-    let computer_name = std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| APP_PRODUCT_NAME.into());
-    let body = app_api_exchange_code_body(code, &device, &computer_name);
-    let session = app_api_send_json::<AppApiTokenResponse>(
-        reqwest::Method::POST,
-        "/auth/code/exchange",
-        None,
-        Some(body),
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-    app_api_store_session(&session)?;
-    Ok(app_api_public_session(Some(session)))
-}
-
-#[tauri::command]
-async fn app_api_exchange_legacy_subscription(
-    request: AppApiExchangeLegacySubscriptionRequest,
-) -> Result<AppApiSessionStatus, String> {
-    ensure_closed_control_plane_enabled()?;
-    let token = legacy_subscription_token(&request.subscription_url)?;
-    let device = app_api_load_or_create_device()?;
-    let computer_name = std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| APP_PRODUCT_NAME.into());
-    let body = serde_json::json!({
-        "subscription_token": token,
-        "device": app_api_device_body(&device, &computer_name)
-    });
-    let session = app_api_send_json::<AppApiTokenResponse>(
-        reqwest::Method::POST,
-        "/auth/legacy-subscription/exchange",
-        None,
-        Some(body),
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-    app_api_store_session(&session)?;
-    Ok(app_api_public_session(Some(session)))
-}
-
-#[tauri::command]
-async fn app_api_refresh() -> Result<AppApiSessionStatus, String> {
-    ensure_closed_control_plane_enabled()?;
-    let session = app_api_refresh_session().await?;
-    Ok(app_api_public_session(Some(session)))
-}
-
-#[tauri::command]
-async fn app_api_logout() -> Result<(), String> {
-    ensure_closed_control_plane_enabled()?;
-    let _ =
-        app_api_authorized_json::<serde_json::Value>(reqwest::Method::POST, "/device/logout", None)
-            .await;
-    app_api_delete_session()
-}
-
-#[tauri::command]
-async fn app_api_locations() -> Result<AppApiLocationsResponse, String> {
-    ensure_closed_control_plane_enabled()?;
-    app_api_authorized_json::<AppApiLocationsResponse>(reqwest::Method::GET, "/locations", None)
-        .await
-}
-
-#[tauri::command]
-async fn app_api_subscription_status() -> Result<AppApiSubscriptionSummary, String> {
-    ensure_closed_control_plane_enabled()?;
-    app_api_authorized_json::<AppApiSubscriptionSummary>(
-        reqwest::Method::GET,
-        "/subscription/status",
-        None,
-    )
-    .await
-}
-
-#[tauri::command]
-async fn app_api_submit_diagnostics(
-    submission: AppApiDiagnosticsSubmission,
-) -> Result<serde_json::Value, String> {
-    ensure_closed_control_plane_enabled()?;
-    if submission.events.is_empty() {
-        return Err("Diagnostics report is empty.".into());
-    }
-    let session =
-        app_api_load_session()?.ok_or_else(|| "DoodleVPN sign-in is required.".to_string())?;
-    let events = submission
-        .events
-        .into_iter()
-        .take(20)
-        .map(|event| {
-            let mut event = app_api_sanitize_diagnostic_value(event, 0);
-            if let Some(object) = event.as_object_mut() {
-                object.insert("manual".into(), submission.manual.into());
-                object.insert("platform".into(), app_api_platform().into());
-                object.insert("architecture".into(), std::env::consts::ARCH.into());
-                object.insert("core_version".into(), app_api_core_version().into());
-            }
-            event
-        })
-        .collect::<Vec<_>>();
-    let body = serde_json::json!({
-        "session_id": format!(
-            "diag_{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis()
-        ),
-        "device_id": session.device_id,
-        "app_version": env!("CARGO_PKG_VERSION"),
-        "events": events,
-    });
-    if body.to_string().len() > 60 * 1024 {
-        return Err("Diagnostics report is too large.".into());
-    }
-    app_api_authorized_json(reqwest::Method::POST, "/diagnostics", Some(body)).await
-}
-
-async fn app_api_connection_profile(
-    session: &AppApiTokenResponse,
-    location_id: &str,
-    selection_mode: &str,
-) -> Result<AppApiProfileLeaseResponse, AppApiHttpError> {
-    let body = serde_json::json!({
-        "location_id": location_id,
-        "device_id": session.device_id,
-        "network_class": "normal",
-        "selection_mode": selection_mode,
-        "app_version": env!("CARGO_PKG_VERSION"),
-        "core_version": app_api_core_version(),
-        "schema_version": 2,
-        "routing_policy_version": "desktop-v2",
-        "client_capabilities": app_api_client_capabilities()
-    });
-    let lease: AppApiProfileLeaseResponse = app_api_authorized_json_http(
-        reqwest::Method::POST,
-        APP_API_CONNECTION_PROFILE_PATH,
-        Some(body),
-    )
-    .await?;
-    if lease.schema_version != 2 {
-        return Err(AppApiHttpError {
-            status: 426,
-            message: "DoodleVPN profile format requires an app update.".into(),
-        });
-    }
-    if lease.routing_policy.is_none() {
-        return Err(AppApiHttpError {
-            status: 426,
-            message:
-                "DoodleVPN profile is missing its signed routing policy. Refresh and try again."
-                    .into(),
-        });
-    }
-    Ok(lease)
-}
-
-fn app_api_profile_error_is_terminal(error: &AppApiHttpError) -> bool {
-    matches!(error.status, 400 | 401 | 403 | 426 | 429)
-}
-
-fn app_api_validated_routing_policy(
-    lease: &AppApiProfileLeaseResponse,
-) -> Result<AppRoutingPolicy, String> {
-    lease
-        .routing_policy
-        .clone()
-        .ok_or_else(|| "DoodleVPN profile is missing its signed routing policy.".to_string())
-        .and_then(validate_app_routing_policy)
-}
-
-#[tauri::command]
-async fn app_connect_location(
-    request: AppConnectLocationRequest,
-    app: tauri::AppHandle,
-) -> ConnectResult {
-    if let Err(message) = ensure_closed_control_plane_enabled() {
-        return ConnectResult {
-            success: false,
-            message,
-            health: None,
-        };
-    }
-    let session = match app_api_load_session() {
-        Ok(Some(session)) => session,
-        Ok(None) => {
-            return ConnectResult {
-                success: false,
-                message: "DoodleVPN sign-in is required.".into(),
-                health: None,
-            };
-        }
-        Err(e) => {
-            return ConnectResult {
-                success: false,
-                message: e,
-                health: None,
-            };
-        }
-    };
-    if session.subscription.device_allowed == Some(false) {
-        return ConnectResult {
-            success: false,
-            message: "DoodleVPN device limit reached. Remove an unused device, then refresh the account status.".into(),
-            health: None,
-        };
-    }
-
-    let location_ids = app_connection_location_ids(&request);
-
-    let selection_mode = if location_ids.len() > 1 {
-        "auto"
-    } else {
-        "manual"
-    };
-    let mut last_failure = None;
-    for location_id in location_ids {
-        let started = Instant::now();
-        let lease = match app_api_connection_profile(&session, &location_id, selection_mode).await {
-            Ok(lease) => lease,
-            Err(e) => {
-                let terminal = app_api_profile_error_is_terminal(&e);
-                last_failure = Some(ConnectResult {
-                    success: false,
-                    message: format!("DoodleVPN connection profile failed: {}", e),
-                    health: None,
-                });
-                if terminal {
-                    break;
-                }
-                continue;
-            }
-        };
-        let mut connect_request =
-            match app_api_profile_to_connect_request(&lease.native_profile, &request) {
-                Ok(request) => request,
-                Err(e) => {
-                    last_failure = Some(ConnectResult {
-                        success: false,
-                        message: e,
-                        health: None,
-                    });
-                    continue;
-                }
-            };
-        connect_request.routing_policy = match app_api_validated_routing_policy(&lease) {
-            Ok(policy) => Some(policy),
-            Err(message) => {
-                last_failure = Some(ConnectResult {
-                    success: false,
-                    message,
-                    health: None,
-                });
-                continue;
-            }
-        };
-        let result = vpn_connect(connect_request, app.clone()).await;
-        let result_body = app_api_connection_result_body(
-            &lease,
-            &session,
-            result.success,
-            started.elapsed().as_millis() as i64,
-            &result.message,
-        );
-        let _ = app_api_authorized_json::<serde_json::Value>(
-            reqwest::Method::POST,
-            "/connection-result",
-            Some(result_body),
-        )
-        .await;
-        if result.success {
-            return result;
-        }
-        last_failure = Some(result);
-    }
-
-    last_failure.unwrap_or(ConnectResult {
-        success: false,
-        message: "No VPN location is available.".into(),
-        health: None,
-    })
-}
-
-#[tauri::command]
-async fn app_ping_location(location_id: String, server_id: String) -> Result<PingResult, String> {
-    ensure_closed_control_plane_enabled()?;
-    let session =
-        app_api_load_session()?.ok_or_else(|| "DoodleVPN sign-in is required.".to_string())?;
-    if session.subscription.device_allowed == Some(false) {
-        return Err("DoodleVPN device limit reached.".into());
-    }
-    let lease = app_api_connection_profile(&session, &location_id, "probe")
-        .await
-        .map_err(|error| error.to_string())?;
-    let request = AppConnectLocationRequest {
-        location_id,
-        fallback_location_ids: Vec::new(),
-        proxy_mode: default_app_proxy_mode(),
-        system_proxy_mode: default_system_proxy_mode(),
-        socks_port: default_app_socks_port(),
-        http_port: default_app_http_port(),
-        network_stack: default_app_network_stack(),
-        dns_mode: default_app_dns_mode(),
-        strict_route: false,
-        kill_switch: false,
-        routing_rules: Vec::new(),
-    };
-    let mut connect_request = app_api_profile_to_connect_request(&lease.native_profile, &request)?;
-    connect_request.routing_policy = Some(app_api_validated_routing_policy(&lease)?);
-    Ok(ping_server_profile(connect_request, server_id).await)
-}
-
-#[tauri::command]
-async fn app_disconnect(app: tauri::AppHandle) -> ConnectResult {
-    vpn_disconnect(app).await
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ConnectRequest {
     pub server_address: String,
@@ -4789,7 +2426,44 @@ pub struct ConnectionHealthReport {
     pub route_explanations: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub endpoint_bypass_checks: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub service_timings_ms: Vec<(String, u64)>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub xray_spawn_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub xray_check_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub singbox_check_ms: Option<u64>,
+    #[serde(default)]
+    pub powershell_fallback_count: u32,
     pub checks: Vec<ConnectionHealthCheck>,
+}
+
+/// Connect phases measured in the app process. The service's own timings_ms
+/// only starts once bring-up begins, so the lease fetch, the cold SCM service
+/// start and the pipe handshake are invisible to it. Reset at the start of
+/// each connect attempt; read back by the diagnostics report.
+static LAST_CONNECT_TIMINGS: std::sync::OnceLock<std::sync::Mutex<Vec<(String, u64)>>> =
+    std::sync::OnceLock::new();
+
+fn last_connect_timings() -> &'static std::sync::Mutex<Vec<(String, u64)>> {
+    LAST_CONNECT_TIMINGS.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+fn reset_connect_timings() {
+    last_connect_timings().lock().unwrap().clear();
+}
+
+fn record_connect_timing(phase: &str, started: std::time::Instant) {
+    let ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+    last_connect_timings()
+        .lock()
+        .unwrap()
+        .push((phase.to_string(), ms));
+}
+
+fn connect_timings_snapshot() -> Vec<(String, u64)> {
+    last_connect_timings().lock().unwrap().clone()
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -5549,10 +3223,14 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
             ob
         }
         unsupported => {
-            // Unknown protocol — return error outbound so user gets clear feedback
-            eprintln!("[error] Unsupported protocol: {}", unsupported);
+            // Unknown protocol: fail closed. A "direct" outbound here would
+            // silently send the user's traffic unproxied while the UI still
+            // claims Connected/Protected — the exact fake-green failure this
+            // app is built to avoid. Block instead, so an unsupported server
+            // fails loudly (no traffic at all) rather than leaking traffic.
+            eprintln!("[error] Unsupported protocol, blocking: {}", unsupported);
             serde_json::json!({
-                "type": "direct",
+                "type": "block",
                 "tag": "proxy"
             })
         }
@@ -5711,189 +3389,22 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
     })
 }
 
-/// Take a raw xray JSON config (from DoodleVPN subscription) and inject
-/// DoodleRay's inbounds (SOCKS, HTTP, stats API) so it uses the correct ports.
-/// Preserves all outbounds, routing, observatory, balancing etc. from the original.
-fn inject_xray_inbounds(mut config: serde_json::Value, req: &ConnectRequest) -> serde_json::Value {
-    // Replace or add inbounds with DoodleRay's SOCKS/HTTP/API ports
-    let inbounds = serde_json::json!([
-        {
-            "tag": "socks-in",
-            "port": req.socks_port,
-            "listen": "127.0.0.1",
-            "protocol": "socks",
-            "settings": { "udp": true, "ip": "127.0.0.1" },
-            "sniffing": {
-                "enabled": true,
-                "destOverride": ["http", "tls", "quic", "fakedns"],
-                "routeOnly": true
-            }
-        },
-        {
-            "tag": "http-in",
-            "port": req.http_port,
-            "listen": "127.0.0.1",
-            "protocol": "http"
-        },
-        {
-            "tag": "api",
-            "port": req.api_port,
-            "listen": "127.0.0.1",
-            "protocol": "dokodemo-door",
-            "settings": { "address": "127.0.0.1" }
-        }
-    ]);
-    config["inbounds"] = inbounds;
-    if req.routing_policy.is_some() {
-        config["dns"] = xray_dns_config(req);
-    } else if config.get("dns").is_none() {
-        config["dns"] = xray_tunnel_dns_config();
-    }
-
-    // Ensure stats/api/policy exist for traffic monitoring
-    if config.get("stats").is_none() {
-        config["stats"] = serde_json::json!({});
-    }
-    if config.get("api").is_none() {
-        config["api"] = serde_json::json!({
-            "tag": "api",
-            "services": ["StatsService"]
-        });
-    }
-    if config.get("policy").is_none() {
-        config["policy"] = serde_json::json!({
-            "system": {
-                "statsInboundUplink": true,
-                "statsInboundDownlink": true,
-                "statsOutboundUplink": true,
-                "statsOutboundDownlink": true
-            }
-        });
-    }
-
-    normalize_xray_transport_settings(&mut config);
-    sanitize_xray_routing_rules(&mut config);
-    constrain_xray_config_to_managed_policy(&mut config, req);
-    ensure_xray_direct_outbound(&mut config);
-    ensure_xray_dns_outbound(&mut config);
-    ensure_xray_api_outbound(&mut config);
-
-    // Make sure routing rules include the API rule
-    if let Some(routing) = config.get_mut("routing") {
-        if let Some(rules) = routing.get_mut("rules") {
-            if let Some(rules_arr) = rules.as_array_mut() {
-                let has_api_rule = rules_arr.iter().any(|r| {
-                    r.get("inboundTag")
-                        .and_then(|t| t.as_array())
-                        .map(|arr| arr.iter().any(|v| v.as_str() == Some("api")))
-                        .unwrap_or(false)
-                });
-                if !has_api_rule {
-                    rules_arr.insert(
-                        0,
-                        serde_json::json!({
-                            "type": "field",
-                            "inboundTag": ["api"],
-                            "outboundTag": "api"
-                        }),
-                    );
-                }
-            }
-        }
-    }
-
-    apply_xray_routing_policy(&mut config, req, false);
-
-    config
-}
-
-fn sanitize_xray_routing_rules(config: &mut serde_json::Value) {
-    let Some(rules) = config
-        .get_mut("routing")
-        .and_then(|routing| routing.get_mut("rules"))
-        .and_then(|rules| rules.as_array_mut())
-    else {
-        return;
-    };
-
-    for rule in rules.iter_mut() {
-        remove_unsupported_xray_rule_values(
-            rule.get_mut("domain"),
-            &[
-                "geosite:category-bittorrent",
-                "geosite:torrent",
-                "geosite:twitch-ads",
-                "geosite:whitelist",
-                "geosite:faceit",
-            ],
-        );
-        remove_unsupported_xray_rule_values(rule.get_mut("ip"), &["geoip:direct"]);
-        remove_empty_xray_rule_array(rule, "domain");
-        remove_empty_xray_rule_array(rule, "ip");
-    }
-
-    rules.retain(has_effective_xray_rule_fields);
-}
-
-fn remove_unsupported_xray_rule_values(
-    value: Option<&mut serde_json::Value>,
-    unsupported: &[&str],
-) {
-    let Some(values) = value.and_then(|v| v.as_array_mut()) else {
-        return;
-    };
-
-    values.retain(|item| {
-        item.as_str()
-            .map(|s| !unsupported.iter().any(|bad| s.eq_ignore_ascii_case(bad)))
-            .unwrap_or(true)
-    });
-}
-
-fn remove_empty_xray_rule_array(rule: &mut serde_json::Value, key: &str) {
-    let should_remove = rule
-        .get(key)
-        .and_then(|value| value.as_array())
-        .map(|values| values.is_empty())
-        .unwrap_or(false);
-
-    if should_remove {
-        if let Some(rule_object) = rule.as_object_mut() {
-            rule_object.remove(key);
-        }
-    }
-}
-
-fn has_effective_xray_rule_fields(rule: &serde_json::Value) -> bool {
-    [
-        "domain",
-        "ip",
-        "port",
-        "sourcePort",
-        "network",
-        "source",
-        "user",
-        "inboundTag",
-        "protocol",
-        "attrs",
-    ]
-    .iter()
-    .any(|key| has_effective_xray_rule_field(rule.get(*key)))
-}
-
-fn has_effective_xray_rule_field(value: Option<&serde_json::Value>) -> bool {
-    match value {
-        Some(serde_json::Value::Array(values)) => !values.is_empty(),
-        Some(serde_json::Value::String(value)) => !value.is_empty(),
-        Some(serde_json::Value::Null) | None => false,
-        Some(_) => true,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// LAST_CONNECT_TIMINGS is a process-global buffer and cargo runs tests
+    /// in parallel threads by default, so any test that resets or records
+    /// into it must hold this lock for its whole body — otherwise a sibling
+    /// test's reset() races a record()/read() here and both flake.
+    static CONNECT_TIMINGS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn lock_connect_timings_for_test() -> std::sync::MutexGuard<'static, ()> {
+        CONNECT_TIMINGS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     #[test]
     fn subscription_redirects_stay_on_the_public_origin() {
@@ -5913,7 +3424,7 @@ mod tests {
         assert_eq!(APP_API_DEFAULT_BASE_URL, "https://ddlvpn.lol/v1/mobile");
         assert_eq!(APP_API_CONNECTION_PROFILE_PATH, "/connection-profile");
         assert_eq!(
-            app_api_endpoint(APP_API_CONNECTION_PROFILE_PATH)
+            control_plane::app_api_endpoint(APP_API_CONNECTION_PROFILE_PATH)
                 .expect("connection-profile URL")
                 .as_str(),
             "https://ddlvpn.lol/v1/mobile/connection-profile"
@@ -5995,6 +3506,11 @@ mod tests {
             service_warning_checks: Vec::new(),
             route_explanations: Vec::new(),
             endpoint_bypass_checks: Vec::new(),
+            service_timings_ms: Vec::new(),
+            xray_spawn_ms: None,
+            xray_check_ms: None,
+            singbox_check_ms: None,
+            powershell_fallback_count: 0,
             checks,
         }
     }
@@ -6155,7 +3671,10 @@ mod tests {
         assert_eq!(check.status, "warning");
         assert_eq!(check.user_text, "Требует внимания");
         assert!(report.copy_text.contains("failed_checks: none"));
-        assert!(!report.copy_text.contains("future_warning_probe"));
+        // Copy is the full report now (almost everyone presses Copy, not
+        // "save full bundle"), so a non-fatal check is still listed in the
+        // per-check detail block — just not counted in failed_checks above.
+        assert!(report.copy_text.contains("future_warning_probe"));
     }
 
     #[test]
@@ -6206,6 +3725,67 @@ mod tests {
         assert!(!report.copy_text.contains("203.0.113.7"));
         assert!(!report.copy_text.contains("vless://secret"));
         assert!(!report.support_summary.contains("203.0.113.7"));
+    }
+
+    #[test]
+    fn diagnosis_copy_text_carries_service_connect_timings() {
+        let mut health = diag_health("protected", vec![], vec![]);
+        health.service_timings_ms = vec![
+            ("waiting_adapter".into(), 4200),
+            ("routes_ready".into(), 9100),
+        ];
+        health.xray_check_ms = Some(310);
+        health.singbox_check_ms = Some(0);
+        health.xray_spawn_ms = Some(45);
+        health.powershell_fallback_count = 2;
+
+        let report = build_network_diagnosis(&health, "tun", None, false);
+
+        assert!(report.copy_text.contains("waiting_adapter=4200ms"));
+        assert!(report.copy_text.contains("routes_ready=9100ms"));
+        assert!(report.copy_text.contains("xray_check=310ms"));
+        assert!(report.copy_text.contains("singbox_check=0ms"));
+        assert!(report.copy_text.contains("xray_spawn=45ms"));
+        assert!(report.copy_text.contains("powershell_fallbacks=2"));
+    }
+
+    #[test]
+    fn diagnosis_copy_text_without_timings_says_none() {
+        let _guard = lock_connect_timings_for_test();
+        reset_connect_timings();
+        let health = diag_health("protected", vec![], vec![]);
+        let report = build_network_diagnosis(&health, "tun", None, false);
+        assert!(report.copy_text.contains("service_phases: none"));
+    }
+
+    #[test]
+    fn diagnosis_copy_text_carries_app_connect_phases() {
+        let _guard = lock_connect_timings_for_test();
+        reset_connect_timings();
+        let started = std::time::Instant::now();
+        record_connect_timing("lease_fetch", started);
+
+        let health = diag_health("protected", vec![], vec![]);
+        let report = build_network_diagnosis(&health, "tun", None, false);
+
+        assert!(report.copy_text.contains("app_phases: lease_fetch="));
+        reset_connect_timings();
+    }
+
+    #[test]
+    fn app_connect_timings_reset_and_record_in_order() {
+        let _guard = lock_connect_timings_for_test();
+        reset_connect_timings();
+        let started = std::time::Instant::now();
+        record_connect_timing("lease_fetch", started);
+        record_connect_timing("service_start", started);
+
+        let snapshot = connect_timings_snapshot();
+        let phases: Vec<&str> = snapshot.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(phases, vec!["lease_fetch", "service_start"]);
+
+        reset_connect_timings();
+        assert!(connect_timings_snapshot().is_empty());
     }
 
     #[test]
@@ -6633,14 +4213,25 @@ mod tests {
     }
 
     #[test]
-    fn renderer_secure_store_cannot_access_app_api_reserved_keys() {
-        assert!(validate_renderer_secure_store_key(APP_API_SESSION_KEY).is_err());
-        assert!(
-            validate_renderer_secure_store_key(&format!("{}.chunk.0", APP_API_SESSION_KEY))
-                .is_err()
+    fn legacy_renderer_state_migration_orders_doodlevpn_subscriptions() {
+        let doodle = json!({
+            "state": {
+                "subscriptions": [
+                    { "id": "older", "url": "https://ddlvpn.lol/s/oldDesktopToken123" },
+                    { "id": "active", "url": "https://doodlevpn.online/sub/activeDesktopToken456" },
+                    { "url": "https://example.com/sub/external-token" }
+                ],
+                "activeServer": { "subscriptionId": "active" }
+            },
+            "version": 0
+        });
+        assert_eq!(
+            legacy_subscription_urls_from_renderer_state(&doodle.to_string()),
+            [
+                "https://doodlevpn.online/sub/activeDesktopToken456",
+                "https://ddlvpn.lol/s/oldDesktopToken123"
+            ]
         );
-        assert!(validate_renderer_secure_store_key(APP_API_DEVICE_KEY).is_err());
-        assert!(validate_renderer_secure_store_key("ui-preference-theme").is_ok());
     }
 
     #[test]
@@ -6709,6 +4300,169 @@ mod tests {
         let migrated = app_api_encode_session_for_disk(&decoded).expect("migrated json");
         assert!(!migrated.contains("legacy-access-secret"));
         assert!(migrated.contains("legacy-refresh-secret"));
+    }
+
+    #[test]
+    fn app_api_windows_hwid_is_stable_without_exposing_the_machine_seed() {
+        let first = app_api_hwid_from_machine_seed("2F8CB1A0-1234-4ABC-9DEF-000011112222");
+        let second = app_api_hwid_from_machine_seed("  2f8cb1a0-1234-4abc-9def-000011112222  ");
+
+        assert_eq!(first, second);
+        assert_eq!(first, "pc-hwid-bfef7afacef4cf4d59ead23be1ab099a");
+        assert_eq!(first.len(), "pc-hwid-".len() + 32);
+        assert!(first.starts_with("pc-hwid-"));
+        assert!(first["pc-hwid-".len()..]
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()));
+        assert!(!first
+            .to_ascii_lowercase()
+            .contains("2f8cb1a0-1234-4abc-9def-000011112222"));
+        assert_ne!(
+            first,
+            app_api_hwid_from_machine_seed("00000000-0000-0000-0000-000000000000")
+        );
+    }
+
+    #[test]
+    fn app_api_generated_device_keeps_random_identity_and_keypair() {
+        let first = app_api_generate_device_state().expect("first device");
+        let second = app_api_generate_device_state().expect("second device");
+
+        assert_ne!(first.client_device_id, second.client_device_id);
+        assert_ne!(first.private_key_seed, second.private_key_seed);
+        assert_ne!(first.public_key, second.public_key);
+    }
+
+    #[test]
+    fn app_api_refresh_error_is_fatal_only_for_auth_rejection() {
+        for status in [401, 403] {
+            assert!(app_api_refresh_error_is_fatal(status));
+        }
+        for status in [0, 500, 503, 200] {
+            assert!(!app_api_refresh_error_is_fatal(status));
+        }
+    }
+
+    #[test]
+    fn app_api_session_tombstone_cannot_decode_as_stale_session() {
+        let stale = AppApiTokenResponse {
+            access_token: String::new(),
+            access_expires_at: String::new(),
+            expires_in: 0,
+            refresh_token: "stale-refresh-secret".into(),
+            refresh_expires_at: "2026-08-06T10:00:00Z".into(),
+            device_id: "stale-device".into(),
+            subscription: AppApiSubscriptionSummary::default(),
+        };
+        let encoded = app_api_encode_session_for_disk(&stale).expect("stale session json");
+
+        assert!(app_api_decode_session_storage_value(&encoded)
+            .expect("stored session")
+            .is_some());
+        assert!(
+            app_api_decode_session_storage_value(APP_API_SESSION_TOMBSTONE)
+                .expect("tombstone")
+                .is_none()
+        );
+        assert!(!APP_API_SESSION_TOMBSTONE.contains("stale-refresh-secret"));
+    }
+
+    #[test]
+    fn app_api_dpapi_delete_failure_replaces_stale_fallback_with_tombstone() {
+        use std::cell::RefCell;
+
+        let stale = AppApiTokenResponse {
+            access_token: String::new(),
+            access_expires_at: String::new(),
+            expires_in: 0,
+            refresh_token: "stale-refresh-secret".into(),
+            refresh_expires_at: "2026-08-06T10:00:00Z".into(),
+            device_id: "stale-device".into(),
+            subscription: AppApiSubscriptionSummary::default(),
+        };
+        let keyring = RefCell::new(Some(
+            app_api_encode_session_for_disk(&stale).expect("keyring session json"),
+        ));
+        let dpapi = RefCell::new(Some(
+            app_api_encode_session_for_disk(&stale).expect("DPAPI session json"),
+        ));
+
+        app_api_invalidate_windows_session_storage(
+            || {
+                *keyring.borrow_mut() = None;
+                Ok(())
+            },
+            |_| panic!("deleted keyring must not be tombstoned"),
+            || Err("simulated DPAPI delete failure".into()),
+            |value| {
+                *dpapi.borrow_mut() = Some(value.to_string());
+                Ok(())
+            },
+        )
+        .expect("DPAPI tombstone replaces stale fallback");
+
+        assert!(keyring.borrow().is_none());
+        let dpapi = dpapi.borrow();
+        let dpapi = dpapi.as_deref().expect("DPAPI tombstone");
+        assert_eq!(dpapi, APP_API_SESSION_TOMBSTONE);
+        assert!(app_api_decode_session_storage_value(dpapi)
+            .expect("DPAPI tombstone")
+            .is_none());
+    }
+
+    #[test]
+    fn app_api_keyring_delete_failure_is_tombstoned_independently() {
+        use std::cell::RefCell;
+
+        let keyring = RefCell::new(Some("stale-session-json".to_string()));
+        let dpapi = RefCell::new(Some("stale-session-json".to_string()));
+
+        app_api_invalidate_windows_session_storage(
+            || Err("simulated keyring delete failure".into()),
+            |value| {
+                *keyring.borrow_mut() = Some(value.to_string());
+                Ok(())
+            },
+            || {
+                *dpapi.borrow_mut() = None;
+                Ok(())
+            },
+            |_| panic!("deleted DPAPI value must not be tombstoned"),
+        )
+        .expect("keyring tombstone replaces stale value");
+
+        assert_eq!(keyring.borrow().as_deref(), Some(APP_API_SESSION_TOMBSTONE));
+        assert!(dpapi.borrow().is_none());
+    }
+
+    #[test]
+    fn refresh_invalidation_cleanup_keeps_original_http_error() {
+        let error = AppApiHttpError {
+            status: 403,
+            message: "refresh rejected".into(),
+        };
+
+        let returned = app_api_refresh_error_after_invalidation(
+            &error,
+            Err("Native secure storage delete failed".into()),
+        );
+
+        assert_eq!(returned, "App API error 403: refresh rejected");
+        assert!(!returned.contains("storage delete"));
+    }
+
+    #[test]
+    fn legacy_auto_exchange_failure_diagnostic_redacts_url_and_token() {
+        let url = "https://ddlvpn.lol/s/legacy_token_1234567890";
+        let token = "legacy_token_1234567890";
+        let diagnostic = legacy_auto_exchange_failure_message(
+            &format!("exchange failed for {url}; token={token}"),
+            url,
+        );
+
+        assert!(!diagnostic.contains(url));
+        assert!(!diagnostic.contains(token));
+        assert!(diagnostic.contains("legacy subscription auto-restore failed"));
     }
 
     #[test]
@@ -6878,6 +4632,7 @@ mod tests {
             powershell_fallback_count: 0,
             singbox_check_ms: Some(10),
             xray_spawn_ms: Some(20),
+            xray_check_ms: Some(5),
             adapter_probe_backend: Some("native_iphelper_evented".into()),
             route_probe_backend: Some("native_getbestroute2".into()),
             native_probe_ms: vec![("adapter_snapshot".into(), 30)],
@@ -7269,6 +5024,7 @@ mod tests {
         let config: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(config_path).unwrap()).unwrap();
 
+        assert_eq!(config["productName"], json!("DoodleRay"));
         assert_eq!(
             config["bundle"]["windows"]["webviewInstallMode"]["type"],
             json!("offlineInstaller")
@@ -7277,10 +5033,7 @@ mod tests {
             config["bundle"]["windows"]["webviewInstallMode"]["silent"],
             json!(true)
         );
-        assert_eq!(
-            config["bundle"]["windows"]["signCommand"]["cmd"],
-            json!("powershell")
-        );
+        assert!(config["bundle"]["windows"].get("signCommand").is_none());
     }
 
     #[test]
@@ -8010,220 +5763,6 @@ mod tests {
     }
 }
 
-/// Build the xray-core JSON config for transports owned by xray-core.
-fn build_xray_config(req: &ConnectRequest) -> serde_json::Value {
-    let flow_value =
-        if req.transport == "tcp" || req.transport == "xhttp" || req.transport.is_empty() {
-            req.flow.clone().unwrap_or_default()
-        } else {
-            String::new()
-        };
-
-    // Build xray outbound settings based on protocol
-    let outbound_settings = match req.protocol.as_str() {
-        "vmess" => serde_json::json!({
-            "vnext": [{
-                "address": req.server_address,
-                "port": req.server_port,
-                "users": [{
-                    "id": req.uuid.clone().unwrap_or_default(),
-                    "security": "auto"
-                }]
-            }]
-        }),
-        "trojan" => serde_json::json!({
-            "servers": [{
-                "address": req.server_address,
-                "port": req.server_port,
-                "password": req.password.clone().unwrap_or_default()
-            }]
-        }),
-        "shadowsocks" => serde_json::json!({
-            "servers": [{
-                "address": req.server_address,
-                "port": req.server_port,
-                "password": req.password.clone().unwrap_or_default(),
-                "method": req.encryption.clone().unwrap_or("aes-256-gcm".into())
-            }]
-        }),
-        _ => serde_json::json!({
-            "vnext": [{
-                "address": req.server_address,
-                "port": req.server_port,
-                "users": [{
-                    "id": req.uuid.clone().unwrap_or_default(),
-                    "encryption": "none",
-                    "flow": flow_value
-                }]
-            }]
-        }),
-    };
-
-    let mut stream_settings = match req.transport.as_str() {
-        "xhttp" => serde_json::json!({
-            "network": "xhttp",
-            "security": req.security,
-            "xhttpSettings": {
-                "path": req.path.clone().unwrap_or("/xhttp".into())
-            }
-        }),
-        "ws" => serde_json::json!({
-            "network": "ws",
-            "security": req.security,
-            "wsSettings": {
-                "path": req.path.clone().unwrap_or("/".into()),
-                "host": xray_transport_host(req)
-            }
-        }),
-        _ => serde_json::json!({
-            "network": "tcp",
-            "security": req.security
-        }),
-    };
-    apply_xray_stream_security_settings(&mut stream_settings, req);
-
-    // Build routing rules from Workshop rules
-    let mut routing_rules = Vec::new();
-
-    // Custom domain rules from Workshop
-    let mut proxy_domains = Vec::new();
-    let mut direct_domains = Vec::new();
-    let mut block_domains = Vec::new();
-
-    for rule in &req.routing_rules {
-        if rule.rule_type == "domain" {
-            let domain_val = if rule.value.starts_with("*.") {
-                // Wildcard → xray "domain:" prefix
-                serde_json::Value::String(format!("domain:{}", rule.value.trim_start_matches("*.")))
-            } else {
-                serde_json::Value::String(format!("domain:{}", rule.value))
-            };
-            match rule.action.as_str() {
-                "proxy" => proxy_domains.push(domain_val),
-                "direct" => direct_domains.push(domain_val),
-                "block" => block_domains.push(domain_val),
-                _ => {}
-            }
-        }
-    }
-
-    // Add custom routing rules
-    if !proxy_domains.is_empty() {
-        routing_rules.push(serde_json::json!({
-            "type": "field",
-            "domain": proxy_domains,
-            "outboundTag": "proxy"
-        }));
-    }
-    if !direct_domains.is_empty() {
-        routing_rules.push(serde_json::json!({
-            "type": "field",
-            "domain": direct_domains,
-            "outboundTag": "direct"
-        }));
-    }
-    if !block_domains.is_empty() {
-        routing_rules.push(serde_json::json!({
-            "type": "field",
-            "domain": block_domains,
-            "outboundTag": "block"
-        }));
-    }
-
-    // API routing rule — must be FIRST
-    let mut final_rules = vec![serde_json::json!({
-        "type": "field",
-        "inboundTag": ["api"],
-        "outboundTag": "api"
-    })];
-    // DNS port 53 rule — so TUN mode DNS queries get resolved by xray instead of going to "direct"
-    final_rules.insert(
-        1,
-        serde_json::json!({
-            "type": "field",
-            "port": "53",
-            "outboundTag": "dns-out"
-        }),
-    );
-    final_rules.extend(routing_rules);
-
-    let mut config = serde_json::json!({
-        "log": { "loglevel": "warning" },
-        "stats": {},
-        "api": {
-            "tag": "api",
-            "services": ["StatsService"]
-        },
-        "policy": {
-            "system": {
-                "statsInboundUplink": true,
-                "statsInboundDownlink": true,
-                "statsOutboundUplink": true,
-                "statsOutboundDownlink": true
-            }
-        },
-        "dns": xray_dns_config(req),
-        "inbounds": [
-            {
-                "tag": "socks-in",
-                "port": req.socks_port,
-                "listen": "127.0.0.1",
-                "protocol": "socks",
-                "settings": { "udp": true, "ip": "127.0.0.1" },
-                "sniffing": {
-                    "enabled": true,
-                    "destOverride": ["http", "tls", "quic", "fakedns"],
-                    "routeOnly": true
-                }
-            },
-            {
-                "tag": "http-in",
-                "port": req.http_port,
-                "listen": "127.0.0.1",
-                "protocol": "http"
-                },
-                {
-                    "tag": "api",
-                    "port": req.api_port,
-                    "listen": "127.0.0.1",
-                    "protocol": "dokodemo-door",
-                    "settings": { "address": "127.0.0.1" }
-            }
-        ],
-        "outbounds": [
-            {
-                "tag": "proxy",
-                "protocol": req.protocol,
-                "settings": outbound_settings,
-                "streamSettings": stream_settings
-            },
-            {
-                "tag": "direct",
-                "protocol": "freedom"
-            },
-            {
-                "tag": "block",
-                "protocol": "blackhole",
-                "settings": { "response": { "type": "http" } }
-            },
-            {
-                "tag": "dns-out",
-                "protocol": "dns"
-            },
-            {
-                "tag": "api",
-                "protocol": "blackhole"
-            }
-        ],
-        "routing": {
-            "domainStrategy": "AsIs",
-            "rules": final_rules
-        }
-    });
-    apply_xray_routing_policy(&mut config, req, true);
-    config
-}
-
 #[cfg(all(target_os = "macos", feature = "app-store"))]
 const APP_STORE_PRIVATE_IP_RANGES: &[&str] = &[
     "10.0.0.0/8",
@@ -8814,8 +6353,14 @@ async fn app_store_connection_health() -> ConnectionHealthReport {
     }
 }
 
-#[tauri::command]
-async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectResult {
+/// Connect using a profile that has already passed the closed control-plane
+/// authorization path. The public `vpn_connect` command deliberately does not
+/// expose the App Store tunnel implementation, because raw renderer input has
+/// not been signed and scoped by the control plane.
+pub(crate) async fn vpn_connect_authorized(
+    request: ConnectRequest,
+    app: tauri::AppHandle,
+) -> ConnectResult {
     #[cfg(all(target_os = "macos", feature = "app-store"))]
     {
         vpn_connect_app_store(request, app).await
@@ -8823,6 +6368,24 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
     #[cfg(not(all(target_os = "macos", feature = "app-store")))]
     {
         vpn_connect_direct(request, app).await
+    }
+}
+
+#[tauri::command]
+async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectResult {
+    #[cfg(all(target_os = "macos", feature = "app-store"))]
+    {
+        let _ = (request, app);
+        ConnectResult {
+            success: false,
+            message: "Direct VPN connection is unavailable in Mac App Store builds. Choose a DoodleVPN location."
+                .to_string(),
+            health: None,
+        }
+    }
+    #[cfg(not(all(target_os = "macos", feature = "app-store")))]
+    {
+        vpn_connect_authorized(request, app).await
     }
 }
 
@@ -8839,21 +6402,39 @@ async fn vpn_connect_direct(mut request: ConnectRequest, app: tauri::AppHandle) 
         logs.clear();
     }
 
+    if request.raw_xray_config.is_none() && !is_supported_proxy_protocol(&request.protocol) {
+        return ConnectResult {
+            success: false,
+            message: format!("Unsupported protocol: {}", request.protocol),
+            health: None,
+        };
+    }
+
     let use_xray = uses_xray_engine(&request);
     let is_tun = request.proxy_mode == "tun";
+    // Ports handed out by reserve_loopback_ports come straight from the OS
+    // ephemeral range and are therefore already free; see the force-free
+    // sweep below, which is only worth paying for on user-configured ports.
+    let mut ports_freshly_reserved = false;
 
     #[cfg(windows)]
     if is_tun && use_xray {
-        if let Ok(adapters) = competing_tun_adapters() {
-            if !adapters.is_empty() {
-                vpn_log(&format!(
-                    "warning: competing TUN adapters are up: {}",
-                    adapters.join(", ")
-                ));
+        // Diagnostics only — the result is nothing but a log line. Spawning
+        // PowerShell for Get-NetAdapter costs seconds (the same call pattern
+        // measured ~2.4s inside the service), so connect must never wait on it.
+        std::thread::spawn(|| {
+            if let Ok(adapters) = competing_tun_adapters() {
+                if !adapters.is_empty() {
+                    vpn_log(&format!(
+                        "warning: competing TUN adapters are up: {}",
+                        adapters.join(", ")
+                    ));
+                }
             }
-        }
+        });
         match reserve_loopback_ports(3) {
             Ok(ports) => {
+                ports_freshly_reserved = true;
                 request.socks_port = ports[0];
                 request.http_port = ports[1];
                 request.api_port = ports[2];
@@ -9006,6 +6587,7 @@ async fn vpn_connect_direct(mut request: ConnectRequest, app: tauri::AppHandle) 
                         "Proxy ports {} / {} are busy; using runtime ports socks={} http={} api={}",
                         request.socks_port, request.http_port, ports[0], ports[1], ports[2]
                     ));
+                    ports_freshly_reserved = true;
                     request.socks_port = ports[0];
                     request.http_port = ports[1];
                     request.api_port = ports[2];
@@ -9027,12 +6609,24 @@ async fn vpn_connect_direct(mut request: ConnectRequest, app: tauri::AppHandle) 
 
     // Forcefully release local ports to prevent "Only one usage of each socket address is normally permitted"
     // caused by zombie processes (or double React Strict Mode invocations) locking the ports.
-    let _ = force_free_managed_port(request.socks_port).await;
-    let _ = force_free_managed_port(request.http_port).await;
-    let _ = force_free_managed_port(request.api_port).await;
+    // Skipped when the ports were just reserved from the OS ephemeral range:
+    // those are guaranteed free, and each sweep costs a netstat subprocess
+    // (plus a PowerShell CIM query per matching PID).
+    if !ports_freshly_reserved {
+        let _ = force_free_managed_port(request.socks_port).await;
+        let _ = force_free_managed_port(request.http_port).await;
+        let _ = force_free_managed_port(request.api_port).await;
+    }
 
-    // Only wait for sing-box.exe process death when TUN was killed (not preserved)
+    // Only wait for sing-box.exe process death when TUN was killed (not preserved).
+    // Windows TUN is always owned by DoodleRayTunnelService, which performs its
+    // own bounded child cleanup in stop_owned_processes — the app must not wait
+    // on, or try to kill, a sing-box it does not own. Waiting here spawned a
+    // tasklist probe on every connect and could burn 10x200ms plus a further
+    // 4x300ms against the service's own sing-box.
+    let service_owns_tun = cfg!(windows) && is_tun;
     let needs_process_wait = !keep_tun_bridge
+        && !service_owns_tun
         && matches!(
             prev_engine.as_deref(),
             Some("singbox-tun") | Some("xray+tun") | None
@@ -9886,8 +7480,14 @@ async fn vpn_disconnect_direct(app: tauri::AppHandle) -> ConnectResult {
         }
     }
 
+    // Defensive sweep for processes the app spawned directly and lost track
+    // of (system-proxy mode). For TUN, DoodleRayTunnelService owns xray/sing-box
+    // and already runs its own bounded cleanup, so this is pure redundancy on
+    // the hot disconnect/switch path — but it's still a real safety net for
+    // system-proxy mode, so it stays, just off the critical path: it spawns a
+    // Get-CimInstance Win32_Process query over every process on the machine.
     #[cfg(windows)]
-    terminate_orphaned_doodleray_engine_processes();
+    std::thread::spawn(terminate_orphaned_doodleray_engine_processes);
 
     restore_system_proxy_if_owned(false);
 
@@ -10028,9 +7628,10 @@ fn system_proxy_fetch_client(
     parsed_url: &Url,
     timeout: Duration,
 ) -> Result<Option<reqwest::Client>, String> {
-    let _ = parsed_url;
+    #[cfg(not(windows))]
+    let _ = (parsed_url, timeout);
 
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(windows)]
     {
         let Some(proxy_url) = sysproxy::current_manual_http_proxy_for_url(parsed_url.scheme())?
         else {
@@ -10047,7 +7648,7 @@ fn system_proxy_fetch_client(
             .map_err(|e| format!("system proxy HTTP client error: {}", e))
     }
 
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(not(windows))]
     {
         Ok(None)
     }
@@ -11273,8 +8874,12 @@ fn tunnel_service_start(
             }
         }
     }
+    let service_start_started = Instant::now();
     ensure_tunnel_service_running()?;
+    record_connect_timing("service_start", service_start_started);
+    let hello_started = Instant::now();
     let _ = ipc::tunnel_service_hello(env!("CARGO_PKG_VERSION"))?;
+    record_connect_timing("hello", hello_started);
     let response = send_start_tunnel_command(tunnel_service::StartTunnelRequest {
         op_id: tun_op_id(),
         engine_kind,
@@ -11315,13 +8920,16 @@ fn tunnel_service_start(
                     .unwrap_or_else(|| "Tunnel Service failed to start TUN".into()))
             }
             // Tunnel start briefly passes through Disconnected while the
-            // service stops the previous owned children (replace_tunnel), and
-            // the bounded bring-up retry does the same for tun_adapter_repair.
-            // Keep waiting instead of aborting the connect in that transient.
+            // service stops the previous owned children (replace_tunnel), the
+            // bounded bring-up retry does the same for tun_adapter_repair, and
+            // a failed start tears down through the same stop_owned_processes
+            // path (failed_cleanup) before set_failed records the real error.
+            // Keep waiting instead of aborting the connect on that transient,
+            // or the generic message below races ahead of the actual cause.
             tunnel_service::TunnelState::Disconnected
                 if matches!(
                     status.last_repair_action.as_deref(),
-                    Some("replace_tunnel") | Some("tun_adapter_repair")
+                    Some("replace_tunnel") | Some("tun_adapter_repair") | Some("failed_cleanup")
                 ) => {}
             tunnel_service::TunnelState::Disconnected => {
                 return Err(status
@@ -12265,6 +9873,11 @@ fn health_report(mode: &str, checks: Vec<ConnectionHealthCheck>) -> ConnectionHe
         service_warning_checks: Vec::new(),
         route_explanations: Vec::new(),
         endpoint_bypass_checks: Vec::new(),
+        service_timings_ms: Vec::new(),
+        xray_spawn_ms: None,
+        xray_check_ms: None,
+        singbox_check_ms: None,
+        powershell_fallback_count: 0,
         checks,
     }
 }
@@ -12332,6 +9945,11 @@ fn attach_tunnel_status_to_health(
     }
     health.route_explanations = status.route_explanations.clone();
     health.endpoint_bypass_checks = status.endpoint_bypass_checks.clone();
+    health.service_timings_ms = status.timings_ms.clone();
+    health.xray_spawn_ms = status.xray_spawn_ms;
+    health.xray_check_ms = status.xray_check_ms;
+    health.singbox_check_ms = status.singbox_check_ms;
+    health.powershell_fallback_count = status.powershell_fallback_count;
     health.verdict = service_health_verdict_to_report(&status.health_verdict).into();
 }
 
@@ -12820,8 +10438,60 @@ fn build_network_diagnosis(
         health.service_degraded_checks.join(" | "),
     ));
 
+    // The "Copy" button is what almost every user actually presses (versus
+    // "Save full bundle"), so this must be the complete report, not a
+    // preview — full support_summary (no character cap) plus every check's
+    // redacted technical detail, not just the failed ones.
+    let checks_detail: String = checks
+        .iter()
+        .map(|c| format!("[{}] {}: {}", c.status, c.id, c.technical_detail_redacted))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Connect-time phase breakdown. The service already records these; they
+    // were previously unreachable from the UI because nothing invoked the
+    // tunnel_service_diagnostics command. powershell_fallback_count matters
+    // because a native probe falling back to spawning PowerShell costs
+    // seconds and is otherwise indistinguishable from a slow network.
+    let service_phases = if health.service_timings_ms.is_empty() {
+        "none".to_string()
+    } else {
+        health
+            .service_timings_ms
+            .iter()
+            .map(|(phase, ms)| format!("{phase}={ms}ms"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let optional_ms = |value: Option<u64>| {
+        value
+            .map(|ms| format!("{ms}ms"))
+            .unwrap_or_else(|| "-".into())
+    };
+    let app_phases = {
+        let snapshot = connect_timings_snapshot();
+        if snapshot.is_empty() {
+            "none".to_string()
+        } else {
+            snapshot
+                .iter()
+                .map(|(phase, ms)| format!("{phase}={ms}ms"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
+    };
+    let timings_block = format!(
+        "connect_timings: xray_check={} singbox_check={} xray_spawn={} powershell_fallbacks={}\napp_phases: {}\nservice_phases: {}",
+        optional_ms(health.xray_check_ms),
+        optional_ms(health.singbox_check_ms),
+        optional_ms(health.xray_spawn_ms),
+        health.powershell_fallback_count,
+        app_phases,
+        service_phases,
+    );
+
     let copy_text = format!(
-        "DoodleRay v{} | {}\nmode={} verdict={} gen={} cause={} repairable={} repair_tried={}\nfailed_checks: {}\n{}",
+        "DoodleRay v{} | {}\nmode={} verdict={} gen={} cause={} repairable={} repair_tried={}\nfailed_checks: {}\n{}\n{}\n{}",
         env!("CARGO_PKG_VERSION"),
         windows_build_short(),
         proxy_mode,
@@ -12834,7 +10504,9 @@ fn build_network_diagnosis(
         can_auto_repair,
         repair_attempted,
         if failed_ids.is_empty() { "none".into() } else { failed_ids.join(", ") },
-        support_summary.chars().take(600).collect::<String>(),
+        timings_block,
+        support_summary,
+        checks_detail,
     );
 
     NetworkDiagnosisReport {
@@ -13852,6 +11524,14 @@ async fn check_silent_autostart() -> bool {
 
 /// Full cleanup — stop all engines, kill subprocesses, unset system proxy
 /// Safe to call multiple times (idempotent)
+/// Called by the frontend once pending secure-storage writes have flushed in
+/// response to `doodleray:flush-before-exit`, so quit doesn't wait out the
+/// full fallback timeout on the common case.
+#[tauri::command]
+fn confirm_secure_storage_flushed(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 fn full_cleanup() {
     #[cfg(all(target_os = "macos", feature = "app-store"))]
     app_store_tunnel::stop_cached();
@@ -14081,6 +11761,7 @@ fn qa_control_dispatch(app: &tauri::AppHandle, path: &str) -> (&'static str, Str
         }
         "/connect"
         | "/disconnect"
+        | "/logout"
         | "/switch-mode"
         | "/refresh-subscription"
         | "/import-subscription"
@@ -14139,8 +11820,6 @@ pub fn run() {
         } else {
             vpn_log("startup cleanup: preserving active tunnel service state");
         }
-        #[cfg(target_os = "macos")]
-        let _ = sysproxy::unset_system_proxy(); // Restore stale app proxy on macOS
     }
     if let Ok(mut managed) = SYSTEM_PROXY_MANAGED.lock() {
         *managed = false;
@@ -14178,6 +11857,7 @@ pub fn run() {
             force_free_port,
             is_admin,
             quit_app,
+            confirm_secure_storage_flushed,
             workshop_api,
             toggle_silent_autostart,
             check_silent_autostart,
@@ -14302,8 +11982,23 @@ pub fn run() {
                         let _ = window.set_focus();
                     }
                 }
-                tauri::RunEvent::ExitRequested { .. } => {
+                tauri::RunEvent::ExitRequested { api, .. } => {
                     xray::begin_shutdown();
+                    // A Settings change (e.g. a custom port) persists via an
+                    // async secure-storage write kicked off from JS; without
+                    // this, quitting right after committing one could tear
+                    // the process down mid round-trip and silently drop it.
+                    // Hold exit open just long enough for the frontend to
+                    // flush, with a bounded fallback so a stuck/missing
+                    // frontend can never prevent the app from quitting.
+                    use tauri::Emitter;
+                    api.prevent_exit();
+                    let _ = app_handle.emit("doodleray:flush-before-exit", ());
+                    let fallback_handle = app_handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+                        fallback_handle.exit(0);
+                    });
                 }
                 tauri::RunEvent::Exit => {
                     full_cleanup();

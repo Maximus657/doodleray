@@ -3,10 +3,13 @@ import { Settings as SettingsIcon, Trash2, RotateCcw, Database, Zap, Monitor, Do
 import { disable } from '@tauri-apps/plugin-autostart';
 import { useTranslation } from '../locales';
 import { useAppStore } from '../stores/app-store';
+import { useToastStore } from '../stores/toast-store';
 import { checkForAppUpdate, getCachedUpdate, installAppUpdate } from '../lib/app-updater';
+import { isInAppUpdateEnabled, isUpdateManagedByStore, openStoreUpdatePage } from '../lib/update-channel';
 import { clearAppCache, diagnosticsReportToText, getStorageReport, runNetworkDiagnostics, type DiagnosticCheck, type NetworkDiagnosticsReport, type StorageReport } from '../lib/diagnostics';
 import { reportConnectionError } from '../lib/workshop-api';
 import { isDesktopAutostartAvailable } from '../lib/build-policy';
+import { desktopBridge } from '../platform/tauri/desktop-bridge.ts';
 
 function Toggle({ checked, onChange, label, description, warning }: { checked: boolean; onChange: (v: boolean) => void; label: string; description?: string; warning?: string }) {
   return (
@@ -237,8 +240,7 @@ export default function Settings() {
   useEffect(() => {
     (async () => {
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        const isExcluded: boolean = await invoke('check_defender_exclusion');
+        const isExcluded = await desktopBridge.checkDefenderExclusion();
         if (isExcluded) {
           setDefenderStatus('✓ DoodleRay is whitelisted in Windows Defender');
         }
@@ -249,14 +251,11 @@ export default function Settings() {
   const handleDefenderExclusion = async () => {
     setDefenderLoading(true);
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      const result: string = await invoke('add_defender_exclusion');
+      const result = await desktopBridge.addDefenderExclusion();
       setDefenderStatus(result);
-      const { useToastStore } = await import('../stores/toast-store');
       useToastStore.getState().addToast('Defender exclusion added ✓', 'success');
     } catch (e: any) {
       setDefenderStatus('Failed: ' + (e?.toString() || 'Unknown error'));
-      const { useToastStore } = await import('../stores/toast-store');
       useToastStore.getState().addToast('Defender exclusion failed (need admin)', 'error');
     } finally {
       setDefenderLoading(false);
@@ -267,8 +266,7 @@ export default function Settings() {
     // Optimistically update UI
     setSilentAdminAutostart(val);
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('toggle_silent_autostart', { enable: val });
+      await desktopBridge.toggleSilentAutostart(val);
       // When enabling silent admin autostart, disable regular autostart to avoid duplicates
       if (val) {
         try {
@@ -276,7 +274,6 @@ export default function Settings() {
           useAppStore.setState({ autoStart: false });
         } catch (_) { /* ignore if already disabled */ }
       }
-      const { useToastStore } = await import('../stores/toast-store');
       useToastStore.getState().addToast(
         val ? 'Admin autostart enabled ✓' : 'Admin autostart disabled',
         'success'
@@ -285,7 +282,7 @@ export default function Settings() {
       // If enabling and not already admin, offer to restart as admin right now
       if (val) {
         try {
-          const isAdmin: boolean = await invoke('is_admin');
+          const isAdmin = await desktopBridge.isAdmin();
           if (!isAdmin) {
             setConfirmModal({
               show: true,
@@ -293,7 +290,7 @@ export default function Settings() {
               message: 'Admin autostart is set for next login.\n\nRestart as Administrator now?\nThis will give full access to Whole computer mode and other admin features immediately.',
               onConfirm: async () => {
                 addLog('info', 'Restarting as administrator...');
-                await invoke('restart_as_admin');
+                await desktopBridge.restartAsAdmin();
                 setConfirmModal(prev => ({ ...prev, show: false }));
               }
             });
@@ -304,7 +301,6 @@ export default function Settings() {
       // Revert on failure (e.g. UAC declined)
       setSilentAdminAutostart(!val);
       addLog('error', `Failed to toggle admin autostart: ${e}`);
-      const { useToastStore } = await import('../stores/toast-store');
       useToastStore.getState().addToast(
         `Autostart failed: ${e?.toString()?.replace('Error: ', '') || 'UAC declined'}`,
         'error'
@@ -332,8 +328,7 @@ export default function Settings() {
   useEffect(() => {
     (async () => {
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        const state = await invoke<string>('detect_stale_doodleray_proxy');
+        const state = await desktopBridge.command<string>('detect_stale_doodleray_proxy');
         setProxyStaleState(state);
       } catch {
         setProxyStaleState('unsupported');
@@ -345,12 +340,10 @@ export default function Settings() {
     setProxyRepairLoading(true);
     setProxyRepairStatus('');
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      const outcome = await invoke<string>('repair_stale_doodleray_proxy_only');
+      const outcome = await desktopBridge.command<string>('repair_stale_doodleray_proxy_only');
       setProxyRepairStatus(`${t('windowsProxyRepairDone')}: ${outcome}`);
       setProxyStaleState('none');
       addLog('success', `${t('windowsProxyRepair')}: ${outcome}`);
-      const { useToastStore } = await import('../stores/toast-store');
       useToastStore.getState().addToast(t('windowsProxyRepairDone'), 'success');
     } catch (e: any) {
       const message = e?.message || String(e);
@@ -368,7 +361,6 @@ export default function Settings() {
       updateProgress: null,
     });
     try {
-      const { isUpdateManagedByStore, openStoreUpdatePage } = await import('../lib/update-channel');
       if (isUpdateManagedByStore()) {
         await openStoreUpdatePage();
         setUpdateState({
@@ -385,9 +377,8 @@ export default function Settings() {
         update = await checkForAppUpdate();
       }
       if (update) {
-        // store-win32 policy: show availability, open Store/support page,
-        // never silently download in-app when self-update is disabled.
-        const { isInAppUpdateEnabled, openStoreUpdatePage } = await import('../lib/update-channel');
+        // Keep managed App Store builds on Apple's update flow; direct
+        // Windows builds continue through the signed in-app updater.
         if (!isInAppUpdateEnabled()) {
           await openStoreUpdatePage();
           setUpdateState({

@@ -1,0 +1,81 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      DOODLERAY_CLOSED_CONTROL_PLANE: '1'
+      VITE_DOODLERAY_CLOSED_CONTROL_PLANE: '1'
+      VITE_DOODLERAY_BUILD_CHANNEL: direct
+      VITE_DOODLERAY_UPDATE_CHANNEL: direct
+      VITE_DOODLERAY_DIAGNOSTICS_TELEMETRY: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - run: npm test
+      - run: npm run release:check
+      - run: node --test scripts/release/check-workflows.test.mjs
+      - shell: pwsh
+        run: ./scripts/release/Prepare-WindowsRelease.test.ps1
+      - run: npm run build
+      - run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --example verify_updater_signature
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --bin DoodleRayService --features windows-service
+      - run: cargo check --manifest-path src-tauri/Cargo.toml --bin DoodleRay
+      - run: cargo check --manifest-path src-tauri/Cargo.toml --bin DoodleRayService --features windows-service
+      - run: git diff --check
+
+  macos-app-store:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --features app-store
+      - run: cargo check --manifest-path src-tauri/Cargo.toml --features app-store --target x86_64-apple-darwin
+      - run: bash -n scripts/macos/*.sh
+      - name: Compile unsigned App Store extension
+        run: |
+          brew install xcodegen
+          scripts/macos/build-libxray.sh
+          scripts/macos/generate-extension-project.sh
+          git diff --exit-code -- src-tauri/macos/DoodleRayAppStoreExtensions.xcodeproj
+          xcodebuild -project src-tauri/macos/DoodleRayAppStoreExtensions.xcodeproj -scheme DoodleRayVPN \
+            -destination 'generic/platform=macOS' -configuration Release -derivedDataPath "$RUNNER_TEMP/DoodleRayExtension" \
+            ARCHS='arm64 x86_64' ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO build

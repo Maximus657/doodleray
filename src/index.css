@@ -357,84 +357,88 @@
     border: 0;
   }
 
+  /* Wide layout shows the days/anti-jammer block inside the location list;
+     compact shows the same data right under the connect button instead. */
+  .v6-orb-sub-status {
+    display: none;
+  }
+
   .v6-compact-mode .v6-panel {
     padding: 14px;
   }
-  .v6-compact-mode .v6-app-header {
-    min-height: 96px;
-    align-items: flex-start;
-    padding: 6px 2px 50px;
-  }
-  .v6-compact-mode .v6-brand-wrap {
-    top: auto;
-    bottom: 6px;
-    transform: translateX(-50%);
-  }
-  .v6-compact-mode .v6-brand-logo {
-    height: 30px;
-    width: 30px;
-    border-radius: 10px;
-  }
-  .v6-compact-mode .v6-brand-word {
-    font-size: 17px;
-  }
-  .v6-compact-mode .v6-mode-selector {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 8px;
-  }
-  .v6-compact-mode .v6-mode-card {
-    align-items: center;
-    gap: 6px;
-    padding: 10px 6px;
-  }
-  .v6-compact-mode .v6-mode-card-head {
-    justify-content: center;
-  }
-  .v6-compact-mode .v6-mode-card-badges,
-  .v6-compact-mode .v6-mode-card-description {
+  /* Compact header keeps the logo at full (wide-mode) size — a shrunk icon
+     read as an afterthought — but drops the wordmark: with the traffic chip
+     and three icon buttons plus native window controls, a ~420px window
+     doesn't have room for logo + "DoodleRay" text too. */
+  .v6-compact-mode .v6-header-brand .v6-brand-word {
     display: none;
   }
-  .v6-compact-mode .v6-mode-card-title {
-    width: 100%;
-    white-space: normal;
-    text-align: center;
-    font-size: 11.5px;
+  .v6-compact-mode .v6-header-button {
+    height: 34px;
+    width: 34px;
+    border-radius: 11px;
+  }
+  .v6-compact-mode .v6-header-button svg {
+    height: 17px;
+    width: 17px;
   }
   .v6-compact-mode .v6-dashboard-layout {
     flex-direction: column;
-    gap: 14px;
+    gap: 12px;
     overflow-y: auto;
     padding-right: 2px;
+    padding-bottom: 14px;
   }
+  /* display:contents flattens dashboard-main's children (orb, quick actions,
+     events) into direct flex items of the layout, so they can be reordered
+     against the location list itself instead of being stuck as a fixed block
+     above it. */
   .v6-compact-mode .v6-dashboard-main {
-    order: 1;
-    flex: none;
-    gap: 10px;
-    overflow: visible;
+    display: contents;
   }
   .v6-compact-mode .v6-connect-orb {
-    min-height: 214px;
+    order: 1;
+    min-height: 0;
     flex: none;
-    gap: 2px;
-    padding-top: 2px;
-    border: 0;
+    border: none;
+    background: none;
     border-radius: 0;
-    background: transparent;
+    gap: 10px;
+    padding-block: 4px;
   }
-  .v6-compact-mode .v6-connect-orb-stage {
-    height: 170px;
-    width: 170px;
+  /* Honesty pill and the "check what's wrong" button repeat information the
+     compact events row already surfaces; the button also eats width next to
+     an already-tight connect core. */
+  .v6-compact-mode .v6-orb-status-pill,
+  .v6-compact-mode .v6-orb-diagnose-btn {
+    display: none;
   }
-  .v6-compact-mode .v6-connect-button {
-    height: 146px;
-    width: 146px;
+  .v6-compact-mode .v6-orb-sub-status {
+    order: 2;
+    display: block;
+    width: 100%;
+  }
+  .v6-compact-mode .v6-quick-actions-row {
+    order: 4;
+  }
+  .v6-compact-mode .v6-diagnostics-drawer {
+    order: 5;
+  }
+  .v6-compact-mode .v6-diagnostics-drawer .v6-glass {
+    background: none;
+    border: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    padding-inline: 0;
   }
   .v6-compact-mode .v6-location-list {
-    order: 2;
+    order: 3;
     min-height: 460px;
     width: 100%;
     flex: none;
+  }
+  .v6-compact-mode .v6-location-sub-status {
+    display: none;
   }
 
   /* Main glass panel = window body: glass gradient layered over the warm

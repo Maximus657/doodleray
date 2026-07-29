@@ -179,7 +179,7 @@ function Switch-Mode {
 
 # --- QA control surface (preferred over CDP DOM automation) -----------------
 # The app exposes it on 127.0.0.1:48765 only when the launcher sets
-# DOODLERAY_QA_CONTROL=1 with a per-run DOODLERAY_QA_TOKEN. Routes: /status, /connect, /disconnect,
+# DOODLERAY_QA_CONTROL=1 with a per-run DOODLERAY_QA_TOKEN. Routes: /status, /connect, /disconnect, /logout,
 # /switch-mode?mode=tun|browsers|manual, /refresh-subscription, /export-bundle.
 function Invoke-QaControl {
     param([Parameter(Mandatory = $true)][string] $Route, [int] $TimeoutSec = 20)

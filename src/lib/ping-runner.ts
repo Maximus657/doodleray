@@ -1,7 +1,12 @@
 import type { ServerConfig, ServerPingUpdate } from '../stores/app-store';
 import { pingServerSmart } from './utils';
 
-const DEFAULT_PING_CONCURRENCY = 4;
+// Each ping spawns a real local proxy process and does an HTTP GET through
+// it (honest probe, not a bare TCP check) — running many of those at once
+// starves CPU/IO on constrained hosts and produces wildly inconsistent
+// readings (50ms next to 5000ms for the same server). Lower concurrency
+// trades a slightly slower full sweep for stable, comparable numbers.
+const DEFAULT_PING_CONCURRENCY = 2;
 
 function isUnsafeProbeHost(rawHost: string): boolean {
   const host = rawHost.trim().replace(/^\[|\]$/g, '').toLowerCase();

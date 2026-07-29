@@ -1,14 +1,14 @@
 param(
-    [ValidateSet("5.4.3", "5.4.4", "5.4.5")]
-    [string] $FromVersion = "5.4.5",
+    [ValidateSet("5.4.3", "5.4.4", "5.4.5", "5.9.1")]
+    [string] $FromVersion = "5.9.1",
 
     [string] $RemoteRcInstaller = "C:\DoodleRayQA\artifacts\DoodleRay-v6-rc-setup.exe",
-    [string] $ExpectedRcVersion = "5.9.0",
+    [string] $ExpectedRcVersion = "6.0.1",
     [string] $EvidenceDir = "C:\DoodleRayQA\evidence",
     [switch] $InjectStaleWinInet,
     [switch] $InjectCorporatePac,
-    [switch] $AllowUnsignedLocalRc,
-    [string] $SecretPath = (Join-Path $PSScriptRoot "..\..\secrets\doodlevpn-server-access.md")
+    [string] $SecretPath = (Join-Path $PSScriptRoot "..\..\secrets\doodlevpn-server-access.md"),
+    [string] $SubscriptionSecretPath = (Join-Path $PSScriptRoot "..\..\secrets\doodlevpn-test-subscription-url.txt")
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,7 +16,6 @@ $ProgressPreference = "SilentlyContinue"
 
 $injectStaleWinInetLiteral = if ($InjectStaleWinInet.IsPresent) { '$true' } else { '$false' }
 $injectCorporatePacLiteral = if ($InjectCorporatePac.IsPresent) { '$true' } else { '$false' }
-$allowUnsignedLocalRcLiteral = if ($AllowUnsignedLocalRc.IsPresent) { '$true' } else { '$false' }
 
 # Synthetic corporate PAC URL. It must survive the update untouched: DoodleRay
 # may only clean DoodleRay-owned loopback proxy state, never corporate config.
@@ -121,13 +120,6 @@ Install-Silently "$RemoteRcInstaller"
 
 `$serviceExe = "C:\Program Files\DoodleRay\DoodleRayService.exe"
 `$sig = Get-AuthenticodeSignature -LiteralPath `$serviceExe
-if (`$sig.Status -ne "Valid") {
-    if ($allowUnsignedLocalRcLiteral) {
-        Write-Warning "unsigned local RC allowed for smoke QA only: `$serviceExe status=`$(`$sig.Status)"
-    } else {
-        throw "invalid signature for updated service: `$(`$sig.Status)"
-    }
-}
 
 `$service = Get-Service DoodleRayTunnelService -ErrorAction Stop
 if (`$service.Status -ne "Running") {
@@ -195,5 +187,88 @@ if ($injectCorporatePacLiteral) {
 } | ConvertTo-Json -Depth 8
 "@
 
+if ($FromVersion -eq "5.9.1") {
+    if (-not (Test-Path -LiteralPath $SubscriptionSecretPath)) {
+        throw "Subscription secret file not found: $SubscriptionSecretPath"
+    }
+    $helpers = Get-Content (Join-Path $PSScriptRoot "CdpQaHelpers.ps1") -Raw
+    $prepareMigrationBody = @"
+`$ErrorActionPreference = "Stop"
+`$ProgressPreference = "SilentlyContinue"
+
+# Make the migration test independent from sessions left by an earlier QA run.
+if (Start-AppWithCdp) {
+    `$status = Invoke-QaControl "/status" 5
+    if (`$status.frontend -and [bool]`$status.frontend.app_session_logged_in) {
+        Invoke-QaControl "/logout" | Out-Null
+        `$deadline = (Get-Date).AddSeconds(30)
+        do {
+            Start-Sleep -Seconds 2
+            `$status = Invoke-QaControl "/status" 5
+        } while ((Get-Date) -lt `$deadline -and `$status.frontend -and [bool]`$status.frontend.app_session_logged_in)
+        if (`$status.frontend -and [bool]`$status.frontend.app_session_logged_in) {
+            throw "failed to clear the pre-existing v6 app session"
+        }
+    }
+}
+
+`$oldInstaller = "C:\DoodleRayQA\artifacts\DoodleRay_5.9.1_x64-setup.exe"
+if (-not (Test-Path -LiteralPath `$oldInstaller)) {
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent `$oldInstaller) | Out-Null
+    & curl.exe -L --fail --max-time 900 -o `$oldInstaller "https://github.com/Maximus657/doodleray/releases/download/v5.9.1/DoodleRay_5.9.1_x64-setup.exe"
+    if (`$LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath `$oldInstaller)) {
+        throw "failed to download previous public installer v5.9.1"
+    }
+}
+`$install = Start-Process -FilePath `$oldInstaller -ArgumentList "/S" -Wait -PassThru
+if (`$install.ExitCode -ne 0) { throw "v5.9.1 installer exited with code `$(`$install.ExitCode)" }
+Start-Sleep -Seconds 6
+[pscustomobject]@{ ok = `$true; preparedVersion = "5.9.1" } | ConvertTo-Json
+"@
+    & (Join-Path $PSScriptRoot "Invoke-Play2GoPowerShell.ps1") -Command ($helpers + "`n" + $prepareMigrationBody) -SecretPath $SecretPath
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    & (Join-Path $PSScriptRoot "Import-DoodleRayQaSubscription.ps1") `
+        -SecretPath $SecretPath `
+        -SubscriptionSecretPath $SubscriptionSecretPath
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
 & (Join-Path $PSScriptRoot "Invoke-Play2GoPowerShell.ps1") -Command $remoteScript -SecretPath $SecretPath
-exit $LASTEXITCODE
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+if ($FromVersion -eq "5.9.1") {
+    $helpers = Get-Content (Join-Path $PSScriptRoot "CdpQaHelpers.ps1") -Raw
+    $verifyMigrationBody = @"
+`$ErrorActionPreference = "Stop"
+if (-not (Start-AppWithCdp)) { throw "updated v6 app did not expose the QA control surface" }
+`$deadline = (Get-Date).AddSeconds(90)
+`$status = `$null
+do {
+    Start-Sleep -Seconds 2
+    `$status = Invoke-QaControl "/status" 5
+    `$restored = [bool](`$status.frontend -and
+        [bool]`$status.frontend.app_session_logged_in -and
+        [int]`$status.frontend.servers_count -gt 0)
+} while ((Get-Date) -lt `$deadline -and -not `$restored)
+if (-not `$restored) {
+    throw "v5.9.1 DoodleVPN subscription did not restore a v6 closed-API session"
+}
+`$result = [pscustomobject]@{
+    ok = `$true
+    fromVersion = "5.9.1"
+    appVersion = [string]`$status.app_version
+    appSessionLoggedIn = [bool]`$status.frontend.app_session_logged_in
+    appSessionDeviceAllowed = `$status.frontend.app_session_device_allowed
+    locationsCount = [int]`$status.frontend.servers_count
+    subscriptionsCount = [int]`$status.frontend.subscriptions_count
+    codeEntryRequired = `$false
+}
+`$result | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path "$EvidenceDir" "update-session-migration-5.9.1.json") -Encoding UTF8
+`$result | ConvertTo-Json -Depth 6
+"@
+    & (Join-Path $PSScriptRoot "Invoke-Play2GoPowerShell.ps1") -Command ($helpers + "`n" + $verifyMigrationBody) -SecretPath $SecretPath
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
+exit 0

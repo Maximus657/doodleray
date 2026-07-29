@@ -1,6 +1,24 @@
 const FLAG_EMOJI_RE = /[\u{1F1E6}-\u{1F1FF}]{2}/gu;
 const PROTOCOL_LABEL_RE = /\b(?:vless|vmess|trojan|shadowsocks|hysteria2?|hy2|tuic|wireguard|reality|grpc|xhttp|websocket|ws|quic)\b/gi;
 
+/**
+ * Localized country name for a 2-letter ISO code, in the given UI language.
+ * Shared by display (ServerRow) and search matching (server-groups) so a
+ * server never shows one name on screen but only matches search under a
+ * different (stale, baked-in-at-fetch-time) one.
+ */
+export function localizedCountryName(countryCode: string | undefined, language: string | undefined): string | undefined {
+  if (!language) return undefined;
+  const cc = countryCode?.trim().toUpperCase();
+  if (!cc || !/^[A-Z]{2}$/.test(cc)) return undefined;
+  if (language === 'ru' && cc === 'US') return 'США';
+  try {
+    return new Intl.DisplayNames([language], { type: 'region' }).of(cc) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function displayLocationTitle(name: string, countryCode?: string): string {
   const countryCodeCandidate = countryCode?.trim().toUpperCase();
   const cc = countryCodeCandidate && /^[A-Z]{2}$/.test(countryCodeCandidate)
