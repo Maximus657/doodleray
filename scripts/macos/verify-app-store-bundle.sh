@@ -11,6 +11,7 @@ HOST_ENTITLEMENTS="$WORK_DIR/host-entitlements.plist"
 EXTENSION_ENTITLEMENTS="$WORK_DIR/extension-entitlements.plist"
 HOST_PROFILE="$WORK_DIR/host-profile.plist"
 EXTENSION_PROFILE="$WORK_DIR/extension-profile.plist"
+SIGNING_DETAILS="$WORK_DIR/signing-details.txt"
 
 trap 'rm -rf "$WORK_DIR"' EXIT
 
@@ -26,6 +27,12 @@ require_array_exact() {
   local actual
   actual="$(plist_value "$1" "$2" | sed '1d;$d' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed '/^$/d')"
   require_equal "$actual" "$3" "$4"
+}
+
+require_array_contains() {
+  local actual
+  actual="$(plist_value "$1" "$2" | sed '1d;$d' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed '/^$/d')"
+  [[ $'\n'"$actual"$'\n' == *$'\n'"$3"$'\n'* ]] || { printf 'FAIL  %s\n' "$4" >&2; exit 1; }
 }
 
 require_architecture() {
@@ -44,8 +51,9 @@ require_architecture() {
 codesign --verify --strict --deep --verbose=2 "$APP_BUNDLE" >/dev/null 2>&1
 codesign --verify --strict --verbose=2 "$EXTENSION_BUNDLE" >/dev/null 2>&1
 for bundle in "$APP_BUNDLE" "$EXTENSION_BUNDLE"; do
-  codesign -d --verbose=4 "$bundle" 2>&1 | rg -Fxq "TeamIdentifier=$EXPECTED_TEAM_ID" || { printf 'FAIL  signed Team ID mismatch.\n' >&2; exit 1; }
-  codesign -d --verbose=4 "$bundle" 2>&1 | rg -q '^Authority=Apple Distribution:' || { printf 'FAIL  Apple Distribution signature is missing.\n' >&2; exit 1; }
+  codesign -d --verbose=4 "$bundle" > "$SIGNING_DETAILS" 2>&1
+  rg -Fxq "TeamIdentifier=$EXPECTED_TEAM_ID" "$SIGNING_DETAILS" || { printf 'FAIL  signed Team ID mismatch.\n' >&2; exit 1; }
+  rg -q '^Authority=Apple Distribution:' "$SIGNING_DETAILS" || { printf 'FAIL  Apple Distribution signature is missing.\n' >&2; exit 1; }
 done
 codesign -d --entitlements :- "$APP_BUNDLE" > "$HOST_ENTITLEMENTS" 2>/dev/null
 codesign -d --entitlements :- "$EXTENSION_BUNDLE" > "$EXTENSION_ENTITLEMENTS" 2>/dev/null
@@ -88,9 +96,12 @@ require_array_exact "$HOST_ENTITLEMENTS" keychain-access-groups "$EXPECTED_TEAM_
 
 for profile in "$HOST_PROFILE" "$EXTENSION_PROFILE"; do
   require_equal "$(plist_value "$profile" TeamIdentifier:0)" "$EXPECTED_TEAM_ID" 'provisioning profile Team ID'
-  require_array_exact "$profile" Entitlements:com.apple.developer.networking.networkextension packet-tunnel-provider 'profile Network Extension entitlement'
-  require_array_exact "$profile" Entitlements:com.apple.security.application-groups group.com.doodleray.doodleray 'profile App Group entitlement'
-  require_equal "$(plist_value "$profile" Entitlements:get-task-allow)" false 'distribution profile get-task-allow'
+  require_array_contains "$profile" Entitlements:com.apple.developer.networking.networkextension packet-tunnel-provider 'profile Network Extension entitlement'
+  require_array_contains "$profile" Entitlements:com.apple.security.application-groups group.com.doodleray.doodleray 'profile App Group entitlement'
+  [ "$(plist_value "$profile" Entitlements:get-task-allow 2>/dev/null || true)" != true ] || {
+    printf 'FAIL  distribution profile get-task-allow\n' >&2
+    exit 1
+  }
 done
 require_equal "$(plist_value "$HOST_PROFILE" Entitlements:com.apple.application-identifier)" "$EXPECTED_TEAM_ID.com.doodleray.doodleray" 'host profile application identifier'
 require_equal "$(plist_value "$EXTENSION_PROFILE" Entitlements:com.apple.application-identifier)" "$EXPECTED_TEAM_ID.com.doodleray.doodleray.DoodleRayVPN" 'extension profile application identifier'

@@ -50,6 +50,8 @@ import { displayServerName } from '../components/v6/ServerRow';
 import LocationList from '../components/v6/LocationList';
 import TrafficStats from '../components/v6/TrafficStats';
 import SubscriptionStatusBlock from '../components/v6/SubscriptionStatusBlock';
+import SplitRoutingToggle from '../components/v6/SplitRoutingToggle';
+import SplitRoutingModal from '../components/v6/SplitRoutingModal';
 import DiagnosticsDrawer from '../components/v6/DiagnosticsDrawer';
 import DiagnosticPanel from '../components/v6/DiagnosticPanel';
 import QuickAddPanel from '../components/v6/QuickAddPanel';
@@ -64,8 +66,6 @@ const CONNECT_TIMEOUT_MS = 45_000;
 const TUN_CONNECT_TIMEOUT_MS = 120_000;
 const DOODLEVPN_ACCOUNT_URL = 'https://doodlevpn.online/account';
 const invoke = <T,>(command: string, args?: Record<string, unknown>) => desktopBridge.command<T>(command, args);
-const TUN_LIMITED_FALLBACK_RE =
-  /could not create the Windows tunnel adapter|IPv4 readiness failed|adapter is missing|adapter did not become ready|route is not preferred|route did not become ready|routes are missing|sing-box exited|sing-box process is not running|Tunnel Service failed to start TUN|Tunnel Service stopped before TUN|Tunnel Service did not become ready|timed out while starting VPN engines/i;
 
 function normalizeAppLoginCode(value: string): string {
   return value.replace(/\D/g, '').slice(0, 8);
@@ -85,10 +85,6 @@ function waitForPersistedAppState(): Promise<void> {
       resolve();
     });
   });
-}
-
-function isTunLimitedFallbackCandidate(message?: string | null) {
-  return !!message && TUN_LIMITED_FALLBACK_RE.test(message);
 }
 
 function isTauriInvokeUnavailableError(error: unknown): boolean {
@@ -227,6 +223,7 @@ export default function Dashboard() {
   const [quickImporting, setQuickImporting] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showDiagModal, setShowDiagModal] = useState(false);
+  const [showSplitModal, setShowSplitModal] = useState(false);
   const [connectionStep, setConnectionStep] = useState<string | null>(null);
   const [activeSystemProxyMode, setActiveSystemProxyMode] = useState<SystemProxyMode | null>(null);
   const [appSession, setAppSession] = useState<AppApiSessionStatus | null>(null);
@@ -422,7 +419,7 @@ export default function Dashboard() {
     setSocksPort(effectiveSocksPort);
     setHttpPort(effectiveHttpPort);
 
-    if (!isHealthAcceptable(mode, health) && mode === 'tun') {
+    if (!networkExtensionOnly && !isHealthAcceptable(mode, health) && mode === 'tun') {
       addLog('warning', `Protected mode health is ${health?.verdict ?? 'missing'}; running automatic repair once...`);
       try {
         const repairMessage = await invoke('repair_windows_runtime') as string;
@@ -451,13 +448,18 @@ export default function Dashboard() {
       const failureSummary = summarizeHealthFailures(health);
       addLog('error', `Connection started but health quorum failed: ${failureSummary}`);
       try {
-        const bundlePath = await invoke('export_support_bundle', {
-          proxyMode: mode,
-          systemProxyMode: nextSystemProxyMode,
-          socksPort: effectiveSocksPort,
-          httpPort: effectiveHttpPort,
-          failureMarker: `connect_health_failed: ${failureSummary}`,
-        }) as string;
+        const bundlePath = await invoke(
+          networkExtensionOnly ? 'export_app_store_support_bundle' : 'export_support_bundle',
+          networkExtensionOnly
+            ? { failureMarker: `connect_health_failed: ${failureSummary}` }
+            : {
+              proxyMode: mode,
+              systemProxyMode: nextSystemProxyMode,
+              socksPort: effectiveSocksPort,
+              httpPort: effectiveHttpPort,
+              failureMarker: `connect_health_failed: ${failureSummary}`,
+            },
+        ) as string;
         addLog('info', `${t('supportBundleExported')}: ${bundlePath}`);
       } catch (bundleErr: any) {
         addLog('warning', `${t('supportBundleExportFailed')}: ${bundleErr?.message || bundleErr}`);
@@ -481,7 +483,7 @@ export default function Dashboard() {
     setStatus('connected');
     setConnectedAt(Date.now());
     return true;
-  }, [addLog, setConnectedAt, setConnectionStep, setHttpPort, setSocksPort, setStatus, t]);
+  }, [addLog, networkExtensionOnly, setConnectedAt, setConnectionStep, setHttpPort, setSocksPort, setStatus, t]);
 
   const connectionOpRef = useRef(0);
   const serverSelectionIndex = useMemo(() => buildServerSelectionIndex(servers), [servers]);
@@ -490,46 +492,6 @@ export default function Dashboard() {
   const eofBurstRef = useRef({ count: 0, windowStartedAt: 0, lastNoticeAt: 0 });
   const tRef = useRef(t);
   const loginFlightTimerRef = useRef<number | null>(null);
-
-  const attemptLimitedBrowsersFallback = useCallback(async (
-    srv: NonNullable<typeof activeServer>,
-    invoke: any,
-    opId: number,
-    reason: string,
-  ) => {
-    if (proxyMode !== 'tun' || !isTunLimitedFallbackCandidate(reason)) return false;
-    addLog('warning', t('limitedFallbackAttempt'));
-    try {
-      // Force the failed protected generation to clean up before starting the
-      // lightweight browser compatibility path. This avoids reusing a failed
-      // service/TUN state as the fallback substrate.
-      await invoke('vpn_disconnect').catch(() => undefined);
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      setProxyMode('system-proxy');
-      setSystemProxyMode('set');
-      const fbReq = await buildConnectRequestFromState(srv, 'system-proxy', 'set');
-      const fb: any = await invoke('vpn_connect', { request: fbReq });
-      if (opId !== connectionOpRef.current) return true;
-      if (fb.success) {
-        await markConnectedIfHealthy(
-          fb,
-          invoke,
-          'system-proxy',
-          fbReq.system_proxy_mode,
-          fbReq.socks_port,
-          fbReq.http_port,
-        );
-        addLog('warning', t('limitedFallbackActive'));
-
-        useToastStore.getState().addToast(t('limitedFallbackActive'), 'warning');
-        return true;
-      }
-      addLog('error', fb.message);
-    } catch (fbErr: any) {
-      addLog('error', `Browsers fallback failed: ${fbErr?.message || fbErr}`);
-    }
-    return false;
-  }, [addLog, markConnectedIfHealthy, proxyMode, setProxyMode, setSystemProxyMode, t]);
 
   useEffect(() => {
     tRef.current = t;
@@ -599,6 +561,7 @@ export default function Dashboard() {
             if (healthPorts.httpPort) setHttpPort(healthPorts.httpPort);
 
             if (
+              !networkExtensionOnly &&
               proxyMode === 'tun' &&
               effectiveSystemProxyMode === 'set'
             ) {
@@ -673,6 +636,7 @@ export default function Dashboard() {
         if (healthPorts.httpPort) setHttpPort(healthPorts.httpPort);
 
         if (
+          !networkExtensionOnly &&
           proxyMode === 'tun' &&
           needsProtectedRuntimeRepair(health) &&
           !runtimeRepairRef.current.inFlight &&
@@ -711,7 +675,7 @@ export default function Dashboard() {
           }
         }
 
-        const compatibilityNeedsRepair = proxyMode === 'tun' &&
+        const compatibilityNeedsRepair = !networkExtensionOnly && proxyMode === 'tun' &&
           effectiveSystemProxyMode === 'set' &&
           (hasWinInetCompatibilityWarning(health) ||
             (health.service_degraded_checks ?? []).some(check => /Windows proxy compatibility/i.test(check)));
@@ -757,13 +721,18 @@ export default function Dashboard() {
           healthFailRef.current = 0;
           addLog('error', `Whole computer mode stopped: ${failureSummary}`);
           try {
-            const bundlePath = await invoke('export_support_bundle', {
-              proxyMode,
-              systemProxyMode: effectiveSystemProxyMode,
-              socksPort,
-              httpPort,
-              failureMarker: `health_fatal: ${failureSummary}`,
-            }) as string;
+            const bundlePath = await invoke(
+              networkExtensionOnly ? 'export_app_store_support_bundle' : 'export_support_bundle',
+              networkExtensionOnly
+                ? { failureMarker: `health_fatal: ${failureSummary}` }
+                : {
+                  proxyMode,
+                  systemProxyMode: effectiveSystemProxyMode,
+                  socksPort,
+                  httpPort,
+                  failureMarker: `health_fatal: ${failureSummary}`,
+                },
+            ) as string;
             addLog('info', `${t('supportBundleExported')}: ${bundlePath}`);
           } catch (bundleErr: any) {
             addLog('warning', `${t('supportBundleExportFailed')}: ${bundleErr?.message || bundleErr}`);
@@ -817,7 +786,7 @@ export default function Dashboard() {
       }
     }, 30000);
     return () => clearInterval(healthCheck);
-  }, [status, socksPort, httpPort, proxyMode, systemProxyMode, getEffectiveHealthSystemProxyMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [status, socksPort, httpPort, proxyMode, systemProxyMode, networkExtensionOnly, getEffectiveHealthSystemProxyMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fast protected-mode fatal watchdog. The normal health monitor is broader
   // and intentionally gentle; this one only consumes service-owned runtime
@@ -1158,14 +1127,6 @@ export default function Dashboard() {
             } catch {}
           }
           addLog('error', result.message);
-          // Honest automatic fallback: a TUN adapter/route bring-up failure
-          // (already past the service-side bounded repair) degrades to
-          // Browsers compatibility with explicit limited-protection messaging.
-          // Manual mode is never entered automatically; WinINet is only
-          // touched by the Browsers connect path itself.
-          if (!closedControlPlane && await attemptLimitedBrowsersFallback(srv!, invoke, opId, result.message)) {
-            return;
-          }
           if (result.message.toLowerCase().includes('full computer components')) {
             const serviceHealthy = await refreshTunnelServiceHealth();
             if (!serviceHealthy) {
@@ -1184,19 +1145,6 @@ export default function Dashboard() {
           addLog('error', t('v6LogConnectFailed' as never).replace('{message}', message));
           try {
             const cleanupInvoke = invoke;
-            let fallbackReason = message;
-            try {
-              const health = await cleanupInvoke('get_connection_health', {
-                proxyMode: 'tun',
-                systemProxyMode,
-                socksPort,
-                httpPort,
-              }) as ConnectionHealthReport;
-              fallbackReason = `${fallbackReason}; ${summarizeHealthFailures(health)}`;
-            } catch { /* best effort */ }
-            if (!closedControlPlane && srv && await attemptLimitedBrowsersFallback(srv, cleanupInvoke, opId, fallbackReason)) {
-              return;
-            }
             await cleanupInvoke('vpn_disconnect');
           } catch { /* best effort cleanup */ }
           reportConnectionError({
@@ -1241,7 +1189,7 @@ export default function Dashboard() {
       } catch { addLog('info', '[SIM] Disconnected'); }
       setStatus('disconnected'); setActiveSystemProxyMode(null); setConnectionStep(null); setConnectedAt(null); setCurrentSpeed(0, 0); resetTraffic();
     }
-  }, [status, setStatus, setCurrentSpeed, resetTraffic, activeServer, servers, setActiveServer, addLog, proxyMode, socksPort, httpPort, autoSelectFastest, setConnectedAt, t, setProxyMode, setSystemProxyMode, refreshTunnelServiceHealth, setSocksPort, setHttpPort, markConnectedIfHealthy, attemptLimitedBrowsersFallback, closedControlPlane, hasDeviceLimit]);
+  }, [status, setStatus, setCurrentSpeed, resetTraffic, activeServer, servers, setActiveServer, addLog, proxyMode, socksPort, httpPort, autoSelectFastest, setConnectedAt, t, setProxyMode, setSystemProxyMode, refreshTunnelServiceHealth, setSocksPort, setHttpPort, markConnectedIfHealthy, closedControlPlane, hasDeviceLimit]);
 
   const handleModeSwitch = useCallback(async (mode: 'system-proxy' | 'tun', nextSystemProxyMode = systemProxyMode) => {
     const normalizedSystemProxyMode = nextSystemProxyMode === 'clear'
@@ -1289,9 +1237,7 @@ export default function Dashboard() {
           }
           else {
             addLog('error', result.message);
-            if (!closedControlPlane && mode === 'tun' && await attemptLimitedBrowsersFallback(srv, invoke, connectionOpRef.current, result.message)) {
-              return;
-            }
+            await invoke('vpn_disconnect').catch(() => undefined);
             setStatus('disconnected');
             setActiveSystemProxyMode(null);
             setConnectionStep(null);
@@ -1300,31 +1246,29 @@ export default function Dashboard() {
       } catch (err: any) {
         const message = err.message || String(err);
         addLog('error', t('v6LogReconnectFailed' as never).replace('{message}', message));
-        if (!closedControlPlane && mode === 'tun' && activeServer) {
-          try {
-            const cleanupInvoke = invoke;
-            if (await attemptLimitedBrowsersFallback(activeServer, cleanupInvoke, connectionOpRef.current, message)) {
-              return;
-            }
-          } catch { /* best effort fallback */ }
-        }
+        try { await invoke('vpn_disconnect'); } catch { /* best effort cleanup */ }
         setStatus('disconnected');
         setActiveSystemProxyMode(null);
         setConnectionStep(null);
       }
     }
-  }, [proxyMode, systemProxyMode, setProxyMode, setSystemProxyMode, status, setStatus, addLog, activeServer, socksPort, httpPort, setConnectedAt, t, refreshTunnelServiceHealth, setSocksPort, setHttpPort, markConnectedIfHealthy, attemptLimitedBrowsersFallback, closedControlPlane]);
+  }, [proxyMode, systemProxyMode, setProxyMode, setSystemProxyMode, status, setStatus, addLog, activeServer, socksPort, httpPort, setConnectedAt, t, refreshTunnelServiceHealth, setSocksPort, setHttpPort, markConnectedIfHealthy, closedControlPlane]);
 
   const handleExportSupportBundle = useCallback(async () => {
     try {
 
       const effectiveSystemProxyMode = await getEffectiveHealthSystemProxyMode();
-      const path = await invoke('export_support_bundle', {
-        proxyMode,
-        systemProxyMode: effectiveSystemProxyMode,
-        socksPort,
-        httpPort,
-      }) as string;
+      const path = await invoke(
+        networkExtensionOnly ? 'export_app_store_support_bundle' : 'export_support_bundle',
+        networkExtensionOnly
+          ? {}
+          : {
+            proxyMode,
+            systemProxyMode: effectiveSystemProxyMode,
+            socksPort,
+            httpPort,
+          },
+      ) as string;
       addLog('success', `${t('supportBundleExported')}: ${path}`);
 
       useToastStore.getState().addToast(`${t('supportBundleExported')}: ${path}`, 'success');
@@ -1333,17 +1277,18 @@ export default function Dashboard() {
 
       useToastStore.getState().addToast(`${t('supportBundleExportFailed')}: ${err?.message || err}`, 'error');
     }
-  }, [addLog, getEffectiveHealthSystemProxyMode, httpPort, proxyMode, socksPort, t]);
+  }, [addLog, getEffectiveHealthSystemProxyMode, httpPort, networkExtensionOnly, proxyMode, socksPort, t]);
 
   const handleQaSimulatedTunFailure = useCallback(async (reason: string) => {
-    const srv = activeServer || resolveConnectServer(activeServer, servers, false);
-    if (!srv) {
-      addLog('error', '[QA-control] simulate-tun-failure failed: no active server');
-      return;
-    }
-
-    await attemptLimitedBrowsersFallback(srv, invoke, connectionOpRef.current, reason);
-  }, [activeServer, addLog, attemptLimitedBrowsersFallback, servers]);
+    ++connectionOpRef.current;
+    addLog('error', `[QA-control] simulated TUN failure: ${reason}`);
+    setStatus('disconnected');
+    setConnectionStep(null);
+    setConnectedAt(null);
+    setActiveSystemProxyMode(null);
+    setCurrentSpeed(0, 0);
+    resetTraffic();
+  }, [addLog, resetTraffic, setConnectedAt, setConnectionStep, setCurrentSpeed, setStatus]);
 
   // QA-only control surface consumer (backend gates it behind
   // DOODLERAY_QA_CONTROL=1; production launches never enable it). Actions are
@@ -1722,18 +1667,20 @@ export default function Dashboard() {
                         {t('v6AppLoginSourceBotSteps' as never)}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={openDoodleVpnAccount}
-                      className="v6-glass-inset v6-hover-bright flex w-full items-start gap-2.5 rounded-[14px] px-3.5 py-3 text-left v6-focus"
-                    >
-                      <Globe className="mt-0.5 h-4 w-4 shrink-0 text-[#FFAE57]/85" strokeWidth={2} />
-                      <span className="text-[11.5px] leading-relaxed text-white/58">
-                        <span className="font-medium text-white/78">{t('v6AppLoginSourceWebLabel' as never)}</span>{' '}
-                        {t('v6AppLoginSourceWebSteps' as never)}
-                      </span>
-                      <ExternalLink className="ml-auto mt-0.5 h-3.5 w-3.5 shrink-0 text-white/35" strokeWidth={2} />
-                    </button>
+                    {!networkExtensionOnly && (
+                      <button
+                        type="button"
+                        onClick={openDoodleVpnAccount}
+                        className="v6-glass-inset v6-hover-bright flex w-full items-start gap-2.5 rounded-[14px] px-3.5 py-3 text-left v6-focus"
+                      >
+                        <Globe className="mt-0.5 h-4 w-4 shrink-0 text-[#FFAE57]/85" strokeWidth={2} />
+                        <span className="text-[11.5px] leading-relaxed text-white/58">
+                          <span className="font-medium text-white/78">{t('v6AppLoginSourceWebLabel' as never)}</span>{' '}
+                          {t('v6AppLoginSourceWebSteps' as never)}
+                        </span>
+                        <ExternalLink className="ml-auto mt-0.5 h-3.5 w-3.5 shrink-0 text-white/35" strokeWidth={2} />
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -1862,7 +1809,7 @@ export default function Dashboard() {
             t={t}
           />
 
-          {/* RIGHT: connect core, bottom row (mode + exceptions now live in Settings) */}
+          {/* RIGHT: connect core, quick access to Windows exceptions, bottom row */}
           <div className="v6-dashboard-main flex min-h-0 min-w-0 flex-1 flex-col gap-4">
             <ConnectOrb
               state={orbState}
@@ -1886,6 +1833,12 @@ export default function Dashboard() {
               t={t}
               className="v6-orb-sub-status"
             />
+
+            {!networkExtensionOnly && (
+              <div className="v6-split-routing-entry shrink-0">
+                <SplitRoutingToggle protectedMode={productMode === 'protected'} onOpen={() => setShowSplitModal(true)} t={t} />
+              </div>
+            )}
 
             {!networkExtensionOnly && showStats && (
               <div className="v6-quick-actions-row flex shrink-0 gap-3.5">
@@ -1912,6 +1865,14 @@ export default function Dashboard() {
         <DiagnosticPanel
           onClose={() => setShowDiagModal(false)}
           onExportSupportBundle={handleExportSupportBundle}
+          t={t}
+        />
+      )}
+
+      {!networkExtensionOnly && showSplitModal && (
+        <SplitRoutingModal
+          protectedMode={productMode === 'protected'}
+          onClose={() => setShowSplitModal(false)}
           t={t}
         />
       )}

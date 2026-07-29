@@ -65,7 +65,7 @@ export default function ConnectOrb({
 
   return (
     <div className="v6-connect-orb flex min-h-0 flex-1 flex-col items-center justify-center gap-4 rounded-[26px] border border-white/[0.08] bg-white/[0.03]">
-      <div className="relative flex h-[248px] w-[248px] items-center justify-center">
+      <div className="v6-connect-orb-stage relative flex h-[248px] w-[248px] items-center justify-center">
         <button
           type="button"
           id="connect-button"
@@ -73,7 +73,7 @@ export default function ConnectOrb({
           disabled={disabled}
           title={primaryLabel}
           aria-label={primaryLabel}
-          className="relative flex h-[172px] w-[172px] flex-col items-center justify-center rounded-full border-none transition-[background,box-shadow] duration-500 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 v6-focus"
+          className="v6-connect-button relative flex h-[172px] w-[172px] flex-col items-center justify-center rounded-full border-none transition-[background,box-shadow] duration-500 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 v6-focus"
           style={{ background: btnBackground, boxShadow: btnShadow, transitionProperty: 'background, box-shadow, transform' }}
         >
           {busy ? (

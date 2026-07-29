@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { useWorkshopStore } from '../stores/workshop-store';
 import type { RoutingPreset, RoutingRule } from '../stores/workshop-store';
+import { parseRoutingRuleImport } from '../lib/routing-rule-import';
 import { useTranslation } from '../locales';
 import { desktopBridge } from '../platform/tauri/desktop-bridge';
 
@@ -404,23 +405,11 @@ function MyRulesTab({ onOpenBrowse }: { onOpenBrowse: () => void }) {
       try {
         if (file.size > 1024 * 1024) throw new Error('File is too large');
         const text = await file.text();
-        const rules = JSON.parse(text);
-        if (!Array.isArray(rules) || rules.length > 256) throw new Error('Invalid format');
-        for (const rule of rules) {
-          if (!rule || typeof rule !== 'object') throw new Error('Invalid rule');
-          if (rule.type !== 'domain' && rule.type !== 'exe') throw new Error('Invalid rule type');
-          if (rule.action !== 'proxy' && rule.action !== 'direct' && rule.action !== 'block') throw new Error('Invalid rule action');
-          if (typeof rule.value !== 'string' || !rule.value.trim() || rule.value.length > 2048) throw new Error('Invalid rule value');
-          if (rule.comment !== undefined && (typeof rule.comment !== 'string' || rule.comment.length > 500)) throw new Error('Invalid rule comment');
-          addRule({
-            id: crypto.randomUUID(),
-            type: rule.type,
-            value: rule.value.trim(),
-            action: rule.action,
-            enabled: rule.enabled !== false,
-            comment: rule.comment?.trim() || undefined,
-          });
-        }
+        const importedRules = parseRoutingRuleImport(JSON.parse(text)).map((rule) => ({
+          ...rule,
+          id: crypto.randomUUID(),
+        }));
+        for (const rule of importedRules) addRule(rule);
       } catch {
         alert('Invalid rules file');
       }

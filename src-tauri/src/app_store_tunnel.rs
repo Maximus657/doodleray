@@ -12,6 +12,14 @@ pub struct TunnelResponse {
     pub message: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct AutostartResponse {
+    success: bool,
+    supported: bool,
+    enabled: bool,
+    message: String,
+}
+
 type DoodleRayNECompletion = extern "C" fn(*mut c_void, *mut c_char);
 
 extern "C" {
@@ -24,6 +32,8 @@ extern "C" {
     fn doodleray_ne_status_async(context: *mut c_void, completion: DoodleRayNECompletion);
     fn doodleray_ne_stop_cached();
     fn doodleray_app_group_container_path() -> *mut c_char;
+    fn doodleray_autostart_status() -> *mut c_char;
+    fn doodleray_autostart_set_enabled(enabled: i32) -> *mut c_char;
     fn doodleray_ne_free(value: *mut c_char);
 }
 
@@ -51,6 +61,49 @@ fn decode_response(value: *mut c_char) -> Result<TunnelResponse, String> {
         .map_err(|_| "Network Extension returned invalid UTF-8".to_string());
     unsafe { doodleray_ne_free(value) };
     serde_json::from_str(&text?).map_err(|_| "Network Extension returned invalid JSON".into())
+}
+
+fn decode_autostart_response(value: *mut c_char) -> Result<AutostartResponse, String> {
+    if value.is_null() {
+        return Err("Login item returned no response".into());
+    }
+    let text = unsafe { CStr::from_ptr(value) }
+        .to_str()
+        .map(ToOwned::to_owned)
+        .map_err(|_| "Login item returned invalid UTF-8".to_string());
+    unsafe { doodleray_ne_free(value) };
+    serde_json::from_str(&text?).map_err(|_| "Login item returned invalid JSON".into())
+}
+
+fn resolve_autostart_response(
+    response: AutostartResponse,
+    requested: Option<bool>,
+) -> Result<bool, String> {
+    if !response.supported
+        || !response.success
+        || requested.is_some_and(|enabled| enabled != response.enabled)
+    {
+        return Err(if response.message.is_empty() {
+            "Could not change Launch at startup".into()
+        } else {
+            response.message
+        });
+    }
+    Ok(response.enabled)
+}
+
+pub fn autostart_enabled() -> Result<bool, String> {
+    resolve_autostart_response(
+        unsafe { decode_autostart_response(doodleray_autostart_status()) }?,
+        None,
+    )
+}
+
+pub fn set_autostart_enabled(enabled: bool) -> Result<bool, String> {
+    resolve_autostart_response(
+        unsafe { decode_autostart_response(doodleray_autostart_set_enabled(i32::from(enabled))) }?,
+        Some(enabled),
+    )
 }
 
 extern "C" fn complete_async_response(context: *mut c_void, value: *mut c_char) {
@@ -116,7 +169,10 @@ pub fn is_stopped_status(status: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_active_status, is_connected_status, is_stopped_status};
+    use super::{
+        is_active_status, is_connected_status, is_stopped_status, resolve_autostart_response,
+        AutostartResponse,
+    };
 
     #[test]
     fn only_live_network_extension_states_are_active() {
@@ -136,5 +192,27 @@ mod tests {
         for status in ["connecting", "connected", "reasserting", "disconnecting"] {
             assert!(!is_stopped_status(status));
         }
+    }
+
+    #[test]
+    fn autostart_requires_a_supported_confirmed_login_item() {
+        let enabled = AutostartResponse {
+            success: true,
+            supported: true,
+            enabled: true,
+            message: String::new(),
+        };
+        assert!(resolve_autostart_response(enabled, Some(true)).unwrap());
+
+        let pending_approval = AutostartResponse {
+            success: true,
+            supported: true,
+            enabled: false,
+            message: "Allow DoodleRay in System Settings".into(),
+        };
+        assert_eq!(
+            resolve_autostart_response(pending_approval, Some(true)).unwrap_err(),
+            "Allow DoodleRay in System Settings"
+        );
     }
 }

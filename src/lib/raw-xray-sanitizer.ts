@@ -27,7 +27,7 @@ function outboundEndpoint(outbound: JsonObject): { address?: string; port?: numb
   };
 }
 
-/** Keep the selected proxy transport, but never trust imported log paths or routing policy. */
+/** Keep the selected proxy transport, but never trust imported DNS, log paths, or routing policy. */
 export function sanitizeRawXrayConfig(rawConfig: unknown, server: RawXrayServerIdentity): JsonObject | null {
   let config: JsonObject;
   try {
@@ -59,6 +59,7 @@ export function sanitizeRawXrayConfig(rawConfig: unknown, server: RawXrayServerI
     domainStrategy: 'AsIs',
     rules: [{ type: 'field', network: 'tcp,udp', outboundTag: selectedTag }],
   };
+  delete config.dns;
   delete config.log;
   delete config.api;
   delete config.metrics;

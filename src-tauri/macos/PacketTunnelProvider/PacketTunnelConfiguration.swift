@@ -12,6 +12,7 @@ struct PreparedPacketTunnelConfiguration {
 enum PacketTunnelConfigurationError: LocalizedError {
     case missingConfiguration
     case invalidConfiguration
+    case missingUplinkInterface
     case unresolvedUplink
 
     var errorDescription: String? {
@@ -20,6 +21,8 @@ enum PacketTunnelConfigurationError: LocalizedError {
             return "DoodleRay VPN configuration is missing. Start the tunnel from the app."
         case .invalidConfiguration:
             return "DoodleRay VPN configuration is invalid."
+        case .missingUplinkInterface:
+            return "DoodleRay VPN could not determine the active network interface."
         case .unresolvedUplink:
             return "DoodleRay VPN could not resolve the selected server before starting the tunnel."
         }
@@ -130,6 +133,21 @@ enum PacketTunnelConfiguration {
         }
     }
 
+    static func primaryPhysicalInterface() -> String? {
+        for key in ["State:/Network/Global/IPv4", "State:/Network/Global/IPv6"] {
+            guard let network = SCDynamicStoreCopyValue(nil, key as CFString) as? [String: Any],
+                  let interface = network["PrimaryInterface"] as? String
+            else {
+                continue
+            }
+            let trimmed = interface.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty && !trimmed.hasPrefix("utun") {
+                return trimmed
+            }
+        }
+        return nil
+    }
+
     static func injectingLocalDNSResolver(
         _ resolver: String,
         into config: [String: Any]
@@ -145,6 +163,27 @@ enum PacketTunnelConfiguration {
         }
         dns["servers"] = servers
         result["dns"] = dns
+        return result
+    }
+
+    static func injectingDirectOutboundInterface(
+        _ interface: String,
+        into config: [String: Any]
+    ) -> [String: Any] {
+        var result = config
+        guard var outbounds = result["outbounds"] as? [[String: Any]] else {
+            return result
+        }
+        for index in outbounds.indices where outbounds[index]["tag"] as? String == "direct"
+            && outbounds[index]["protocol"] as? String == "freedom"
+        {
+            var streamSettings = outbounds[index]["streamSettings"] as? [String: Any] ?? [:]
+            var sockopt = streamSettings["sockopt"] as? [String: Any] ?? [:]
+            sockopt["interface"] = interface
+            streamSettings["sockopt"] = sockopt
+            outbounds[index]["streamSettings"] = streamSettings
+        }
+        result["outbounds"] = outbounds
         return result
     }
 

@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { X, MessageCircle, LifeBuoy, ChevronRight } from 'lucide-react';
-import { isNetworkExtensionOnlyBuild } from '../../lib/build-policy';
 
 type T = (key: never) => string;
 
@@ -33,12 +32,12 @@ export default function SupportModal({ onClose, onExportSupportBundle, t }: Prop
       sub: t('v6SupportChatSub' as never),
       onClick: () => open('https://t.me/doodlevpn_support'),
     },
-    ...(!isNetworkExtensionOnlyBuild() ? [{
+    {
       icon: LifeBuoy,
       title: t('supportBundle' as never),
       sub: t('v6SupportBundleSub' as never),
       onClick: () => { onExportSupportBundle(); onClose(); },
-    }] : []),
+    },
   ];
 
   return (

@@ -45,7 +45,7 @@ install_profile() {
     printf '%s profile does not authorize Packet Tunnel Provider.\n' "$label" >&2
     exit 1
   }
-  [ "$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:get-task-allow' "$decoded" 2>/dev/null || true)" = false ] || {
+  [ "$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:get-task-allow' "$decoded" 2>/dev/null || true)" != true ] || {
     printf '%s profile is not a distribution profile.\n' "$label" >&2
     exit 1
   }

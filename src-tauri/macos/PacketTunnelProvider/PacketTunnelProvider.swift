@@ -14,13 +14,20 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     ) {
         do {
             let config = try PacketTunnelConfiguration.decode(options: options)
+            guard let uplinkInterface = PacketTunnelConfiguration.primaryPhysicalInterface() else {
+                throw PacketTunnelConfigurationError.missingUplinkInterface
+            }
             let directDNS = PacketTunnelConfiguration.physicalDNSServers().first
                 ?? PacketTunnelConfiguration.fallbackDirectDNSServer
             let dnsPrepared = PacketTunnelConfiguration.injectingLocalDNSResolver(
                 directDNS,
                 into: config
             )
-            let prepared = try PacketTunnelConfiguration.resolvingUplinks(in: dnsPrepared)
+            let directPrepared = PacketTunnelConfiguration.injectingDirectOutboundInterface(
+                uplinkInterface,
+                into: dnsPrepared
+            )
+            let prepared = try PacketTunnelConfiguration.resolvingUplinks(in: directPrepared)
             let validationJSON = try PacketTunnelConfiguration.injectingTunnelFileDescriptor(
                 3,
                 into: prepared.xrayConfig
@@ -31,7 +38,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 excludingIPv6: prepared.excludedIPv6Addresses
             )
             logger.notice(
-                "Prepared packet tunnel with local DNS and \(prepared.excludedIPv4Addresses.count, privacy: .public) IPv4 and \(prepared.excludedIPv6Addresses.count, privacy: .public) IPv6 uplink exclusions"
+                "Prepared packet tunnel on \(uplinkInterface, privacy: .public) with local DNS and \(prepared.excludedIPv4Addresses.count, privacy: .public) IPv4 and \(prepared.excludedIPv6Addresses.count, privacy: .public) IPv6 uplink exclusions"
             )
             setTunnelNetworkSettings(settings) { [weak self] error in
                 guard let self else {

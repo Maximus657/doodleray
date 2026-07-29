@@ -1,6 +1,7 @@
 import type { ServerConfig, Subscription } from '../../stores/app-store';
 import { antiJammerQuotaView, formatQuotaBytes } from '../../lib/ui-format';
 import { isAntiJammerOrReserveServer } from '../../lib/app-control-plane';
+import { isNetworkExtensionOnlyBuild } from '../../lib/build-policy';
 import { useAppStore } from '../../stores/app-store';
 
 type T = (key: never) => string;
@@ -38,6 +39,7 @@ interface Props {
  */
 export default function SubscriptionStatusBlock({ activeSub, activeServer, t, className }: Props) {
   const language = useAppStore((state) => state.language);
+  const canOfferExternalRenewal = !isNetworkExtensionOnlyBuild();
   const expire = activeSub?.traffic?.expire;
   const days = expire && expire > 0 ? Math.max(0, Math.ceil((expire * 1000 - Date.now()) / 86_400_000)) : null;
   const dCol = days !== null ? dayColor(days) : null;
@@ -58,7 +60,7 @@ export default function SubscriptionStatusBlock({ activeSub, activeServer, t, cl
               {formatQuotaBytes(quota.remaining, language)} {t('v6QuotaOf' as never)} {formatQuotaBytes(quota.limit, language)}
             </span>
           </div>
-          <div className="mx-3 h-[7px] overflow-hidden rounded-md bg-white/10">
+          <div className="h-[7px] w-full overflow-hidden rounded-md bg-white/10">
             <div
               className="h-full rounded-md transition-[width] duration-500"
               style={{ width: `${(quota.ratio * 100).toFixed(1)}%`, background: quotaColor, boxShadow: `0 0 10px ${quotaColor}66` }}
@@ -70,7 +72,7 @@ export default function SubscriptionStatusBlock({ activeSub, activeServer, t, cl
               {t((quota.tone === 'exhausted' ? 'v6AntiJammerExhausted' : 'v6AntiJammerLow') as never)}
             </p>
           )}
-          {quota.remaining <= LOW_QUOTA_RENEW_BYTES && (
+          {canOfferExternalRenewal && quota.remaining <= LOW_QUOTA_RENEW_BYTES && (
             <button type="button" onClick={openAccountPage} className="v6-hover-bright mt-2 w-full rounded-[11px] border border-white/[0.12] bg-white/[0.06] py-1.5 text-[11.5px] font-semibold text-[#FFA84E] v6-focus">
               {t('v6RenewCta' as never)}
             </button>
@@ -87,11 +89,13 @@ export default function SubscriptionStatusBlock({ activeSub, activeServer, t, cl
                 {days <= 0 ? t('subscriptionExpired' as never) : t('v6DaysLeft' as never)}
               </span>
             </span>
-            <button type="button" onClick={openAccountPage} className="v6-hover-bright shrink-0 rounded-[11px] border border-white/[0.12] bg-white/[0.06] px-2.5 py-1 text-[11.5px] font-semibold text-[#FFA84E] v6-focus">
-              {t('v6RenewCta' as never)}
-            </button>
+            {canOfferExternalRenewal && (
+              <button type="button" onClick={openAccountPage} className="v6-hover-bright shrink-0 rounded-[11px] border border-white/[0.12] bg-white/[0.06] px-2.5 py-1 text-[11.5px] font-semibold text-[#FFA84E] v6-focus">
+                {t('v6RenewCta' as never)}
+              </button>
+            )}
           </div>
-          <div className="mx-3 h-[7px] overflow-hidden rounded-md bg-white/10">
+          <div className="h-[7px] w-full overflow-hidden rounded-md bg-white/10">
             <div
               className="h-full rounded-md transition-[width] duration-500"
               style={{ width: `${(Math.min(1, days / 30) * 100).toFixed(1)}%`, background: dCol, boxShadow: `0 0 10px ${dCol}66` }}

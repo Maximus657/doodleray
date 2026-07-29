@@ -2625,11 +2625,41 @@ $after = @(Get-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -AddressF
             if !is_current_generation(generation) {
                 return;
             }
+            mark_ipv6_policy_status();
             mark_quic_policy_status();
             record_windows_system_resolver_canary(generation);
         });
     }
 
+    fn mark_ipv6_policy_status() {
+        let check = ensure_doodleray_ipv6_policy();
+        let mut runtime = state().lock().unwrap();
+        match check {
+            Ok(detail) => {
+                let detail = format!("IPv6 policy verified: {}", detail);
+                if !runtime
+                    .route_explanations
+                    .iter()
+                    .any(|existing| existing == &detail)
+                {
+                    runtime.route_explanations.push(detail);
+                }
+            }
+            Err(error) => {
+                let detail = format!(
+                    "IPv6 route verification failed after connect: {}",
+                    redact(&error)
+                );
+                if !runtime
+                    .degraded_checks
+                    .iter()
+                    .any(|existing| existing == &detail)
+                {
+                    runtime.degraded_checks.push(detail);
+                }
+            }
+        }
+    }
     fn mark_quic_policy_status() {
         let mut runtime = state().lock().unwrap();
         let check = "QUIC/HTTP3 is not verified by a controlled probe in this build; no QUIC claim";
@@ -2940,6 +2970,71 @@ Write-Output ("DoodleRay Tunnel dual-stack route preferred: ipv4_shape={0}, ipv6
                 log_service_event(&message);
                 Err(message)
             }
+        }
+    }
+
+    fn ensure_doodleray_ipv6_policy() -> Result<String, String> {
+        let script = r#"
+$adapter = Get-NetAdapter -Name 'DoodleRay Tunnel' -ErrorAction SilentlyContinue | Select-Object -First 1
+$allDefaults = @(Get-NetRoute -AddressFamily IPv6 -DestinationPrefix '::/0' -ErrorAction SilentlyContinue |
+  Where-Object { $_.State -eq 'Alive' })
+
+if (-not $adapter) {
+  if ($allDefaults.Count -eq 0) {
+    Write-Output 'no external IPv6 default route; no IPv6 bypass path exists'
+    exit 0
+  }
+  Write-Output 'DoodleRay Tunnel adapter is missing while an IPv6 default route exists'
+  exit 2
+}
+
+$externalDefaults = @($allDefaults | Where-Object { [int]$_.InterfaceIndex -ne [int]$adapter.ifIndex })
+if ($externalDefaults.Count -eq 0) {
+  Write-Output 'no external IPv6 default route; no IPv6 bypass path exists'
+  exit 0
+}
+
+$tunInterface = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -ErrorAction SilentlyContinue
+$tunAddress = Get-NetIPAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -ErrorAction SilentlyContinue |
+  Where-Object { $_.IPAddress -like 'fdfe:dcba:9876:*' } |
+  Select-Object -First 1
+if (-not $tunInterface -or -not $tunAddress) {
+  Write-Output 'DoodleRay Tunnel IPv6 interface/address is missing while an external IPv6 route exists'
+  exit 2
+}
+
+$bypassed = @()
+foreach ($ip in @('2606:4700:4700::1111', '2001:4860:4860::8888')) {
+  $best = Find-NetRoute -RemoteIPAddress $ip -ErrorAction SilentlyContinue | Select-Object -First 1
+  if (-not $best -or [int]$best.InterfaceIndex -ne [int]$adapter.ifIndex) {
+    $via = if ($best) { "$($best.InterfaceAlias):$($best.InterfaceIndex)" } else { 'none' }
+    $bypassed += "$ip via $via"
+  }
+}
+if ($bypassed.Count -gt 0) {
+  Write-Output ("DoodleRay Tunnel is not selected for IPv6 route canaries: {0}" -f ($bypassed -join '; '))
+  exit 3
+}
+
+Write-Output ("DoodleRay Tunnel IPv6 route preferred: ifIndex={0}, canaries=ok" -f $adapter.ifIndex)
+"#;
+        match Command::new("powershell")
+            .args(["-NoProfile", "-Command", script])
+            .creation_flags(0x08000000)
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+            }
+            Ok(output) => Err(format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )),
+            Err(error) => Err(format!(
+                "failed to run IPv6 route readiness command: {}",
+                error
+            )),
         }
     }
 

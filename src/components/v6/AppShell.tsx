@@ -16,15 +16,6 @@ gsap.registerPlugin(useGSAP);
 
 type WindowMode = 'wide' | 'compact';
 
-// The centered header lockup exists only because macOS's native traffic
-// lights sit top-left and leave no room for a left-aligned logo there.
-// Windows (and any other platform) has no such constraint, so the brand
-// belongs on the left like a normal app header.
-function isMacPlatform(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  return /Mac/i.test(navigator.userAgent);
-}
-
 async function resizeNativeWindow(mode: WindowMode): Promise<void> {
   if (typeof (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ === 'undefined') return;
 
@@ -113,7 +104,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const [windowTransitioning, setWindowTransitioning] = useState(false);
   const nativeMacWindow = isNetworkExtensionOnlyBuild();
   const hasMainContent = appSessionLoggedIn || serversCount > 0 || status !== 'disconnected';
-  const brandOnLeft = windowMode === 'compact' || !isMacPlatform();
+  // Native App Store windows reserve the top-left corner for macOS traffic
+  // lights; offset the brand toward that open space, clear of both chrome groups.
+  const brandOnLeft = !nativeMacWindow;
 
   useEffect(() => {
     try { localStorage.setItem('doodleray_window_mode', windowMode); } catch { /* non-critical preference */ }
@@ -191,12 +184,17 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const exportSupportBundle = async () => {
     const s = useAppStore.getState();
     try {
-      await desktopBridge.command('export_support_bundle', {
-        proxyMode: s.proxyMode,
-        systemProxyMode: s.systemProxyMode,
-        socksPort: s.socksPort,
-        httpPort: s.httpPort,
-      });
+      await desktopBridge.command(
+        nativeMacWindow ? 'export_app_store_support_bundle' : 'export_support_bundle',
+        nativeMacWindow
+          ? {}
+          : {
+            proxyMode: s.proxyMode,
+            systemProxyMode: s.systemProxyMode,
+            socksPort: s.socksPort,
+            httpPort: s.httpPort,
+          },
+      );
       s.addLog('success', t('supportBundleExported' as never));
       useToastStore.getState().addToast(t('supportBundleExported' as never), 'success');
     } catch (err) {
@@ -231,7 +229,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               </div>
             </div>
           ) : (
-            <div data-tauri-drag-region className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-[calc(50%+4px)]">
+            <div data-tauri-drag-region className="pointer-events-none absolute left-[calc(50%-48px)] top-1/2 -translate-x-1/2 -translate-y-[calc(50%+4px)]">
               <div
                 data-tauri-drag-region
                 className={`flex items-center gap-[11px] ${hasMainContent ? 'v6-brand-enter' : 'v6-brand-hidden'}`}
@@ -251,7 +249,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             </div>
           )}
 
-          <div className="flex items-center gap-2.5">
+          <div className="v6-header-actions flex items-center gap-2.5">
             {gbLeft !== null && (
               <div className="flex items-center gap-[9px] rounded-[30px] border border-white/[0.12] bg-white/[0.08] px-4 py-2">
                 <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: chipColor, boxShadow: `0 0 8px ${chipColor}` }} />

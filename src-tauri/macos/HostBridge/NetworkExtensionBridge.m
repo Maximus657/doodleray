@@ -2,6 +2,7 @@
 
 #import <Foundation/Foundation.h>
 #import <NetworkExtension/NetworkExtension.h>
+#import <ServiceManagement/ServiceManagement.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -22,6 +23,25 @@ static char *DoodleRayCopyJSON(BOOL success, NSString *status, NSString *message
     NSData *data = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
     NSString *json = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
     return strdup(json.UTF8String ?: "{\"success\":false,\"status\":\"unknown\",\"message\":\"Network Extension error\"}");
+}
+
+static char *DoodleRayCopyAutostartJSON(BOOL success, BOOL supported, BOOL enabled, NSString *message) {
+    NSDictionary *payload = @{
+        @"success" : @(success),
+        @"supported" : @(supported),
+        @"enabled" : @(enabled),
+        @"message" : message ?: @""
+    };
+    NSData *data = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
+    NSString *json = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    return strdup(json.UTF8String ?: "{\"success\":false,\"supported\":false,\"enabled\":false,\"message\":\"Login item error\"}");
+}
+
+static NSString *DoodleRayAutostartStatusMessage(SMAppServiceStatus status) {
+    if (status == SMAppServiceStatusRequiresApproval) {
+        return @"Allow DoodleRay in System Settings > General > Login Items.";
+    }
+    return @"";
 }
 
 static NSString *DoodleRayStatusName(NEVPNStatus status) {
@@ -239,6 +259,55 @@ char *doodleray_app_group_container_path(void) {
     NSURL *url = [[NSFileManager defaultManager]
         containerURLForSecurityApplicationGroupIdentifier:@"group.com.doodleray.doodleray"];
     return url.path.length > 0 ? strdup(url.path.UTF8String) : NULL;
+}
+
+char *doodleray_autostart_status(void) {
+    @autoreleasepool {
+        if (@available(macOS 13.0, *)) {
+            SMAppService *service = SMAppService.mainAppService;
+            SMAppServiceStatus status = service.status;
+            return DoodleRayCopyAutostartJSON(
+                YES,
+                YES,
+                status == SMAppServiceStatusEnabled,
+                DoodleRayAutostartStatusMessage(status)
+            );
+        }
+        return DoodleRayCopyAutostartJSON(
+            NO,
+            NO,
+            NO,
+            @"Launch at startup requires macOS 13 or later."
+        );
+    }
+}
+
+char *doodleray_autostart_set_enabled(int enabled) {
+    @autoreleasepool {
+        if (@available(macOS 13.0, *)) {
+            SMAppService *service = SMAppService.mainAppService;
+            SMAppServiceStatus before = service.status;
+            if ((enabled != 0 && before == SMAppServiceStatusEnabled) ||
+                (enabled == 0 && before == SMAppServiceStatusNotRegistered)) {
+                return DoodleRayCopyAutostartJSON(YES, YES, enabled != 0, @"");
+            }
+
+            NSError *error = nil;
+            BOOL succeeded = enabled != 0
+                ? [service registerAndReturnError:&error]
+                : [service unregisterAndReturnError:&error];
+            SMAppServiceStatus after = service.status;
+            BOOL isEnabled = after == SMAppServiceStatusEnabled;
+            NSString *message = error.localizedDescription ?: DoodleRayAutostartStatusMessage(after);
+            return DoodleRayCopyAutostartJSON(succeeded, YES, isEnabled, message);
+        }
+        return DoodleRayCopyAutostartJSON(
+            NO,
+            NO,
+            NO,
+            @"Launch at startup requires macOS 13 or later."
+        );
+    }
 }
 
 void doodleray_ne_free(char *value) {

@@ -64,6 +64,31 @@ test('App Store preflight accepts only a newer tuple or an exact usable rerun', 
   assert.equal(assessRelease(existing, '6.0.2', '60017'), 'exists');
 });
 
+test('TestFlight may advance only the build number within the current marketing version', async () => {
+  const { assessRelease } = await import(pathToFileURL(helperPath));
+  const existing = {
+    data: [{
+      attributes: { version: '60018', processingState: 'VALID' },
+      relationships: { preReleaseVersion: { data: { id: 'pre-current' } } },
+    }],
+    included: [{
+      type: 'preReleaseVersions',
+      id: 'pre-current',
+      attributes: { version: '6.0.2', platform: 'MAC_OS' },
+    }],
+  };
+
+  assert.throws(() => assessRelease(existing, '6.0.2', '60019'), /strictly newer/);
+  assert.equal(
+    assessRelease(existing, '6.0.2', '60019', { allowNextTestFlightBuild: true }),
+    'new',
+  );
+  assert.equal(
+    assessRelease(existing, '6.0.2', '60018', { allowNextTestFlightBuild: true }),
+    'exists',
+  );
+});
+
 test('App Store preflight compares large version components without precision loss', async () => {
   const { assessRelease } = await import(pathToFileURL(helperPath));
   const existing = {

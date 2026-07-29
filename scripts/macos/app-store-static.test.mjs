@@ -96,6 +96,16 @@ test('App Store connection accepts only an authorized control-plane profile', ()
   assert.doesNotMatch(controlPlane, /vpn_connect\(connect_request, app\.clone\(\)\)\.await/);
 });
 
+test('App Store UI has no external subscription-purchase CTA', () => {
+  const subscriptionStatus = read('src/components/v6/SubscriptionStatusBlock.tsx');
+  const dashboard = read('src/pages/Dashboard.tsx');
+
+  assert.match(subscriptionStatus, /const canOfferExternalRenewal = !isNetworkExtensionOnlyBuild\(\);/);
+  assert.equal((subscriptionStatus.match(/canOfferExternalRenewal &&/g) ?? []).length, 2);
+  assert.match(subscriptionStatus, /\{canOfferExternalRenewal && \(\s*<button[\s\S]*?v6RenewCta/);
+  assert.match(dashboard, /\{!networkExtensionOnly && \(\s*<button[\s\S]*?v6AppLoginSourceWebLabel/);
+});
+
 test('release.json supplies both App Store version fields at build and verification time', () => {
   const release = readJson('release/release.json');
   const packageJson = readJson('package.json');
@@ -131,6 +141,7 @@ test('workflow uses one exact fail-closed Apple secret and profile contract', ()
   assert.equal(existsSync(profileInstallerPath), true, 'profile installer is missing');
   if (!existsSync(profileInstallerPath)) return;
   const profileInstaller = read('scripts/macos/install-app-store-profiles.sh');
+  const verify = read('scripts/macos/verify-app-store-bundle.sh');
   const upload = read('scripts/macos/upload-app-store.sh');
   const docs = `${read('docs/release-runbook.md')}\n${read('docs/macos-app-store-readiness.md')}`;
 
@@ -152,8 +163,15 @@ test('workflow uses one exact fail-closed Apple secret and profile contract', ()
   assert.doesNotMatch(`${workflow}\n${upload}`, /allowProvisioningUpdates/);
   assert.match(profileInstaller, /TeamIdentifier:0/);
   assert.match(profileInstaller, /Entitlements:com\.apple\.application-identifier/);
+  assert.match(profileInstaller, /Entitlements:get-task-allow/);
+  assert.match(verify, /distribution profile get-task-allow/);
+  assert.match(verify, /SIGNING_DETAILS=/);
+  assert.doesNotMatch(verify, /codesign -d --verbose=4 "\$bundle" 2>&1 \| rg/);
+  assert.match(verify, /require_array_contains/);
   assert.match(profileInstaller, /Library\/MobileDevice\/Provisioning Profiles/);
   assert.match(upload, /check-app-store-build\.mjs/);
+  assert.match(upload, /APP_STORE_TESTFLIGHT_UPLOAD/);
+  assert.match(upload, /--allow-next-testflight-build/);
   assert.doesNotMatch(upload, /DoodleRay VPN macOS App Store Host|DoodleRay VPN macOS App Store Extension/);
 });
 
