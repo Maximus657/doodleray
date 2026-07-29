@@ -1,8 +1,8 @@
 # macOS App Store readiness
 
 Status: **the signed universal 6.0.2 (60018) bundle passed full local App Store
-verification on 2026-07-29; production remains blocked pending external QA and
-the explicit submission handoff.**
+verification and was uploaded to App Store Connect on 2026-07-29; production
+remains blocked pending TestFlight QA and the explicit submission handoff.**
 
 This is the canonical macOS release document. Historical build notes are not a
 release gate and must not be treated as evidence for the current source SHA.
@@ -102,17 +102,15 @@ permanent branch.
 
 - App Store Connect now has a manual-release `6.0.2` draft with its existing
   metadata and screenshot preserved. The remote `60017` build is actually
-  `6.0.0`, so it cannot be attached to the `6.0.2` record. Upload the verified
-  `6.0.2 (60018)` build, then attach it; neither action is a release.
+  `6.0.0`, so it cannot be attached to the `6.0.2` record. The verified
+  `6.0.2 (60018)` build is uploaded and awaiting processing; attach it only
+  after it becomes valid. Neither action is a release.
 - TestFlight clean install and the real 5.9.1 transition path on a QA Mac where
   changing the VPN is safe;
 - Intel and Apple Silicon connect/disconnect, DNS/IPv4/IPv6, sleep/wake, network
   change, relaunch, and uninstall checks;
 - accepted-size screenshots from the exact Store build and completed
   accessibility labels based on that QA evidence;
-- App Store Connect API access, a scoped API key, and the required CI secrets
-  if automated upload is desired; production currently fails closed without
-  them;
 - App Store Connect metadata/reviewer credentials and legal/export review;
 - explicit human approval after attaching evidence for the exact source SHA.
 
