@@ -104,6 +104,14 @@ test('Packet Tunnel rewrites localhost in mixed Xray DNS server arrays', () => {
   assert.match(configuration, /server == "localhost"/);
 });
 
+test('Packet Tunnel uses encrypted system DNS instead of filtered UDP port 53', () => {
+  const provider = read('src-tauri/macos/PacketTunnelProvider/PacketTunnelProvider.swift');
+
+  assert.match(provider, /NEDNSOverHTTPSSettings\(servers:/);
+  assert.match(provider, /serverURL = URL\(string: "https:\/\/cloudflare-dns\.com\/dns-query"\)/);
+  assert.doesNotMatch(provider, /NEDNSSettings\(servers:/);
+});
+
 test('App Store UI has no external subscription-purchase CTA', () => {
   const subscriptionStatus = read('src/components/v6/SubscriptionStatusBlock.tsx');
   const dashboard = read('src/pages/Dashboard.tsx');
@@ -192,6 +200,13 @@ test('production signing never regenerates the privileged extension project', ()
   assert.doesNotMatch(build, /generate-extension-project\.sh|\bxcodegen\b/);
   assert.match(ci, /generate-extension-project\.sh/);
   assert.match(ci, /git diff --exit-code -- src-tauri\/macos\/DoodleRayAppStoreExtensions\.xcodeproj/);
+});
+
+test('TestFlight upload waits for processing and attaches the internal group', () => {
+  const workflow = read('.github/workflows/testflight-macos.yml');
+
+  assert.match(workflow, /scripts\/macos\/upload-app-store\.sh[\s\S]*scripts\/macos\/attach-testflight-build\.mjs/);
+  assert.match(workflow, /TESTFLIGHT_INTERNAL_GROUP_NAME: Mac QA/);
 });
 
 test('readiness separates portable static proof from macOS release evidence', () => {

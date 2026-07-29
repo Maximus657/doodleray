@@ -152,7 +152,9 @@ const APP_STORE_TRAFFIC_VERIFY_URLS: [&str; 3] = [
 #[cfg(all(target_os = "macos", feature = "app-store"))]
 const APP_STORE_TRAFFIC_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 #[cfg(all(target_os = "macos", feature = "app-store"))]
-const APP_STORE_DATAPLANE_HEALTH_TIMEOUT: Duration = Duration::from_secs(9);
+const APP_STORE_TRAFFIC_VERIFY_TIMEOUT: Duration = Duration::from_secs(20);
+#[cfg(all(target_os = "macos", feature = "app-store"))]
+const APP_STORE_DATAPLANE_HEALTH_TIMEOUT: Duration = Duration::from_secs(21);
 #[cfg(windows)]
 fn claim_single_app_instance() -> bool {
     use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
@@ -6038,9 +6040,11 @@ mod app_store_config_tests {
         app_store_support_bundle_text, app_store_traffic_probe_quorum,
         prepare_app_store_xray_config, rewrite_app_store_geodata_dependencies,
         APP_STORE_DATAPLANE_HEALTH_TIMEOUT, APP_STORE_TRAFFIC_PROBE_TIMEOUT,
+        APP_STORE_TRAFFIC_VERIFY_TIMEOUT,
     };
     use crate::app_store_tunnel::TunnelResponse;
     use serde_json::json;
+    use std::time::Duration;
 
     #[test]
     fn network_extension_config_removes_local_api_and_proxy_inbounds() {
@@ -6198,7 +6202,9 @@ mod app_store_config_tests {
 
     #[test]
     fn dataplane_health_deadline_outlives_each_traffic_probe() {
-        assert!(APP_STORE_DATAPLANE_HEALTH_TIMEOUT > APP_STORE_TRAFFIC_PROBE_TIMEOUT);
+        assert!(APP_STORE_TRAFFIC_VERIFY_TIMEOUT >= Duration::from_secs(15));
+        assert!(APP_STORE_TRAFFIC_VERIFY_TIMEOUT > APP_STORE_TRAFFIC_PROBE_TIMEOUT);
+        assert!(APP_STORE_DATAPLANE_HEALTH_TIMEOUT > APP_STORE_TRAFFIC_VERIFY_TIMEOUT);
     }
 }
 
@@ -6232,16 +6238,36 @@ async fn verify_app_store_tunnel_traffic() -> Result<(), String> {
             .await
             .is_ok_and(|response| response.status().is_success())
     }
-    let (cloudflare, public_ip, control_plane) = tokio::join!(
-        probe(&client, APP_STORE_TRAFFIC_VERIFY_URLS[0]),
-        probe(&client, APP_STORE_TRAFFIC_VERIFY_URLS[1]),
-        probe(&client, APP_STORE_TRAFFIC_VERIFY_URLS[2]),
-    );
-    app_store_traffic_probe_quorum([cloudflare, public_ip, control_plane]).map_err(|error| {
-        format!(
-            "{error}; probes: cloudflare_ip={cloudflare}, public_ip={public_ip}, control_plane={control_plane}"
+    let deadline = tokio::time::Instant::now() + APP_STORE_TRAFFIC_VERIFY_TIMEOUT;
+    let mut last_error = "traffic probes did not run".to_string();
+    loop {
+        let attempt = async {
+            let (cloudflare, public_ip, control_plane) = tokio::join!(
+                probe(&client, APP_STORE_TRAFFIC_VERIFY_URLS[0]),
+                probe(&client, APP_STORE_TRAFFIC_VERIFY_URLS[1]),
+                probe(&client, APP_STORE_TRAFFIC_VERIFY_URLS[2]),
+            );
+            app_store_traffic_probe_quorum([cloudflare, public_ip, control_plane]).map_err(
+                |error| {
+                    format!(
+                        "{error}; probes: cloudflare_ip={cloudflare}, public_ip={public_ip}, control_plane={control_plane}"
+                    )
+                },
+            )
+        };
+        match tokio::time::timeout_at(deadline, attempt).await {
+            Ok(Ok(())) => return Ok(()),
+            Ok(Err(error)) => last_error = error,
+            Err(_) => return Err(last_error),
+        }
+        tokio::time::sleep_until(
+            deadline.min(tokio::time::Instant::now() + Duration::from_secs(1)),
         )
-    })
+        .await;
+        if tokio::time::Instant::now() >= deadline {
+            return Err(last_error);
+        }
+    }
 }
 
 #[cfg(all(target_os = "macos", feature = "app-store"))]

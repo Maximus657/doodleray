@@ -128,3 +128,17 @@ jobs:
           chmod 600 "$key_path"
           export APP_STORE_CONNECT_API_KEY_PATH="$key_path"
           scripts/macos/upload-app-store.sh
+
+      - name: Wait for Apple processing and attach the internal QA group
+        env:
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+          TESTFLIGHT_INTERNAL_GROUP_NAME: Mac QA
+        run: |
+          set -euo pipefail
+          key_path="$RUNNER_TEMP/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"
+          trap 'rm -f "$key_path"' EXIT
+          printf '%s\n' "$APP_STORE_CONNECT_PRIVATE_KEY" > "$key_path"
+          chmod 600 "$key_path"
+          APP_STORE_CONNECT_API_KEY_PATH="$key_path" node scripts/macos/attach-testflight-build.mjs

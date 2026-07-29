@@ -126,7 +126,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         settings.ipv6Settings = ipv6
 
-        let dns = NEDNSSettings(servers: ["1.1.1.1", "9.9.9.9"])
+        let dns = NEDNSOverHTTPSSettings(servers: ["1.1.1.1", "1.0.0.1"])
+        dns.serverURL = URL(string: "https://cloudflare-dns.com/dns-query")
         dns.matchDomains = [""]
         dns.matchDomainsNoSearch = true
         settings.dnsSettings = dns
