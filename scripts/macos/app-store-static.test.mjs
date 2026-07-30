@@ -148,6 +148,8 @@ test('release.json supplies both App Store version fields at build and verificat
   assert.match(cargo, new RegExp(`^version = "${release.version.replaceAll('.', '\\.')}"$`, 'm'));
   assert.equal(Object.hasOwn(appStore, 'version'), false);
   assert.equal(Object.hasOwn(appStore.bundle.macOS, 'bundleVersion'), false);
+  assert.equal(appStore.productName, 'DoodleRay');
+  assert.equal(appStore.app.windows[0].title, 'DoodleRay');
   assert.doesNotMatch(project, /^\s*(?:MARKETING_VERSION|CURRENT_PROJECT_VERSION):/m);
   assert.doesNotMatch(pbxproj, /^\s*(?:MARKETING_VERSION|CURRENT_PROJECT_VERSION) =/m);
   assert.match(build, /release\/release\.json/);
@@ -159,6 +161,10 @@ test('release.json supplies both App Store version fields at build and verificat
   assert.doesNotMatch(verify, /package\.json|tauri\.appstore\.conf\.json/);
   assert.match(verify, /extension marketing version/);
   assert.match(verify, /extension build number/);
+  assert.match(build, /DoodleRay\.app/);
+  assert.match(verify, /DoodleRay\.app/);
+  assert.match(verify, /CFBundleDisplayName\)" DoodleRay/);
+  assert.match(verify, /CFBundleName\)" DoodleRay/);
 });
 
 test('workflow uses one exact fail-closed Apple secret and profile contract', () => {

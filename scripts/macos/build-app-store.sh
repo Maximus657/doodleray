@@ -8,7 +8,7 @@ STAGING_DIR="$MACOS_DIR/profiles"
 HOST_PROFILE_STAGED="$STAGING_DIR/DoodleRayHost.provisionprofile"
 HOST_ENTITLEMENTS_STAGED="$STAGING_DIR/DoodleRayHost.entitlements"
 EXTENSION_BUNDLE="$MACOS_DIR/DerivedData/Build/Products/Release/DoodleRayVPN.appex"
-APP_BUNDLE="$ROOT_DIR/src-tauri/target/universal-apple-darwin/release/bundle/macos/DoodleRay VPN.app"
+APP_BUNDLE="$ROOT_DIR/src-tauri/target/universal-apple-darwin/release/bundle/macos/DoodleRay.app"
 EXPECTED_TEAM_ID="${APPLE_TEAM_ID:-}"
 read -r RELEASE_VERSION RELEASE_BUILD < <(
   node -e 'const release = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")); console.log(`${release.version} ${release.macBuild}`);' "$ROOT_DIR/release/release.json"

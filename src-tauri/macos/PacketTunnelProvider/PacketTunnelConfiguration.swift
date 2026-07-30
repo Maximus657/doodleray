@@ -18,13 +18,13 @@ enum PacketTunnelConfigurationError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingConfiguration:
-            return "DoodleRay VPN configuration is missing. Start the tunnel from the app."
+            return "DoodleRay configuration is missing. Start the tunnel from the app."
         case .invalidConfiguration:
-            return "DoodleRay VPN configuration is invalid."
+            return "DoodleRay configuration is invalid."
         case .missingUplinkInterface:
-            return "DoodleRay VPN could not determine the active network interface."
+            return "DoodleRay could not determine the active network interface."
         case .unresolvedUplink:
-            return "DoodleRay VPN could not resolve the selected server before starting the tunnel."
+            return "DoodleRay could not resolve the selected server before starting the tunnel."
         }
     }
 }

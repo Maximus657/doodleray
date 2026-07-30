@@ -4,7 +4,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 MODE="${1:---static}"
-APP_BUNDLE="${2:-$ROOT_DIR/src-tauri/target/universal-apple-darwin/release/bundle/macos/DoodleRay VPN.app}"
+APP_BUNDLE="${2:-$ROOT_DIR/src-tauri/target/universal-apple-darwin/release/bundle/macos/DoodleRay.app}"
 
 cd "$ROOT_DIR"
 node --test scripts/macos/app-store-static.test.mjs scripts/macos/check-app-store-build.test.mjs

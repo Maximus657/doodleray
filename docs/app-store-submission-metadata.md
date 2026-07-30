@@ -1,4 +1,4 @@
-# DoodleRay VPN — App Store submission draft
+# DoodleRay — App Store submission draft
 
 Status: **core metadata, privacy labels, age rating, availability, and pricing
 are saved in App Store Connect.** Do not put reviewer credentials or personal
@@ -8,7 +8,7 @@ contact details in Git.
 
 | Field | Proposed value |
 |---|---|
-| Name | `DoodleRay VPN` |
+| Name | `DoodleRay` |
 | Version | Read from `release/release.json` for the submitted source SHA |
 | Primary category | Utilities |
 | Secondary category | Productivity |
@@ -25,11 +25,11 @@ Subtitle (30-character limit):
 
 Promotional text:
 
-> Connect in one tap. DoodleRay VPN protects your whole Mac with smart location selection, stable DNS, and clear connection status—without ads or tracking.
+> Connect in one tap. DoodleRay protects your whole Mac with smart location selection, stable DNS, and clear connection status—without ads or tracking.
 
 Description:
 
-> DoodleRay VPN makes protecting your Mac simple. Sign in with your DoodleVPN code, choose a location, and connect in one tap. Your connection runs through the macOS system VPN powered by Apple's Network Extension framework.
+> DoodleRay makes protecting your Mac simple. Sign in with your DoodleVPN code, choose a location, and connect in one tap. Your connection runs through the macOS system VPN powered by Apple's Network Extension framework.
 >
 > • Protect your whole Mac through the system VPN
 > • Choose a country or let DoodleRay pick automatically
@@ -39,7 +39,7 @@ Description:
 > • Get help quickly if something does not connect
 > • No ads or third-party analytics SDKs
 >
-> An active DoodleVPN account is required. DoodleRay VPN is a companion app for existing DoodleVPN users. The app does not offer purchases or account creation.
+> An active DoodleVPN account is required. DoodleRay is a companion app for existing DoodleVPN users. The app does not offer purchases or account creation.
 
 Keywords (under 100 bytes):
 
@@ -53,11 +53,11 @@ Subtitle:
 
 Promotional text:
 
-> Подключайтесь в одно касание. DoodleRay VPN защищает весь Mac, автоматически выбирает локацию и показывает понятный статус — без рекламы и трекинга.
+> Подключайтесь в одно касание. DoodleRay защищает весь Mac, автоматически выбирает локацию и показывает понятный статус — без рекламы и трекинга.
 
 Description:
 
-> DoodleRay VPN делает защиту Mac простой. Войдите по коду DoodleVPN, выберите локацию и подключитесь в одно касание. Соединение работает через системный VPN macOS на базе Network Extension от Apple.
+> DoodleRay делает защиту Mac простой. Войдите по коду DoodleVPN, выберите локацию и подключитесь в одно касание. Соединение работает через системный VPN macOS на базе Network Extension от Apple.
 >
 > • Защита всего Mac через системный VPN
 > • Выбор страны или автоматической локации
@@ -67,7 +67,7 @@ Description:
 > • Быстрая помощь, если что-то не подключается
 > • Без рекламы и сторонних аналитических SDK
 >
-> Для работы нужен активный аккаунт DoodleVPN. DoodleRay VPN — приложение-компаньон для действующих пользователей DoodleVPN. В приложении нет покупок и создания аккаунта.
+> Для работы нужен активный аккаунт DoodleVPN. DoodleRay — приложение-компаньон для действующих пользователей DoodleVPN. В приложении нет покупок и создания аккаунта.
 
 Keywords (76 UTF-8 bytes, saved):
 
@@ -81,7 +81,7 @@ Connect review information.
 
 Proposed review notes:
 
-> DoodleRay VPN is a macOS Network Extension VPN client for an existing DoodleVPN subscription. It does not create accounts and has no in-app purchases.
+> DoodleRay is a macOS Network Extension VPN client for an existing DoodleVPN subscription. It does not create accounts and has no in-app purchases.
 >
 > Sign-in: enter the dedicated eight-digit review code supplied below and click Sign in. The code remains valid for the review window and is attached to an active reviewer subscription.
 >
@@ -89,7 +89,7 @@ Proposed review notes:
 > 1. Sign in with the review code.
 > 2. Select any available location.
 > 3. Click Connect.
-> 4. On the first connection, approve the standard macOS request to add the DoodleRay VPN configuration.
+> 4. On the first connection, approve the standard macOS request to add the DoodleRay configuration.
 > 5. Confirm that macOS reports the VPN as connected, then click Disconnect.
 > 6. Open Settings to verify auto-connect, language selection, and App Store-managed updates.
 >

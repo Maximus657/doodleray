@@ -1,11 +1,11 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "DoodleRay VPN",
+  "productName": "DoodleRay",
   "identifier": "com.doodleray.doodleray",
   "app": {
     "windows": [
       {
-        "title": "DoodleRay VPN",
+        "title": "DoodleRay",
         "width": 1204,
         "height": 764,
         "minWidth": 940,

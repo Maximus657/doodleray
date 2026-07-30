@@ -1,7 +1,7 @@
 # macOS App Store readiness
 
-Status: **the final-candidate source is prepared as 6.0.2 (60025). The signed
-60024 bundle passed CI verification and TestFlight connectivity QA; 60025 must
+Status: **the final-candidate source is prepared as 6.0.2 (60026). The signed
+60024 bundle passed CI verification and TestFlight connectivity QA; 60026 must
 repeat the signed build and focused acceptance checks before App Review.**
 
 This is the canonical macOS release document. Historical build notes are not a
@@ -74,7 +74,7 @@ Packet Tunnel extension are universal, sandboxed, Apple-signed, exactly
 provisioned, and match the release manifest. This proves the local signing and
 bundle contract. TestFlight 60024 also proved real Network Extension
 connect/disconnect and the corrected DNS path on the current Apple Silicon QA
-Mac. Build 60025 changes the pre-use privacy presentation and in-app policy
+Mac. Build 60026 changes the pre-use privacy presentation and in-app policy
 link, so it still requires its own signed verification and focused QA.
 
 Production also queries the official App Store Connect API. A new tuple must
@@ -103,11 +103,11 @@ permanent branch.
 ## Remaining Mac-only release gates
 
 - App Store Connect has a manual-release `6.0.2` draft. It still references the
-  obsolete `60012` build until the exact `60025` artifact finishes processing;
+  obsolete `60012` build until the exact `60026` artifact finishes processing;
   the separate manual attachment workflow replaces that relationship without
   publishing the app.
 - Build `60024` is assigned to the two-user private internal TestFlight group.
-  Build `60025` must be signed, uploaded, processed, and assigned to the same
+  Build `60026` must be signed, uploaded, processed, and assigned to the same
   group before it can become the review binary.
 - TestFlight clean install and the real 5.9.1 transition path on a QA Mac where
   changing the VPN is safe;

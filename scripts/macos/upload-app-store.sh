@@ -4,7 +4,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 MACOS_DIR="$ROOT_DIR/src-tauri/macos"
-APP_BUNDLE="${1:-$ROOT_DIR/src-tauri/target/universal-apple-darwin/release/bundle/macos/DoodleRay VPN.app}"
+APP_BUNDLE="${1:-$ROOT_DIR/src-tauri/target/universal-apple-darwin/release/bundle/macos/DoodleRay.app}"
 OUTPUT_DIR="${2:-$ROOT_DIR/dist-app-store}"
 EXTENSION_BUNDLE="$APP_BUNDLE/Contents/PlugIns/DoodleRayVPN.appex"
 HOST_EXECUTABLE="$APP_BUNDLE/Contents/MacOS/DoodleRay"
@@ -24,7 +24,7 @@ EXPECTED_TEAM_ID="${APPLE_TEAM_ID:-}"
 read -r RELEASE_VERSION RELEASE_BUILD < <(
   node -e 'const release = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")); console.log(`${release.version} ${release.macBuild}`);' "$ROOT_DIR/release/release.json"
 )
-ARCHIVE="$OUTPUT_DIR/DoodleRay-VPN-$RELEASE_VERSION-$STAMP.xcarchive"
+ARCHIVE="$OUTPUT_DIR/DoodleRay-$RELEASE_VERSION-$STAMP.xcarchive"
 
 node "$ROOT_DIR/scripts/release/check-release.mjs"
 
@@ -85,17 +85,17 @@ fi
 [ "$build_status" = new ] || { printf 'Unexpected App Store build status.\n' >&2; exit 1; }
 
 mkdir -p "$ARCHIVE/Products/Applications" "$ARCHIVE/dSYMs" "$EXPORT_DIR"
-ditto "$APP_BUNDLE" "$ARCHIVE/Products/Applications/DoodleRay VPN.app"
-xcrun dsymutil "$HOST_EXECUTABLE" -o "$ARCHIVE/dSYMs/DoodleRay VPN.app.dSYM"
+ditto "$APP_BUNDLE" "$ARCHIVE/Products/Applications/DoodleRay.app"
+xcrun dsymutil "$HOST_EXECUTABLE" -o "$ARCHIVE/dSYMs/DoodleRay.app.dSYM"
 ditto "$EXTENSION_DSYM" "$ARCHIVE/dSYMs/DoodleRayVPN.appex.dSYM"
 
 plutil -create xml1 "$ARCHIVE/Info.plist"
 plutil -insert ArchiveVersion -integer 2 "$ARCHIVE/Info.plist"
 plutil -insert CreationDate -date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ARCHIVE/Info.plist"
-plutil -insert Name -string "DoodleRay VPN" "$ARCHIVE/Info.plist"
-plutil -insert SchemeName -string "DoodleRay VPN" "$ARCHIVE/Info.plist"
+plutil -insert Name -string DoodleRay "$ARCHIVE/Info.plist"
+plutil -insert SchemeName -string DoodleRay "$ARCHIVE/Info.plist"
 plutil -insert ApplicationProperties -dictionary "$ARCHIVE/Info.plist"
-plutil -insert ApplicationProperties.ApplicationPath -string "Applications/DoodleRay VPN.app" "$ARCHIVE/Info.plist"
+plutil -insert ApplicationProperties.ApplicationPath -string "Applications/DoodleRay.app" "$ARCHIVE/Info.plist"
 plutil -insert ApplicationProperties.Architectures -json '["arm64","x86_64"]' "$ARCHIVE/Info.plist"
 plutil -insert ApplicationProperties.CFBundleIdentifier -string "com.doodleray.doodleray" "$ARCHIVE/Info.plist"
 plutil -insert ApplicationProperties.CFBundleShortVersionString -string "$marketing_version" "$ARCHIVE/Info.plist"

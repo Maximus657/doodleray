@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-APP_BUNDLE="${1:-$ROOT_DIR/src-tauri/target/universal-apple-darwin/release/bundle/macos/DoodleRay VPN.app}"
+APP_BUNDLE="${1:-$ROOT_DIR/src-tauri/target/universal-apple-darwin/release/bundle/macos/DoodleRay.app}"
 EXTENSION_BUNDLE="$APP_BUNDLE/Contents/PlugIns/DoodleRayVPN.appex"
 EXPECTED_TEAM_ID="${APPLE_TEAM_ID:-}"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/doodleray-bundle-verify.XXXXXX")"
@@ -75,7 +75,8 @@ require_equal "$(plist_value "$host_info" CFBundleShortVersionString)" "$expecte
 require_equal "$(plist_value "$host_info" CFBundleVersion)" "$expected_build_version" 'host build number'
 require_equal "$(plist_value "$host_info" ITSAppUsesNonExemptEncryption)" false 'export-compliance declaration'
 require_equal "$(plist_value "$extension_info" CFBundleIdentifier)" com.doodleray.doodleray.DoodleRayVPN 'extension bundle identifier'
-require_equal "$(plist_value "$extension_info" CFBundleDisplayName)" 'DoodleRay VPN' 'extension display name'
+require_equal "$(plist_value "$extension_info" CFBundleDisplayName)" DoodleRay 'extension display name'
+require_equal "$(plist_value "$extension_info" CFBundleName)" DoodleRay 'extension bundle name'
 require_equal "$(plist_value "$extension_info" CFBundleShortVersionString)" "$expected_marketing_version" 'extension marketing version'
 require_equal "$(plist_value "$extension_info" CFBundleVersion)" "$expected_build_version" 'extension build number'
 require_equal "$(plist_value "$extension_info" NSExtension:NSExtensionPointIdentifier)" com.apple.networkextension.packet-tunnel 'Packet Tunnel extension point'
@@ -132,4 +133,4 @@ for data_type in UserID DeviceID ProductInteraction OtherDiagnosticData OtherDat
   /usr/bin/grep -q "NSPrivacyCollectedDataType$data_type" "$privacy_manifest" || { printf 'FAIL  privacy manifest data inventory is incomplete.\n' >&2; exit 1; }
 done
 
-printf 'PASS  DoodleRay VPN %s (%s) App Store bundle is universal, sandboxed, Apple-signed, exactly provisioned, and contains the Packet Tunnel extension.\n' "$expected_marketing_version" "$expected_build_version"
+printf 'PASS  DoodleRay %s (%s) App Store bundle is universal, sandboxed, Apple-signed, exactly provisioned, and contains the Packet Tunnel extension.\n' "$expected_marketing_version" "$expected_build_version"
