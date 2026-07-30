@@ -104,12 +104,11 @@ test('Packet Tunnel rewrites localhost in mixed Xray DNS server arrays', () => {
   assert.match(configuration, /server == "localhost"/);
 });
 
-test('Packet Tunnel uses encrypted system DNS instead of filtered UDP port 53', () => {
+test('Packet Tunnel sends system DNS through Xray dns-out', () => {
   const provider = read('src-tauri/macos/PacketTunnelProvider/PacketTunnelProvider.swift');
 
-  assert.match(provider, /NEDNSOverHTTPSSettings\(servers:/);
-  assert.match(provider, /serverURL = URL\(string: "https:\/\/cloudflare-dns\.com\/dns-query"\)/);
-  assert.doesNotMatch(provider, /NEDNSSettings\(servers:/);
+  assert.match(provider, /NEDNSSettings\(servers:/);
+  assert.doesNotMatch(provider, /NEDNSOverHTTPSSettings\(servers:/);
 });
 
 test('App Store UI has no external subscription-purchase CTA', () => {
