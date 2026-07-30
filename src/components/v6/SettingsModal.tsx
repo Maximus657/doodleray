@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { X, LogOut, RefreshCw, Trash2, DownloadCloud, Wrench, Loader2, Send } from 'lucide-react';
+import { X, LogOut, RefreshCw, Trash2, DownloadCloud, Wrench, Loader2, Send, ExternalLink } from 'lucide-react';
 import { disable, enable } from '@tauri-apps/plugin-autostart';
 import { useAppStore, type SupportedLanguage } from '../../stores/app-store';
 import { useToastStore } from '../../stores/toast-store';
 import { refreshSubscription } from '../../lib/subscription';
 import { checkForAppUpdate } from '../../lib/app-updater';
-import { isClosedControlPlaneEnabled, isDesktopAutostartAvailable, isNetworkExtensionOnlyBuild } from '../../lib/build-policy';
+import { getPrivacyPolicyUrl, isClosedControlPlaneEnabled, isDesktopAutostartAvailable, isNetworkExtensionOnlyBuild } from '../../lib/build-policy';
 import { appApiLogout } from '../../lib/app-control-plane';
 import { isUpdateManagedByStore, openStoreUpdatePage } from '../../lib/update-channel';
 import { diagnosticsReportToText, runNetworkDiagnostics } from '../../lib/diagnostics';
@@ -100,6 +100,16 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
   const networkExtensionOnly = isNetworkExtensionOnlyBuild();
   const launchAtLoginAvailable = desktopAutostartAvailable || networkExtensionOnly;
   const storeManagedUpdates = isUpdateManagedByStore();
+  const privacyPolicyUrl = getPrivacyPolicyUrl();
+
+  const openPrivacyPolicy = async () => {
+    try {
+      const { openUrl } = await import('@tauri-apps/plugin-opener');
+      await openUrl(privacyPolicyUrl);
+    } catch {
+      window.open(privacyPolicyUrl, '_blank', 'noopener,noreferrer');
+    }
+  };
 
   const launchOn = autoStart || silentAdminAutostart;
   const toggleLaunch = async () => {
@@ -403,6 +413,13 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
               ? <Loader2 className="h-[18px] w-[18px] shrink-0 v6-orb-spin text-[#FF9E38]" strokeWidth={2} />
               : <Send className="h-[18px] w-[18px] shrink-0 text-white/50" strokeWidth={1.9} />}
           />
+          {privacyPolicyUrl && (
+            <Row
+              title={t('v6PrivacyPolicy' as never)}
+              onClick={() => { void openPrivacyPolicy(); }}
+              right={<ExternalLink className="h-[18px] w-[18px] shrink-0 text-white/50" strokeWidth={1.9} />}
+            />
+          )}
           {diagnosticsPreview && (
             <div className="mt-3 rounded-[16px] border border-white/[0.1] bg-black/20 p-3.5">
               <p className="mb-2 text-[12px] font-semibold text-white">{t('v6DiagnosticsPreview' as never)}</p>

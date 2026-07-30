@@ -1767,17 +1767,24 @@ export default function Dashboard() {
                   </p>
                 )}
                 <div className="mt-6 border-t border-white/[0.08] pt-4">
-                  <button
-                    type="button"
-                    aria-expanded={privacyDetailsOpen}
-                    onClick={() => setPrivacyDetailsOpen((open) => !open)}
-                    className="v6-focus flex w-full items-center gap-2 rounded-xl py-1 text-left text-[12px] font-medium text-white/48 transition-colors hover:text-white/70"
-                  >
-                    <ShieldCheck className="h-4 w-4 text-[#FFAE57]/75" strokeWidth={2} />
-                    <span className="flex-1">{t('v6PrivacyDetails' as never)}</span>
-                    <ChevronDown className={`h-4 w-4 transition-transform duration-200 ${privacyDetailsOpen ? 'rotate-180' : ''}`} strokeWidth={2} />
-                  </button>
-                  {privacyDetailsOpen && (
+                  {networkExtensionOnly ? (
+                    <div className="flex w-full items-center gap-2 py-1 text-left text-[12px] font-medium text-white/62">
+                      <ShieldCheck className="h-4 w-4 text-[#FFAE57]/75" strokeWidth={2} />
+                      <span>{t('v6PrivacyDetails' as never)}</span>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      aria-expanded={privacyDetailsOpen}
+                      onClick={() => setPrivacyDetailsOpen((open) => !open)}
+                      className="v6-focus flex w-full items-center gap-2 rounded-xl py-1 text-left text-[12px] font-medium text-white/48 transition-colors hover:text-white/70"
+                    >
+                      <ShieldCheck className="h-4 w-4 text-[#FFAE57]/75" strokeWidth={2} />
+                      <span className="flex-1">{t('v6PrivacyDetails' as never)}</span>
+                      <ChevronDown className={`h-4 w-4 transition-transform duration-200 ${privacyDetailsOpen ? 'rotate-180' : ''}`} strokeWidth={2} />
+                    </button>
+                  )}
+                  {(networkExtensionOnly || privacyDetailsOpen) && (
                     <div className="mt-3 rounded-[15px] bg-white/[0.035] px-4 py-3.5">
                       <p className="text-[11.5px] leading-relaxed text-white/52">
                         {t('v6VpnDataDisclosure' as never)}

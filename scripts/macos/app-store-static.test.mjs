@@ -122,6 +122,16 @@ test('App Store UI has no external subscription-purchase CTA', () => {
   assert.match(dashboard, /\{!networkExtensionOnly && \(\s*<button[\s\S]*?v6AppLoginSourceWebLabel/);
 });
 
+test('App Store UI discloses VPN data before use and keeps its privacy policy accessible', () => {
+  const dashboard = read('src/pages/Dashboard.tsx');
+  const settings = read('src/components/v6/SettingsModal.tsx');
+
+  assert.match(dashboard, /\{\(networkExtensionOnly \|\| privacyDetailsOpen\) && \(/);
+  assert.match(dashboard, /networkExtensionOnly \? \([\s\S]*?v6PrivacyDetails/);
+  assert.match(settings, /getPrivacyPolicyUrl/);
+  assert.match(settings, /title=\{t\('v6PrivacyPolicy'/);
+});
+
 test('release.json supplies both App Store version fields at build and verification time', () => {
   const release = readJson('release/release.json');
   const packageJson = readJson('package.json');
@@ -207,6 +217,17 @@ test('TestFlight upload waits for processing and attaches the internal group', (
 
   assert.match(workflow, /scripts\/macos\/upload-app-store\.sh[\s\S]*scripts\/macos\/attach-testflight-build\.mjs/);
   assert.match(workflow, /TESTFLIGHT_INTERNAL_GROUP_NAME: DoodleRay 6\.0\.2 Private QA/);
+});
+
+test('final App Store build attachment is a separate exact manual workflow', () => {
+  const workflow = read('.github/workflows/attach-app-store-version-macos.yml');
+  const script = read('scripts/macos/attach-app-store-version-build.mjs');
+
+  assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /attach-app-store-version-build\.mjs/);
+  assert.match(script, /appStoreState === 'PREPARE_FOR_SUBMISSION'/);
+  assert.match(script, /method: 'PATCH'/);
+  assert.match(script, /relationships\/build/);
 });
 
 test('readiness separates portable static proof from macOS release evidence', () => {

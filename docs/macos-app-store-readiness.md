@@ -1,8 +1,8 @@
 # macOS App Store readiness
 
-Status: **the signed universal 6.0.2 (60018) bundle passed full local App Store
-verification and was uploaded to App Store Connect on 2026-07-29; production
-remains blocked pending TestFlight QA and the explicit submission handoff.**
+Status: **the final-candidate source is prepared as 6.0.2 (60025). The signed
+60024 bundle passed CI verification and TestFlight connectivity QA; 60025 must
+repeat the signed build and focused acceptance checks before App Review.**
 
 This is the canonical macOS release document. Historical build notes are not a
 release gate and must not be treated as evidence for the current source SHA.
@@ -69,11 +69,13 @@ Distribution identity, Mac Installer Distribution identity, Team ID, signed
 host, signed extension, exact entitlements, privacy manifest, architectures,
 or release versions are missing or inconsistent.
 
-The 2026-07-29 signed handoff passed full mode for `6.0.2 (60018)`: host and
+The signed handoff passed full mode for `6.0.2 (60024)`: host and
 Packet Tunnel extension are universal, sandboxed, Apple-signed, exactly
 provisioned, and match the release manifest. This proves the local signing and
-bundle contract only; it does not prove a live VPN connection or an App Review
-outcome.
+bundle contract. TestFlight 60024 also proved real Network Extension
+connect/disconnect and the corrected DNS path on the current Apple Silicon QA
+Mac. Build 60025 changes the pre-use privacy presentation and in-app policy
+link, so it still requires its own signed verification and focused QA.
 
 Production also queries the official App Store Connect API. A new tuple must
 have both a newer SemVer and a higher `macBuild`; an exact existing
@@ -100,20 +102,21 @@ permanent branch.
 
 ## Remaining Mac-only release gates
 
-- App Store Connect has a manual-release `6.0.2` draft with its existing
-  metadata and screenshot preserved. The remote `60017` build is actually
-  `6.0.0`, so it cannot be attached to the `6.0.2` record. The verified
-  `6.0.2 (60018)` build has finished processing and is assigned to the
-  one-user internal TestFlight group. Neither action is a release.
-- The QA Apple ID is an internal App Store Connect user, scoped to DoodleRay
-  VPN, and can test `60018` without external beta review.
+- App Store Connect has a manual-release `6.0.2` draft. It still references the
+  obsolete `60012` build until the exact `60025` artifact finishes processing;
+  the separate manual attachment workflow replaces that relationship without
+  publishing the app.
+- Build `60024` is assigned to the two-user private internal TestFlight group.
+  Build `60025` must be signed, uploaded, processed, and assigned to the same
+  group before it can become the review binary.
 - TestFlight clean install and the real 5.9.1 transition path on a QA Mac where
   changing the VPN is safe;
 - Intel and Apple Silicon connect/disconnect, DNS/IPv4/IPv6, sleep/wake, network
   change, relaunch, and uninstall checks;
-- accepted-size screenshots from the exact Store build and completed
-  accessibility labels based on that QA evidence;
-- App Store Connect metadata/reviewer credentials and legal/export review;
+- accepted-size localized screenshots from the exact Store build; do not
+  publish optional accessibility labels until their claims have real QA;
+- final metadata synchronization, reviewer-code retest, and legal/export
+  owner confirmation;
 - explicit human approval after attaching evidence for the exact source SHA.
 
 ## Verified source invariants

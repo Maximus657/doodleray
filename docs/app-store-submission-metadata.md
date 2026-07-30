@@ -25,7 +25,7 @@ Subtitle (30-character limit):
 
 Promotional text:
 
-> Connect in one tap. DoodleRay VPN protects your whole Mac with Apple's system VPN, simple location selection, and unlimited traffic on every plan.
+> Connect in one tap. DoodleRay VPN protects your whole Mac with smart location selection, stable DNS, and clear connection status—without ads or tracking.
 
 Description:
 
@@ -33,13 +33,13 @@ Description:
 >
 > • Protect your whole Mac through the system VPN
 > • Choose a country or let DoodleRay pick automatically
-> • Enjoy unlimited traffic with every DoodleVPN plan
+> • Use stable DNS and full-device routing
 > • See clear connection states and local event history
 > • Turn on automatic connection at app launch
 > • Get help quickly if something does not connect
 > • No ads or third-party analytics SDKs
 >
-> An active DoodleVPN subscription is required. Subscription and account management take place in the DoodleVPN account outside the app. DoodleRay VPN does not create accounts or sell subscriptions in the app.
+> An active DoodleVPN account is required. DoodleRay VPN is a companion app for existing DoodleVPN users. The app does not offer purchases or account creation.
 
 Keywords (under 100 bytes):
 
@@ -53,7 +53,7 @@ Subtitle:
 
 Promotional text:
 
-> Подключайтесь в одно касание. DoodleRay VPN защищает весь Mac через системный VPN от Apple, предлагает простой выбор локации и безлимитный трафик.
+> Подключайтесь в одно касание. DoodleRay VPN защищает весь Mac, автоматически выбирает локацию и показывает понятный статус — без рекламы и трекинга.
 
 Description:
 
@@ -61,13 +61,13 @@ Description:
 >
 > • Защита всего Mac через системный VPN
 > • Выбор страны или автоматической локации
-> • Безлимитный трафик в каждом тарифе DoodleVPN
+> • Стабильный DNS и маршрутизация всего устройства
 > • Понятные состояния и локальная история событий
 > • Автоподключение при запуске приложения
 > • Быстрая помощь, если что-то не подключается
 > • Без рекламы и сторонних аналитических SDK
 >
-> Для работы нужна действующая подписка DoodleVPN. Подписка и аккаунт управляются в личном кабинете DoodleVPN вне приложения. В DoodleRay VPN нельзя создать аккаунт или купить подписку.
+> Для работы нужен активный аккаунт DoodleVPN. DoodleRay VPN — приложение-компаньон для действующих пользователей DoodleVPN. В приложении нет покупок и создания аккаунта.
 
 Keywords (76 UTF-8 bytes, saved):
 
@@ -156,13 +156,20 @@ Release is manual after App Review approval.
 ## Screenshots
 
 Provide one to ten non-transparent PNG/JPEG screenshots, all at one accepted
-Mac 16:10 size: 1280×800, 1440×900, 2560×1600, or 2880×1800. Recommended set:
+Mac 16:10 size: 1280×800, 1440×900, 2560×1600, or 2880×1800. Recommended
+six-shot set; localize the full set for English and Russian:
 
-1. Sign-in screen with the pre-use VPN data disclosure; never show a real code.
-2. Location list and disconnected connect screen.
-3. Connected state using the dedicated reviewer account on an isolated QA Mac.
-4. App Store settings showing auto-connect, language, and Store updates.
-5. Local event history and support choices.
+1. Connected wide view — `One tap. Your whole Mac protected.` / `Один клик — защищён весь Mac`.
+2. Automatic selection and locations — `The right location, automatically.` / `Лучшая локация — автоматически`.
+3. Bypass and reserve routes — `Ready for changing networks.` / `Готов к меняющимся сетям`.
+4. Settings with launch-at-login and auto-connect — `Protection that starts itself.` / `Защита включается сама`.
+5. Local events and support — `Clear status. Help when you need it.` / `Понятный статус и помощь рядом`.
+6. Sign-in with the always-visible pre-use disclosure — `Privacy explained before you connect.` / `Приватность объяснена до подключения`.
+
+The first three screenshots are the priority set. Export each as opaque
+1440×900 PNG in sRGB. Keep text within a 70 px safe area; use 52–60 px benefit
+headlines and no more than two lines. Never show a real code, account/device
+identifier, endpoint, IP address, event timestamps, or reviewer credentials.
 
 Do not use localhost mock data in final screenshots. Capture the connected
 state only on a clean QA Mac where changing the VPN is safe, and redact account,

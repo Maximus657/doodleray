@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { selectInternalGroup, selectMacBuild } from './attach-testflight-build.mjs';
+import { selectEditableMacVersion } from './attach-app-store-version-build.mjs';
 
 test('TestFlight attachment selects the exact macOS build and sole internal group', () => {
   const builds = {
@@ -27,4 +28,16 @@ test('TestFlight attachment selects the exact macOS build and sole internal grou
   groups.data.push({ id: 'second-internal', attributes: { name: 'Staff', isInternalGroup: true } });
   assert.throws(() => selectInternalGroup(groups), /exactly one internal TestFlight group/);
   assert.equal(selectInternalGroup(groups, 'Internal QA').id, 'internal');
+});
+
+test('App Store attachment selects only the exact editable macOS version', () => {
+  const versions = {
+    data: [
+      { id: 'editable', attributes: { platform: 'MAC_OS', versionString: '6.0.2', appStoreState: 'PREPARE_FOR_SUBMISSION' } },
+      { id: 'old', attributes: { platform: 'MAC_OS', versionString: '6.0.1', appStoreState: 'READY_FOR_SALE' } },
+      { id: 'ios', attributes: { platform: 'IOS', versionString: '6.0.2', appStoreState: 'PREPARE_FOR_SUBMISSION' } },
+    ],
+  };
+  assert.equal(selectEditableMacVersion(versions, '6.0.2').id, 'editable');
+  assert.throws(() => selectEditableMacVersion(versions, '6.0.3'), /exactly one editable macOS App Store version/);
 });
