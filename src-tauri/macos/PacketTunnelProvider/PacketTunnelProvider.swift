@@ -17,10 +17,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             guard let uplinkInterface = PacketTunnelConfiguration.primaryPhysicalInterface() else {
                 throw PacketTunnelConfigurationError.missingUplinkInterface
             }
-            let directDNS = PacketTunnelConfiguration.physicalDNSServers().first
-                ?? PacketTunnelConfiguration.fallbackDirectDNSServer
             let dnsPrepared = PacketTunnelConfiguration.injectingLocalDNSResolver(
-                directDNS,
+                "https://1.1.1.1/dns-query",
                 into: config
             )
             let directPrepared = PacketTunnelConfiguration.injectingDirectOutboundInterface(

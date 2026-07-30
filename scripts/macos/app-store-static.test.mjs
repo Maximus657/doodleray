@@ -104,11 +104,12 @@ test('Packet Tunnel rewrites localhost in mixed Xray DNS server arrays', () => {
   assert.match(configuration, /server == "localhost"/);
 });
 
-test('Packet Tunnel sends system DNS through Xray dns-out', () => {
+test('Packet Tunnel sends system DNS through Xray DoH', () => {
   const provider = read('src-tauri/macos/PacketTunnelProvider/PacketTunnelProvider.swift');
 
   assert.match(provider, /NEDNSSettings\(servers:/);
   assert.doesNotMatch(provider, /NEDNSOverHTTPSSettings\(servers:/);
+  assert.match(provider, /injectingLocalDNSResolver\(\s*"https:\/\/1\.1\.1\.1\/dns-query"/);
 });
 
 test('App Store UI has no external subscription-purchase CTA', () => {

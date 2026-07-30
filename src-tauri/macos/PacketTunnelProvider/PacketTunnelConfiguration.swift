@@ -31,7 +31,6 @@ enum PacketTunnelConfigurationError: LocalizedError {
 
 enum PacketTunnelConfiguration {
     static let optionKey = "xrayConfig"
-    static let fallbackDirectDNSServer = "77.88.8.8"
 
     static func decode(options: [String: NSObject]?) throws -> [String: Any] {
         guard let value = options?[optionKey] else {
@@ -113,24 +112,6 @@ enum PacketTunnelConfiguration {
             excludedIPv4Addresses: excludedIPv4.sorted(),
             excludedIPv6Addresses: excludedIPv6.sorted()
         )
-    }
-
-    static func physicalDNSServers() -> [String] {
-        guard let dns = SCDynamicStoreCopyValue(
-            nil,
-            "State:/Network/Global/DNS" as CFString
-        ) as? [String: Any],
-        let servers = dns["ServerAddresses"] as? [String]
-        else {
-            return []
-        }
-        return servers.filter { server in
-            var ipv4 = in_addr()
-            var ipv6 = in6_addr()
-            return server.withCString { pointer in
-                inet_pton(AF_INET, pointer, &ipv4) == 1 || inet_pton(AF_INET6, pointer, &ipv6) == 1
-            }
-        }
     }
 
     static func primaryPhysicalInterface() -> String? {
