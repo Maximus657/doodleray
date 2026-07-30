@@ -46,6 +46,11 @@ Team ID, exact bundle IDs, App Group, Network Extension entitlement, and
 distribution profile type. Manual signing never uses
 `allowProvisioningUpdates` to replace or repair supplied profiles.
 
+The App Store Connect **team** API key used by these secrets must have the
+`App Manager` role (or broader). Apple allows a `Developer` key to upload and
+distribute a TestFlight build, but rejects the API request that attaches a
+build to an App Store version with `403`.
+
 ## Reproducible gates
 
 Portable static verification, including Windows Git Bash:
