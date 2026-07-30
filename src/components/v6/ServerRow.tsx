@@ -10,7 +10,7 @@ import usFlag from 'flag-icons/flags/4x3/us.svg';
 import type { ServerConfig } from '../../stores/app-store';
 import { useAppStore } from '../../stores/app-store';
 import { useTranslation } from '../../locales';
-import { isClosedAutoLocationServer } from '../../lib/app-control-plane';
+import { closedLocationIdFromServer } from '../../lib/app-control-plane';
 import { displayLocationTitle, localizedCountryName } from '../../lib/ui-format';
 
 const LOCAL_EMOJI_ASSETS: Record<string, string> = {
@@ -124,9 +124,19 @@ interface Props {
  * on a later language change (matches the "Auto" row's staleness problem,
  * fixed there via a reactive t() call). `language`, when passed, re-derives
  * the name live from the ISO country code instead of trusting the stale
- * baked-in string.
+ * baked-in string. Special control-plane locations follow the same rule:
+ * their backend titles are not UI translations.
  */
-export function displayServerName(server: Pick<ServerConfig, 'name' | 'countryCode'>, language?: string): string {
+export function displayServerName(
+  server: Pick<ServerConfig, 'id' | 'name' | 'countryCode'>,
+  language: string | undefined,
+  t: (key: never) => string,
+): string {
+  switch (closedLocationIdFromServer(server)) {
+    case 'auto': return t('v6AutoLocationName' as never);
+    case 'bypass': return t('v6BypassLocationName' as never);
+    case 'reserve': return t('v6ReserveLocationName' as never);
+  }
   const localized = localizedCountryName(server.countryCode, language);
   if (localized) return localized;
   const name = isValidCountryCode(server.countryCode) ? server.name : splitLeadingEmoji(server.name).name;
@@ -137,8 +147,8 @@ export function displayServerName(server: Pick<ServerConfig, 'name' | 'countryCo
 export default function ServerRow({ server, active, onSelect }: Props) {
   const { t } = useTranslation();
   const language = useAppStore((state) => state.language);
-  const auto = isClosedAutoLocationServer(server);
-  const name = auto ? t('v6AutoLocationName' as never) : displayServerName(server, language);
+  const auto = closedLocationIdFromServer(server) === 'auto';
+  const name = displayServerName(server, language, t);
 
   return (
     <button

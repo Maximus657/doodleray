@@ -37,7 +37,6 @@ import {
   appApiSessionStatus,
   buildAppConnectLocationRequestFromState,
   findLegacyDoodleSubscriptionUrls,
-  isClosedAutoLocationServer,
   isClosedLocationServer,
   syncClosedLocationsToStore,
   type AppApiSessionStatus,
@@ -1842,7 +1841,7 @@ export default function Dashboard() {
               subLabel={orbSub}
               statusLabel={orbStatusLabel}
               serverName={activeServer
-                ? (isClosedAutoLocationServer(activeServer) ? t('v6AutoLocationName' as never) : displayServerName(activeServer, language))
+                ? displayServerName(activeServer, language, t)
                 : null}
               serverRawName={activeServer?.name ?? null}
               serverCountryCode={activeServer?.countryCode ?? null}

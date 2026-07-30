@@ -73,7 +73,7 @@ export function isClosedAutoLocationServer(server: ServerConfig | null | undefin
   return server?.id === `${LOCATION_ID_PREFIX}${AUTO_LOCATION_ID}`;
 }
 
-export function closedLocationIdFromServer(server: ServerConfig): string {
+export function closedLocationIdFromServer(server: Pick<ServerConfig, 'id'>): string {
   return server.id.startsWith(LOCATION_ID_PREFIX)
     ? server.id.slice(LOCATION_ID_PREFIX.length)
     : server.id;

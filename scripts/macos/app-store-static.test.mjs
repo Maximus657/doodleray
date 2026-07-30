@@ -121,6 +121,19 @@ test('Packet Tunnel keeps a physical uplink available when another VPN owns the 
   assert.match(configuration, /!\["utun", "ipsec", "ppp", "lo", "awdl", "llw", "bridge"\]\.contains/);
 });
 
+test('special locations use live localized labels instead of backend Russian titles', () => {
+  const serverRow = read('src/components/v6/ServerRow.tsx');
+  const dashboard = read('src/pages/Dashboard.tsx');
+  const locales = read('src/locales/index.ts');
+
+  assert.match(serverRow, /case 'bypass': return t\('v6BypassLocationName'/);
+  assert.match(serverRow, /case 'reserve': return t\('v6ReserveLocationName'/);
+  assert.match(dashboard, /displayServerName\(activeServer, language, t\)/);
+  for (const label of ['Anti-blocking', '绕过封锁', 'Reserve', '备用']) {
+    assert.match(locales, new RegExp(`: '${label}'`));
+  }
+});
+
 test('App Store UI has no external subscription-purchase CTA', () => {
   const subscriptionStatus = read('src/components/v6/SubscriptionStatusBlock.tsx');
   const dashboard = read('src/pages/Dashboard.tsx');
