@@ -119,7 +119,10 @@ test('App Store UI has no external subscription-purchase CTA', () => {
   assert.match(subscriptionStatus, /const canOfferExternalRenewal = !isNetworkExtensionOnlyBuild\(\);/);
   assert.equal((subscriptionStatus.match(/canOfferExternalRenewal &&/g) ?? []).length, 2);
   assert.match(subscriptionStatus, /\{canOfferExternalRenewal && \(\s*<button[\s\S]*?v6RenewCta/);
-  assert.match(dashboard, /\{!networkExtensionOnly && \(\s*<button[\s\S]*?v6AppLoginSourceWebLabel/);
+  const accountGuide = dashboard.match(/\{networkExtensionOnly \? \(\s*([\s\S]*?)\s*\) : \(\s*<button[\s\S]*?<\/button>\s*\)\}/)?.[1] ?? '';
+  assert.match(accountGuide, /v6AppLoginSourceWebLabel/);
+  assert.doesNotMatch(accountGuide, /openDoodleVpnAccount|ExternalLink/);
+  assert.match(dashboard, /networkExtensionOnly \? 'v6AppLoginSourceBotStepsMac' : 'v6AppLoginSourceBotSteps'/);
 });
 
 test('App Store UI discloses VPN data before use and keeps its privacy policy accessible', () => {

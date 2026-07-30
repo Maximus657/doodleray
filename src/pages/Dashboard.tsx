@@ -1674,10 +1674,18 @@ export default function Dashboard() {
                       <Bot className="mt-0.5 h-4 w-4 shrink-0 text-[#FFAE57]/85" strokeWidth={2} />
                       <p className="text-[11.5px] leading-relaxed text-white/58">
                         <span className="font-medium text-white/78">{t('v6AppLoginSourceBotLabel' as never)}</span>{' '}
-                        {t('v6AppLoginSourceBotSteps' as never)}
+                        {t((networkExtensionOnly ? 'v6AppLoginSourceBotStepsMac' : 'v6AppLoginSourceBotSteps') as never)}
                       </p>
                     </div>
-                    {!networkExtensionOnly && (
+                    {networkExtensionOnly ? (
+                      <div className="v6-glass-inset flex items-start gap-2.5 rounded-[14px] px-3.5 py-3">
+                        <Globe className="mt-0.5 h-4 w-4 shrink-0 text-[#FFAE57]/85" strokeWidth={2} />
+                        <span className="text-[11.5px] leading-relaxed text-white/58">
+                          <span className="font-medium text-white/78">{t('v6AppLoginSourceWebLabel' as never)}</span>{' '}
+                          {t('v6AppLoginSourceWebSteps' as never)}
+                        </span>
+                      </div>
+                    ) : (
                       <button
                         type="button"
                         onClick={openDoodleVpnAccount}
