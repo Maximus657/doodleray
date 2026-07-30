@@ -26,7 +26,7 @@ jobs:
           APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
-          TESTFLIGHT_INTERNAL_GROUP_NAME: Mac QA
+          TESTFLIGHT_INTERNAL_GROUP_NAME: DoodleRay 6.0.2 Private QA
         run: |
           set -euo pipefail
           key_path="$RUNNER_TEMP/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"

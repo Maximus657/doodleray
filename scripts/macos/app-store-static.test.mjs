@@ -206,7 +206,7 @@ test('TestFlight upload waits for processing and attaches the internal group', (
   const workflow = read('.github/workflows/testflight-macos.yml');
 
   assert.match(workflow, /scripts\/macos\/upload-app-store\.sh[\s\S]*scripts\/macos\/attach-testflight-build\.mjs/);
-  assert.match(workflow, /TESTFLIGHT_INTERNAL_GROUP_NAME: Mac QA/);
+  assert.match(workflow, /TESTFLIGHT_INTERNAL_GROUP_NAME: DoodleRay 6\.0\.2 Private QA/);
 });
 
 test('readiness separates portable static proof from macOS release evidence', () => {
