@@ -117,16 +117,40 @@ enum PacketTunnelConfiguration {
     static func primaryPhysicalInterface() -> String? {
         for key in ["State:/Network/Global/IPv4", "State:/Network/Global/IPv6"] {
             guard let network = SCDynamicStoreCopyValue(nil, key as CFString) as? [String: Any],
-                  let interface = network["PrimaryInterface"] as? String
+                  let interface = network["PrimaryInterface"] as? String,
+                  isPhysicalInterface(interface)
             else {
                 continue
             }
-            let trimmed = interface.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty && !trimmed.hasPrefix("utun") {
-                return trimmed
-            }
+            return interface
         }
-        return nil
+
+        // Another VPN owns the default route as utun*, but the physical
+        // interface still has an IPv4 address and must carry our upstream.
+        let pattern = "State:/Network/Interface/.*/IPv4" as CFString
+        guard let keys = SCDynamicStoreCopyKeyList(nil, pattern) as? [String] else {
+            return nil
+        }
+        return keys.compactMap { key -> String? in
+            let parts = key.split(separator: "/")
+            guard parts.count == 5,
+                  let interface = parts.dropLast().last.map(String.init),
+                  isPhysicalInterface(interface),
+                  let state = SCDynamicStoreCopyValue(nil, key as CFString) as? [String: Any],
+                  let addresses = state["Addresses"] as? [String],
+                  !addresses.isEmpty
+            else {
+                return nil
+            }
+            return interface
+        }.sorted().first
+    }
+
+    private static func isPhysicalInterface(_ interface: String) -> Bool {
+        let name = interface.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !name.isEmpty && !["utun", "ipsec", "ppp", "lo", "awdl", "llw", "bridge"].contains {
+            name.hasPrefix($0)
+        }
     }
 
     static func injectingLocalDNSResolver(

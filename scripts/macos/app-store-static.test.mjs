@@ -112,6 +112,15 @@ test('Packet Tunnel sends system DNS through Xray DoH', () => {
   assert.match(provider, /injectingLocalDNSResolver\(\s*"https:\/\/1\.1\.1\.1\/dns-query"/);
 });
 
+test('Packet Tunnel keeps a physical uplink available when another VPN owns the default route', () => {
+  const configuration = read('src-tauri/macos/PacketTunnelProvider/PacketTunnelConfiguration.swift');
+
+  assert.match(configuration, /SCDynamicStoreCopyKeyList\(nil, pattern\)/);
+  assert.match(configuration, /State:\/Network\/Interface\/\.\*\/IPv4/);
+  assert.match(configuration, /state\["Addresses"\] as\? \[String\]/);
+  assert.match(configuration, /!\["utun", "ipsec", "ppp", "lo", "awdl", "llw", "bridge"\]\.contains/);
+});
+
 test('App Store UI has no external subscription-purchase CTA', () => {
   const subscriptionStatus = read('src/components/v6/SubscriptionStatusBlock.tsx');
   const dashboard = read('src/pages/Dashboard.tsx');
