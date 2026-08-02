@@ -1,0 +1,4 @@
+scenario,new_payers,revenue_per_payer_30d,first_payment_net,first_payment_partner_rate,server_cost_per_user,gift_days,gift_opportunity_cost_per_payer,fraud_reserve_rate,month2_retention,month3_retention,partner_payout_per_payer,gift_infra_per_payer,fraud_reserve_per_payer,contribution_per_payer_30d,incremental_revenue_30d,partner_payout_30d,incremental_contribution_30d,future_contribution_per_payer,incremental_contribution_90d
+Pessimistic,20,5.76,4.98,0.6,0.24,7,0.73,0.08,0.45,0.3,2.988,0.056,0.23904,1.50696,115.19999999999999,59.76,30.139200000000002,2.6999999999999997,84.13919999999999
+Base,100,5.76,4.98,0.6,0.12,7,0.22,0.05,0.6,0.45,2.988,0.028,0.1494,2.2545999999999995,576.0,298.8,225.45999999999995,3.9059999999999997,616.0599999999998
+Aggressive,250,5.76,4.98,0.6,0.05,7,0.11,0.03,0.7,0.55,2.988,0.011666666666666667,0.08964,2.510693333333333,1440.0,747.0,627.6733333333333,4.7375,1812.0483333333332

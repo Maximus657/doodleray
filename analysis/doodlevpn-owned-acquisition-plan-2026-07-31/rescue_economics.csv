@@ -1,0 +1,4 @@
+scenario,activated_free_users,paid_conversion,new_payers,revenue_30d,server_cost_30d,contribution_before_support
+Kill boundary,100,0.03,3.0,18.09,24.0,-5.91
+Base,100,0.06,6.0,36.18,24.0,12.18
+Scale,100,0.08,8.0,48.24,24.0,24.24

@@ -1,0 +1,808 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "DoodleVPN: откуда брать новых пользователей",
+    "description": "Decision report comparing twelve zero-budget acquisition options and specifying the selected Partner Engine.",
+    "generatedAt": "2026-07-31T12:00:00+03:00",
+    "sources": [
+      {
+        "id": "internal_growth",
+        "label": "DoodleVPN validated growth analysis",
+        "path": "analysis/doodlevpn-growth-research-2026-07-30/doodlevpn_growth_research.ipynb",
+        "query": {
+          "description": "Validated DoodleVPN aggregates from 13 April through 30 July 2026.",
+          "engine": "SQLite/Python",
+          "tables_used": [
+            "accounting.revenue",
+            "accounting.revenue_refunds",
+            "bot_mirror.users",
+            "bot_mirror.payments",
+            "bot_mirror.referral_holds"
+          ],
+          "filters": [
+            "Business flows >= 2026-04-13",
+            "July closed at 2026-07-30 23:59:59 MSK"
+          ],
+          "metric_definitions": [
+            "30-day special-partner payer revenue = $5.76",
+            "ordinary referral 7-day paid conversion in mature July cohort ≈35.1%",
+            "special-partner 7-day paid conversion in mature July cohort ≈4.7%"
+          ]
+        }
+      },
+      {
+        "id": "channel_model",
+        "label": "DoodleVPN acquisition channel decision model",
+        "path": "analysis/doodlevpn-acquisition-plan-2026-07-31/channel_scoring.csv",
+        "query": {
+          "description": "Weighted comparison of twelve acquisition options; scores and payer ranges are decision assumptions, not forecasts.",
+          "engine": "SQLite",
+          "sql": "WITH channel_snapshot(rank, channel, score, evidence_fit, profit_potential, zero_upfront_cash, speed, scale, measurement, payers_30d_low, payers_30d_base, payers_30d_high, verdict) AS (VALUES\n(1.0, 'Partner Engine: old partners + microauthors CPA', 91.0, 95.0, 90.0, 95.0, 85.0, 85.0, 95.0, 20.0, 100.0, 250.0, 'Primary motion'),\n(2.0, '30-day gift-pass referral sprint', 80.5, 90.0, 65.0, 90.0, 90.0, 60.0, 90.0, 15.0, 35.0, 60.0, 'Second experiment, not the source of new graphs'),\n(3.0, 'Cross-bot and channel rev-share integrations', 74.25, 65.0, 70.0, 90.0, 70.0, 80.0, 80.0, 10.0, 30.0, 80.0, 'Fold into Partner Engine after first proof'),\n(4.0, 'Family/group plan as a product loop', 71.25, 75.0, 55.0, 90.0, 65.0, 65.0, 85.0, 10.0, 25.0, 50.0, 'Good product loop; not first acquisition motion'),\n(5.0, 'B2B2C bundles with tech/service communities', 69.5, 60.0, 70.0, 90.0, 55.0, 75.0, 75.0, 5.0, 20.0, 50.0, 'Explore after the direct partner playbook works'),\n(6.0, 'CPA/affiliate marketplace', 67.25, 55.0, 65.0, 75.0, 55.0, 80.0, 90.0, 10.0, 35.0, 100.0, 'Potential scale, but weaker control and likely platform fees'),\n(7.0, 'Organic setup content and search', 63.25, 55.0, 55.0, 95.0, 30.0, 85.0, 70.0, 0.0, 5.0, 30.0, 'Long-term compounding channel; too slow for the current hole'),\n(8.0, 'UGC, reviews and customer ambassadors', 63.0, 60.0, 50.0, 90.0, 60.0, 60.0, 65.0, 5.0, 15.0, 40.0, 'Supporting trust layer, not enough as the primary engine'),\n(9.0, 'Telegram Mini App + Stars affiliate discovery', 59.25, 40.0, 55.0, 80.0, 30.0, 85.0, 90.0, 0.0, 10.0, 50.0, 'Future distribution option; requires Stars economics'),\n(10.0, 'Viral Mini App/game season', 56.5, 40.0, 45.0, 80.0, 40.0, 80.0, 75.0, 0.0, 15.0, 80.0, 'High variance; game has no audience before distribution'),\n(11.0, 'App-store/ASO and bot directories', 55.25, 45.0, 45.0, 85.0, 35.0, 70.0, 65.0, 0.0, 5.0, 20.0, 'Hygiene, not a growth engine'),\n(12.0, 'Broad paid Telegram placements', 50.5, 45.0, 40.0, 10.0, 75.0, 70.0, 80.0, 0.0, 0.0, 0.0, 'Rejected: no budget and rising placement prices')\n) SELECT * FROM channel_snapshot;",
+          "metric_definitions": [
+            "score = 25% evidence fit + 20% profit potential + 15% zero-upfront cash + 15% speed + 15% scale + 10% measurement",
+            "payer ranges are scenario assumptions for the first 30 days"
+          ]
+        }
+      },
+      {
+        "id": "partner_economics",
+        "label": "Partner Engine unit economics",
+        "path": "analysis/doodlevpn-acquisition-plan-2026-07-31/partner_economics.csv",
+        "query": {
+          "description": "Pessimistic, base and aggressive performance-only partner economics.",
+          "engine": "SQLite/Python",
+          "sql": "WITH partner_economics_snapshot(scenario, new_payers, incremental_revenue_30d, partner_payout_30d, incremental_contribution_30d, incremental_contribution_90d) AS (VALUES\n('Pessimistic', 20.0, 115.19999999999999, 59.76, 30.139200000000002, 84.13919999999999),\n('Base', 100.0, 576.0, 298.8, 225.45999999999995, 616.0599999999998),\n('Aggressive', 250.0, 1440.0, 747.0, 627.6733333333333, 1812.0483333333332)\n) SELECT * FROM partner_economics_snapshot;",
+          "metric_definitions": [
+            "partner payout = 60% of average $4.98 first net payment",
+            "friend receives seven additional days after first verified payment",
+            "30-day contribution subtracts payout, server cost, gift infrastructure, gift opportunity cost and fraud reserve",
+            "90-day contribution assumes 20% partner share on the next two successful payments"
+          ]
+        }
+      },
+      {
+        "id": "outreach_model",
+        "label": "Partner recruitment funnel model",
+        "path": "analysis/doodlevpn-acquisition-plan-2026-07-31/outreach_funnel.csv",
+        "query": {
+          "description": "Operational funnel required to produce the modeled payer scenarios.",
+          "engine": "SQLite/Python",
+          "sql": "WITH outreach_snapshot(scenario, old_partners_live, new_prospects_contacted, new_partners_live, new_partner_registrations, registration_to_paid, paid_from_old_partners, paid_from_new_partners, total_new_payers) AS (VALUES\n('Pessimistic', 2.0, 100.0, 4.0, 100.0, 0.04, 16.0, 4.0, 20.0),\n('Base', 4.0, 200.0, 14.399999999999999, 719.9999999999999, 0.08, 40.0, 57.599999999999994, 97.6),\n('Aggressive', 6.0, 300.0, 33.074999999999996, 2315.2499999999995, 0.07, 90.0, 162.0675, 252.0675)\n) SELECT * FROM outreach_snapshot;"
+        }
+      },
+      {
+        "id": "akar_market",
+        "label": "AKAR Russian influencer market study",
+        "href": "https://akarussia.ru/news/novosti-akar/rynok-blogerov-v-rossii-ocenili-v-60-mlrd-rublej/"
+      },
+      {
+        "id": "arir_telegram",
+        "label": "ARIR and Telega.in Telegram advertising study",
+        "href": "https://adindex.ru/publication/analitics/search/338484/img/issledovanie_rynka_telegram_reklamy_arir_i_telega_in_2025_1.pdf"
+      },
+      {
+        "id": "telegram_inflation",
+        "label": "MTS AdTech Telegram placement price study",
+        "href": "https://adindex.ru/news/researches/2026/02/4/342193.phtml"
+      },
+      {
+        "id": "amnezia_affiliate",
+        "label": "Amnezia affiliate terms",
+        "href": "https://amnezia.org/br/partners"
+      },
+      {
+        "id": "adguard_affiliate",
+        "label": "AdGuard affiliate terms",
+        "href": "https://adguard.com/ru/partners/affiliate.html"
+      },
+      {
+        "id": "telegram_affiliate",
+        "label": "Telegram Affiliate Programs",
+        "href": "https://core.telegram.org/api/bots/referrals"
+      },
+      {
+        "id": "telegram_miniapps",
+        "label": "Telegram Mini Apps documentation",
+        "href": "https://core.telegram.org/bots/webapps"
+      },
+      {
+        "id": "referral_recipient",
+        "label": "Referral reward recipient research",
+        "href": "https://www.ccsenet.org/journal/index.php/ijbm/article/view/39118"
+      },
+      {
+        "id": "reward_uncertainty",
+        "label": "Management Science referral field experiment",
+        "href": "https://pubsonline.informs.org/doi/10.1287/mnsc.2024.05685"
+      },
+      {
+        "id": "vpn_ad_law",
+        "label": "Current Russian VPN advertising restriction summary",
+        "href": "https://www.consultant.ru/document/cons_doc_LAW_507825/4cc793b2c6391ed91aec28ce9d0456feba8a8b6b/"
+      }
+    ],
+    "charts": [
+      {
+        "id": "channel_ranking",
+        "title": "Acquisition channel scores",
+        "subtitle": "Weighted decision score, 0–100; modeled on DoodleVPN evidence and zero-upfront constraint.",
+        "type": "bar",
+        "dataset": "channels",
+        "sourceId": "channel_model",
+        "encodings": {
+          "x": {
+            "field": "channel",
+            "type": "nominal",
+            "label": "Channel"
+          },
+          "y": {
+            "field": "score",
+            "type": "quantitative",
+            "label": "Score",
+            "format": "number"
+          }
+        },
+        "valueFormat": "number",
+        "options": {
+          "orientation": "horizontal",
+          "valueLabels": true
+        }
+      }
+    ],
+    "tables": [
+      {
+        "id": "channel_table",
+        "title": "Twelve acquisition options",
+        "subtitle": "First-30-day payer ranges are scenario assumptions, not forecasts.",
+        "dataset": "channels",
+        "sourceId": "channel_model",
+        "defaultSort": {
+          "field": "rank",
+          "direction": "asc"
+        },
+        "columns": [
+          {
+            "field": "rank",
+            "label": "Rank",
+            "format": "number"
+          },
+          {
+            "field": "channel",
+            "label": "Channel"
+          },
+          {
+            "field": "score",
+            "label": "Score",
+            "format": "number"
+          },
+          {
+            "field": "payers_30d_range",
+            "label": "Modeled first-paid users"
+          },
+          {
+            "field": "verdict",
+            "label": "Decision"
+          }
+        ]
+      },
+      {
+        "id": "economics_table",
+        "title": "Partner Engine economics",
+        "subtitle": "Incremental values under 60% first-payment partner share and a seven-day post-payment gift.",
+        "dataset": "economics",
+        "sourceId": "partner_economics",
+        "defaultSort": {
+          "field": "new_payers",
+          "direction": "asc"
+        },
+        "columns": [
+          {
+            "field": "scenario",
+            "label": "Scenario"
+          },
+          {
+            "field": "new_payers",
+            "label": "New payers",
+            "format": "number"
+          },
+          {
+            "field": "incremental_revenue_30d",
+            "label": "30d revenue",
+            "format": "currency"
+          },
+          {
+            "field": "partner_payout_30d",
+            "label": "Partner payout",
+            "format": "currency"
+          },
+          {
+            "field": "incremental_contribution_30d",
+            "label": "30d contribution",
+            "format": "currency"
+          },
+          {
+            "field": "incremental_contribution_90d",
+            "label": "90d contribution",
+            "format": "currency"
+          }
+        ]
+      },
+      {
+        "id": "outreach_table",
+        "title": "Required partner recruitment funnel",
+        "subtitle": "The base case requires active outbound work, not a passive affiliate page.",
+        "dataset": "outreach",
+        "sourceId": "outreach_model",
+        "defaultSort": {
+          "field": "new_prospects_contacted",
+          "direction": "asc"
+        },
+        "columns": [
+          {
+            "field": "scenario",
+            "label": "Scenario"
+          },
+          {
+            "field": "old_partners_live",
+            "label": "Old partners live",
+            "format": "number"
+          },
+          {
+            "field": "new_prospects_contacted",
+            "label": "New contacts",
+            "format": "number"
+          },
+          {
+            "field": "new_partners_live",
+            "label": "New partners live",
+            "format": "number"
+          },
+          {
+            "field": "new_partner_registrations",
+            "label": "Registrations",
+            "format": "number"
+          },
+          {
+            "field": "registration_to_paid",
+            "label": "Paid conversion",
+            "format": "percent"
+          },
+          {
+            "field": "total_new_payers",
+            "label": "New payers",
+            "format": "number"
+          }
+        ]
+      }
+    ],
+    "blocks": [
+      {
+        "id": "title",
+        "type": "markdown",
+        "body": "# DoodleVPN: откуда брать новых пользователей"
+      },
+      {
+        "id": "executive",
+        "type": "markdown",
+        "body": "## Executive Summary\n\n- **Одной более понятной рефералки недостаточно.** Она повышает конверсию существующей базы, но не создаёт новые социальные графы.\n- **Лучший один acquisition-механизм — Doodle Partner Engine.** Он объединяет возврат десяти просевших партнёров, перевод доказанных рефереров в амбассадоры и системный набор тематических микроавторов с оплатой только после подтверждённой покупки.\n- **Предлагаемая экономика:** 60% первой чистой оплаты + 20% следующих двух оплат партнёру; другу — семь дней после первой оплаты; 14-дневный hold, возвраты вычитаются. Базовый сценарий 100 новых плательщиков даёт около $576 новой 30-дневной выручки и примерно $226 contribution после всех модельных затрат.\n- **Не строить игру как первый источник трафика.** Без канала распространения игра получает ту же существующую базу и не решает исходную проблему."
+      },
+      {
+        "id": "why",
+        "type": "markdown",
+        "body": "## У Doodle закончился не спрос, а доступ к новым аудиториям\n\nСредний платёж сохранился, а ordinary referral-трафик остаётся качественным. Падение пришло из количества новых регистраций, уменьшения активных рефереров и просадки нескольких специальных партнёров. Следовательно, нужен не ещё один экран внутри бота, а повторяемый способ забирать аудиторию из чужих сообществ.\n\nРоссийский influencer-рынок уже использует Telegram как крупную площадку, а исследования АРИР/Telega.in отдельно отмечают микро- и нано-каналы как формат точечного измеримого охвата. При этом цены обычных размещений росли быстрее охватов. Это усиливает выбор **performance-only**, а не покупку постов заранее. [АКАР](https://akarussia.ru/news/novosti-akar/rynok-blogerov-v-rossii-ocenili-v-60-mlrd-rublej/), [АРИР/Telega.in](https://adindex.ru/publication/analitics/search/338484/img/issledovanie_rynka_telegram_reklamy_arir_i_telega_in_2025_1.pdf), [MTS AdTech](https://adindex.ru/news/researches/2026/02/4/342193.phtml)."
+      },
+      {
+        "id": "ranking_chart",
+        "type": "chart",
+        "chartId": "channel_ranking"
+      },
+      {
+        "id": "ranking_table",
+        "type": "table",
+        "tableId": "channel_table"
+      },
+      {
+        "id": "winner",
+        "type": "markdown",
+        "body": "## Победитель — не просто партнёрка, а управляемая партнёрская машина\n\nТри источника партнёров запускаются одной системой:\n\n1. **Десять просевших специальных партнёров:** персонально выяснить, почему перестали приводить людей, и вернуть их в 30-дневный спринт без ухудшения старых договорённостей.\n2. **Доказанные обычные рефереры:** пригласить пользователей, уже приводивших платящих друзей, в отдельную campaign-based ambassador программу для новых referrals.\n3. **Новые микроавторы:** каналы и сообщества вокруг AI-сервисов, устройств и настройки, путешествий, remote work, видео, gaming, Smart TV/роутеров и цифровой приватности.\n\nЭто один acquisition engine: единые ссылки, attribution, payout, creatives, anti-fraud и weekly scorecard."
+      },
+      {
+        "id": "offer",
+        "type": "markdown",
+        "body": "## Оффер должен мотивировать автора и не убивать маржу\n\n**Новые партнёры:** 60% первой чистой оплаты и 20% следующих двух успешных оплат. После 20 новых плательщиков за 30 дней ставку первой покупки можно поднять до 70%. Не давать lifetime 50–60% всем новым партнёрам.\n\n**Новый пользователь:** обычный трёхдневный trial плюс семь дней после первой подтверждённой оплаты. Это конкретная выгода получателю, а не обещание заработка отправителю. Исследования referral-design показывают, что для low-involvement-продуктов выгода получателю способна улучшать принятие рекомендации; крупный field experiment также обнаружил преимущество определённой награды получателю. [Recipient reward research](https://www.ccsenet.org/journal/index.php/ijbm/article/view/39118), [Management Science field experiment](https://pubsonline.informs.org/doi/10.1287/mnsc.2024.05685).\n\nУсловия остаются конкурентными: Amnezia публично предлагает до 40% продажи и 30% продлений, AdGuard — до 50% продаж и продлений. Doodle компенсирует меньший бренд более высокой front-loaded ставкой, но ограничивает recurring. [Amnezia](https://amnezia.org/br/partners), [AdGuard](https://adguard.com/ru/partners/affiliate.html)."
+      },
+      {
+        "id": "economics",
+        "type": "table",
+        "tableId": "economics_table"
+      },
+      {
+        "id": "funnel",
+        "type": "markdown",
+        "body": "## Базовый сценарий требует около 200 качественных контактов\n\nПассивная страница «станьте партнёром» не сработает. Базовая модель предполагает: вернуть четыре старых партнёра, сделать 200 персональных выходов на новых авторов, получить около 60 ответов, подключить 24 и добиться фактического размещения примерно от 14. Вместе это моделирует около 100 новых плательщиков. Это цель для операционной команды, а не обещание."
+      },
+      {
+        "id": "outreach",
+        "type": "table",
+        "tableId": "outreach_table"
+      },
+      {
+        "id": "steps",
+        "type": "markdown",
+        "body": "## План запуска на 30 дней\n\n### Дни 1–2: измерение\n\n- Заполнить рабочие `campaigns`, `campaign_links`, attribution и conversion ledger.\n- Для каждой ссылки хранить partner, niche, creative, first touch, registration, trial, first connection, checkout, payment, refund и renewal.\n- Не считать start или клик успехом.\n\n### Дни 3–4: пакет партнёра\n\n- Утвердить новые условия только для новых referrals.\n- Сделать одну партнёрскую страницу, один отчёт и три коротких creative-шаблона под разные use cases.\n- Ссылка должна вести в персонализированный onboarding, а не на общий экран бота.\n\n### Дни 5–7: вернуть проверенных\n\n- Связаться со всеми десятью просевшими партнёрами лично.\n- Задать три вопроса: почему остановились, что перестало конвертировать, какой формат аудитория примет сейчас.\n- Цель: минимум пять содержательных ответов и три повторных запуска.\n\n### Дни 5–14: набрать новую supply\n\n- Собрать 200 авторов размером примерно 2k–100k подписчиков.\n- Фильтры: естественная потребность в продукте, живая аудитория, нормальные просмотры, отсутствие giveaway/scam-истории, возможность измерить ссылкой.\n- Делать 20 персонализированных контактов в день. Не рассылать один одинаковый спам-текст.\n\n### Дни 8–21: волны по пять партнёров\n\n- Запускать не всех сразу, а волнами по нишам.\n- Для каждого фиксировать creative и recipient offer.\n- После первых 100 регистраций на партнёра: scale при paid conversion ≥8%; оставить и донабрать данные при 5–8%; остановить конкретный источник при <3%, fraud/refunds >15% или отрицательном contribution.\n\n### Дни 22–30: удвоить победителей\n\n- Оставить две лучшие ниши и два лучших creative.\n- Повторно выйти к похожим авторам.\n- Не добавлять одновременно игру, новую массовую рефералку и большую скидку: иначе источник lift нельзя будет определить."
+      },
+      {
+        "id": "metrics",
+        "type": "markdown",
+        "body": "## Цифры принятия решения\n\n**Продолжить после 30 дней:** не менее пяти реально публикующих партнёров, не менее 50 дополнительных подтверждённых плательщиков, положительный 30-дневный contribution и refund/fraud ниже 8%.\n\n**Масштабировать:** 100+ дополнительных плательщиков, registration→first-paid не ниже 7%, contribution не ниже $1.50 на нового плательщика, ни один партнёр не даёт более 35% новых оплат.\n\n**Переделать оффер:** после 150 качественных контактов запустились менее пяти партнёров. Это означает слабое предложение авторам или плохой список.\n\n**Остановить канал:** после 500 атрибутированных партнёрских регистраций paid conversion ниже 3% либо contribution отрицательный. Останавливать нужно не после первого неудачного автора, а после достаточного совокупного трафика."
+      },
+      {
+        "id": "not_now",
+        "type": "markdown",
+        "body": "## Что сейчас не делать\n\n- Не строить игру как самостоятельный источник пользователей.\n- Не покупать крупные Telegram-посты заранее.\n- Не менять массовую рефералку и партнёрскую программу одновременно.\n- Не давать выплаты за регистрацию, trial или клик.\n- Не выдавать новым партнёрам 50–60% со всех продлений навсегда.\n- Не ждать, что Mini App Store сам даст discovery: Telegram пишет лишь о возможности feature для успешных Mini Apps со Stars, а affiliate commissions привязаны к Stars-транзакциям. [Telegram Mini Apps](https://core.telegram.org/bots/webapps), [Telegram Affiliate Programs](https://core.telegram.org/api/bots/referrals).\n- Не путать CRM/winback с притоком новых пользователей.\n- Не считать UX-аудит acquisition-стратегией: он нужен, но является multiplier."
+      },
+      {
+        "id": "legal",
+        "type": "markdown",
+        "body": "## Регуляторный риск не отменяет математику, но влияет на supply\n\nПлан выше выбран без превращения закона в автоматический veto. Однако с сентября 2025 года действует запрет и штрафы за рекламу соответствующих средств доступа, причём ответственность указана для рекламодателя и распространителя. Это влияет хотя бы на то, сколько авторов согласится работать и какие форматы они примут. Перед публичными интеграциями нужен review конкретного текста и канала; скрывать рекламу или строить стратегию на предположении «точно никого не тронут» нельзя считать бизнес-контролем. [Текущая правовая сводка](https://www.consultant.ru/document/cons_doc_LAW_507825/4cc793b2c6391ed91aec28ce9d0456feba8a8b6b/)."
+      },
+      {
+        "id": "questions",
+        "type": "markdown",
+        "body": "## Further Questions\n\n- Почему конкретно остановился каждый из топ-10 партнёров: аудитория исчерпалась, продукт перестал работать, изменилась экономика или они перестали публиковать?\n- Какой partner creative давал качественных плательщиков, а не только регистрации?\n- Какая доля специальных партнёрских плательщиков продлевается на второй и третий месяц?\n- Поддерживает ли текущий checkout частичную оплату внутренним балансом? Это влияет на последующий массовый referral sprint, но не блокирует Partner Engine."
+      },
+      {
+        "id": "caveats",
+        "type": "markdown",
+        "body": "## Caveats and Assumptions\n\nКанал выбран с высокой относительной, но средней абсолютной уверенностью. В Doodle нет причинного эксперимента по acquisition-каналам, а campaign-таблицы были пустыми. Диапазоны новых плательщиков и weighted scores являются прозрачными priors, не прогнозами. Внутренние агрегаты закрыты на 30 июля 2026 года; июльская специальная конверсия около 4.7% показывает, что простое наращивание старого партнёрского трафика без отбора и персонального onboarding не сработает."
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "generatedAt": "2026-07-31T12:00:00+03:00",
+    "status": "ready",
+    "datasets": {
+      "channels": [
+        {
+          "rank": 1,
+          "channel": "Partner Engine: old partners + microauthors CPA",
+          "evidence_fit": 95,
+          "profit_potential": 90,
+          "zero_upfront_cash": 95,
+          "speed": 85,
+          "scale": 85,
+          "measurement": 95,
+          "payers_30d_low": 20,
+          "payers_30d_base": 100,
+          "payers_30d_high": 250,
+          "verdict": "Primary motion",
+          "score": 91.0,
+          "payers_30d_range": "20–250 (base 100)"
+        },
+        {
+          "rank": 2,
+          "channel": "30-day gift-pass referral sprint",
+          "evidence_fit": 90,
+          "profit_potential": 65,
+          "zero_upfront_cash": 90,
+          "speed": 90,
+          "scale": 60,
+          "measurement": 90,
+          "payers_30d_low": 15,
+          "payers_30d_base": 35,
+          "payers_30d_high": 60,
+          "verdict": "Second experiment, not the source of new graphs",
+          "score": 80.5,
+          "payers_30d_range": "15–60 (base 35)"
+        },
+        {
+          "rank": 3,
+          "channel": "Cross-bot and channel rev-share integrations",
+          "evidence_fit": 65,
+          "profit_potential": 70,
+          "zero_upfront_cash": 90,
+          "speed": 70,
+          "scale": 80,
+          "measurement": 80,
+          "payers_30d_low": 10,
+          "payers_30d_base": 30,
+          "payers_30d_high": 80,
+          "verdict": "Fold into Partner Engine after first proof",
+          "score": 74.25,
+          "payers_30d_range": "10–80 (base 30)"
+        },
+        {
+          "rank": 4,
+          "channel": "Family/group plan as a product loop",
+          "evidence_fit": 75,
+          "profit_potential": 55,
+          "zero_upfront_cash": 90,
+          "speed": 65,
+          "scale": 65,
+          "measurement": 85,
+          "payers_30d_low": 10,
+          "payers_30d_base": 25,
+          "payers_30d_high": 50,
+          "verdict": "Good product loop; not first acquisition motion",
+          "score": 71.25,
+          "payers_30d_range": "10–50 (base 25)"
+        },
+        {
+          "rank": 5,
+          "channel": "B2B2C bundles with tech/service communities",
+          "evidence_fit": 60,
+          "profit_potential": 70,
+          "zero_upfront_cash": 90,
+          "speed": 55,
+          "scale": 75,
+          "measurement": 75,
+          "payers_30d_low": 5,
+          "payers_30d_base": 20,
+          "payers_30d_high": 50,
+          "verdict": "Explore after the direct partner playbook works",
+          "score": 69.5,
+          "payers_30d_range": "5–50 (base 20)"
+        },
+        {
+          "rank": 6,
+          "channel": "CPA/affiliate marketplace",
+          "evidence_fit": 55,
+          "profit_potential": 65,
+          "zero_upfront_cash": 75,
+          "speed": 55,
+          "scale": 80,
+          "measurement": 90,
+          "payers_30d_low": 10,
+          "payers_30d_base": 35,
+          "payers_30d_high": 100,
+          "verdict": "Potential scale, but weaker control and likely platform fees",
+          "score": 67.25,
+          "payers_30d_range": "10–100 (base 35)"
+        },
+        {
+          "rank": 7,
+          "channel": "Organic setup content and search",
+          "evidence_fit": 55,
+          "profit_potential": 55,
+          "zero_upfront_cash": 95,
+          "speed": 30,
+          "scale": 85,
+          "measurement": 70,
+          "payers_30d_low": 0,
+          "payers_30d_base": 5,
+          "payers_30d_high": 30,
+          "verdict": "Long-term compounding channel; too slow for the current hole",
+          "score": 63.25,
+          "payers_30d_range": "0–30 (base 5)"
+        },
+        {
+          "rank": 8,
+          "channel": "UGC, reviews and customer ambassadors",
+          "evidence_fit": 60,
+          "profit_potential": 50,
+          "zero_upfront_cash": 90,
+          "speed": 60,
+          "scale": 60,
+          "measurement": 65,
+          "payers_30d_low": 5,
+          "payers_30d_base": 15,
+          "payers_30d_high": 40,
+          "verdict": "Supporting trust layer, not enough as the primary engine",
+          "score": 63.0,
+          "payers_30d_range": "5–40 (base 15)"
+        },
+        {
+          "rank": 9,
+          "channel": "Telegram Mini App + Stars affiliate discovery",
+          "evidence_fit": 40,
+          "profit_potential": 55,
+          "zero_upfront_cash": 80,
+          "speed": 30,
+          "scale": 85,
+          "measurement": 90,
+          "payers_30d_low": 0,
+          "payers_30d_base": 10,
+          "payers_30d_high": 50,
+          "verdict": "Future distribution option; requires Stars economics",
+          "score": 59.25,
+          "payers_30d_range": "0–50 (base 10)"
+        },
+        {
+          "rank": 10,
+          "channel": "Viral Mini App/game season",
+          "evidence_fit": 40,
+          "profit_potential": 45,
+          "zero_upfront_cash": 80,
+          "speed": 40,
+          "scale": 80,
+          "measurement": 75,
+          "payers_30d_low": 0,
+          "payers_30d_base": 15,
+          "payers_30d_high": 80,
+          "verdict": "High variance; game has no audience before distribution",
+          "score": 56.5,
+          "payers_30d_range": "0–80 (base 15)"
+        },
+        {
+          "rank": 11,
+          "channel": "App-store/ASO and bot directories",
+          "evidence_fit": 45,
+          "profit_potential": 45,
+          "zero_upfront_cash": 85,
+          "speed": 35,
+          "scale": 70,
+          "measurement": 65,
+          "payers_30d_low": 0,
+          "payers_30d_base": 5,
+          "payers_30d_high": 20,
+          "verdict": "Hygiene, not a growth engine",
+          "score": 55.25,
+          "payers_30d_range": "0–20 (base 5)"
+        },
+        {
+          "rank": 12,
+          "channel": "Broad paid Telegram placements",
+          "evidence_fit": 45,
+          "profit_potential": 40,
+          "zero_upfront_cash": 10,
+          "speed": 75,
+          "scale": 70,
+          "measurement": 80,
+          "payers_30d_low": 0,
+          "payers_30d_base": 0,
+          "payers_30d_high": 0,
+          "verdict": "Rejected: no budget and rising placement prices",
+          "score": 50.5,
+          "payers_30d_range": "0–0 (base 0)"
+        }
+      ],
+      "economics": [
+        {
+          "scenario": "Pessimistic",
+          "new_payers": 20,
+          "revenue_per_payer_30d": 5.76,
+          "first_payment_net": 4.98,
+          "first_payment_partner_rate": 0.6,
+          "server_cost_per_user": 0.24,
+          "gift_days": 7,
+          "gift_opportunity_cost_per_payer": 0.73,
+          "fraud_reserve_rate": 0.08,
+          "month2_retention": 0.45,
+          "month3_retention": 0.3,
+          "partner_payout_per_payer": 2.988,
+          "gift_infra_per_payer": 0.056,
+          "fraud_reserve_per_payer": 0.23904,
+          "contribution_per_payer_30d": 1.50696,
+          "incremental_revenue_30d": 115.19999999999999,
+          "partner_payout_30d": 59.76,
+          "incremental_contribution_30d": 30.139200000000002,
+          "future_contribution_per_payer": 2.6999999999999997,
+          "incremental_contribution_90d": 84.13919999999999
+        },
+        {
+          "scenario": "Base",
+          "new_payers": 100,
+          "revenue_per_payer_30d": 5.76,
+          "first_payment_net": 4.98,
+          "first_payment_partner_rate": 0.6,
+          "server_cost_per_user": 0.12,
+          "gift_days": 7,
+          "gift_opportunity_cost_per_payer": 0.22,
+          "fraud_reserve_rate": 0.05,
+          "month2_retention": 0.6,
+          "month3_retention": 0.45,
+          "partner_payout_per_payer": 2.988,
+          "gift_infra_per_payer": 0.028,
+          "fraud_reserve_per_payer": 0.1494,
+          "contribution_per_payer_30d": 2.2545999999999995,
+          "incremental_revenue_30d": 576.0,
+          "partner_payout_30d": 298.8,
+          "incremental_contribution_30d": 225.45999999999995,
+          "future_contribution_per_payer": 3.9059999999999997,
+          "incremental_contribution_90d": 616.0599999999998
+        },
+        {
+          "scenario": "Aggressive",
+          "new_payers": 250,
+          "revenue_per_payer_30d": 5.76,
+          "first_payment_net": 4.98,
+          "first_payment_partner_rate": 0.6,
+          "server_cost_per_user": 0.05,
+          "gift_days": 7,
+          "gift_opportunity_cost_per_payer": 0.11,
+          "fraud_reserve_rate": 0.03,
+          "month2_retention": 0.7,
+          "month3_retention": 0.55,
+          "partner_payout_per_payer": 2.988,
+          "gift_infra_per_payer": 0.011666666666666667,
+          "fraud_reserve_per_payer": 0.08964,
+          "contribution_per_payer_30d": 2.510693333333333,
+          "incremental_revenue_30d": 1440.0,
+          "partner_payout_30d": 747.0,
+          "incremental_contribution_30d": 627.6733333333333,
+          "future_contribution_per_payer": 4.7375,
+          "incremental_contribution_90d": 1812.0483333333332
+        }
+      ],
+      "outreach": [
+        {
+          "scenario": "Pessimistic",
+          "old_partners_contacted": 10,
+          "old_partners_live": 2,
+          "paid_per_old_partner": 8,
+          "new_prospects_contacted": 100,
+          "reply_rate": 0.2,
+          "onboard_rate_of_replies": 0.4,
+          "publish_rate_of_onboarded": 0.5,
+          "registrations_per_live_new_partner": 25,
+          "registration_to_paid": 0.04,
+          "replies": 20.0,
+          "new_partners_onboarded": 8.0,
+          "new_partners_live": 4.0,
+          "new_partner_registrations": 100.0,
+          "paid_from_new_partners": 4.0,
+          "paid_from_old_partners": 16,
+          "total_new_payers": 20.0
+        },
+        {
+          "scenario": "Base",
+          "old_partners_contacted": 10,
+          "old_partners_live": 4,
+          "paid_per_old_partner": 10,
+          "new_prospects_contacted": 200,
+          "reply_rate": 0.3,
+          "onboard_rate_of_replies": 0.4,
+          "publish_rate_of_onboarded": 0.6,
+          "registrations_per_live_new_partner": 50,
+          "registration_to_paid": 0.08,
+          "replies": 60.0,
+          "new_partners_onboarded": 24.0,
+          "new_partners_live": 14.399999999999999,
+          "new_partner_registrations": 719.9999999999999,
+          "paid_from_new_partners": 57.599999999999994,
+          "paid_from_old_partners": 40,
+          "total_new_payers": 97.6
+        },
+        {
+          "scenario": "Aggressive",
+          "old_partners_contacted": 10,
+          "old_partners_live": 6,
+          "paid_per_old_partner": 15,
+          "new_prospects_contacted": 300,
+          "reply_rate": 0.35,
+          "onboard_rate_of_replies": 0.45,
+          "publish_rate_of_onboarded": 0.7,
+          "registrations_per_live_new_partner": 70,
+          "registration_to_paid": 0.07,
+          "replies": 105.0,
+          "new_partners_onboarded": 47.25,
+          "new_partners_live": 33.074999999999996,
+          "new_partner_registrations": 2315.2499999999995,
+          "paid_from_new_partners": 162.0675,
+          "paid_from_old_partners": 90,
+          "total_new_payers": 252.0675
+        }
+      ]
+    }
+  },
+  "sources": [
+    {
+      "id": "internal_growth",
+      "label": "DoodleVPN validated growth analysis",
+      "path": "analysis/doodlevpn-growth-research-2026-07-30/doodlevpn_growth_research.ipynb",
+      "query": {
+        "description": "Validated DoodleVPN aggregates from 13 April through 30 July 2026.",
+        "engine": "SQLite/Python",
+        "tables_used": [
+          "accounting.revenue",
+          "accounting.revenue_refunds",
+          "bot_mirror.users",
+          "bot_mirror.payments",
+          "bot_mirror.referral_holds"
+        ],
+        "filters": [
+          "Business flows >= 2026-04-13",
+          "July closed at 2026-07-30 23:59:59 MSK"
+        ],
+        "metric_definitions": [
+          "30-day special-partner payer revenue = $5.76",
+          "ordinary referral 7-day paid conversion in mature July cohort ≈35.1%",
+          "special-partner 7-day paid conversion in mature July cohort ≈4.7%"
+        ]
+      }
+    },
+    {
+      "id": "channel_model",
+      "label": "DoodleVPN acquisition channel decision model",
+      "path": "analysis/doodlevpn-acquisition-plan-2026-07-31/channel_scoring.csv",
+      "query": {
+        "description": "Weighted comparison of twelve acquisition options; scores and payer ranges are decision assumptions, not forecasts.",
+        "engine": "SQLite",
+        "sql": "WITH channel_snapshot(rank, channel, score, evidence_fit, profit_potential, zero_upfront_cash, speed, scale, measurement, payers_30d_low, payers_30d_base, payers_30d_high, verdict) AS (VALUES\n(1.0, 'Partner Engine: old partners + microauthors CPA', 91.0, 95.0, 90.0, 95.0, 85.0, 85.0, 95.0, 20.0, 100.0, 250.0, 'Primary motion'),\n(2.0, '30-day gift-pass referral sprint', 80.5, 90.0, 65.0, 90.0, 90.0, 60.0, 90.0, 15.0, 35.0, 60.0, 'Second experiment, not the source of new graphs'),\n(3.0, 'Cross-bot and channel rev-share integrations', 74.25, 65.0, 70.0, 90.0, 70.0, 80.0, 80.0, 10.0, 30.0, 80.0, 'Fold into Partner Engine after first proof'),\n(4.0, 'Family/group plan as a product loop', 71.25, 75.0, 55.0, 90.0, 65.0, 65.0, 85.0, 10.0, 25.0, 50.0, 'Good product loop; not first acquisition motion'),\n(5.0, 'B2B2C bundles with tech/service communities', 69.5, 60.0, 70.0, 90.0, 55.0, 75.0, 75.0, 5.0, 20.0, 50.0, 'Explore after the direct partner playbook works'),\n(6.0, 'CPA/affiliate marketplace', 67.25, 55.0, 65.0, 75.0, 55.0, 80.0, 90.0, 10.0, 35.0, 100.0, 'Potential scale, but weaker control and likely platform fees'),\n(7.0, 'Organic setup content and search', 63.25, 55.0, 55.0, 95.0, 30.0, 85.0, 70.0, 0.0, 5.0, 30.0, 'Long-term compounding channel; too slow for the current hole'),\n(8.0, 'UGC, reviews and customer ambassadors', 63.0, 60.0, 50.0, 90.0, 60.0, 60.0, 65.0, 5.0, 15.0, 40.0, 'Supporting trust layer, not enough as the primary engine'),\n(9.0, 'Telegram Mini App + Stars affiliate discovery', 59.25, 40.0, 55.0, 80.0, 30.0, 85.0, 90.0, 0.0, 10.0, 50.0, 'Future distribution option; requires Stars economics'),\n(10.0, 'Viral Mini App/game season', 56.5, 40.0, 45.0, 80.0, 40.0, 80.0, 75.0, 0.0, 15.0, 80.0, 'High variance; game has no audience before distribution'),\n(11.0, 'App-store/ASO and bot directories', 55.25, 45.0, 45.0, 85.0, 35.0, 70.0, 65.0, 0.0, 5.0, 20.0, 'Hygiene, not a growth engine'),\n(12.0, 'Broad paid Telegram placements', 50.5, 45.0, 40.0, 10.0, 75.0, 70.0, 80.0, 0.0, 0.0, 0.0, 'Rejected: no budget and rising placement prices')\n) SELECT * FROM channel_snapshot;",
+        "metric_definitions": [
+          "score = 25% evidence fit + 20% profit potential + 15% zero-upfront cash + 15% speed + 15% scale + 10% measurement",
+          "payer ranges are scenario assumptions for the first 30 days"
+        ]
+      }
+    },
+    {
+      "id": "partner_economics",
+      "label": "Partner Engine unit economics",
+      "path": "analysis/doodlevpn-acquisition-plan-2026-07-31/partner_economics.csv",
+      "query": {
+        "description": "Pessimistic, base and aggressive performance-only partner economics.",
+        "engine": "SQLite/Python",
+        "sql": "WITH partner_economics_snapshot(scenario, new_payers, incremental_revenue_30d, partner_payout_30d, incremental_contribution_30d, incremental_contribution_90d) AS (VALUES\n('Pessimistic', 20.0, 115.19999999999999, 59.76, 30.139200000000002, 84.13919999999999),\n('Base', 100.0, 576.0, 298.8, 225.45999999999995, 616.0599999999998),\n('Aggressive', 250.0, 1440.0, 747.0, 627.6733333333333, 1812.0483333333332)\n) SELECT * FROM partner_economics_snapshot;",
+        "metric_definitions": [
+          "partner payout = 60% of average $4.98 first net payment",
+          "friend receives seven additional days after first verified payment",
+          "30-day contribution subtracts payout, server cost, gift infrastructure, gift opportunity cost and fraud reserve",
+          "90-day contribution assumes 20% partner share on the next two successful payments"
+        ]
+      }
+    },
+    {
+      "id": "outreach_model",
+      "label": "Partner recruitment funnel model",
+      "path": "analysis/doodlevpn-acquisition-plan-2026-07-31/outreach_funnel.csv",
+      "query": {
+        "description": "Operational funnel required to produce the modeled payer scenarios.",
+        "engine": "SQLite/Python",
+        "sql": "WITH outreach_snapshot(scenario, old_partners_live, new_prospects_contacted, new_partners_live, new_partner_registrations, registration_to_paid, paid_from_old_partners, paid_from_new_partners, total_new_payers) AS (VALUES\n('Pessimistic', 2.0, 100.0, 4.0, 100.0, 0.04, 16.0, 4.0, 20.0),\n('Base', 4.0, 200.0, 14.399999999999999, 719.9999999999999, 0.08, 40.0, 57.599999999999994, 97.6),\n('Aggressive', 6.0, 300.0, 33.074999999999996, 2315.2499999999995, 0.07, 90.0, 162.0675, 252.0675)\n) SELECT * FROM outreach_snapshot;"
+      }
+    },
+    {
+      "id": "akar_market",
+      "label": "AKAR Russian influencer market study",
+      "href": "https://akarussia.ru/news/novosti-akar/rynok-blogerov-v-rossii-ocenili-v-60-mlrd-rublej/"
+    },
+    {
+      "id": "arir_telegram",
+      "label": "ARIR and Telega.in Telegram advertising study",
+      "href": "https://adindex.ru/publication/analitics/search/338484/img/issledovanie_rynka_telegram_reklamy_arir_i_telega_in_2025_1.pdf"
+    },
+    {
+      "id": "telegram_inflation",
+      "label": "MTS AdTech Telegram placement price study",
+      "href": "https://adindex.ru/news/researches/2026/02/4/342193.phtml"
+    },
+    {
+      "id": "amnezia_affiliate",
+      "label": "Amnezia affiliate terms",
+      "href": "https://amnezia.org/br/partners"
+    },
+    {
+      "id": "adguard_affiliate",
+      "label": "AdGuard affiliate terms",
+      "href": "https://adguard.com/ru/partners/affiliate.html"
+    },
+    {
+      "id": "telegram_affiliate",
+      "label": "Telegram Affiliate Programs",
+      "href": "https://core.telegram.org/api/bots/referrals"
+    },
+    {
+      "id": "telegram_miniapps",
+      "label": "Telegram Mini Apps documentation",
+      "href": "https://core.telegram.org/bots/webapps"
+    },
+    {
+      "id": "referral_recipient",
+      "label": "Referral reward recipient research",
+      "href": "https://www.ccsenet.org/journal/index.php/ijbm/article/view/39118"
+    },
+    {
+      "id": "reward_uncertainty",
+      "label": "Management Science referral field experiment",
+      "href": "https://pubsonline.informs.org/doi/10.1287/mnsc.2024.05685"
+    },
+    {
+      "id": "vpn_ad_law",
+      "label": "Current Russian VPN advertising restriction summary",
+      "href": "https://www.consultant.ru/document/cons_doc_LAW_507825/4cc793b2c6391ed91aec28ce9d0456feba8a8b6b/"
+    }
+  ]
+}

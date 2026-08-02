@@ -1,0 +1,175 @@
+{
+  "as_of": "2026-07-31T15:30:00+03:00",
+  "scope": "ordinary referrals created 2026-04-13 through 2026-06-30, D30 window",
+  "cohorts": [
+    {
+      "cohort": "2026-04-13…04-30",
+      "registrations": 142,
+      "activation_proxy": 104,
+      "activation_rate_pct": 73.2,
+      "payers_d30": 38,
+      "reg_to_paid_d30_pct": 26.8,
+      "activation_to_paid_d30_pct": 24.0,
+      "revenue_d30_rub": 18485
+    },
+    {
+      "cohort": "2026-05",
+      "registrations": 250,
+      "activation_proxy": 186,
+      "activation_rate_pct": 74.4,
+      "payers_d30": 89,
+      "reg_to_paid_d30_pct": 35.6,
+      "activation_to_paid_d30_pct": 34.4,
+      "revenue_d30_rub": 43437
+    },
+    {
+      "cohort": "2026-06",
+      "registrations": 208,
+      "activation_proxy": 155,
+      "activation_rate_pct": 74.5,
+      "payers_d30": 86,
+      "reg_to_paid_d30_pct": 41.3,
+      "activation_to_paid_d30_pct": 43.2,
+      "revenue_d30_rub": 41918
+    },
+    {
+      "cohort": "Всего",
+      "registrations": 600,
+      "activation_proxy": 445,
+      "activation_rate_pct": 74.2,
+      "payers_d30": 213,
+      "reg_to_paid_d30_pct": 35.5,
+      "activation_to_paid_d30_pct": 35.1,
+      "revenue_d30_rub": 103841
+    }
+  ],
+  "first_payment_replay": [
+    {
+      "cohort": "2026-04-13…04-30",
+      "payers": 38,
+      "first_payment_revenue_rub": 17639,
+      "current_20pct_rub": 3528,
+      "fixed_100_paid_rub": 3800,
+      "minimum_100_or_20pct_rub": 4880
+    },
+    {
+      "cohort": "2026-05",
+      "payers": 89,
+      "first_payment_revenue_rub": 40139,
+      "current_20pct_rub": 8028,
+      "fixed_100_paid_rub": 8900,
+      "minimum_100_or_20pct_rub": 11274
+    },
+    {
+      "cohort": "2026-06",
+      "payers": 86,
+      "first_payment_revenue_rub": 40448,
+      "current_20pct_rub": 8090,
+      "fixed_100_paid_rub": 8600,
+      "minimum_100_or_20pct_rub": 10546
+    },
+    {
+      "cohort": "Всего",
+      "payers": 213,
+      "first_payment_revenue_rub": 98227,
+      "current_20pct_rub": 19645,
+      "fixed_100_paid_rub": 21300,
+      "minimum_100_or_20pct_rub": 26701
+    }
+  ],
+  "models": [
+    {
+      "model": "Текущие 20% первой оплаты",
+      "reward_cost_cohort_rub": 19645,
+      "reward_per_registration_rub": 32.7,
+      "revenue_after_reward_per_registration_rub": 140.3,
+      "reward_cost_per_d30_payer_rub": 92.2,
+      "extra_registrations_needed_vs_paid100_pct": -2.0,
+      "verdict": "Control"
+    },
+    {
+      "model": "100 ₽ за первую оплату",
+      "reward_cost_cohort_rub": 21300,
+      "reward_per_registration_rub": 35.5,
+      "revenue_after_reward_per_registration_rub": 137.6,
+      "reward_cost_per_d30_payer_rub": 100.0,
+      "extra_registrations_needed_vs_paid100_pct": 0.0,
+      "verdict": "Победитель"
+    },
+    {
+      "model": "20 ₽ за активацию + 80 ₽ за оплату",
+      "reward_cost_cohort_rub": 25940,
+      "reward_per_registration_rub": 43.2,
+      "revenue_after_reward_per_registration_rub": 129.8,
+      "reward_cost_per_d30_payer_rub": 121.8,
+      "extra_registrations_needed_vs_paid100_pct": 6.0,
+      "verdict": "Второй тест"
+    },
+    {
+      "model": "100 ₽ за активацию (proxy)",
+      "reward_cost_cohort_rub": 44500,
+      "reward_per_registration_rub": 74.2,
+      "revenue_after_reward_per_registration_rub": 98.9,
+      "reward_cost_per_d30_payer_rub": 208.9,
+      "extra_registrations_needed_vs_paid100_pct": 39.1,
+      "verdict": "Не запускать"
+    }
+  ],
+  "connection_sensitivity": [
+    {
+      "verified_connection_rate_pct": 40,
+      "reward_cost_per_registration_rub": 40,
+      "revenue_after_reward_per_registration_rub": 133.1,
+      "registration_lift_needed_vs_paid100_pct": 3.4
+    },
+    {
+      "verified_connection_rate_pct": 50,
+      "reward_cost_per_registration_rub": 50,
+      "revenue_after_reward_per_registration_rub": 123.1,
+      "registration_lift_needed_vs_paid100_pct": 11.8
+    },
+    {
+      "verified_connection_rate_pct": 60,
+      "reward_cost_per_registration_rub": 60,
+      "revenue_after_reward_per_registration_rub": 113.1,
+      "registration_lift_needed_vs_paid100_pct": 21.7
+    },
+    {
+      "verified_connection_rate_pct": 74.2,
+      "reward_cost_per_registration_rub": 74.2,
+      "revenue_after_reward_per_registration_rub": 98.9,
+      "registration_lift_needed_vs_paid100_pct": 39.1
+    }
+  ],
+  "data_quality": [
+    {
+      "signal": "trial_used / trial_started",
+      "meaning": "Пользователь активировал trial",
+      "quality": "Средняя",
+      "problem": "Не доказывает реальный VPN-сеанс; старые trial_started неполны",
+      "reward_ready": "Нет"
+    },
+    {
+      "signal": "guide_connected",
+      "meaning": "Нажал «готово» в инструкции",
+      "quality": "Низкая",
+      "problem": "Самодекларация, легко фармится",
+      "reward_ready": "Нет"
+    },
+    {
+      "signal": "remnawave first_connected_at",
+      "meaning": "В snapshot виден первый connect",
+      "quality": "Низкая исторически",
+      "problem": "Snapshot неполный и цензурированный; часть плательщиков отсутствует",
+      "reward_ready": "Нет"
+    },
+    {
+      "signal": "первая successful payment + hold",
+      "meaning": "Получены деньги, refund window пройден",
+      "quality": "Высокая",
+      "problem": "Позже, чем connect, зато причинно связано с кассой",
+      "reward_ready": "Да"
+    }
+  ],
+  "decision": "fixed 100 RUB after first successful payment and hold; not on connection"
+}

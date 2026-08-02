@@ -1,0 +1,322 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "DoodleVPN: 30-дневный реферальный толчок",
+    "generatedAt": "2026-07-31T19:00:00+03:00",
+    "sources": [
+      {
+        "id": "internal_referral",
+        "label": "DoodleVPN validated referral analysis",
+        "path": "analysis/doodlevpn-growth-research-2026-07-30/doodlevpn_growth_research.ipynb",
+        "query": {
+          "description": "Validated ordinary referral behavior and economics from DoodleVPN data since 13 April 2026.",
+          "engine": "SQLite/Python",
+          "tables_used": [
+            "bot_mirror.users",
+            "bot_mirror.payments",
+            "bot_mirror.referral_holds",
+            "accounting.revenue"
+          ],
+          "filters": [
+            "Business flows >= 2026-04-13",
+            "Special partners excluded where ordinary referrals are stated"
+          ],
+          "metric_definitions": [
+            "recent inviter rate = 75 active payers with an invite in 30 days / 1,144 active payers = 6.6%",
+            "ordinary referral 7-day paid conversion in mature July cohort = 35.1%",
+            "30-day net revenue per ordinary referred payer = $6.98"
+          ]
+        }
+      },
+      {
+        "id": "scenario_model",
+        "label": "Referral sprint scenario model",
+        "path": "analysis/doodlevpn-referral-sprint-2026-07-31/sprint_scenarios.csv",
+        "query": {
+          "description": "Pessimistic, base and aggressive participation scenarios for a 30-day gift sprint.",
+          "engine": "SQLite/Python",
+          "sql": "WITH scenario_snapshot(scenario, target_inviter_rate, incremental_inviters, incremental_registrations, incremental_payers, incremental_revenue_30d, current_20pct_obligation, payer_server_cost, reward_cash_cost, max_reward_opportunity_cost, contribution_after_max_opportunity) AS (VALUES\n('Pessimistic', 0.1, 39.4, 51.2, 18.0, 125.49, 25.1, 4.31, 5.95, 56.27, 33.85),\n('Base', 0.15, 96.6, 144.9, 50.9, 355.0, 71.0, 12.21, 16.84, 159.19, 95.76),\n('Aggressive', 0.2, 153.8, 261.5, 91.8, 640.57, 128.11, 22.03, 30.39, 287.25, 172.79)\n) SELECT * FROM scenario_snapshot;",
+          "metric_definitions": [
+            "incremental payers = incremental inviters × registrations per inviter × 35.1% paid conversion",
+            "payer server cost and reward server cost are shown as separate $0.24 user-months",
+            "cash reward cost includes the referrer's reward month plus four added friend trial days",
+            "max opportunity cost assumes every 30-day sender reward replaces $3.13 of renewal revenue"
+          ]
+        }
+      },
+      {
+        "id": "in_kind_study",
+        "label": "Monetary versus in-kind referral rewards",
+        "href": "https://www.sciencedirect.com/science/article/pii/S0167811613000906"
+      },
+      {
+        "id": "uncertainty_study",
+        "label": "Management Science referral field experiment",
+        "href": "https://pubsonline.informs.org/doi/10.1287/mnsc.2024.05685"
+      },
+      {
+        "id": "freemium_study",
+        "label": "Social Referral Programs for Freemium Platforms",
+        "href": "https://pubsonline.informs.org/doi/10.1287/mnsc.2022.4301"
+      }
+    ],
+    "blocks": [
+      {
+        "id": "title",
+        "type": "markdown",
+        "body": "# DoodleVPN: 30-дневный реферальный толчок"
+      },
+      {
+        "id": "executive",
+        "type": "markdown",
+        "body": "## Executive Summary\n\n- **Да: основу сейчас надо делать на массовой рефералке, но не на знакомых-партнёрах.** У 1,144 активных плательщиков собственные маленькие социальные графы; за последние 30 дней приглашали только 75 человек.\n- **Запускать один оффер:** «Другу — 7 дней вместо 3. Вам — 30 дней после его первой оплаты». Награда даётся уже за первого платящего друга; никакого порога в три человека.\n- **На 30 дней не ломать текущие 20%.** Treatment получает новую награду сверху, control остаётся на старой механике. Если пакет выигрывает, для новых referrals постоянная модель становится выбором «30 дней или 20%», без вечного двойного вознаграждения.\n- **Базовый сценарий:** рост доли недавно реферивших с 6.6% до 15% даёт около 51 дополнительного плательщика и $356 новой 30-дневной выручки — примерно 47% майско-июльского разрыва."
+      },
+      {
+        "id": "source",
+        "type": "markdown",
+        "body": "## Источник новых людей — 93.4% базы, которая сейчас молчит\n\nПартнёрские аудитории действительно исчерпаны. Но это не означает, что исчерпаны личные графы обычных пользователей: 71.8% активных плательщиков вообще никогда никого не приглашали, 960 не имеют ни одного активного платного реферала, а за последний месяц приглашали лишь 6.6%.\n\nКачество уже доказано: обычные рефералы конвертируются в оплату примерно вдвое лучше нереферальных регистраций. Значит, bottleneck находится до перехода друга — пользователь не видит достаточно сильной и социально нормальной причины отправить ссылку.",
+        "sourceId": "internal_referral"
+      },
+      {
+        "id": "offer",
+        "type": "markdown",
+        "body": "## Единственный оффер теста\n\n**Друг получает точно семь бесплатных дней вместо стандартных трёх. Реферер получает точно 30 дней подписки после первой подтверждённой оплаты друга.**\n\nПочему не $0.63 и не порог «три друга»: деньги создают ощущение, что пользователь зарабатывает на знакомом, а маленький баланс и $10 на вывод слишком далеки. Исследования находят, что для менее сильного бренда in-kind reward может работать лучше денег из-за меньшего социального дискомфорта; крупный field experiment показывает, что получателю важна определённая, а не случайная выгода. Doodle-данные добавляют решающий аргумент: 72.4% исторических рефереров остановились на одном-двух приглашённых, поэтому threshold создаст cold start.\n\nПоказывать честно: «Тебе 7 дней. Если останешься — мне добавят месяц». Это подарок с прозрачной взаимной выгодой, а не MLM."
+      },
+      {
+        "id": "mobile_flow",
+        "type": "markdown",
+        "body": "## Мобильный flow в пять экранов\n\n1. На главном экране после успешного подключения или оплаты — карточка **«Подарить другу 7 дней»**. Не ещё одна постоянная кнопка в общей каше.\n2. Реферальный экран: один тезис «Другу 7 дней · вам 30 дней после его оплаты», одна кнопка **«Подарить»**, ниже статусы друзей.\n3. Telegram share sheet с текстом: «Я пользуюсь DoodleVPN. По моей ссылке тебе 7 дней вместо 3. Если останешься — мне тоже добавят месяц: …».\n4. Friend landing: «[Имя] подарил вам 7 дней DoodleVPN», одна кнопка **«Подключить бесплатно»**. Не показывать заработок, USDT и длинные условия до подключения.\n5. После оплаты друга: «Готово — вам добавлено 30 дней». Баланс денег и вывод от $10 остаются отдельным вторичным блоком **«Зарабатывать»**."
+      },
+      {
+        "id": "economics_intro",
+        "type": "markdown",
+        "body": "## Даже консервативная экономика положительная\n\nМодель ниже оставляет текущие 20% и одновременно считает каждый подаренный месяц как будто он полностью заменил обычное продление на $3.13. Это завышает opportunity cost, но даже при таком подходе все три сценария остаются положительными. Серверная cash-cost подарочного месяца показана отдельно и составляет около $0.24."
+      },
+      {
+        "id": "economics_chart",
+        "type": "chart",
+        "chartId": "scenario_chart"
+      },
+      {
+        "id": "economics_table",
+        "type": "table",
+        "tableId": "scenario_table"
+      },
+      {
+        "id": "experiment",
+        "type": "markdown",
+        "body": "## Эксперимент: 70% treatment, 30% holdout\n\n**Кого включить:** обычные пользователи, которые сейчас платят; исключить специальных партнёров, сотрудников, тестовые аккаунты и крупных outlier-рефереров. Randomization — по `referrer_user_id`, ссылка навсегда наследует arm.\n\n**Treatment:** 7 дней другу + 30 дней рефереру после первой оплаты + текущие 20% на время спринта. **Control:** текущий оффер 3 дня + 20%.\n\n**Primary:** first-paid referrals D30 / eligible users. **Secondary:** referral-page open, share, friend start, first connection, first paid, D30 net revenue. **Guardrails:** refunds/fraud, renewal displacement, bot blocks, support load.\n\nПри маленькой выборке использовать Bayesian/Poisson readout: пакет выигрывает, если вероятность положительного lift >80%, rate treatment минимум в 1.5 раза выше control и incremental contribution положительный. Не ждать формального p<0.05, которого эта база может не дать."
+      },
+      {
+        "id": "steps",
+        "type": "markdown",
+        "body": "## Пошагово: что делать завтра и дальше\n\n### Завтра\n\n1. Остановить любые планы игры, free-tier и порога «три друга».\n2. Зафиксировать treatment/control и оффер без вариантов.\n3. Добавить события: referral_view, share_tap, recipient_start, first_connection, first_paid, reward_granted, refund.\n4. Сохранить первую атрибуцию друга; повторные ссылки не перетирают referrer.\n\n### Дни 2–4\n\n1. Переписать один мобильный referral screen и friend landing.\n2. Добавить reward ledger: 30 дней выдаются один раз после settled payment и hold; при refund не выдавать или откатывать до использования.\n3. Антифрод: новый recipient, один trial lifetime, совпадающий Telegram/device key не засчитывается, сотрудники/тесты исключены. IP — только сигнал, не бан.\n\n### День 5\n\n1. Запустить на 10% treatment как QA.\n2. Проверить вручную полный путь двумя чистыми аккаунтами: share → start → connection → payment → 30 days.\n3. Если ledger и attribution сходятся — расширить до 70/30.\n\n### Дни 6–30\n\n1. Показывать карточку после успешной оплаты/подключения и в момент, когда пользователь явно доволен.\n2. Одно стартовое сообщение treatment-аудитории. Второе — только открывшим referral screen, но не нажавшим Share, через 72 часа. Третье — только когда друг начал trial или до награды остался один шаг.\n3. Не долбить ежедневными referral-уведомлениями. Максимум три кампанийных касания за 30 дней.\n4. Каждые семь дней считать rate и contribution, но не менять оффер посередине."
+      },
+      {
+        "id": "decision",
+        "type": "markdown",
+        "body": "## Решение на 30-й день\n\n**Rollout:** treatment даёт ≥1.5× first-paid rate control, минимум 30 дополнительных плательщиков в пересчёте на всю базу, положительный contribution, fraud/refund <8%. Для новых ссылок сделать два режима: по умолчанию **«Бесплатный VPN — 30 дней за каждого платящего друга»**; отдельно **«Заработок — 20% и вывод от $10»**. Старые обязательства 20% сохранить.\n\n**Повторить ещё 30 дней:** lift 1.2–1.5× и contribution положительный, но credible interval широкий. Менять только одну часть: сначала проверить 14 против 30 дней рефереру.\n\n**Kill:** lift <20%, меньше 10 дополнительных плательщиков, contribution отрицательный или fraud/refund ≥8%. Тогда не строить игру: вернуться к текущим 20% и искать внешний канал, потому что одной перестановкой UX социальные графы не расширить."
+      },
+      {
+        "id": "caveats",
+        "type": "markdown",
+        "body": "## Caveats and Assumptions\n\n51 дополнительный плательщик — сценарий, а не прогноз. Его главный допуск: новая механика поднимет долю недавно приглашающих с 6.6% до 15%. Control нужен именно для проверки этого допущения. Расчёт разделяет cash-cost, существующие 20% и максимальную упущенную выручку подаренного месяца; их нельзя складывать как одну и ту же статью. Внешние исследования проведены не на российском VPN, поэтому дизайн опирается прежде всего на собственную воронку Doodle."
+      }
+    ],
+    "charts": [
+      {
+        "id": "scenario_chart",
+        "title": "Referral sprint scenarios",
+        "subtitle": "Incremental first-paid users and 30-day revenue as recent-inviter participation rises from 6.6%.",
+        "type": "bar",
+        "dataset": "scenarios",
+        "sourceId": "scenario_model",
+        "encodings": {
+          "x": {
+            "field": "scenario",
+            "type": "nominal",
+            "label": "Scenario"
+          },
+          "y": {
+            "field": "incremental_payers",
+            "type": "quantitative",
+            "label": "Incremental payers",
+            "format": "number"
+          }
+        },
+        "valueFormat": "number",
+        "options": {
+          "orientation": "vertical",
+          "valueLabels": true
+        }
+      }
+    ],
+    "tables": [
+      {
+        "id": "scenario_table",
+        "title": "Thirty-day scenario economics",
+        "subtitle": "Current 20% obligation and maximum renewal displacement are both included during the temporary sprint.",
+        "dataset": "scenarios",
+        "sourceId": "scenario_model",
+        "defaultSort": {
+          "field": "target_inviter_rate",
+          "direction": "asc"
+        },
+        "columns": [
+          {
+            "field": "scenario",
+            "label": "Scenario"
+          },
+          {
+            "field": "target_inviter_rate",
+            "label": "Recent inviters",
+            "format": "percent"
+          },
+          {
+            "field": "incremental_payers",
+            "label": "New payers",
+            "format": "number"
+          },
+          {
+            "field": "incremental_revenue_30d",
+            "label": "30d revenue",
+            "format": "currency"
+          },
+          {
+            "field": "current_20pct_obligation",
+            "label": "Existing 20%",
+            "format": "currency"
+          },
+          {
+            "field": "payer_server_cost",
+            "label": "Payer server cost",
+            "format": "currency"
+          },
+          {
+            "field": "reward_cash_cost",
+            "label": "Reward cash cost",
+            "format": "currency"
+          },
+          {
+            "field": "max_reward_opportunity_cost",
+            "label": "Max opportunity cost",
+            "format": "currency"
+          },
+          {
+            "field": "contribution_after_max_opportunity",
+            "label": "Contribution",
+            "format": "currency",
+            "movement": true
+          }
+        ]
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "status": "ready",
+    "generatedAt": "2026-07-31T19:00:00+03:00",
+    "datasets": {
+      "scenarios": [
+        {
+          "scenario": "Pessimistic",
+          "target_inviter_rate": 0.1,
+          "incremental_inviters": 39.4,
+          "incremental_registrations": 51.2,
+          "incremental_payers": 18.0,
+          "incremental_revenue_30d": 125.49,
+          "current_20pct_obligation": 25.1,
+          "payer_server_cost": 4.31,
+          "reward_cash_cost": 5.95,
+          "max_reward_opportunity_cost": 56.27,
+          "contribution_after_max_opportunity": 33.85
+        },
+        {
+          "scenario": "Base",
+          "target_inviter_rate": 0.15,
+          "incremental_inviters": 96.6,
+          "incremental_registrations": 144.9,
+          "incremental_payers": 50.9,
+          "incremental_revenue_30d": 355.0,
+          "current_20pct_obligation": 71.0,
+          "payer_server_cost": 12.21,
+          "reward_cash_cost": 16.84,
+          "max_reward_opportunity_cost": 159.19,
+          "contribution_after_max_opportunity": 95.76
+        },
+        {
+          "scenario": "Aggressive",
+          "target_inviter_rate": 0.2,
+          "incremental_inviters": 153.8,
+          "incremental_registrations": 261.5,
+          "incremental_payers": 91.8,
+          "incremental_revenue_30d": 640.57,
+          "current_20pct_obligation": 128.11,
+          "payer_server_cost": 22.03,
+          "reward_cash_cost": 30.39,
+          "max_reward_opportunity_cost": 287.25,
+          "contribution_after_max_opportunity": 172.79
+        }
+      ]
+    }
+  },
+  "sources": [
+    {
+      "id": "internal_referral",
+      "label": "DoodleVPN validated referral analysis",
+      "path": "analysis/doodlevpn-growth-research-2026-07-30/doodlevpn_growth_research.ipynb",
+      "query": {
+        "description": "Validated ordinary referral behavior and economics from DoodleVPN data since 13 April 2026.",
+        "engine": "SQLite/Python",
+        "tables_used": [
+          "bot_mirror.users",
+          "bot_mirror.payments",
+          "bot_mirror.referral_holds",
+          "accounting.revenue"
+        ],
+        "filters": [
+          "Business flows >= 2026-04-13",
+          "Special partners excluded where ordinary referrals are stated"
+        ],
+        "metric_definitions": [
+          "recent inviter rate = 75 active payers with an invite in 30 days / 1,144 active payers = 6.6%",
+          "ordinary referral 7-day paid conversion in mature July cohort = 35.1%",
+          "30-day net revenue per ordinary referred payer = $6.98"
+        ]
+      }
+    },
+    {
+      "id": "scenario_model",
+      "label": "Referral sprint scenario model",
+      "path": "analysis/doodlevpn-referral-sprint-2026-07-31/sprint_scenarios.csv",
+      "query": {
+        "description": "Pessimistic, base and aggressive participation scenarios for a 30-day gift sprint.",
+        "engine": "SQLite/Python",
+        "sql": "WITH scenario_snapshot(scenario, target_inviter_rate, incremental_inviters, incremental_registrations, incremental_payers, incremental_revenue_30d, current_20pct_obligation, payer_server_cost, reward_cash_cost, max_reward_opportunity_cost, contribution_after_max_opportunity) AS (VALUES\n('Pessimistic', 0.1, 39.4, 51.2, 18.0, 125.49, 25.1, 4.31, 5.95, 56.27, 33.85),\n('Base', 0.15, 96.6, 144.9, 50.9, 355.0, 71.0, 12.21, 16.84, 159.19, 95.76),\n('Aggressive', 0.2, 153.8, 261.5, 91.8, 640.57, 128.11, 22.03, 30.39, 287.25, 172.79)\n) SELECT * FROM scenario_snapshot;",
+        "metric_definitions": [
+          "incremental payers = incremental inviters × registrations per inviter × 35.1% paid conversion",
+          "payer server cost and reward server cost are shown as separate $0.24 user-months",
+          "cash reward cost includes the referrer's reward month plus four added friend trial days",
+          "max opportunity cost assumes every 30-day sender reward replaces $3.13 of renewal revenue"
+        ]
+      }
+    },
+    {
+      "id": "in_kind_study",
+      "label": "Monetary versus in-kind referral rewards",
+      "href": "https://www.sciencedirect.com/science/article/pii/S0167811613000906"
+    },
+    {
+      "id": "uncertainty_study",
+      "label": "Management Science referral field experiment",
+      "href": "https://pubsonline.informs.org/doi/10.1287/mnsc.2024.05685"
+    },
+    {
+      "id": "freemium_study",
+      "label": "Social Referral Programs for Freemium Platforms",
+      "href": "https://pubsonline.informs.org/doi/10.1287/mnsc.2022.4301"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+scenario,target_inviter_rate,incremental_inviters,incremental_registrations,incremental_payers,incremental_revenue_30d,current_20pct_obligation,payer_server_cost,reward_cash_cost,max_reward_opportunity_cost,contribution_after_max_opportunity
+Pessimistic,0.1,39.4,51.2,18.0,125.49,25.1,4.31,5.95,56.27,33.85
+Base,0.15,96.6,144.9,50.9,355.0,71.0,12.21,16.84,159.19,95.76
+Aggressive,0.2,153.8,261.5,91.8,640.57,128.11,22.03,30.39,287.25,172.79

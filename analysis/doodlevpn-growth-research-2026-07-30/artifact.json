@@ -1,0 +1,2763 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "DoodleVPN: как вернуть рост без рекламного бюджета",
+    "description": "Independent growth, referral, lifecycle, game and unit-economics decision report.",
+    "generatedAt": "2026-07-30T21:00:00Z",
+    "sources": [
+      {
+        "id": "revenue_export",
+        "label": "DoodleVPN validated revenue aggregate",
+        "path": "analysis/doodlevpn-growth-research-2026-07-30/monthly_metrics.csv",
+        "query": {
+          "description": "Reviewed aggregate reproduced from accounting and bot mirrors; VALUES preserve the exact chart snapshot.",
+          "engine": "SQLite",
+          "sql": "WITH monthly_snapshot (month, segment, revenue, total, payers, registrations, aov) AS (\n  VALUES ('May', 'New', 3006.33, 3581.06, 644, 892, 4.91),\n  ('May', 'Returning', 574.73, 3581.06, 644, 892, 4.91),\n  ('June', 'New', 1662.92, 3066.94, 576, 627, 4.78),\n  ('June', 'Returning', 1404.02, 3066.94, 576, 627, 4.78),\n  ('July', 'New', 1452.03, 2823.94, 514, 420, 4.98),\n  ('July', 'Returning', 1371.91, 2823.94, 514, 420, 4.98)\n)\nSELECT * FROM monthly_snapshot;",
+          "tables_used": [
+            "accounting.revenue",
+            "accounting.revenue_refunds",
+            "bot_mirror.users",
+            "bot_mirror.payments"
+          ],
+          "filters": [
+            "paid_at >= 2026-04-13",
+            "paid_at < 2026-07-30 21:00:00 UTC",
+            "refunds matched to original source and external id"
+          ],
+          "metric_definitions": [
+            "net revenue = amount_usd_net less matched refunds",
+            "new payer = first observed successful payment after 2026-04-13"
+          ]
+        }
+      },
+      {
+        "id": "driver_export",
+        "label": "DoodleVPN revenue driver bridge",
+        "query": {
+          "description": "Reviewed May-to-July segment bridge; VALUES preserve the exact chart snapshot.",
+          "engine": "SQLite",
+          "sql": "WITH driver_snapshot (segment, may, july, change, share) AS (\n  VALUES ('Special partners', 906.44, 486.52, -419.92, 0.555),\n  ('Retail referrals 20%', 1203.32, 975.75, -227.57, 0.301),\n  ('Non-ref / unattributed', 1471.3, 1361.67, -109.63, 0.145)\n)\nSELECT * FROM driver_snapshot;",
+          "tables_used": [
+            "accounting.revenue",
+            "accounting.revenue_refunds",
+            "bot_mirror.users"
+          ],
+          "filters": [
+            "May and July 1–30 2026",
+            "payer segmented by current referrer commission classification"
+          ]
+        }
+      },
+      {
+        "id": "referral_export",
+        "label": "DoodleVPN validated referral aggregate",
+        "path": "analysis/doodlevpn-growth-research-2026-07-30/doodlevpn_growth_research.ipynb",
+        "query": {
+          "description": "Reviewed referral activity snapshot reproduced from bot mirror.",
+          "engine": "SQLite",
+          "sql": "WITH referral_activity_snapshot (month, registrations, active_referrers, regs_per_referrer) AS (\n  VALUES ('Apr 13–30', 142, 96, 1.48),\n  ('May', 250, 163, 1.53),\n  ('June', 208, 135, 1.54),\n  ('July', 102, 83, 1.23)\n)\nSELECT * FROM referral_activity_snapshot;",
+          "tables_used": [
+            "bot_mirror.users",
+            "bot_mirror.payments",
+            "bot_mirror.referral_holds",
+            "bot_mirror.withdrawal_requests"
+          ],
+          "filters": [
+            "registration flow >= 2026-04-13",
+            "lifetime fields explicitly labeled",
+            "commission 20% = retail; other = special"
+          ]
+        }
+      },
+      {
+        "id": "unit_model",
+        "label": "DoodleVPN scenario model",
+        "path": "analysis/doodlevpn-growth-research-2026-07-30/unit_economics.csv",
+        "query": {
+          "description": "Transparent pessimistic/base/aggressive unit-economics sensitivity model; VALUES preserve the finalist snapshot.",
+          "engine": "SQLite",
+          "sql": "WITH unit_finalists_snapshot (strategy, scenario, incremental_payers, revenue, current_obligation, server_cost, opportunity_cost, baseline_subsidy, external_prizes, fraud_reserve, net_contribution, break_even_payers) AS (\n  VALUES ('20% + мгновенная трата в VPN', 'pessimistic', 3.5, 24.43, 4.89, 0.84, 0.0, 0.0, 0.0, 0.0, 8.7, 1.9),\n  ('20% + мгновенная трата в VPN', 'base', 8.8, 61.08, 12.22, 1.05, 0.0, 0.0, 0.0, 0.0, 22.81, 4.6),\n  ('20% + мгновенная трата в VPN', 'aggressive', 14.0, 97.72, 19.54, 0.7, 0.0, 0.0, 0.0, 0.0, 27.48, 9.0),\n  ('3 активных = бесплатный VPN', 'pessimistic', 1.8, 12.21, 2.44, 0.42, 0.0, 0.0, 0.0, 0.0, -26.95, 6.8),\n  ('3 активных = бесплатный VPN', 'base', 5.2, 36.65, 7.33, 0.63, 0.0, 0.0, 0.0, 0.0, -7.61, 6.6),\n  ('3 активных = бесплатный VPN', 'aggressive', 10.5, 73.29, 14.66, 0.53, 0.0, 0.0, 0.0, 0.0, 21.81, 6.6),\n  ('20% + 7 дней другу после оплаты', 'pessimistic', 4.2, 29.32, 5.86, 3.2, 28.63, 27.52, 0.0, 0.0, -8.38, 6.0),\n  ('20% + 7 дней другу после оплаты', 'base', 9.8, 68.4, 13.68, 2.43, 16.36, 13.76, 0.0, 0.0, 35.93, 2.7),\n  ('20% + 7 дней другу после оплаты', 'aggressive', 17.5, 122.15, 24.43, 1.49, 9.59, 6.8, 0.0, 0.0, 86.65, 1.3),\n  ('Игра + фиксированный магазин', 'pessimistic', 3.5, 24.43, 4.89, 0.84, 0.0, 14.0, 0.0, 1.01, 2.29, 2.8),\n  ('Игра + фиксированный магазин', 'base', 10.5, 73.29, 14.66, 1.26, 0.0, 14.0, 25.0, 2.89, 11.28, 7.7),\n  ('Игра + фиксированный магазин', 'aggressive', 21.0, 146.58, 29.32, 1.05, 0.0, 14.0, 50.0, 5.09, 38.73, 12.5),\n  ('Новые партнёры: $2 first-paid + 10% recurring', 'pessimistic', 1.0, 5.74, 0.57, 0.24, 0.0, 0.0, 0.0, 0.13, 2.8, 0.0),\n  ('Новые партнёры: $2 first-paid + 10% recurring', 'base', 4.0, 22.96, 2.3, 0.48, 0.0, 0.0, 0.0, 0.51, 11.67, 0.0),\n  ('Новые партнёры: $2 first-paid + 10% recurring', 'aggressive', 8.0, 45.92, 4.59, 0.4, 0.0, 0.0, 0.0, 1.03, 23.9, 0.0),\n  ('Внутренний баланс + 7 дней другу', 'pessimistic', 6.3, 43.97, 8.79, 3.82, 30.16, 27.52, 0.0, 0.26, -9.07, 8.2),\n  ('Внутренний баланс + 7 дней другу', 'base', 14.0, 97.72, 19.54, 3.05, 17.89, 13.76, 0.0, 0.59, 36.64, 6.7),\n  ('Внутренний баланс + 7 дней другу', 'aggressive', 24.5, 171.01, 34.2, 1.92, 10.86, 6.8, 0.0, 1.03, 83.0, 8.8)\n)\nSELECT * FROM unit_finalists_snapshot;",
+          "language": "Python",
+          "metric_definitions": [
+            "incremental contribution subtracts current referral obligation, reward subsidy paid to baseline and incremental converters, server cost, opportunity cost, prizes, cannibalization and fraud reserve",
+            "scenario uplifts are assumptions, not forecasts"
+          ]
+        }
+      },
+      {
+        "id": "score_model",
+        "label": "DoodleVPN 100-point strategy scoring",
+        "path": "analysis/doodlevpn-growth-research-2026-07-30/strategy_scoring.csv",
+        "query": {
+          "description": "Owner-weighted and sensitivity scores; VALUES preserve the exact report snapshot.",
+          "engine": "SQLite",
+          "sql": "WITH strategy_score_snapshot (strategy, owner, profit_heavy, viral_heavy, risk_speed) AS (\n  VALUES ('Текущие 20%', 64.15, 61.4, 62.0, 69.6),\n  ('20%, вывод от $3', 71.15, 69.4, 68.4, 75.6),\n  ('20% + мгновенная трата в VPN', 83.85, 83.0, 80.2, 86.4),\n  ('7 дней рефереру вместо денег', 76.9, 73.9, 75.1, 80.2),\n  ('3 активных = бесплатный VPN', 68.5, 65.9, 67.1, 72.3),\n  ('Выбор: деньги или VPN', 80.5, 79.2, 78.6, 82.0),\n  ('20% + 7 дней другу после оплаты', 85.8, 84.4, 85.2, 86.65),\n  ('30-дневный referral-спринт', 80.2, 77.9, 81.1, 81.0),\n  ('Розыгрыш среди оплативших друзей', 59.75, 54.75, 62.75, 61.5),\n  ('Игра + фиксированный магазин', 71.45, 68.5, 73.5, 70.7),\n  ('Игра + случайные ценные призы', 62.15, 56.85, 66.05, 61.4),\n  ('Новые партнёры: $2 first-paid + 10% recurring', 76.7, 76.6, 75.8, 76.4),\n  ('Lifecycle/winback без скидки', 80.9, 82.2, 73.4, 84.6),\n  ('Внутренний баланс + 7 дней другу', 87.4, 86.75, 87.15, 86.1),\n  ('Гибрид + сезонный Doodle Route', 76.3, 74.4, 78.8, 73.3)\n)\nSELECT * FROM strategy_score_snapshot;",
+          "language": "Python"
+        }
+      },
+      {
+        "id": "root_analysis",
+        "label": "Root-cause evidence matrix",
+        "query": {
+          "description": "Reviewed evidence and uncertainty matrix assembled from validated aggregates.",
+          "engine": "SQLite",
+          "sql": "WITH root_cause_snapshot (hypothesis, support, contradiction, missing, confidence, discriminator) AS (\n  VALUES ('Приток новых плательщиков упал', 'New revenue: $3,006 May → $1,452 July; registrations 892 → 420', '7-day conversion did not collapse', 'Canonical acquisition cohort before Apr 13', 'High', 'Weekly acquired paid users by attributable source'),\n  ('Просели специальные партнёры', '−$420 May→July; top 10 explain −$428', 'Other partners grew +$8', 'Partner content cadence and reach', 'High', 'Partner-level reactivation with matched historical baseline'),\n  ('Меньше обычных людей вообще реферят', '163 active referrers May → 83 July; ~83% registration decline is count effect', 'Referred users still convert ~35% in mature July cohort', 'View/copy/share funnel', 'High', 'Referral activation experiment with event funnel'),\n  ('Упал настоящий organic/direct', 'Non-ref registrations also fell', 'Non-ref revenue only −$110; 73.5% source missing', 'UTM/deep-link attribution', 'Medium-low', 'Persist first/last touch for every start/payment'),\n  ('Notification fatigue harms conversion', 'Pretrial users got 18.8 repeated messages on average; only 5 paid within 7d', 'No holdout, so no causal estimate', 'Bot blocks, controls, delivery IDs', 'Medium', 'Zero-message vs two-message randomized holdout'),\n  ('Payment failure caused decline', 'Crypto settled/attempt fell to ~31%', 'Wata click→paid improved to 82.7%; crypto too small to explain total', 'Provider-normalized intent funnel', 'Low', 'Payment-intent cohort by provider and error'),\n  ('Retention collapsed', 'Possible definition-sensitive renewal softness', 'Returning revenue $1,404 June vs $1,372 July', 'Canonical eligible renewal event', 'Low/unknown', 'Eligible renewal cohorts with plan-expiry logic'),\n  ('Price/AOV problem', 'None material', 'AOV stable $4.91→$4.98', 'Price elasticity test', 'Low', 'Do not test until acquisition leak is fixed'),\n  ('Growing online proves healthy growth', 'Total MAU rose', 'Core tg MAU fell 1,552→1,450; restore accounts rose 4→468', 'Canonical customer-active metric', 'Rejected', 'Exclude wl_restor* from business MAU')\n)\nSELECT * FROM root_cause_snapshot;"
+        }
+      },
+      {
+        "id": "strategy_analysis",
+        "label": "Strategy comparison model",
+        "query": {
+          "description": "Reviewed mechanics, base economics and owner-weighted scores.",
+          "engine": "SQLite",
+          "sql": "WITH strategy_snapshot (strategy, mechanic, base_incremental_payers, base_net_contribution, score, risk, verdict) AS (\n  VALUES ('Текущие 20%', 'Деньги, вывод $10 USDT', 0.0, 0.0, 64.2, 'Низкая ликвидность', 'Control'),\n  ('20%, вывод от $3', 'Те же деньги, раньше вывод', 4.2, 22.95, 71.2, 'Cash release existing liability', 'Test only if internal spend cannot ship'),\n  ('20% + мгновенная трата в VPN', 'Баланс тратится с первого цента', 8.8, 22.81, 83.8, 'Cash cannibalization/timing', 'Stage 1'),\n  ('7 дней рефереру вместо денег', 'Фиксированные дни за оплату', 7.0, 80.37, 76.9, 'May repel earners; contract change', 'Isolated test, not default'),\n  ('3 активных = бесплатный VPN', 'Cliff at three active friends', 5.2, -7.61, 68.5, '78% stop at 1–2 registrations', 'Reject as first move'),\n  ('Выбор: деньги или VPN', 'User chooses redemption', 7.0, 18.25, 80.5, 'More UI complexity', 'Good fallback'),\n  ('20% + 7 дней другу после оплаты', 'Real recipient benefit', 9.8, 35.93, 85.8, 'Subsidizes baseline conversions', 'Stage 2'),\n  ('30-дневный referral-спринт', 'Temporary boosted rewards', 12.2, 9.78, 80.2, 'Fatigue and subsidy', 'Later campaign'),\n  ('Розыгрыш среди оплативших друзей', 'Random prize', 10.5, -24.8, 59.8, 'Legal, tax, fraud', 'Do not launch'),\n  ('Игра + фиксированный магазин', 'Deterministic points store', 10.5, 11.28, 71.5, 'Farmer traffic', 'Only after offer proof'),\n  ('Игра + случайные ценные призы', 'Cases/roulette', 14.0, -65.29, 62.1, 'Fraud, legal, reputation', 'Reject'),\n  ('Новые партнёры: $2 first-paid + 10% recurring', 'Front-loaded partner bounty', 4.0, 11.67, 76.7, 'Partner quality', 'New contracts only'),\n  ('Lifecycle/winback без скидки', 'Behavior-triggered owned CRM', 10.0, 43.8, 80.9, 'Needs measurement', 'Run in parallel'),\n  ('Внутренний баланс + 7 дней другу', 'Liquid sender reward + friend benefit', 14.0, 36.64, 87.4, 'Needs ≥24% lift in worst case', 'Recommended staged package'),\n  ('Гибрид + сезонный Doodle Route', 'Same offer plus game layer', 17.5, 18.98, 76.3, 'Game can hide weak offer', 'Stage 3 only')\n)\nSELECT * FROM strategy_snapshot;"
+        }
+      },
+      {
+        "id": "analog_analysis",
+        "label": "Public analogue review",
+        "query": {
+          "description": "Public mechanics and applicability; no performance claims inferred.",
+          "engine": "SQLite",
+          "sql": "WITH analogue_snapshot (analog, market_price, mechanic, threshold_hold, applicability, source) AS (\n  VALUES ('Zefir VPN', 'RU Telegram VPN; 199 Stars/mo', 'Friend gets 7d instead of 3; inviter +7d; 3 friends +30d; 5 subscribed friends = free while they renew', '1 / 3 / 5; paid-active condition', 'Very close product/market; performance and company size undisclosed', 'https://zefirvpn.ru/'),\n  ('Volno', 'RU Telegram VPN; 199 ₽/mo', 'Bonus days to both sides after friend’s first payment', 'First payment; exact days not public', 'Close low-ticket benchmark; result data absent', 'https://volno.online/'),\n  ('Delta VPN', 'RU VPN; 100 ₽/mo', 'Friend 1 month, inviter 15 days', 'Per friend; unlimited stated', 'Shows aggressive subsidy, not that it is profitable', 'https://deltavpn.ru/'),\n  ('Tuneway', 'RU VPN; 249 ₽/mo', 'Inviter +10d per subscribed friend; 9 friends = 3 months', 'Subscribed friend', 'Simple one-sided days; higher price than DoodleVPN', 'https://dostup24.com/'),\n  ('FastNeo VPN', 'RU Telegram VPN; 150 ₽/mo', '50% from every friend payment, withdrawal in bot', 'Public withdrawal threshold not stated', 'Closest cash recurring analogue; economics/outcomes undisclosed', 'https://fastneoapp.com/'),\n  ('Telegram Affiliate Programs', 'Telegram Mini Apps using Stars', 'Developer sets revenue-share percent and duration; commissions in Stars', 'Only referred Mini App Stars transactions', 'Potential infrastructure, not proof of user appeal; VPN advertising law still applies', 'https://core.telegram.org/api/bots/referrals')\n)\nSELECT * FROM analogue_snapshot;"
+        }
+      },
+      {
+        "id": "game_analysis",
+        "label": "Game concept evaluation",
+        "query": {
+          "description": "Expert screen against requested product, retention, cost, fraud and reputation dimensions.",
+          "engine": "SQLite",
+          "sql": "WITH game_snapshot (concept, five_second, viral, d1_d7_d30, ref_dependency, reward_cost, mvp, antifraud, vpn_fit, boredom, legal_rep) AS (\n  VALUES ('Doodle Route seasonal map', '5', '5', '4/4/3', 'High', 'Low–medium', '1–3d UI; 3–7d safe integration', '4/5', '4/5', 'Medium', 'Low if deterministic'),\n  ('Internet Passport stamps', '5', '4', '4/4/3', 'Medium', 'Low', '1–3d', '5/5', '4/5', 'Medium', 'Low'),\n  ('Shield Team 3–5 people', '4', '5', '4/4/3', 'Very high', 'Medium', '2–5d', '3/5', '4/5', 'Medium', 'Low–medium'),\n  ('Gift a Shield', '5', '5', '4/3/2', 'Very high', 'Low', '1–2d', '5/5', '5/5', 'High alone', 'Low'),\n  ('Referral Relay chain', '4', '5', '4/3/2', 'Very high', 'Medium', '2–4d', '3/5', '4/5', 'Medium', 'MLM optics risk'),\n  ('Shield City co-op', '4', '4', '4/4/3', 'Medium', 'Low', '3–7d', '4/5', '4/5', 'Medium', 'Low'),\n  ('Privacy Garden / pet', '5', '3', '4/4/3', 'Low', 'Low', '2–4d', '5/5', '4/5', 'Medium', 'Low'),\n  ('Server City builder', '4', '3', '4/4/3', 'Medium', 'Low', '3–7d', '4/5', '4/5', 'Medium', 'Low'),\n  ('Referral Boss', '4', '4', '4/3/2', 'Very high', 'Medium', '1–3d', '3/5', '3/5', 'High', 'Low'),\n  ('Mission board + badges', '5', '3', '4/3/2', 'Medium', 'Low', '1–3d', '5/5', '4/5', 'High', 'Low'),\n  ('Route leagues', '3', '4', '3/4/3', 'High', 'Medium', '3–7d', '3/5', '3/5', 'Medium', 'Competition risk'),\n  ('Treasure Map deterministic', '4', '4', '4/4/2', 'High', 'Medium', '2–4d', '4/5', '4/5', 'Medium', 'Low'),\n  ('Collectible stickers', '5', '4', '4/3/2', 'Medium', 'Very low', '1–3d', '5/5', '5/5', 'High', 'Low'),\n  ('Community milestone', '5', '3', '3/3/2', 'Low', 'Low', '1–3d', '5/5', '5/5', 'High', 'Low'),\n  ('Async expedition', '3', '4', '3/4/3', 'High', 'Medium', '3–7d', '3/5', '4/5', 'Medium', 'Low'),\n  ('Cases / roulette with valuable prizes', '5', '5', '4/3/1', 'High', 'High', '1–3d', '1/5', '1/5', 'High', 'High risk')\n)\nSELECT * FROM game_snapshot;"
+        }
+      },
+      {
+        "id": "lifecycle_analysis",
+        "label": "Lifecycle message design",
+        "query": {
+          "description": "State-triggered matrix with suppression, holdout and success events.",
+          "engine": "SQLite",
+          "sql": "WITH lifecycle_snapshot (state, timing, goal, suppression_cap, control, copy, cta, success) AS (\n  VALUES ('New user', 'Immediately', 'Start trial', 'Suppress if trial/payment; transactional; global cap', '5%', '3 дня уже доступны. Подключить на этом устройстве →', 'Подключить', 'trial_started'),\n  ('Trial not activated', '6h, then 36h only', 'Complete setup', 'Max 2 total; stop on trial/payment/support issue', '10%', 'VPN ещё не подключён. Покажем настройку за минуту.', 'Настроить', 'first_connection'),\n  ('Trial active', 'After first connection', 'Confirm value', 'Once', '5%', 'Готово — VPN работает. Если что-то не откроется, поможем здесь.', 'Проверить', 'healthy_session'),\n  ('Trial ending', '24h before expiry', 'First payment', 'Once; suppress if paid', '10%', 'Пробный доступ закончится завтра. Месяц можно продлить в два нажатия.', 'Выбрать срок', 'payment_success_48h'),\n  ('Viewed plans', '2h after exit', 'Return to checkout', 'Once/14d', '10%', 'Тариф сохранился. Вернуться к оплате?', 'Продолжить', 'payment_started'),\n  ('Clicked payment', '30m', 'Recover checkout', 'Once per intent; suppress if success', '10%', 'Оплата не завершилась. Можно продолжить с того же места.', 'Продолжить', 'payment_success_24h'),\n  ('Payment failed', '10m with provider error', 'Offer working path', 'Once/error', '5%', 'Платёж не прошёл. Попробовать другой способ?', 'Другой способ', 'payment_success_24h'),\n  ('First payment', 'Immediately', 'Activation and trust', 'Transactional', 'None', 'Оплата прошла. Доступ активен до {date}.', 'Подключить', 'first_paid_connection'),\n  ('Subscription expiry', '3d and 6h before', 'Renewal', 'Max 2; suppress if renewed', '10%', 'Доступ закончится через 3 дня. Продлить без перерыва?', 'Продлить', 'renewal'),\n  ('Former payer', '7d after expiry, then 30d', 'Winback', 'Max 2/90d; no blanket discount', '10%', 'Нужен VPN снова? Подключение и прошлые устройства сохранены.', 'Вернуться', 'reactivation'),\n  ('Referral page opened', '24h if no share', 'First share', 'Once/30d', '10%', 'Друг получит +7 дней после первой оплаты. Ссылка готова.', 'Поделиться', 'referral_share_click'),\n  ('Link sent', 'No reminder immediately', 'Avoid pressure', 'Status only', 'None', 'Ссылка отправлена. Покажем статус, когда друг откроет бота.', 'Статус', 'referral_link_open'),\n  ('First referred signup', 'Immediately', 'Explain next step', 'Once/referral', '5%', 'Друг подключился. Награда появится после его первой оплаты.', 'Статус', 'referred_payment'),\n  ('Referral paid', 'After hold/release', 'Make value liquid', 'Transactional', 'None', 'Друг оплатил: +${amount} на баланс. Им уже можно продлить VPN.', 'Использовать', 'balance_redeemed'),\n  ('Near reward', 'At deterministic threshold', 'Finish progress', 'Once/season; no fake urgency', '10%', 'До +3 дней осталась одна подтверждённая оплата друга.', 'Пригласить', 'next_verified_referral'),\n  ('Reward received', 'Immediately', 'Close loop', 'Transactional', 'None', 'Готово: +3 дня добавлены до {date}.', 'Открыть маршрут', 'reward_used')\n)\nSELECT * FROM lifecycle_snapshot;"
+        }
+      },
+      {
+        "id": "experiment_analysis",
+        "label": "Causal experiment plan",
+        "query": {
+          "description": "Sequential experiments with break-even and contamination rules.",
+          "engine": "SQLite",
+          "sql": "WITH experiment_snapshot (experiment, audience, treatment_control, primary, guardrails, mde_sample, rollout, kill, contamination) AS (\n  VALUES ('E0 Pretrial cleanup', 'New non-payers', '2 messages total vs 0', '7d payment rate', 'Bot blocks, support tickets', 'Business MDE +25%; sequential, 6–8 weeks', 'Positive contribution and P(lift>10%)≥80%', 'No lift after 8w or blocks +0.5pp', 'Hash by tg_id'),\n  ('E1 Liquid internal balance', 'Active payers exposed to referral UI', 'Spend 20% balance in VPN from $0.01 vs $10 USDT only', 'Verified paid referrals / 100 exposed', 'Cash revenue displaced, withdrawal complaints', 'Target ≥25% lift; 50/50 for 6–8 weeks', '≥60 verified payments, positive incremental contribution, posterior ≥80%', 'P(lift≥10%)<20% after 8w', 'Referrer-level assignment'),\n  ('E2 Friend +7 after first payment', 'New referral links', 'Real +7d recipient benefit vs standard trial', 'Link-open → paid within 7d', 'Next-renewal delay, refunds, fraud', 'Break-even ~16% worst-case; target ≥25%; 6–8 weeks', 'Incremental paid lift ≥25% and contribution >0', 'Lift <10%, fraud >5%, or subsidy >$1/incremental $', 'Cluster by inviter/link variant'),\n  ('E3 Partner reactivation', 'Top 10 declined partners', 'Personal reactivation kit; matched pre-period', 'Verified first payers and net revenue', 'Refunds, commission %, concentration', 'Small-N Bayesian/matched; 30 days', '≥$2 contribution per acquired payer', 'No verified payer from outreach cohort', 'Partner-specific links'),\n  ('E4 Doodle Route layer', 'Only after E1+E2 win', 'Same offer, game UI vs plain UI', 'Verified paid referrals / exposed', 'Farmer rate, D7 opens without revenue, reward cost', 'Target ≥15% beyond offer; one 30-day season', 'Positive incremental profit and ≥15% lift', 'No paid lift, farm >8%, or reward >10% referred revenue', 'Season assignment by referrer')\n)\nSELECT * FROM experiment_snapshot;"
+        }
+      },
+      {
+        "id": "channel_analysis",
+        "label": "Zero-budget channel assessment",
+        "query": {
+          "description": "Channel realism, cost, speed and legal-risk screen.",
+          "engine": "SQLite",
+          "sql": "WITH channel_snapshot (channel, realism, cost, speed, legal, decision) AS (\n  VALUES ('Existing-base lifecycle / winback', 'High', 'Low', 'Days', 'Lower but review copy', 'Do now with holdouts'),\n  ('Gifting / family/group plan', 'High', 'Low–medium', '1–3 weeks', 'Product mechanic; review promotion', 'Prototype after attribution'),\n  ('Reanimate top 10 partners', 'High', 'Performance-only', 'Days', 'VPN advertising gate', 'Prepare; activate only after counsel'),\n  ('New micro-partners', 'Medium', '$2 first-paid + 10% recurring', 'Weeks', 'High advertising risk', 'New contracts only; legal gate'),\n  ('Platform/device onboarding', 'High', 'Low', 'Days', 'Support/product content', 'Improve retention, not acquisition claim'),\n  ('Cross-bot integrations', 'Medium', 'Rev-share', 'Weeks', 'Advertising risk', 'Do not scale before counsel/attribution'),\n  ('UGC, reviews, ambassadors', 'Medium', 'Low', 'Weeks', 'Advertising/endorsement risk', 'No paid/public brief until counsel'),\n  ('SEO/public VPN content', 'Low–medium', 'Time', 'Months', 'High in Russia', 'Not a current recommendation'),\n  ('Telegram Mini App discovery', 'Low', 'Low', 'Uncertain', 'Does not bypass VPN ad law', 'Bonus distribution, not core plan'),\n  ('B2B2C / digital bundles', 'Medium', 'Rev-share', '1–3 months', 'Contract/regulatory review', 'Explore after core recovery')\n)\nSELECT * FROM channel_snapshot;"
+        }
+      },
+      {
+        "id": "plan_analysis",
+        "label": "7/30/60/90 implementation plan",
+        "query": {
+          "description": "Ordered actions and exit metrics.",
+          "engine": "SQLite",
+          "sql": "WITH plan_snapshot (horizon, action, owner_metric) AS (\n  VALUES ('Tomorrow', 'Stop daily pretrial loop; keep transactional notices. Freeze threshold-3, roulette/cases and broad 40% discounts. Create legal review brief.', 'No user receives >2 pretrial prompts total'),\n  ('7 days', 'Implement referral/view/share/payment events, delivery_id, experiment_id and 10% persistent CRM holdout. Reconcile source attribution. Contact top 10 partners for diagnosis.', '≥95% new starts and payments have first/last touch'),\n  ('30 days', 'Run E0 and E1. Ship internal balance redemption without changing earned 20% or old contracts. Build one referral page and one share message.', 'Referral funnel complete; cash displacement and contribution visible'),\n  ('60 days', 'If E1 passes, run E2 friend +7 after first confirmed payment. Pilot new-partner contract only after legal approval. Test gifting/family separately.', '≥25% paid-referral lift and positive contribution'),\n  ('90 days', 'Only if E1+E2 pass, run one 30-day Doodle Route season against identical plain offer. Roll out winning CRM matrix.', 'Game adds ≥15% paid referrals beyond offer; reward ≤10% referred revenue')\n)\nSELECT * FROM plan_snapshot;"
+        }
+      },
+      {
+        "id": "decision_analysis",
+        "label": "Priority decision table",
+        "query": {
+          "description": "Priorities synthesized from evidence, economics and risk.",
+          "engine": "SQLite",
+          "sql": "WITH decision_snapshot (priority, decision, impact, confidence, effort, now) AS (\n  VALUES (1, 'Measurement + stop pretrial spam', 'High', 'High', 'Low', 'Yes'),\n  (2, 'Internal balance from first cent', 'High', 'Medium-high', 'Low', 'Experiment'),\n  (3, 'Friend +7 after first payment', 'High', 'Medium', 'Low', 'Stage 2 experiment'),\n  (4, 'Top-10 partner reactivation', 'High', 'High diagnosis / legal gate', 'Low', 'Prepare'),\n  (5, 'Lifecycle/winback without blanket discount', 'Medium-high', 'Medium', 'Low', 'Parallel tests'),\n  (6, 'New partner contract $2 +10%', 'Medium', 'Medium', 'Medium', 'New deals only'),\n  (7, 'Doodle Route season', 'Potentially medium', 'Low', 'Low UI / medium reliable ops', 'Only after core offer wins'),\n  (8, 'Threshold 3-active free VPN', 'Low reach', 'Low', 'Low', 'No'),\n  (9, 'Random prize/cases', 'Uncertain', 'Low', 'Low', 'No')\n)\nSELECT * FROM decision_snapshot;"
+        }
+      },
+      {
+        "id": "law_281",
+        "label": "Federal Law 281-FZ, official publication",
+        "href": "https://publication.pravo.gov.ru/document/0001202507310012"
+      },
+      {
+        "id": "prosecutor_vpn",
+        "label": "Prosecutor's Office explanation of VPN advertising ban",
+        "href": "https://epp.genproc.gov.ru/ru/proc_78/activity/legal-education/explain/otherwise/e8255163/"
+      },
+      {
+        "id": "telegram_affiliate",
+        "label": "Telegram Affiliate Programs",
+        "href": "https://core.telegram.org/api/bots/referrals"
+      },
+      {
+        "id": "telegram_miniapps",
+        "label": "Telegram Mini Apps usage and Stars",
+        "href": "https://telegram.org/blog/telegram-stars?setln=en"
+      },
+      {
+        "id": "referral_cash",
+        "label": "When Giving Money Does Not Work",
+        "href": "https://www.sciencedirect.com/science/article/pii/S0167811613000906"
+      },
+      {
+        "id": "prosocial",
+        "label": "Why Prosocial Incentives Work",
+        "href": "https://www.hbs.edu/ris/Publication%20Files/GershonCryderJohn%20-%20Why%20Prosocial%20Incentives%20Work_3a65737a-0749-4008-86f6-70aa9945db97.pdf"
+      },
+      {
+        "id": "referral_value",
+        "label": "Referral Programs and Customer Value",
+        "href": "https://journals.sagepub.com/doi/abs/10.1509/jm.75.1.46"
+      },
+      {
+        "id": "gamification_rct",
+        "label": "2026 contest gamification randomized trial",
+        "href": "https://link.springer.com/article/10.1007/s11129-026-09311-3"
+      },
+      {
+        "id": "telegram_games",
+        "label": "Telegram games retention report summary",
+        "href": "https://www.theblock.co/amp/post/339563/telegram-games-had-trouble-earning-revenue-retaining-users-in-q4-report"
+      },
+      {
+        "id": "tax_prizes",
+        "label": "Federal Tax Service: prize taxation",
+        "href": "https://www.nalog.gov.ru/rn77/taxation/taxes/ndfl/ndfl_fl/"
+      }
+    ],
+    "charts": [
+      {
+        "id": "revenue_components",
+        "title": "Monthly net revenue by payer status",
+        "subtitle": "Returning revenue stayed near $1.4k while new-payer revenue halved from May.",
+        "type": "bar",
+        "dataset": "monthly",
+        "sourceId": "revenue_export",
+        "encodings": {
+          "x": {
+            "field": "month",
+            "type": "nominal",
+            "label": "Month"
+          },
+          "y": {
+            "field": "revenue",
+            "type": "quantitative",
+            "label": "Net revenue",
+            "format": "currency"
+          },
+          "color": {
+            "field": "segment",
+            "type": "nominal",
+            "label": "Payer status"
+          }
+        },
+        "valueFormat": "currency",
+        "options": {
+          "grouping": "stacked"
+        }
+      },
+      {
+        "id": "driver_bridge",
+        "title": "May-to-July revenue change by acquisition segment",
+        "subtitle": "Special partners account for 55.5% of the measured decline.",
+        "type": "bar",
+        "dataset": "drivers",
+        "sourceId": "driver_export",
+        "encodings": {
+          "x": {
+            "field": "segment",
+            "type": "nominal",
+            "label": "Segment"
+          },
+          "y": {
+            "field": "change",
+            "type": "quantitative",
+            "label": "Change",
+            "format": "currency"
+          }
+        },
+        "valueFormat": "currency"
+      },
+      {
+        "id": "retail_activity",
+        "title": "Retail referral activity",
+        "subtitle": "Active referrers fell 163 → 83; registrations per active referrer also slipped.",
+        "type": "line",
+        "dataset": "ref_activity",
+        "sourceId": "referral_export",
+        "encodings": {
+          "x": {
+            "field": "month",
+            "type": "nominal",
+            "label": "Month"
+          },
+          "y": {
+            "fields": [
+              "registrations",
+              "active_referrers"
+            ],
+            "type": "quantitative",
+            "label": "Count"
+          }
+        }
+      },
+      {
+        "id": "strategy_scores",
+        "title": "Strategy scores under the owner-specified weights",
+        "subtitle": "The staged liquid-balance plus friend-benefit package is robust across weight sensitivities.",
+        "type": "bar",
+        "dataset": "scores",
+        "sourceId": "score_model",
+        "encodings": {
+          "x": {
+            "field": "strategy",
+            "type": "nominal",
+            "label": "Strategy"
+          },
+          "y": {
+            "field": "owner",
+            "type": "quantitative",
+            "label": "Score / 100"
+          }
+        }
+      },
+      {
+        "id": "unit_scenarios",
+        "title": "Incremental 30-day contribution of finalists",
+        "subtitle": "Scenario uplift assumptions are not forecasts; all baseline reward subsidies are charged.",
+        "type": "bar",
+        "dataset": "unit_finalists",
+        "sourceId": "unit_model",
+        "encodings": {
+          "x": {
+            "field": "strategy",
+            "type": "nominal",
+            "label": "Strategy"
+          },
+          "y": {
+            "field": "net_contribution",
+            "type": "quantitative",
+            "label": "Incremental contribution",
+            "format": "currency"
+          },
+          "color": {
+            "field": "scenario",
+            "type": "nominal",
+            "label": "Scenario"
+          }
+        },
+        "valueFormat": "currency",
+        "options": {
+          "grouping": "grouped"
+        }
+      }
+    ],
+    "tables": [
+      {
+        "id": "root_causes",
+        "title": "Root-cause hypotheses",
+        "subtitle": "Evidence, counterevidence and the test that can distinguish each cause.",
+        "dataset": "root_causes",
+        "sourceId": "root_analysis",
+        "defaultSort": {
+          "field": "confidence_rank",
+          "direction": "asc"
+        },
+        "columns": [
+          {
+            "field": "hypothesis",
+            "label": "Hypothesis"
+          },
+          {
+            "field": "support",
+            "label": "Supporting evidence"
+          },
+          {
+            "field": "contradiction",
+            "label": "Contradicting evidence"
+          },
+          {
+            "field": "missing",
+            "label": "Missing data"
+          },
+          {
+            "field": "confidence",
+            "label": "Confidence"
+          },
+          {
+            "field": "discriminator",
+            "label": "Discriminating test"
+          },
+          {
+            "field": "confidence_rank",
+            "label": "Rank",
+            "format": "number"
+          }
+        ]
+      },
+      {
+        "id": "strategies",
+        "title": "Referral and growth strategy comparison",
+        "subtitle": "Base-case economics are transparent assumptions, not causal forecasts.",
+        "dataset": "strategy_rows",
+        "sourceId": "strategy_analysis",
+        "defaultSort": {
+          "field": "score",
+          "direction": "desc"
+        },
+        "columns": [
+          {
+            "field": "strategy",
+            "label": "Strategy"
+          },
+          {
+            "field": "mechanic",
+            "label": "Mechanic"
+          },
+          {
+            "field": "base_incremental_payers",
+            "label": "Base incremental payers",
+            "format": "number"
+          },
+          {
+            "field": "base_net_contribution",
+            "label": "Base 30d contribution",
+            "format": "currency"
+          },
+          {
+            "field": "score",
+            "label": "Score / 100",
+            "format": "number"
+          },
+          {
+            "field": "risk",
+            "label": "Main risk"
+          },
+          {
+            "field": "verdict",
+            "label": "Verdict"
+          }
+        ]
+      },
+      {
+        "id": "unit_finalists_table",
+        "title": "Financial model of finalists",
+        "subtitle": "Cash, infrastructure, opportunity cost and baseline subsidy remain separate.",
+        "dataset": "unit_finalists",
+        "sourceId": "unit_model",
+        "defaultSort": {
+          "field": "net_contribution",
+          "direction": "desc"
+        },
+        "columns": [
+          {
+            "field": "strategy",
+            "label": "Strategy"
+          },
+          {
+            "field": "scenario",
+            "label": "Scenario"
+          },
+          {
+            "field": "incremental_payers",
+            "label": "Inc. payers",
+            "format": "number"
+          },
+          {
+            "field": "revenue",
+            "label": "30d revenue",
+            "format": "currency"
+          },
+          {
+            "field": "current_obligation",
+            "label": "20% obligation",
+            "format": "currency"
+          },
+          {
+            "field": "server_cost",
+            "label": "Server + free access",
+            "format": "currency"
+          },
+          {
+            "field": "opportunity_cost",
+            "label": "Opportunity cost",
+            "format": "currency"
+          },
+          {
+            "field": "baseline_subsidy",
+            "label": "Baseline subsidy",
+            "format": "currency"
+          },
+          {
+            "field": "external_prizes",
+            "label": "External prizes",
+            "format": "currency"
+          },
+          {
+            "field": "fraud_reserve",
+            "label": "Fraud reserve",
+            "format": "currency"
+          },
+          {
+            "field": "net_contribution",
+            "label": "Net contribution",
+            "format": "currency"
+          },
+          {
+            "field": "break_even_payers",
+            "label": "Break-even inc. payers",
+            "format": "number"
+          }
+        ]
+      },
+      {
+        "id": "analogs",
+        "title": "Closest public analogues",
+        "subtitle": "Public mechanics are observable; company size, hold details and causal performance usually are not.",
+        "dataset": "analogs",
+        "sourceId": "analog_analysis",
+        "defaultSort": {
+          "field": "analog",
+          "direction": "asc"
+        },
+        "columns": [
+          {
+            "field": "analog",
+            "label": "Analogue"
+          },
+          {
+            "field": "market_price",
+            "label": "Market / price"
+          },
+          {
+            "field": "mechanic",
+            "label": "Mechanic"
+          },
+          {
+            "field": "threshold_hold",
+            "label": "Threshold / hold"
+          },
+          {
+            "field": "applicability",
+            "label": "Applicability"
+          },
+          {
+            "field": "source",
+            "label": "Source"
+          }
+        ]
+      },
+      {
+        "id": "games",
+        "title": "Sixteen game concepts",
+        "subtitle": "Scores are expert judgments; the game must beat an identical plain offer.",
+        "dataset": "games",
+        "sourceId": "game_analysis",
+        "defaultSort": {
+          "field": "concept",
+          "direction": "asc"
+        },
+        "columns": [
+          {
+            "field": "concept",
+            "label": "Concept"
+          },
+          {
+            "field": "five_second",
+            "label": "5-second clarity"
+          },
+          {
+            "field": "viral",
+            "label": "Virality"
+          },
+          {
+            "field": "d1_d7_d30",
+            "label": "D1/D7/D30"
+          },
+          {
+            "field": "ref_dependency",
+            "label": "Referral dependence"
+          },
+          {
+            "field": "reward_cost",
+            "label": "Reward cost"
+          },
+          {
+            "field": "mvp",
+            "label": "MVP"
+          },
+          {
+            "field": "antifraud",
+            "label": "Anti-fraud"
+          },
+          {
+            "field": "vpn_fit",
+            "label": "VPN fit"
+          },
+          {
+            "field": "boredom",
+            "label": "Boredom"
+          },
+          {
+            "field": "legal_rep",
+            "label": "Legal/reputation"
+          }
+        ]
+      },
+      {
+        "id": "lifecycle",
+        "title": "Lifecycle message matrix",
+        "subtitle": "Global marketing cap: ≤2 messages in 7 days and ≤6 in 30 days; transactional notices excluded.",
+        "dataset": "lifecycle",
+        "sourceId": "lifecycle_analysis",
+        "defaultSort": {
+          "field": "order",
+          "direction": "asc"
+        },
+        "columns": [
+          {
+            "field": "state",
+            "label": "State"
+          },
+          {
+            "field": "timing",
+            "label": "Timing"
+          },
+          {
+            "field": "goal",
+            "label": "Goal"
+          },
+          {
+            "field": "suppression_cap",
+            "label": "Suppression / cap"
+          },
+          {
+            "field": "control",
+            "label": "Holdout"
+          },
+          {
+            "field": "copy",
+            "label": "Example copy"
+          },
+          {
+            "field": "cta",
+            "label": "CTA"
+          },
+          {
+            "field": "success",
+            "label": "Success event"
+          },
+          {
+            "field": "order",
+            "label": "Order",
+            "format": "number"
+          }
+        ]
+      },
+      {
+        "id": "experiments",
+        "title": "Causal experiment program",
+        "subtitle": "One mechanism per test; small-N decisions use sequential Bayesian/Poisson evidence plus business break-even.",
+        "dataset": "experiments",
+        "sourceId": "experiment_analysis",
+        "defaultSort": {
+          "field": "order",
+          "direction": "asc"
+        },
+        "columns": [
+          {
+            "field": "experiment",
+            "label": "Experiment"
+          },
+          {
+            "field": "audience",
+            "label": "Audience"
+          },
+          {
+            "field": "treatment_control",
+            "label": "Treatment / control"
+          },
+          {
+            "field": "primary",
+            "label": "Primary metric"
+          },
+          {
+            "field": "guardrails",
+            "label": "Guardrails"
+          },
+          {
+            "field": "mde_sample",
+            "label": "MDE / sample / duration"
+          },
+          {
+            "field": "rollout",
+            "label": "Rollout"
+          },
+          {
+            "field": "kill",
+            "label": "Kill"
+          },
+          {
+            "field": "contamination",
+            "label": "Avoid contamination"
+          },
+          {
+            "field": "order",
+            "label": "Order",
+            "format": "number"
+          }
+        ]
+      },
+      {
+        "id": "channels",
+        "title": "Zero-budget and performance-based channels",
+        "subtitle": "Public VPN promotion in Russia is a legal gate, not a tactical afterthought.",
+        "dataset": "channels",
+        "sourceId": "channel_analysis",
+        "defaultSort": {
+          "field": "order",
+          "direction": "asc"
+        },
+        "columns": [
+          {
+            "field": "channel",
+            "label": "Channel"
+          },
+          {
+            "field": "realism",
+            "label": "Realism"
+          },
+          {
+            "field": "cost",
+            "label": "Cost"
+          },
+          {
+            "field": "speed",
+            "label": "Speed"
+          },
+          {
+            "field": "legal",
+            "label": "Legal"
+          },
+          {
+            "field": "decision",
+            "label": "Decision"
+          },
+          {
+            "field": "order",
+            "label": "Order",
+            "format": "number"
+          }
+        ]
+      },
+      {
+        "id": "plan",
+        "title": "7/30/60/90-day action plan",
+        "subtitle": "Instrumentation and offer economics precede the game layer.",
+        "dataset": "plan",
+        "sourceId": "plan_analysis",
+        "defaultSort": {
+          "field": "order",
+          "direction": "asc"
+        },
+        "columns": [
+          {
+            "field": "horizon",
+            "label": "Horizon"
+          },
+          {
+            "field": "action",
+            "label": "Action"
+          },
+          {
+            "field": "owner_metric",
+            "label": "Exit metric"
+          },
+          {
+            "field": "order",
+            "label": "Order",
+            "format": "number"
+          }
+        ]
+      },
+      {
+        "id": "decisions",
+        "title": "Decision table",
+        "subtitle": "One recommended path, with explicit sequencing and stop conditions.",
+        "dataset": "decisions",
+        "sourceId": "decision_analysis",
+        "defaultSort": {
+          "field": "priority",
+          "direction": "asc"
+        },
+        "columns": [
+          {
+            "field": "priority",
+            "label": "Priority",
+            "format": "number"
+          },
+          {
+            "field": "decision",
+            "label": "Decision"
+          },
+          {
+            "field": "impact",
+            "label": "Impact"
+          },
+          {
+            "field": "confidence",
+            "label": "Confidence"
+          },
+          {
+            "field": "effort",
+            "label": "Effort"
+          },
+          {
+            "field": "now",
+            "label": "Now"
+          }
+        ]
+      }
+    ],
+    "blocks": [
+      {
+        "id": "title",
+        "type": "markdown",
+        "body": "# DoodleVPN: как вернуть рост без рекламного бюджета"
+      },
+      {
+        "id": "executive",
+        "type": "markdown",
+        "body": "## Executive Summary\n\n- **Падает не средний чек и не существующая платящая база, а приток новых плательщиков.** Май → июль: чистая выручка −21.1%, регистрации −52.9%, AOV $4.91 → $4.98; returning revenue июня и июля почти равна.\n- **Рефералка качественная, но перестала активироваться.** Обычный реферальный трафик конвертируется примерно вдвое лучше nonref, однако активных обычных рефереров стало 163 → 83. Одновременно десять специальных партнёров объясняют около $428 падения.\n- **Не заменять 20% порогом в три друга и не строить игру как лекарство.** Сохранить 20%, разрешить тратить заработанный баланс на VPN с первого цента, затем отдельно проверить реальную выгоду другу: +7 дней только после первой подтверждённой оплаты.\n- **Игра — третий эксперимент, не первый продукт.** Если два механизма выше дадут прибыльный lift, запустить один 30-дневный Doodle Route с детерминированными наградами; не делать cases, roulette, tap-to-earn и случайные денежные призы."
+      },
+      {
+        "id": "what_changed",
+        "type": "markdown",
+        "body": "## Падение сосредоточено в новых плательщиках\n\nПоздняя оплата 30 июля добавила к исходному снимку $7.52, поэтому полный день закрывается на $2,823.94 и 514 плательщиках. Это не меняет вывод. Общий MAU нельзя использовать как доказательство роста: core `tg_*` MAU снизился 1,552 → 1,450, тогда как `wl_restor*` вырос 4 → 468."
+      },
+      {
+        "id": "revenue_chart",
+        "type": "chart",
+        "chartId": "revenue_components"
+      },
+      {
+        "id": "root_tree",
+        "type": "markdown",
+        "body": "## Root-cause tree: два доказанных драйвера и несколько недоказанных\n\n**Выручка = плательщики × частота × средний платёж.** Средний платёж стабилен; количество плательщиков падает. Внутри acquisition-потока одновременно просели специальные партнёры и массовая реферальная активность. Платежи, цена, retention, сезонность и спам остаются вторичными или недоказанными объяснениями."
+      },
+      {
+        "id": "driver_chart",
+        "type": "chart",
+        "chartId": "driver_bridge"
+      },
+      {
+        "id": "root_table",
+        "type": "table",
+        "tableId": "root_causes"
+      },
+      {
+        "id": "ref_verdict",
+        "type": "markdown",
+        "body": "## Вердикт по текущим 20%: оставить экономику, исправить ликвидность и social value\n\n20% не доказаны как плохой размер: 30-дневная выручка обычного реферального плательщика $6.98 против $6.03 nonref, а июльская 7-дневная конверсия около 35% против 17.4%. Проблема — 16 оплат по ~$0.63 до вывода $10, USDT-only и отсутствие выгоды другу сверх стандартного trial.\n\nСтрого после 13 апреля 78.0% рефереров остановились на 1–2 регистрациях; среди 1,144 активных плательщиков 960 не имеют ни одного активного платного друга. Поэтому cliff «3 активных = free VPN» имеет слишком малый достижимый reach."
+      },
+      {
+        "id": "ref_chart",
+        "type": "chart",
+        "chartId": "retail_activity"
+      },
+      {
+        "id": "strategy_chart",
+        "type": "chart",
+        "chartId": "strategy_scores"
+      },
+      {
+        "id": "strategy_table",
+        "type": "table",
+        "tableId": "strategies"
+      },
+      {
+        "id": "econ",
+        "type": "markdown",
+        "body": "## Финансовая модель: baseline subsidy посчитана полностью\n\nМодель списывает награду и на дополнительных, и на тех плательщиков, которые пришли бы без изменения. Поэтому рекомендуемый пакет убыточен в pessimistic (−$9.07/месяц при +18% lift), но положителен в base (+$36.64 при +40%). Worst-case break-even — около 8.2 дополнительных плательщика, то есть примерно +24% к июльской базе 35. Это и есть rollout-порог, а не обещание результата."
+      },
+      {
+        "id": "unit_chart",
+        "type": "chart",
+        "chartId": "unit_scenarios"
+      },
+      {
+        "id": "unit_table",
+        "type": "table",
+        "tableId": "unit_finalists_table"
+      },
+      {
+        "id": "external",
+        "type": "markdown",
+        "body": "## Внешние аналоги не дают готового ответа\n\nРоссийские low-ticket VPN используют одновременно days, thresholds, internal value и recurring cash. Это показывает допустимость механик, но не их causal performance. Исследования также неоднозначны: денежные награды могут увеличивать social cost для слабого бренда, а recipient-benefiting incentives иногда генерируют referrals не хуже sender rewards. Поэтому DoodleVPN должен тестировать выгоду другу отдельно от ликвидности отправителя. [Cash vs in-kind study](https://www.sciencedirect.com/science/article/pii/S0167811613000906), [prosocial incentive research](https://www.hbs.edu/ris/Publication%20Files/GershonCryderJohn%20-%20Why%20Prosocial%20Incentives%20Work_3a65737a-0749-4008-86f6-70aa9945db97.pdf)."
+      },
+      {
+        "id": "analog_table",
+        "type": "table",
+        "tableId": "analogs"
+      },
+      {
+        "id": "legal",
+        "type": "markdown",
+        "body": "## Юридический gate меняет весь zero-budget план\n\nС 1 сентября 2025 года в России действует ответственность за рекламу VPN и иных средств обхода ограничений. [Официальный текст 281-ФЗ](https://publication.pravo.gov.ru/document/0001202507310012); [разъяснение прокуратуры](https://epp.genproc.gov.ru/ru/proc_78/activity/legal-education/explain/otherwise/e8255163/). Это не юридическое заключение, но достаточно, чтобы не запускать публичные интеграции, инфлюенсеров, SEO-продвижение, UGC-брифы или Telegram Affiliate как будто они автоматически безопасны. До rollout нужен письменный review конкретного оффера, share-текста и канала российским юристом."
+      },
+      {
+        "id": "game_verdict",
+        "type": "markdown",
+        "body": "## Вердикт по игре: строить только как отдельный измеримый слой\n\nTelegram даёт нативную среду Mini Apps и affiliate infrastructure, но clicker boom не является proof of monetization. Отраслевой отчёт по Telegram games приводил retention порядка 5–20%; академические результаты показывают, что временные contests способны поднять engagement, но эффект зависит от контекста и может исчезнуть после наград. [Telegram platform](https://telegram.org/blog/telegram-stars?setln=en), [2026 RCT](https://link.springer.com/article/10.1007/s11129-026-09311-3).\n\nТоп-3 полноценные концепции: **Doodle Route**, **Internet Passport**, **Shield Team**. `Gift a Shield` набирает больше как referral-механика, но сам по себе не удерживает D30; его нужно встроить в Doodle Route."
+      },
+      {
+        "id": "games_table",
+        "type": "table",
+        "tableId": "games"
+      },
+      {
+        "id": "winner",
+        "type": "markdown",
+        "body": "## Победитель: 30-дневный Doodle Route\n\n**Core loop:** открыть карту → увидеть следующий checkpoint → выполнить продуктовую/социальную миссию → подтверждённая оплата друга двигает маршрут → получить фиксированную награду → подарить другу +7 дней. Нет paid points, multi-level и оплаты попыток.\n\n**Первый сеанс:** 10 секунд: карта из 6 checkpoint, готовая ссылка и текст «Другу +7 дней после первой оплаты; тебе 20%, которые можно сразу потратить на VPN». После share показывается только статус, без ежедневного давления.\n\n**Points:** daily puzzle 5, сезонный cap 100 (только cosmetics); first verified referred payment 600; referral renewal 120; own renewal 60. Sinks: 300 cosmetic stamp; 600 +3 VPN days; 1,200 extra device for 30d; 1,800 +7 days; 3,600 +14 days. Дополнительная стоимость наград ≤10% net referred revenue.\n\n**Anti-fraud:** no value for signup/trial; paid + hold + refund check; immutable inviter; device/payment/risk graph; household IP is a signal, not a ban; 1,200 valuable points/month before manual review.\n\n**Notifications:** season start once, first friend paid transactional, near deterministic checkpoint once, season end once. **MVP:** one map, 6 checkpoints, fixed store, four events; no leaderboard/clans/random rewards. **Kill:** no ≥15% paid-referral lift over identical offer after 30 days, farmer share >8%, or reward cost >10% referred net revenue."
+      },
+      {
+        "id": "birthday",
+        "type": "markdown",
+        "body": "## Birthday, anniversary, winback and family\n\nA blanket birthday discount of 40% needs about **69–76% more purchases** to preserve contribution at a $3.13 monthly plan and $0.05–$0.24 marginal cost. No birthday field exists in the database, so collecting unreliable dates to trigger a destructive discount is not justified.\n\nRecommended order: anniversary-of-first-payment gift (3 days, existing data) → winback without discount → targeted 15–20% offer only to users expired ≥30 days in a holdout test → gifting/family plan. A free birthday badge or 1–3 days can be tested only after a real date-collection consent flow exists."
+      },
+      {
+        "id": "lifecycle_md",
+        "type": "markdown",
+        "body": "## Новая lifecycle-система replaces broadcast pressure\n\nDisable the daily pretrial loop. Marketing cap: no more than 2 messages in 7 days and 6 in 30 days; transactional payment, expiry and reward confirmations are excluded. Every send carries `delivery_id`, `experiment_id`, `variant`, suppression reason and a persistent 5–10% holdout."
+      },
+      {
+        "id": "lifecycle_table",
+        "type": "table",
+        "tableId": "lifecycle"
+      },
+      {
+        "id": "partners",
+        "type": "markdown",
+        "body": "## Специальные партнёры — отдельный продукт\n\nTen partners fell from $801.31 in May to $373.21 in July (−$428.10); all others together grew about $8. July special commissions were $207.95 on $413.48 base, roughly 50.3%.\n\nDo not rewrite old deals retroactively. Reactivate the top ten with partner-specific diagnosis and current terms. For **new** contracts test `$2 after verified first payment + 10% recurring`, 30-day hold, refunds netted, tiers only after 10/20 verified new payers, no registration bounty. At $5.74 30-day revenue this costs about $2.57 before infra and leaves about $2.93 contribution at $0.24 infra. Offer existing partners optional migration only with a guaranteed floor."
+      },
+      {
+        "id": "attribution",
+        "type": "markdown",
+        "body": "## Attribution and anti-fraud must exist before incentives scale\n\nPersist immutable `first_touch`, mutable `last_touch`, `referrer_id`, `campaign_id`, `partner_id`, deep-link token and experiment variant on start; copy them into every payment and refund. Required funnel events: referral view, copy, share click, link open, signup, trial, payment intent, success, hold release, balance redeem, notification delivery/click and bot block.\n\nReward only confirmed revenue after hold; reverse on refund; one inviter per payer; no reward for registration/trial; cap velocity and review shared devices/payment instruments. Do not hard-block shared IPs because households and VPN exits collide. Keep referral and partner ledgers separate."
+      },
+      {
+        "id": "experiments_md",
+        "type": "markdown",
+        "body": "## Experiments: causal answers with a small audience\n\nAt a 6.6% monthly referrer activation rate, a classical A/B is underpowered for modest lifts. Use 50/50 referrer-level assignment, sequential Bayesian/Poisson monitoring and business break-even. Do not test liquidity, friend gift and game in one treatment: E1, E2 and E4 are sequential by design."
+      },
+      {
+        "id": "experiments_table",
+        "type": "table",
+        "tableId": "experiments"
+      },
+      {
+        "id": "channels_md",
+        "type": "markdown",
+        "body": "## Other zero-budget channels\n\nThe highest-realism channels are lifecycle/winback, gifting/family mechanics and reactivation of already-known partners. Public acquisition tactics remain gated by law and attribution. Telegram Affiliate Programs can technically pay Stars commissions for Mini App purchases, but do not bypass Russian VPN-advertising restrictions and do not solve the consumer-offer problem."
+      },
+      {
+        "id": "channels_table",
+        "type": "table",
+        "tableId": "channels"
+      },
+      {
+        "id": "plan_md",
+        "type": "markdown",
+        "body": "## 7/30/60/90-day plan\n\nThe sequence deliberately separates measurement, sender liquidity, recipient value and game wrapper. Each later stage requires the previous stage to produce incremental contribution."
+      },
+      {
+        "id": "plan_table",
+        "type": "table",
+        "tableId": "plan"
+      },
+      {
+        "id": "dont",
+        "type": "markdown",
+        "body": "## What not to do\n\n- Do not call growing total MAU growth; exclude restore accounts from business MAU.\n- Do not replace 20% with the three-active cliff now.\n- Do not lower payout and confuse release of existing liability with new acquisition cost.\n- Do not launch a game, cases, roulette, random cash/ChatGPT prizes or tap-to-earn before offer lift.\n- Do not give value for signup, trial, clicks or daily opens.\n- Do not run a 40% birthday discount to all renewers.\n- Do not renegotiate special partners retroactively.\n- Do not send 19 pretrial messages or evaluate CRM without a holdout.\n- Do not label unattributed traffic organic.\n- Do not launch influencer, SEO, UGC or cross-bot VPN promotion without a specific legal review."
+      },
+      {
+        "id": "decision_md",
+        "type": "markdown",
+        "body": "## Final decision\n\nThe one recommended direction is a **staged two-sided liquid referral offer**: keep 20%; allow spending the earned balance on DoodleVPN from the first cent; after that proves activation, give the friend +7 days only after a verified first payment. The public copy, subject to legal approval: **«Другу — +7 дней после первой оплаты. Тебе — 20% каждой его оплаты. Баланс можно сразу потратить на VPN или вывести от $10.»**"
+      },
+      {
+        "id": "decision_table",
+        "type": "table",
+        "tableId": "decisions"
+      },
+      {
+        "id": "fallback",
+        "type": "markdown",
+        "body": "## Alternative and pre-mortem\n\n**Fallback if the main package fails:** keep 20%, add internal redemption only, focus on lifecycle/winback and new-partner `$2 + 10%` contracts; do not add a game.\n\n**Pre-mortem:** (1) people still feel awkward advertising VPN to friends; (2) +7 days subsidizes users who would already pay; (3) internal balance cannibalizes cash renewals; (4) legal review blocks public share wording; (5) partner concentration returns; (6) restore/attribution bugs make the experiment look successful; (7) a game produces opens and farmers, not payments. Each is covered by a holdout, contribution metric, legal gate, attribution completeness, partner concentration limit or explicit kill criterion."
+      },
+      {
+        "id": "tomorrow",
+        "type": "markdown",
+        "body": "## Exact owner sequence\n\n1. **Tomorrow disable:** daily pretrial repeats; random-prize and threshold-3 implementation; blanket birthday discount.\n2. **Measure:** the complete referral/share/payment funnel, bot blocks, attribution completeness and incremental contribution.\n3. **Change in bot:** internal balance redemption from $0.01; existing $10 USDT withdrawal remains.\n4. **Show first:** E1 to 50% of eligible active payers; do not add friend bonus yet.\n5. **After E1 wins:** E2 offer +7 days to the friend after first confirmed payment. Budget at full July baseline: about $14/month base opportunity+infra, about $28 pessimistic; hard cap $1 total incremental reward per verified payer.\n6. **Game:** one 30-day Doodle Route, only after E1+E2; fixed product rewards; $0 external-prize budget in MVP, then at most $50/month and ≤10% of referred net revenue.\n7. **Look at results:** weekly guardrails; decision after 6–8 weeks and at least 60 verified referred payments across E1/E2.\n8. **Scale:** paid referrals +25% or more, posterior probability of meaningful lift ≥80%, incremental contribution >0, fraud <5%, bot-block delta <0.5 pp.\n9. **Close:** lift <10%, negative contribution, fraud >5%, or game farm >8% / no ≥15% incremental paid lift."
+      },
+      {
+        "id": "caveats",
+        "type": "markdown",
+        "body": "## Caveats and assumptions\n\nThe July full-day snapshot differs from the owner’s earlier snapshot by one late payment. `New` may include people whose pre-April payment is outside the observable window. Nonref attribution is incomplete. Renewal is not canonical. Marginal server cost is assumed at $0.05/$0.12/$0.24 because $308 July cash expense and $792 listed monthly server inventory do not reconcile into capacity cost. Strategy uplifts and scores are priors for decision analysis, not predictions. External analogues publish mechanics, not outcomes. Legal notes are risk flags, not legal advice."
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "generatedAt": "2026-07-30T21:00:00Z",
+    "status": "ready",
+    "datasets": {
+      "monthly": [
+        {
+          "month": "May",
+          "segment": "New",
+          "revenue": 3006.33,
+          "total": 3581.06,
+          "payers": 644,
+          "registrations": 892,
+          "aov": 4.91
+        },
+        {
+          "month": "May",
+          "segment": "Returning",
+          "revenue": 574.73,
+          "total": 3581.06,
+          "payers": 644,
+          "registrations": 892,
+          "aov": 4.91
+        },
+        {
+          "month": "June",
+          "segment": "New",
+          "revenue": 1662.92,
+          "total": 3066.94,
+          "payers": 576,
+          "registrations": 627,
+          "aov": 4.78
+        },
+        {
+          "month": "June",
+          "segment": "Returning",
+          "revenue": 1404.02,
+          "total": 3066.94,
+          "payers": 576,
+          "registrations": 627,
+          "aov": 4.78
+        },
+        {
+          "month": "July",
+          "segment": "New",
+          "revenue": 1452.03,
+          "total": 2823.94,
+          "payers": 514,
+          "registrations": 420,
+          "aov": 4.98
+        },
+        {
+          "month": "July",
+          "segment": "Returning",
+          "revenue": 1371.91,
+          "total": 2823.94,
+          "payers": 514,
+          "registrations": 420,
+          "aov": 4.98
+        }
+      ],
+      "drivers": [
+        {
+          "segment": "Special partners",
+          "may": 906.44,
+          "july": 486.52,
+          "change": -419.92,
+          "share": 0.555
+        },
+        {
+          "segment": "Retail referrals 20%",
+          "may": 1203.32,
+          "july": 975.75,
+          "change": -227.57,
+          "share": 0.301
+        },
+        {
+          "segment": "Non-ref / unattributed",
+          "may": 1471.3,
+          "july": 1361.67,
+          "change": -109.63,
+          "share": 0.145
+        }
+      ],
+      "ref_activity": [
+        {
+          "month": "Apr 13–30",
+          "registrations": 142,
+          "active_referrers": 96,
+          "regs_per_referrer": 1.48
+        },
+        {
+          "month": "May",
+          "registrations": 250,
+          "active_referrers": 163,
+          "regs_per_referrer": 1.53
+        },
+        {
+          "month": "June",
+          "registrations": 208,
+          "active_referrers": 135,
+          "regs_per_referrer": 1.54
+        },
+        {
+          "month": "July",
+          "registrations": 102,
+          "active_referrers": 83,
+          "regs_per_referrer": 1.23
+        }
+      ],
+      "root_causes": [
+        {
+          "hypothesis": "Приток новых плательщиков упал",
+          "support": "New revenue: $3,006 May → $1,452 July; registrations 892 → 420",
+          "contradiction": "7-day conversion did not collapse",
+          "missing": "Canonical acquisition cohort before Apr 13",
+          "confidence": "High",
+          "discriminator": "Weekly acquired paid users by attributable source",
+          "confidence_rank": 1
+        },
+        {
+          "hypothesis": "Просели специальные партнёры",
+          "support": "−$420 May→July; top 10 explain −$428",
+          "contradiction": "Other partners grew +$8",
+          "missing": "Partner content cadence and reach",
+          "confidence": "High",
+          "discriminator": "Partner-level reactivation with matched historical baseline",
+          "confidence_rank": 2
+        },
+        {
+          "hypothesis": "Меньше обычных людей вообще реферят",
+          "support": "163 active referrers May → 83 July; ~83% registration decline is count effect",
+          "contradiction": "Referred users still convert ~35% in mature July cohort",
+          "missing": "View/copy/share funnel",
+          "confidence": "High",
+          "discriminator": "Referral activation experiment with event funnel",
+          "confidence_rank": 3
+        },
+        {
+          "hypothesis": "Упал настоящий organic/direct",
+          "support": "Non-ref registrations also fell",
+          "contradiction": "Non-ref revenue only −$110; 73.5% source missing",
+          "missing": "UTM/deep-link attribution",
+          "confidence": "Medium-low",
+          "discriminator": "Persist first/last touch for every start/payment",
+          "confidence_rank": 4
+        },
+        {
+          "hypothesis": "Notification fatigue harms conversion",
+          "support": "Pretrial users got 18.8 repeated messages on average; only 5 paid within 7d",
+          "contradiction": "No holdout, so no causal estimate",
+          "missing": "Bot blocks, controls, delivery IDs",
+          "confidence": "Medium",
+          "discriminator": "Zero-message vs two-message randomized holdout",
+          "confidence_rank": 5
+        },
+        {
+          "hypothesis": "Payment failure caused decline",
+          "support": "Crypto settled/attempt fell to ~31%",
+          "contradiction": "Wata click→paid improved to 82.7%; crypto too small to explain total",
+          "missing": "Provider-normalized intent funnel",
+          "confidence": "Low",
+          "discriminator": "Payment-intent cohort by provider and error",
+          "confidence_rank": 6
+        },
+        {
+          "hypothesis": "Retention collapsed",
+          "support": "Possible definition-sensitive renewal softness",
+          "contradiction": "Returning revenue $1,404 June vs $1,372 July",
+          "missing": "Canonical eligible renewal event",
+          "confidence": "Low/unknown",
+          "discriminator": "Eligible renewal cohorts with plan-expiry logic",
+          "confidence_rank": 7
+        },
+        {
+          "hypothesis": "Price/AOV problem",
+          "support": "None material",
+          "contradiction": "AOV stable $4.91→$4.98",
+          "missing": "Price elasticity test",
+          "confidence": "Low",
+          "discriminator": "Do not test until acquisition leak is fixed",
+          "confidence_rank": 8
+        },
+        {
+          "hypothesis": "Growing online proves healthy growth",
+          "support": "Total MAU rose",
+          "contradiction": "Core tg MAU fell 1,552→1,450; restore accounts rose 4→468",
+          "missing": "Canonical customer-active metric",
+          "confidence": "Rejected",
+          "discriminator": "Exclude wl_restor* from business MAU",
+          "confidence_rank": 9
+        }
+      ],
+      "strategy_rows": [
+        {
+          "strategy": "Текущие 20%",
+          "mechanic": "Деньги, вывод $10 USDT",
+          "base_incremental_payers": 0.0,
+          "base_net_contribution": 0.0,
+          "score": 64.2,
+          "risk": "Низкая ликвидность",
+          "verdict": "Control"
+        },
+        {
+          "strategy": "20%, вывод от $3",
+          "mechanic": "Те же деньги, раньше вывод",
+          "base_incremental_payers": 4.2,
+          "base_net_contribution": 22.95,
+          "score": 71.2,
+          "risk": "Cash release existing liability",
+          "verdict": "Test only if internal spend cannot ship"
+        },
+        {
+          "strategy": "20% + мгновенная трата в VPN",
+          "mechanic": "Баланс тратится с первого цента",
+          "base_incremental_payers": 8.8,
+          "base_net_contribution": 22.81,
+          "score": 83.8,
+          "risk": "Cash cannibalization/timing",
+          "verdict": "Stage 1"
+        },
+        {
+          "strategy": "7 дней рефереру вместо денег",
+          "mechanic": "Фиксированные дни за оплату",
+          "base_incremental_payers": 7.0,
+          "base_net_contribution": 80.37,
+          "score": 76.9,
+          "risk": "May repel earners; contract change",
+          "verdict": "Isolated test, not default"
+        },
+        {
+          "strategy": "3 активных = бесплатный VPN",
+          "mechanic": "Cliff at three active friends",
+          "base_incremental_payers": 5.2,
+          "base_net_contribution": -7.61,
+          "score": 68.5,
+          "risk": "78% stop at 1–2 registrations",
+          "verdict": "Reject as first move"
+        },
+        {
+          "strategy": "Выбор: деньги или VPN",
+          "mechanic": "User chooses redemption",
+          "base_incremental_payers": 7.0,
+          "base_net_contribution": 18.25,
+          "score": 80.5,
+          "risk": "More UI complexity",
+          "verdict": "Good fallback"
+        },
+        {
+          "strategy": "20% + 7 дней другу после оплаты",
+          "mechanic": "Real recipient benefit",
+          "base_incremental_payers": 9.8,
+          "base_net_contribution": 35.93,
+          "score": 85.8,
+          "risk": "Subsidizes baseline conversions",
+          "verdict": "Stage 2"
+        },
+        {
+          "strategy": "30-дневный referral-спринт",
+          "mechanic": "Temporary boosted rewards",
+          "base_incremental_payers": 12.2,
+          "base_net_contribution": 9.78,
+          "score": 80.2,
+          "risk": "Fatigue and subsidy",
+          "verdict": "Later campaign"
+        },
+        {
+          "strategy": "Розыгрыш среди оплативших друзей",
+          "mechanic": "Random prize",
+          "base_incremental_payers": 10.5,
+          "base_net_contribution": -24.8,
+          "score": 59.8,
+          "risk": "Legal, tax, fraud",
+          "verdict": "Do not launch"
+        },
+        {
+          "strategy": "Игра + фиксированный магазин",
+          "mechanic": "Deterministic points store",
+          "base_incremental_payers": 10.5,
+          "base_net_contribution": 11.28,
+          "score": 71.5,
+          "risk": "Farmer traffic",
+          "verdict": "Only after offer proof"
+        },
+        {
+          "strategy": "Игра + случайные ценные призы",
+          "mechanic": "Cases/roulette",
+          "base_incremental_payers": 14.0,
+          "base_net_contribution": -65.29,
+          "score": 62.1,
+          "risk": "Fraud, legal, reputation",
+          "verdict": "Reject"
+        },
+        {
+          "strategy": "Новые партнёры: $2 first-paid + 10% recurring",
+          "mechanic": "Front-loaded partner bounty",
+          "base_incremental_payers": 4.0,
+          "base_net_contribution": 11.67,
+          "score": 76.7,
+          "risk": "Partner quality",
+          "verdict": "New contracts only"
+        },
+        {
+          "strategy": "Lifecycle/winback без скидки",
+          "mechanic": "Behavior-triggered owned CRM",
+          "base_incremental_payers": 10.0,
+          "base_net_contribution": 43.8,
+          "score": 80.9,
+          "risk": "Needs measurement",
+          "verdict": "Run in parallel"
+        },
+        {
+          "strategy": "Внутренний баланс + 7 дней другу",
+          "mechanic": "Liquid sender reward + friend benefit",
+          "base_incremental_payers": 14.0,
+          "base_net_contribution": 36.64,
+          "score": 87.4,
+          "risk": "Needs ≥24% lift in worst case",
+          "verdict": "Recommended staged package"
+        },
+        {
+          "strategy": "Гибрид + сезонный Doodle Route",
+          "mechanic": "Same offer plus game layer",
+          "base_incremental_payers": 17.5,
+          "base_net_contribution": 18.98,
+          "score": 76.3,
+          "risk": "Game can hide weak offer",
+          "verdict": "Stage 3 only"
+        }
+      ],
+      "unit_finalists": [
+        {
+          "strategy": "20% + мгновенная трата в VPN",
+          "scenario": "pessimistic",
+          "incremental_payers": 3.5,
+          "revenue": 24.43,
+          "current_obligation": 4.89,
+          "server_cost": 0.84,
+          "opportunity_cost": 0.0,
+          "baseline_subsidy": 0.0,
+          "external_prizes": 0.0,
+          "fraud_reserve": 0.0,
+          "net_contribution": 8.7,
+          "break_even_payers": 1.9
+        },
+        {
+          "strategy": "20% + мгновенная трата в VPN",
+          "scenario": "base",
+          "incremental_payers": 8.8,
+          "revenue": 61.08,
+          "current_obligation": 12.22,
+          "server_cost": 1.05,
+          "opportunity_cost": 0.0,
+          "baseline_subsidy": 0.0,
+          "external_prizes": 0.0,
+          "fraud_reserve": 0.0,
+          "net_contribution": 22.81,
+          "break_even_payers": 4.6
+        },
+        {
+          "strategy": "20% + мгновенная трата в VPN",
+          "scenario": "aggressive",
+          "incremental_payers": 14.0,
+          "revenue": 97.72,
+          "current_obligation": 19.54,
+          "server_cost": 0.7,
+          "opportunity_cost": 0.0,
+          "baseline_subsidy": 0.0,
+          "external_prizes": 0.0,
+          "fraud_reserve": 0.0,
+          "net_contribution": 27.48,
+          "break_even_payers": 9.0
+        },
+        {
+          "strategy": "3 активных = бесплатный VPN",
+          "scenario": "pessimistic",
+          "incremental_payers": 1.8,
+          "revenue": 12.21,
+          "current_obligation": 2.44,
+          "server_cost": 0.42,
+          "opportunity_cost": 0.0,
+          "baseline_subsidy": 0.0,
+          "external_prizes": 0.0,
+          "fraud_reserve": 0.0,
+          "net_contribution": -26.95,
+          "break_even_payers": 6.8
+        },
+        {
+          "strategy": "3 активных = бесплатный VPN",
+          "scenario": "base",
+          "incremental_payers": 5.2,
+          "revenue": 36.65,
+          "current_obligation": 7.33,
+          "server_cost": 0.63,
+          "opportunity_cost": 0.0,
+          "baseline_subsidy": 0.0,
+          "external_prizes": 0.0,
+          "fraud_reserve": 0.0,
+          "net_contribution": -7.61,
+          "break_even_payers": 6.6
+        },
+        {
+          "strategy": "3 активных = бесплатный VPN",
+          "scenario": "aggressive",
+          "incremental_payers": 10.5,
+          "revenue": 73.29,
+          "current_obligation": 14.66,
+          "server_cost": 0.53,
+          "opportunity_cost": 0.0,
+          "baseline_subsidy": 0.0,
+          "external_prizes": 0.0,
+          "fraud_reserve": 0.0,
+          "net_contribution": 21.81,
+          "break_even_payers": 6.6
+        },
+        {
+          "strategy": "20% + 7 дней другу после оплаты",
+          "scenario": "pessimistic",
+          "incremental_payers": 4.2,
+          "revenue": 29.32,
+          "current_obligation": 5.86,
+          "server_cost": 3.2,
+          "opportunity_cost": 28.63,
+          "baseline_subsidy": 27.52,
+          "external_prizes": 0.0,
+          "fraud_reserve": 0.0,
+          "net_contribution": -8.38,
+          "break_even_payers": 6.0
+        },
+        {
+          "strategy": "20% + 7 дней другу после оплаты",
+          "scenario": "base",
+          "incremental_payers": 9.8,
+          "revenue": 68.4,
+          "current_obligation": 13.68,
+          "server_cost": 2.43,
+          "opportunity_cost": 16.36,
+          "baseline_subsidy": 13.76,
+          "external_prizes": 0.0,
+          "fraud_reserve": 0.0,
+          "net_contribution": 35.93,
+          "break_even_payers": 2.7
+        },
+        {
+          "strategy": "20% + 7 дней другу после оплаты",
+          "scenario": "aggressive",
+          "incremental_payers": 17.5,
+          "revenue": 122.15,
+          "current_obligation": 24.43,
+          "server_cost": 1.49,
+          "opportunity_cost": 9.59,
+          "baseline_subsidy": 6.8,
+          "external_prizes": 0.0,
+          "fraud_reserve": 0.0,
+          "net_contribution": 86.65,
+          "break_even_payers": 1.3
+        },
+        {
+          "strategy": "Игра + фиксированный магазин",
+          "scenario": "pessimistic",
+          "incremental_payers": 3.5,
+          "revenue": 24.43,
+          "current_obligation": 4.89,
+          "server_cost": 0.84,
+          "opportunity_cost": 0.0,
+          "baseline_subsidy": 14.0,
+          "external_prizes": 0.0,
+          "fraud_reserve": 1.01,
+          "net_contribution": 2.29,
+          "break_even_payers": 2.8
+        },
+        {
+          "strategy": "Игра + фиксированный магазин",
+          "scenario": "base",
+          "incremental_payers": 10.5,
+          "revenue": 73.29,
+          "current_obligation": 14.66,
+          "server_cost": 1.26,
+          "opportunity_cost": 0.0,
+          "baseline_subsidy": 14.0,
+          "external_prizes": 25.0,
+          "fraud_reserve": 2.89,
+          "net_contribution": 11.28,
+          "break_even_payers": 7.7
+        },
+        {
+          "strategy": "Игра + фиксированный магазин",
+          "scenario": "aggressive",
+          "incremental_payers": 21.0,
+          "revenue": 146.58,
+          "current_obligation": 29.32,
+          "server_cost": 1.05,
+          "opportunity_cost": 0.0,
+          "baseline_subsidy": 14.0,
+          "external_prizes": 50.0,
+          "fraud_reserve": 5.09,
+          "net_contribution": 38.73,
+          "break_even_payers": 12.5
+        },
+        {
+          "strategy": "Новые партнёры: $2 first-paid + 10% recurring",
+          "scenario": "pessimistic",
+          "incremental_payers": 1.0,
+          "revenue": 5.74,
+          "current_obligation": 0.57,
+          "server_cost": 0.24,
+          "opportunity_cost": 0.0,
+          "baseline_subsidy": 0.0,
+          "external_prizes": 0.0,
+          "fraud_reserve": 0.13,
+          "net_contribution": 2.8,
+          "break_even_payers": 0.0
+        },
+        {
+          "strategy": "Новые партнёры: $2 first-paid + 10% recurring",
+          "scenario": "base",
+          "incremental_payers": 4.0,
+          "revenue": 22.96,
+          "current_obligation": 2.3,
+          "server_cost": 0.48,
+          "opportunity_cost": 0.0,
+          "baseline_subsidy": 0.0,
+          "external_prizes": 0.0,
+          "fraud_reserve": 0.51,
+          "net_contribution": 11.67,
+          "break_even_payers": 0.0
+        },
+        {
+          "strategy": "Новые партнёры: $2 first-paid + 10% recurring",
+          "scenario": "aggressive",
+          "incremental_payers": 8.0,
+          "revenue": 45.92,
+          "current_obligation": 4.59,
+          "server_cost": 0.4,
+          "opportunity_cost": 0.0,
+          "baseline_subsidy": 0.0,
+          "external_prizes": 0.0,
+          "fraud_reserve": 1.03,
+          "net_contribution": 23.9,
+          "break_even_payers": 0.0
+        },
+        {
+          "strategy": "Внутренний баланс + 7 дней другу",
+          "scenario": "pessimistic",
+          "incremental_payers": 6.3,
+          "revenue": 43.97,
+          "current_obligation": 8.79,
+          "server_cost": 3.82,
+          "opportunity_cost": 30.16,
+          "baseline_subsidy": 27.52,
+          "external_prizes": 0.0,
+          "fraud_reserve": 0.26,
+          "net_contribution": -9.07,
+          "break_even_payers": 8.2
+        },
+        {
+          "strategy": "Внутренний баланс + 7 дней другу",
+          "scenario": "base",
+          "incremental_payers": 14.0,
+          "revenue": 97.72,
+          "current_obligation": 19.54,
+          "server_cost": 3.05,
+          "opportunity_cost": 17.89,
+          "baseline_subsidy": 13.76,
+          "external_prizes": 0.0,
+          "fraud_reserve": 0.59,
+          "net_contribution": 36.64,
+          "break_even_payers": 6.7
+        },
+        {
+          "strategy": "Внутренний баланс + 7 дней другу",
+          "scenario": "aggressive",
+          "incremental_payers": 24.5,
+          "revenue": 171.01,
+          "current_obligation": 34.2,
+          "server_cost": 1.92,
+          "opportunity_cost": 10.86,
+          "baseline_subsidy": 6.8,
+          "external_prizes": 0.0,
+          "fraud_reserve": 1.03,
+          "net_contribution": 83.0,
+          "break_even_payers": 8.8
+        }
+      ],
+      "scores": [
+        {
+          "strategy": "Текущие 20%",
+          "profit": 45.0,
+          "ru_fit": 72.0,
+          "viral": 48.0,
+          "speed": 100.0,
+          "clarity": 70.0,
+          "durability": 68.0,
+          "antifraud": 82.0,
+          "measurement": 60.0,
+          "reputation": 80.0,
+          "owner": 64.15,
+          "profit_heavy": 61.4,
+          "viral_heavy": 62.0,
+          "risk_speed": 69.6
+        },
+        {
+          "strategy": "20%, вывод от $3",
+          "profit": 60.0,
+          "ru_fit": 78.0,
+          "viral": 55.0,
+          "speed": 95.0,
+          "clarity": 82.0,
+          "durability": 66.0,
+          "antifraud": 78.0,
+          "measurement": 80.0,
+          "reputation": 80.0,
+          "owner": 71.15,
+          "profit_heavy": 69.4,
+          "viral_heavy": 68.4,
+          "risk_speed": 75.6
+        },
+        {
+          "strategy": "20% + мгновенная трата в VPN",
+          "profit": 78.0,
+          "ru_fit": 92.0,
+          "viral": 64.0,
+          "speed": 92.0,
+          "clarity": 95.0,
+          "durability": 84.0,
+          "antifraud": 90.0,
+          "measurement": 95.0,
+          "reputation": 92.0,
+          "owner": 83.85,
+          "profit_heavy": 83.0,
+          "viral_heavy": 80.2,
+          "risk_speed": 86.4
+        },
+        {
+          "strategy": "7 дней рефереру вместо денег",
+          "profit": 62.0,
+          "ru_fit": 86.0,
+          "viral": 68.0,
+          "speed": 90.0,
+          "clarity": 92.0,
+          "durability": 70.0,
+          "antifraud": 82.0,
+          "measurement": 90.0,
+          "reputation": 90.0,
+          "owner": 76.9,
+          "profit_heavy": 73.9,
+          "viral_heavy": 75.1,
+          "risk_speed": 80.2
+        },
+        {
+          "strategy": "3 активных = бесплатный VPN",
+          "profit": 54.0,
+          "ru_fit": 82.0,
+          "viral": 60.0,
+          "speed": 86.0,
+          "clarity": 72.0,
+          "durability": 58.0,
+          "antifraud": 68.0,
+          "measurement": 90.0,
+          "reputation": 84.0,
+          "owner": 68.5,
+          "profit_heavy": 65.9,
+          "viral_heavy": 67.1,
+          "risk_speed": 72.3
+        },
+        {
+          "strategy": "Выбор: деньги или VPN",
+          "profit": 73.0,
+          "ru_fit": 91.0,
+          "viral": 70.0,
+          "speed": 85.0,
+          "clarity": 84.0,
+          "durability": 80.0,
+          "antifraud": 82.0,
+          "measurement": 92.0,
+          "reputation": 90.0,
+          "owner": 80.5,
+          "profit_heavy": 79.2,
+          "viral_heavy": 78.6,
+          "risk_speed": 82.0
+        },
+        {
+          "strategy": "20% + 7 дней другу после оплаты",
+          "profit": 81.0,
+          "ru_fit": 92.0,
+          "viral": 85.0,
+          "speed": 88.0,
+          "clarity": 94.0,
+          "durability": 75.0,
+          "antifraud": 80.0,
+          "measurement": 94.0,
+          "reputation": 92.0,
+          "owner": 85.8,
+          "profit_heavy": 84.4,
+          "viral_heavy": 85.2,
+          "risk_speed": 86.65
+        },
+        {
+          "strategy": "30-дневный referral-спринт",
+          "profit": 74.0,
+          "ru_fit": 88.0,
+          "viral": 90.0,
+          "speed": 84.0,
+          "clarity": 90.0,
+          "durability": 58.0,
+          "antifraud": 66.0,
+          "measurement": 92.0,
+          "reputation": 78.0,
+          "owner": 80.2,
+          "profit_heavy": 77.9,
+          "viral_heavy": 81.1,
+          "risk_speed": 81.0
+        },
+        {
+          "strategy": "Розыгрыш среди оплативших друзей",
+          "profit": 42.0,
+          "ru_fit": 68.0,
+          "viral": 82.0,
+          "speed": 74.0,
+          "clarity": 76.0,
+          "durability": 42.0,
+          "antifraud": 35.0,
+          "measurement": 86.0,
+          "reputation": 30.0,
+          "owner": 59.75,
+          "profit_heavy": 54.75,
+          "viral_heavy": 62.75,
+          "risk_speed": 61.5
+        },
+        {
+          "strategy": "Игра + фиксированный магазин",
+          "profit": 61.0,
+          "ru_fit": 80.0,
+          "viral": 86.0,
+          "speed": 65.0,
+          "clarity": 76.0,
+          "durability": 62.0,
+          "antifraud": 60.0,
+          "measurement": 84.0,
+          "reputation": 76.0,
+          "owner": 71.45,
+          "profit_heavy": 68.5,
+          "viral_heavy": 73.5,
+          "risk_speed": 70.7
+        },
+        {
+          "strategy": "Игра + случайные ценные призы",
+          "profit": 45.0,
+          "ru_fit": 72.0,
+          "viral": 91.0,
+          "speed": 62.0,
+          "clarity": 78.0,
+          "durability": 46.0,
+          "antifraud": 35.0,
+          "measurement": 80.0,
+          "reputation": 42.0,
+          "owner": 62.15,
+          "profit_heavy": 56.85,
+          "viral_heavy": 66.05,
+          "risk_speed": 61.4
+        },
+        {
+          "strategy": "Новые партнёры: $2 first-paid + 10% recurring",
+          "profit": 76.0,
+          "ru_fit": 82.0,
+          "viral": 72.0,
+          "speed": 72.0,
+          "clarity": 76.0,
+          "durability": 80.0,
+          "antifraud": 70.0,
+          "measurement": 90.0,
+          "reputation": 76.0,
+          "owner": 76.7,
+          "profit_heavy": 76.6,
+          "viral_heavy": 75.8,
+          "risk_speed": 76.4
+        },
+        {
+          "strategy": "Lifecycle/winback без скидки",
+          "profit": 82.0,
+          "ru_fit": 92.0,
+          "viral": 38.0,
+          "speed": 92.0,
+          "clarity": 90.0,
+          "durability": 86.0,
+          "antifraud": 94.0,
+          "measurement": 94.0,
+          "reputation": 94.0,
+          "owner": 80.9,
+          "profit_heavy": 82.2,
+          "viral_heavy": 73.4,
+          "risk_speed": 84.6
+        },
+        {
+          "strategy": "Внутренний баланс + 7 дней другу",
+          "profit": 86.0,
+          "ru_fit": 95.0,
+          "viral": 88.0,
+          "speed": 78.0,
+          "clarity": 88.0,
+          "durability": 86.0,
+          "antifraud": 78.0,
+          "measurement": 95.0,
+          "reputation": 92.0,
+          "owner": 87.4,
+          "profit_heavy": 86.75,
+          "viral_heavy": 87.15,
+          "risk_speed": 86.1
+        },
+        {
+          "strategy": "Гибрид + сезонный Doodle Route",
+          "profit": 72.0,
+          "ru_fit": 86.0,
+          "viral": 94.0,
+          "speed": 58.0,
+          "clarity": 74.0,
+          "durability": 70.0,
+          "antifraud": 58.0,
+          "measurement": 88.0,
+          "reputation": 76.0,
+          "owner": 76.3,
+          "profit_heavy": 74.4,
+          "viral_heavy": 78.8,
+          "risk_speed": 73.3
+        }
+      ],
+      "analogs": [
+        {
+          "analog": "Zefir VPN",
+          "market_price": "RU Telegram VPN; 199 Stars/mo",
+          "mechanic": "Friend gets 7d instead of 3; inviter +7d; 3 friends +30d; 5 subscribed friends = free while they renew",
+          "threshold_hold": "1 / 3 / 5; paid-active condition",
+          "applicability": "Very close product/market; performance and company size undisclosed",
+          "source": "https://zefirvpn.ru/"
+        },
+        {
+          "analog": "Volno",
+          "market_price": "RU Telegram VPN; 199 ₽/mo",
+          "mechanic": "Bonus days to both sides after friend’s first payment",
+          "threshold_hold": "First payment; exact days not public",
+          "applicability": "Close low-ticket benchmark; result data absent",
+          "source": "https://volno.online/"
+        },
+        {
+          "analog": "Delta VPN",
+          "market_price": "RU VPN; 100 ₽/mo",
+          "mechanic": "Friend 1 month, inviter 15 days",
+          "threshold_hold": "Per friend; unlimited stated",
+          "applicability": "Shows aggressive subsidy, not that it is profitable",
+          "source": "https://deltavpn.ru/"
+        },
+        {
+          "analog": "Tuneway",
+          "market_price": "RU VPN; 249 ₽/mo",
+          "mechanic": "Inviter +10d per subscribed friend; 9 friends = 3 months",
+          "threshold_hold": "Subscribed friend",
+          "applicability": "Simple one-sided days; higher price than DoodleVPN",
+          "source": "https://dostup24.com/"
+        },
+        {
+          "analog": "FastNeo VPN",
+          "market_price": "RU Telegram VPN; 150 ₽/mo",
+          "mechanic": "50% from every friend payment, withdrawal in bot",
+          "threshold_hold": "Public withdrawal threshold not stated",
+          "applicability": "Closest cash recurring analogue; economics/outcomes undisclosed",
+          "source": "https://fastneoapp.com/"
+        },
+        {
+          "analog": "Telegram Affiliate Programs",
+          "market_price": "Telegram Mini Apps using Stars",
+          "mechanic": "Developer sets revenue-share percent and duration; commissions in Stars",
+          "threshold_hold": "Only referred Mini App Stars transactions",
+          "applicability": "Potential infrastructure, not proof of user appeal; VPN advertising law still applies",
+          "source": "https://core.telegram.org/api/bots/referrals"
+        }
+      ],
+      "games": [
+        {
+          "concept": "Doodle Route seasonal map",
+          "five_second": "5",
+          "viral": "5",
+          "d1_d7_d30": "4/4/3",
+          "ref_dependency": "High",
+          "reward_cost": "Low–medium",
+          "mvp": "1–3d UI; 3–7d safe integration",
+          "antifraud": "4/5",
+          "vpn_fit": "4/5",
+          "boredom": "Medium",
+          "legal_rep": "Low if deterministic"
+        },
+        {
+          "concept": "Internet Passport stamps",
+          "five_second": "5",
+          "viral": "4",
+          "d1_d7_d30": "4/4/3",
+          "ref_dependency": "Medium",
+          "reward_cost": "Low",
+          "mvp": "1–3d",
+          "antifraud": "5/5",
+          "vpn_fit": "4/5",
+          "boredom": "Medium",
+          "legal_rep": "Low"
+        },
+        {
+          "concept": "Shield Team 3–5 people",
+          "five_second": "4",
+          "viral": "5",
+          "d1_d7_d30": "4/4/3",
+          "ref_dependency": "Very high",
+          "reward_cost": "Medium",
+          "mvp": "2–5d",
+          "antifraud": "3/5",
+          "vpn_fit": "4/5",
+          "boredom": "Medium",
+          "legal_rep": "Low–medium"
+        },
+        {
+          "concept": "Gift a Shield",
+          "five_second": "5",
+          "viral": "5",
+          "d1_d7_d30": "4/3/2",
+          "ref_dependency": "Very high",
+          "reward_cost": "Low",
+          "mvp": "1–2d",
+          "antifraud": "5/5",
+          "vpn_fit": "5/5",
+          "boredom": "High alone",
+          "legal_rep": "Low"
+        },
+        {
+          "concept": "Referral Relay chain",
+          "five_second": "4",
+          "viral": "5",
+          "d1_d7_d30": "4/3/2",
+          "ref_dependency": "Very high",
+          "reward_cost": "Medium",
+          "mvp": "2–4d",
+          "antifraud": "3/5",
+          "vpn_fit": "4/5",
+          "boredom": "Medium",
+          "legal_rep": "MLM optics risk"
+        },
+        {
+          "concept": "Shield City co-op",
+          "five_second": "4",
+          "viral": "4",
+          "d1_d7_d30": "4/4/3",
+          "ref_dependency": "Medium",
+          "reward_cost": "Low",
+          "mvp": "3–7d",
+          "antifraud": "4/5",
+          "vpn_fit": "4/5",
+          "boredom": "Medium",
+          "legal_rep": "Low"
+        },
+        {
+          "concept": "Privacy Garden / pet",
+          "five_second": "5",
+          "viral": "3",
+          "d1_d7_d30": "4/4/3",
+          "ref_dependency": "Low",
+          "reward_cost": "Low",
+          "mvp": "2–4d",
+          "antifraud": "5/5",
+          "vpn_fit": "4/5",
+          "boredom": "Medium",
+          "legal_rep": "Low"
+        },
+        {
+          "concept": "Server City builder",
+          "five_second": "4",
+          "viral": "3",
+          "d1_d7_d30": "4/4/3",
+          "ref_dependency": "Medium",
+          "reward_cost": "Low",
+          "mvp": "3–7d",
+          "antifraud": "4/5",
+          "vpn_fit": "4/5",
+          "boredom": "Medium",
+          "legal_rep": "Low"
+        },
+        {
+          "concept": "Referral Boss",
+          "five_second": "4",
+          "viral": "4",
+          "d1_d7_d30": "4/3/2",
+          "ref_dependency": "Very high",
+          "reward_cost": "Medium",
+          "mvp": "1–3d",
+          "antifraud": "3/5",
+          "vpn_fit": "3/5",
+          "boredom": "High",
+          "legal_rep": "Low"
+        },
+        {
+          "concept": "Mission board + badges",
+          "five_second": "5",
+          "viral": "3",
+          "d1_d7_d30": "4/3/2",
+          "ref_dependency": "Medium",
+          "reward_cost": "Low",
+          "mvp": "1–3d",
+          "antifraud": "5/5",
+          "vpn_fit": "4/5",
+          "boredom": "High",
+          "legal_rep": "Low"
+        },
+        {
+          "concept": "Route leagues",
+          "five_second": "3",
+          "viral": "4",
+          "d1_d7_d30": "3/4/3",
+          "ref_dependency": "High",
+          "reward_cost": "Medium",
+          "mvp": "3–7d",
+          "antifraud": "3/5",
+          "vpn_fit": "3/5",
+          "boredom": "Medium",
+          "legal_rep": "Competition risk"
+        },
+        {
+          "concept": "Treasure Map deterministic",
+          "five_second": "4",
+          "viral": "4",
+          "d1_d7_d30": "4/4/2",
+          "ref_dependency": "High",
+          "reward_cost": "Medium",
+          "mvp": "2–4d",
+          "antifraud": "4/5",
+          "vpn_fit": "4/5",
+          "boredom": "Medium",
+          "legal_rep": "Low"
+        },
+        {
+          "concept": "Collectible stickers",
+          "five_second": "5",
+          "viral": "4",
+          "d1_d7_d30": "4/3/2",
+          "ref_dependency": "Medium",
+          "reward_cost": "Very low",
+          "mvp": "1–3d",
+          "antifraud": "5/5",
+          "vpn_fit": "5/5",
+          "boredom": "High",
+          "legal_rep": "Low"
+        },
+        {
+          "concept": "Community milestone",
+          "five_second": "5",
+          "viral": "3",
+          "d1_d7_d30": "3/3/2",
+          "ref_dependency": "Low",
+          "reward_cost": "Low",
+          "mvp": "1–3d",
+          "antifraud": "5/5",
+          "vpn_fit": "5/5",
+          "boredom": "High",
+          "legal_rep": "Low"
+        },
+        {
+          "concept": "Async expedition",
+          "five_second": "3",
+          "viral": "4",
+          "d1_d7_d30": "3/4/3",
+          "ref_dependency": "High",
+          "reward_cost": "Medium",
+          "mvp": "3–7d",
+          "antifraud": "3/5",
+          "vpn_fit": "4/5",
+          "boredom": "Medium",
+          "legal_rep": "Low"
+        },
+        {
+          "concept": "Cases / roulette with valuable prizes",
+          "five_second": "5",
+          "viral": "5",
+          "d1_d7_d30": "4/3/1",
+          "ref_dependency": "High",
+          "reward_cost": "High",
+          "mvp": "1–3d",
+          "antifraud": "1/5",
+          "vpn_fit": "1/5",
+          "boredom": "High",
+          "legal_rep": "High risk"
+        }
+      ],
+      "lifecycle": [
+        {
+          "state": "New user",
+          "timing": "Immediately",
+          "goal": "Start trial",
+          "suppression_cap": "Suppress if trial/payment; transactional; global cap",
+          "control": "5%",
+          "copy": "3 дня уже доступны. Подключить на этом устройстве →",
+          "cta": "Подключить",
+          "success": "trial_started",
+          "order": 1
+        },
+        {
+          "state": "Trial not activated",
+          "timing": "6h, then 36h only",
+          "goal": "Complete setup",
+          "suppression_cap": "Max 2 total; stop on trial/payment/support issue",
+          "control": "10%",
+          "copy": "VPN ещё не подключён. Покажем настройку за минуту.",
+          "cta": "Настроить",
+          "success": "first_connection",
+          "order": 2
+        },
+        {
+          "state": "Trial active",
+          "timing": "After first connection",
+          "goal": "Confirm value",
+          "suppression_cap": "Once",
+          "control": "5%",
+          "copy": "Готово — VPN работает. Если что-то не откроется, поможем здесь.",
+          "cta": "Проверить",
+          "success": "healthy_session",
+          "order": 3
+        },
+        {
+          "state": "Trial ending",
+          "timing": "24h before expiry",
+          "goal": "First payment",
+          "suppression_cap": "Once; suppress if paid",
+          "control": "10%",
+          "copy": "Пробный доступ закончится завтра. Месяц можно продлить в два нажатия.",
+          "cta": "Выбрать срок",
+          "success": "payment_success_48h",
+          "order": 4
+        },
+        {
+          "state": "Viewed plans",
+          "timing": "2h after exit",
+          "goal": "Return to checkout",
+          "suppression_cap": "Once/14d",
+          "control": "10%",
+          "copy": "Тариф сохранился. Вернуться к оплате?",
+          "cta": "Продолжить",
+          "success": "payment_started",
+          "order": 5
+        },
+        {
+          "state": "Clicked payment",
+          "timing": "30m",
+          "goal": "Recover checkout",
+          "suppression_cap": "Once per intent; suppress if success",
+          "control": "10%",
+          "copy": "Оплата не завершилась. Можно продолжить с того же места.",
+          "cta": "Продолжить",
+          "success": "payment_success_24h",
+          "order": 6
+        },
+        {
+          "state": "Payment failed",
+          "timing": "10m with provider error",
+          "goal": "Offer working path",
+          "suppression_cap": "Once/error",
+          "control": "5%",
+          "copy": "Платёж не прошёл. Попробовать другой способ?",
+          "cta": "Другой способ",
+          "success": "payment_success_24h",
+          "order": 7
+        },
+        {
+          "state": "First payment",
+          "timing": "Immediately",
+          "goal": "Activation and trust",
+          "suppression_cap": "Transactional",
+          "control": "None",
+          "copy": "Оплата прошла. Доступ активен до {date}.",
+          "cta": "Подключить",
+          "success": "first_paid_connection",
+          "order": 8
+        },
+        {
+          "state": "Subscription expiry",
+          "timing": "3d and 6h before",
+          "goal": "Renewal",
+          "suppression_cap": "Max 2; suppress if renewed",
+          "control": "10%",
+          "copy": "Доступ закончится через 3 дня. Продлить без перерыва?",
+          "cta": "Продлить",
+          "success": "renewal",
+          "order": 9
+        },
+        {
+          "state": "Former payer",
+          "timing": "7d after expiry, then 30d",
+          "goal": "Winback",
+          "suppression_cap": "Max 2/90d; no blanket discount",
+          "control": "10%",
+          "copy": "Нужен VPN снова? Подключение и прошлые устройства сохранены.",
+          "cta": "Вернуться",
+          "success": "reactivation",
+          "order": 10
+        },
+        {
+          "state": "Referral page opened",
+          "timing": "24h if no share",
+          "goal": "First share",
+          "suppression_cap": "Once/30d",
+          "control": "10%",
+          "copy": "Друг получит +7 дней после первой оплаты. Ссылка готова.",
+          "cta": "Поделиться",
+          "success": "referral_share_click",
+          "order": 11
+        },
+        {
+          "state": "Link sent",
+          "timing": "No reminder immediately",
+          "goal": "Avoid pressure",
+          "suppression_cap": "Status only",
+          "control": "None",
+          "copy": "Ссылка отправлена. Покажем статус, когда друг откроет бота.",
+          "cta": "Статус",
+          "success": "referral_link_open",
+          "order": 12
+        },
+        {
+          "state": "First referred signup",
+          "timing": "Immediately",
+          "goal": "Explain next step",
+          "suppression_cap": "Once/referral",
+          "control": "5%",
+          "copy": "Друг подключился. Награда появится после его первой оплаты.",
+          "cta": "Статус",
+          "success": "referred_payment",
+          "order": 13
+        },
+        {
+          "state": "Referral paid",
+          "timing": "After hold/release",
+          "goal": "Make value liquid",
+          "suppression_cap": "Transactional",
+          "control": "None",
+          "copy": "Друг оплатил: +${amount} на баланс. Им уже можно продлить VPN.",
+          "cta": "Использовать",
+          "success": "balance_redeemed",
+          "order": 14
+        },
+        {
+          "state": "Near reward",
+          "timing": "At deterministic threshold",
+          "goal": "Finish progress",
+          "suppression_cap": "Once/season; no fake urgency",
+          "control": "10%",
+          "copy": "До +3 дней осталась одна подтверждённая оплата друга.",
+          "cta": "Пригласить",
+          "success": "next_verified_referral",
+          "order": 15
+        },
+        {
+          "state": "Reward received",
+          "timing": "Immediately",
+          "goal": "Close loop",
+          "suppression_cap": "Transactional",
+          "control": "None",
+          "copy": "Готово: +3 дня добавлены до {date}.",
+          "cta": "Открыть маршрут",
+          "success": "reward_used",
+          "order": 16
+        }
+      ],
+      "experiments": [
+        {
+          "experiment": "E0 Pretrial cleanup",
+          "audience": "New non-payers",
+          "treatment_control": "2 messages total vs 0",
+          "primary": "7d payment rate",
+          "guardrails": "Bot blocks, support tickets",
+          "mde_sample": "Business MDE +25%; sequential, 6–8 weeks",
+          "rollout": "Positive contribution and P(lift>10%)≥80%",
+          "kill": "No lift after 8w or blocks +0.5pp",
+          "contamination": "Hash by tg_id",
+          "order": 1
+        },
+        {
+          "experiment": "E1 Liquid internal balance",
+          "audience": "Active payers exposed to referral UI",
+          "treatment_control": "Spend 20% balance in VPN from $0.01 vs $10 USDT only",
+          "primary": "Verified paid referrals / 100 exposed",
+          "guardrails": "Cash revenue displaced, withdrawal complaints",
+          "mde_sample": "Target ≥25% lift; 50/50 for 6–8 weeks",
+          "rollout": "≥60 verified payments, positive incremental contribution, posterior ≥80%",
+          "kill": "P(lift≥10%)<20% after 8w",
+          "contamination": "Referrer-level assignment",
+          "order": 2
+        },
+        {
+          "experiment": "E2 Friend +7 after first payment",
+          "audience": "New referral links",
+          "treatment_control": "Real +7d recipient benefit vs standard trial",
+          "primary": "Link-open → paid within 7d",
+          "guardrails": "Next-renewal delay, refunds, fraud",
+          "mde_sample": "Break-even ~16% worst-case; target ≥25%; 6–8 weeks",
+          "rollout": "Incremental paid lift ≥25% and contribution >0",
+          "kill": "Lift <10%, fraud >5%, or subsidy >$1/incremental $",
+          "contamination": "Cluster by inviter/link variant",
+          "order": 3
+        },
+        {
+          "experiment": "E3 Partner reactivation",
+          "audience": "Top 10 declined partners",
+          "treatment_control": "Personal reactivation kit; matched pre-period",
+          "primary": "Verified first payers and net revenue",
+          "guardrails": "Refunds, commission %, concentration",
+          "mde_sample": "Small-N Bayesian/matched; 30 days",
+          "rollout": "≥$2 contribution per acquired payer",
+          "kill": "No verified payer from outreach cohort",
+          "contamination": "Partner-specific links",
+          "order": 4
+        },
+        {
+          "experiment": "E4 Doodle Route layer",
+          "audience": "Only after E1+E2 win",
+          "treatment_control": "Same offer, game UI vs plain UI",
+          "primary": "Verified paid referrals / exposed",
+          "guardrails": "Farmer rate, D7 opens without revenue, reward cost",
+          "mde_sample": "Target ≥15% beyond offer; one 30-day season",
+          "rollout": "Positive incremental profit and ≥15% lift",
+          "kill": "No paid lift, farm >8%, or reward >10% referred revenue",
+          "contamination": "Season assignment by referrer",
+          "order": 5
+        }
+      ],
+      "channels": [
+        {
+          "channel": "Existing-base lifecycle / winback",
+          "realism": "High",
+          "cost": "Low",
+          "speed": "Days",
+          "legal": "Lower but review copy",
+          "decision": "Do now with holdouts",
+          "order": 1
+        },
+        {
+          "channel": "Gifting / family/group plan",
+          "realism": "High",
+          "cost": "Low–medium",
+          "speed": "1–3 weeks",
+          "legal": "Product mechanic; review promotion",
+          "decision": "Prototype after attribution",
+          "order": 2
+        },
+        {
+          "channel": "Reanimate top 10 partners",
+          "realism": "High",
+          "cost": "Performance-only",
+          "speed": "Days",
+          "legal": "VPN advertising gate",
+          "decision": "Prepare; activate only after counsel",
+          "order": 3
+        },
+        {
+          "channel": "New micro-partners",
+          "realism": "Medium",
+          "cost": "$2 first-paid + 10% recurring",
+          "speed": "Weeks",
+          "legal": "High advertising risk",
+          "decision": "New contracts only; legal gate",
+          "order": 4
+        },
+        {
+          "channel": "Platform/device onboarding",
+          "realism": "High",
+          "cost": "Low",
+          "speed": "Days",
+          "legal": "Support/product content",
+          "decision": "Improve retention, not acquisition claim",
+          "order": 5
+        },
+        {
+          "channel": "Cross-bot integrations",
+          "realism": "Medium",
+          "cost": "Rev-share",
+          "speed": "Weeks",
+          "legal": "Advertising risk",
+          "decision": "Do not scale before counsel/attribution",
+          "order": 6
+        },
+        {
+          "channel": "UGC, reviews, ambassadors",
+          "realism": "Medium",
+          "cost": "Low",
+          "speed": "Weeks",
+          "legal": "Advertising/endorsement risk",
+          "decision": "No paid/public brief until counsel",
+          "order": 7
+        },
+        {
+          "channel": "SEO/public VPN content",
+          "realism": "Low–medium",
+          "cost": "Time",
+          "speed": "Months",
+          "legal": "High in Russia",
+          "decision": "Not a current recommendation",
+          "order": 8
+        },
+        {
+          "channel": "Telegram Mini App discovery",
+          "realism": "Low",
+          "cost": "Low",
+          "speed": "Uncertain",
+          "legal": "Does not bypass VPN ad law",
+          "decision": "Bonus distribution, not core plan",
+          "order": 9
+        },
+        {
+          "channel": "B2B2C / digital bundles",
+          "realism": "Medium",
+          "cost": "Rev-share",
+          "speed": "1–3 months",
+          "legal": "Contract/regulatory review",
+          "decision": "Explore after core recovery",
+          "order": 10
+        }
+      ],
+      "plan": [
+        {
+          "horizon": "Tomorrow",
+          "action": "Stop daily pretrial loop; keep transactional notices. Freeze threshold-3, roulette/cases and broad 40% discounts. Create legal review brief.",
+          "owner_metric": "No user receives >2 pretrial prompts total",
+          "order": 1
+        },
+        {
+          "horizon": "7 days",
+          "action": "Implement referral/view/share/payment events, delivery_id, experiment_id and 10% persistent CRM holdout. Reconcile source attribution. Contact top 10 partners for diagnosis.",
+          "owner_metric": "≥95% new starts and payments have first/last touch",
+          "order": 2
+        },
+        {
+          "horizon": "30 days",
+          "action": "Run E0 and E1. Ship internal balance redemption without changing earned 20% or old contracts. Build one referral page and one share message.",
+          "owner_metric": "Referral funnel complete; cash displacement and contribution visible",
+          "order": 3
+        },
+        {
+          "horizon": "60 days",
+          "action": "If E1 passes, run E2 friend +7 after first confirmed payment. Pilot new-partner contract only after legal approval. Test gifting/family separately.",
+          "owner_metric": "≥25% paid-referral lift and positive contribution",
+          "order": 4
+        },
+        {
+          "horizon": "90 days",
+          "action": "Only if E1+E2 pass, run one 30-day Doodle Route season against identical plain offer. Roll out winning CRM matrix.",
+          "owner_metric": "Game adds ≥15% paid referrals beyond offer; reward ≤10% referred revenue",
+          "order": 5
+        }
+      ],
+      "decisions": [
+        {
+          "priority": 1,
+          "decision": "Measurement + stop pretrial spam",
+          "impact": "High",
+          "confidence": "High",
+          "effort": "Low",
+          "now": "Yes"
+        },
+        {
+          "priority": 2,
+          "decision": "Internal balance from first cent",
+          "impact": "High",
+          "confidence": "Medium-high",
+          "effort": "Low",
+          "now": "Experiment"
+        },
+        {
+          "priority": 3,
+          "decision": "Friend +7 after first payment",
+          "impact": "High",
+          "confidence": "Medium",
+          "effort": "Low",
+          "now": "Stage 2 experiment"
+        },
+        {
+          "priority": 4,
+          "decision": "Top-10 partner reactivation",
+          "impact": "High",
+          "confidence": "High diagnosis / legal gate",
+          "effort": "Low",
+          "now": "Prepare"
+        },
+        {
+          "priority": 5,
+          "decision": "Lifecycle/winback without blanket discount",
+          "impact": "Medium-high",
+          "confidence": "Medium",
+          "effort": "Low",
+          "now": "Parallel tests"
+        },
+        {
+          "priority": 6,
+          "decision": "New partner contract $2 +10%",
+          "impact": "Medium",
+          "confidence": "Medium",
+          "effort": "Medium",
+          "now": "New deals only"
+        },
+        {
+          "priority": 7,
+          "decision": "Doodle Route season",
+          "impact": "Potentially medium",
+          "confidence": "Low",
+          "effort": "Low UI / medium reliable ops",
+          "now": "Only after core offer wins"
+        },
+        {
+          "priority": 8,
+          "decision": "Threshold 3-active free VPN",
+          "impact": "Low reach",
+          "confidence": "Low",
+          "effort": "Low",
+          "now": "No"
+        },
+        {
+          "priority": 9,
+          "decision": "Random prize/cases",
+          "impact": "Uncertain",
+          "confidence": "Low",
+          "effort": "Low",
+          "now": "No"
+        }
+      ]
+    }
+  },
+  "sources": [
+    {
+      "id": "revenue_export",
+      "label": "DoodleVPN validated revenue aggregate",
+      "path": "analysis/doodlevpn-growth-research-2026-07-30/monthly_metrics.csv",
+      "query": {
+        "description": "Reviewed aggregate reproduced from accounting and bot mirrors; VALUES preserve the exact chart snapshot.",
+        "engine": "SQLite",
+        "sql": "WITH monthly_snapshot (month, segment, revenue, total, payers, registrations, aov) AS (\n  VALUES ('May', 'New', 3006.33, 3581.06, 644, 892, 4.91),\n  ('May', 'Returning', 574.73, 3581.06, 644, 892, 4.91),\n  ('June', 'New', 1662.92, 3066.94, 576, 627, 4.78),\n  ('June', 'Returning', 1404.02, 3066.94, 576, 627, 4.78),\n  ('July', 'New', 1452.03, 2823.94, 514, 420, 4.98),\n  ('July', 'Returning', 1371.91, 2823.94, 514, 420, 4.98)\n)\nSELECT * FROM monthly_snapshot;",
+        "tables_used": [
+          "accounting.revenue",
+          "accounting.revenue_refunds",
+          "bot_mirror.users",
+          "bot_mirror.payments"
+        ],
+        "filters": [
+          "paid_at >= 2026-04-13",
+          "paid_at < 2026-07-30 21:00:00 UTC",
+          "refunds matched to original source and external id"
+        ],
+        "metric_definitions": [
+          "net revenue = amount_usd_net less matched refunds",
+          "new payer = first observed successful payment after 2026-04-13"
+        ]
+      }
+    },
+    {
+      "id": "driver_export",
+      "label": "DoodleVPN revenue driver bridge",
+      "query": {
+        "description": "Reviewed May-to-July segment bridge; VALUES preserve the exact chart snapshot.",
+        "engine": "SQLite",
+        "sql": "WITH driver_snapshot (segment, may, july, change, share) AS (\n  VALUES ('Special partners', 906.44, 486.52, -419.92, 0.555),\n  ('Retail referrals 20%', 1203.32, 975.75, -227.57, 0.301),\n  ('Non-ref / unattributed', 1471.3, 1361.67, -109.63, 0.145)\n)\nSELECT * FROM driver_snapshot;",
+        "tables_used": [
+          "accounting.revenue",
+          "accounting.revenue_refunds",
+          "bot_mirror.users"
+        ],
+        "filters": [
+          "May and July 1–30 2026",
+          "payer segmented by current referrer commission classification"
+        ]
+      }
+    },
+    {
+      "id": "referral_export",
+      "label": "DoodleVPN validated referral aggregate",
+      "path": "analysis/doodlevpn-growth-research-2026-07-30/doodlevpn_growth_research.ipynb",
+      "query": {
+        "description": "Reviewed referral activity snapshot reproduced from bot mirror.",
+        "engine": "SQLite",
+        "sql": "WITH referral_activity_snapshot (month, registrations, active_referrers, regs_per_referrer) AS (\n  VALUES ('Apr 13–30', 142, 96, 1.48),\n  ('May', 250, 163, 1.53),\n  ('June', 208, 135, 1.54),\n  ('July', 102, 83, 1.23)\n)\nSELECT * FROM referral_activity_snapshot;",
+        "tables_used": [
+          "bot_mirror.users",
+          "bot_mirror.payments",
+          "bot_mirror.referral_holds",
+          "bot_mirror.withdrawal_requests"
+        ],
+        "filters": [
+          "registration flow >= 2026-04-13",
+          "lifetime fields explicitly labeled",
+          "commission 20% = retail; other = special"
+        ]
+      }
+    },
+    {
+      "id": "unit_model",
+      "label": "DoodleVPN scenario model",
+      "path": "analysis/doodlevpn-growth-research-2026-07-30/unit_economics.csv",
+      "query": {
+        "description": "Transparent pessimistic/base/aggressive unit-economics sensitivity model; VALUES preserve the finalist snapshot.",
+        "engine": "SQLite",
+        "sql": "WITH unit_finalists_snapshot (strategy, scenario, incremental_payers, revenue, current_obligation, server_cost, opportunity_cost, baseline_subsidy, external_prizes, fraud_reserve, net_contribution, break_even_payers) AS (\n  VALUES ('20% + мгновенная трата в VPN', 'pessimistic', 3.5, 24.43, 4.89, 0.84, 0.0, 0.0, 0.0, 0.0, 8.7, 1.9),\n  ('20% + мгновенная трата в VPN', 'base', 8.8, 61.08, 12.22, 1.05, 0.0, 0.0, 0.0, 0.0, 22.81, 4.6),\n  ('20% + мгновенная трата в VPN', 'aggressive', 14.0, 97.72, 19.54, 0.7, 0.0, 0.0, 0.0, 0.0, 27.48, 9.0),\n  ('3 активных = бесплатный VPN', 'pessimistic', 1.8, 12.21, 2.44, 0.42, 0.0, 0.0, 0.0, 0.0, -26.95, 6.8),\n  ('3 активных = бесплатный VPN', 'base', 5.2, 36.65, 7.33, 0.63, 0.0, 0.0, 0.0, 0.0, -7.61, 6.6),\n  ('3 активных = бесплатный VPN', 'aggressive', 10.5, 73.29, 14.66, 0.53, 0.0, 0.0, 0.0, 0.0, 21.81, 6.6),\n  ('20% + 7 дней другу после оплаты', 'pessimistic', 4.2, 29.32, 5.86, 3.2, 28.63, 27.52, 0.0, 0.0, -8.38, 6.0),\n  ('20% + 7 дней другу после оплаты', 'base', 9.8, 68.4, 13.68, 2.43, 16.36, 13.76, 0.0, 0.0, 35.93, 2.7),\n  ('20% + 7 дней другу после оплаты', 'aggressive', 17.5, 122.15, 24.43, 1.49, 9.59, 6.8, 0.0, 0.0, 86.65, 1.3),\n  ('Игра + фиксированный магазин', 'pessimistic', 3.5, 24.43, 4.89, 0.84, 0.0, 14.0, 0.0, 1.01, 2.29, 2.8),\n  ('Игра + фиксированный магазин', 'base', 10.5, 73.29, 14.66, 1.26, 0.0, 14.0, 25.0, 2.89, 11.28, 7.7),\n  ('Игра + фиксированный магазин', 'aggressive', 21.0, 146.58, 29.32, 1.05, 0.0, 14.0, 50.0, 5.09, 38.73, 12.5),\n  ('Новые партнёры: $2 first-paid + 10% recurring', 'pessimistic', 1.0, 5.74, 0.57, 0.24, 0.0, 0.0, 0.0, 0.13, 2.8, 0.0),\n  ('Новые партнёры: $2 first-paid + 10% recurring', 'base', 4.0, 22.96, 2.3, 0.48, 0.0, 0.0, 0.0, 0.51, 11.67, 0.0),\n  ('Новые партнёры: $2 first-paid + 10% recurring', 'aggressive', 8.0, 45.92, 4.59, 0.4, 0.0, 0.0, 0.0, 1.03, 23.9, 0.0),\n  ('Внутренний баланс + 7 дней другу', 'pessimistic', 6.3, 43.97, 8.79, 3.82, 30.16, 27.52, 0.0, 0.26, -9.07, 8.2),\n  ('Внутренний баланс + 7 дней другу', 'base', 14.0, 97.72, 19.54, 3.05, 17.89, 13.76, 0.0, 0.59, 36.64, 6.7),\n  ('Внутренний баланс + 7 дней другу', 'aggressive', 24.5, 171.01, 34.2, 1.92, 10.86, 6.8, 0.0, 1.03, 83.0, 8.8)\n)\nSELECT * FROM unit_finalists_snapshot;",
+        "language": "Python",
+        "metric_definitions": [
+          "incremental contribution subtracts current referral obligation, reward subsidy paid to baseline and incremental converters, server cost, opportunity cost, prizes, cannibalization and fraud reserve",
+          "scenario uplifts are assumptions, not forecasts"
+        ]
+      }
+    },
+    {
+      "id": "score_model",
+      "label": "DoodleVPN 100-point strategy scoring",
+      "path": "analysis/doodlevpn-growth-research-2026-07-30/strategy_scoring.csv",
+      "query": {
+        "description": "Owner-weighted and sensitivity scores; VALUES preserve the exact report snapshot.",
+        "engine": "SQLite",
+        "sql": "WITH strategy_score_snapshot (strategy, owner, profit_heavy, viral_heavy, risk_speed) AS (\n  VALUES ('Текущие 20%', 64.15, 61.4, 62.0, 69.6),\n  ('20%, вывод от $3', 71.15, 69.4, 68.4, 75.6),\n  ('20% + мгновенная трата в VPN', 83.85, 83.0, 80.2, 86.4),\n  ('7 дней рефереру вместо денег', 76.9, 73.9, 75.1, 80.2),\n  ('3 активных = бесплатный VPN', 68.5, 65.9, 67.1, 72.3),\n  ('Выбор: деньги или VPN', 80.5, 79.2, 78.6, 82.0),\n  ('20% + 7 дней другу после оплаты', 85.8, 84.4, 85.2, 86.65),\n  ('30-дневный referral-спринт', 80.2, 77.9, 81.1, 81.0),\n  ('Розыгрыш среди оплативших друзей', 59.75, 54.75, 62.75, 61.5),\n  ('Игра + фиксированный магазин', 71.45, 68.5, 73.5, 70.7),\n  ('Игра + случайные ценные призы', 62.15, 56.85, 66.05, 61.4),\n  ('Новые партнёры: $2 first-paid + 10% recurring', 76.7, 76.6, 75.8, 76.4),\n  ('Lifecycle/winback без скидки', 80.9, 82.2, 73.4, 84.6),\n  ('Внутренний баланс + 7 дней другу', 87.4, 86.75, 87.15, 86.1),\n  ('Гибрид + сезонный Doodle Route', 76.3, 74.4, 78.8, 73.3)\n)\nSELECT * FROM strategy_score_snapshot;",
+        "language": "Python"
+      }
+    },
+    {
+      "id": "root_analysis",
+      "label": "Root-cause evidence matrix",
+      "query": {
+        "description": "Reviewed evidence and uncertainty matrix assembled from validated aggregates.",
+        "engine": "SQLite",
+        "sql": "WITH root_cause_snapshot (hypothesis, support, contradiction, missing, confidence, discriminator) AS (\n  VALUES ('Приток новых плательщиков упал', 'New revenue: $3,006 May → $1,452 July; registrations 892 → 420', '7-day conversion did not collapse', 'Canonical acquisition cohort before Apr 13', 'High', 'Weekly acquired paid users by attributable source'),\n  ('Просели специальные партнёры', '−$420 May→July; top 10 explain −$428', 'Other partners grew +$8', 'Partner content cadence and reach', 'High', 'Partner-level reactivation with matched historical baseline'),\n  ('Меньше обычных людей вообще реферят', '163 active referrers May → 83 July; ~83% registration decline is count effect', 'Referred users still convert ~35% in mature July cohort', 'View/copy/share funnel', 'High', 'Referral activation experiment with event funnel'),\n  ('Упал настоящий organic/direct', 'Non-ref registrations also fell', 'Non-ref revenue only −$110; 73.5% source missing', 'UTM/deep-link attribution', 'Medium-low', 'Persist first/last touch for every start/payment'),\n  ('Notification fatigue harms conversion', 'Pretrial users got 18.8 repeated messages on average; only 5 paid within 7d', 'No holdout, so no causal estimate', 'Bot blocks, controls, delivery IDs', 'Medium', 'Zero-message vs two-message randomized holdout'),\n  ('Payment failure caused decline', 'Crypto settled/attempt fell to ~31%', 'Wata click→paid improved to 82.7%; crypto too small to explain total', 'Provider-normalized intent funnel', 'Low', 'Payment-intent cohort by provider and error'),\n  ('Retention collapsed', 'Possible definition-sensitive renewal softness', 'Returning revenue $1,404 June vs $1,372 July', 'Canonical eligible renewal event', 'Low/unknown', 'Eligible renewal cohorts with plan-expiry logic'),\n  ('Price/AOV problem', 'None material', 'AOV stable $4.91→$4.98', 'Price elasticity test', 'Low', 'Do not test until acquisition leak is fixed'),\n  ('Growing online proves healthy growth', 'Total MAU rose', 'Core tg MAU fell 1,552→1,450; restore accounts rose 4→468', 'Canonical customer-active metric', 'Rejected', 'Exclude wl_restor* from business MAU')\n)\nSELECT * FROM root_cause_snapshot;"
+      }
+    },
+    {
+      "id": "strategy_analysis",
+      "label": "Strategy comparison model",
+      "query": {
+        "description": "Reviewed mechanics, base economics and owner-weighted scores.",
+        "engine": "SQLite",
+        "sql": "WITH strategy_snapshot (strategy, mechanic, base_incremental_payers, base_net_contribution, score, risk, verdict) AS (\n  VALUES ('Текущие 20%', 'Деньги, вывод $10 USDT', 0.0, 0.0, 64.2, 'Низкая ликвидность', 'Control'),\n  ('20%, вывод от $3', 'Те же деньги, раньше вывод', 4.2, 22.95, 71.2, 'Cash release existing liability', 'Test only if internal spend cannot ship'),\n  ('20% + мгновенная трата в VPN', 'Баланс тратится с первого цента', 8.8, 22.81, 83.8, 'Cash cannibalization/timing', 'Stage 1'),\n  ('7 дней рефереру вместо денег', 'Фиксированные дни за оплату', 7.0, 80.37, 76.9, 'May repel earners; contract change', 'Isolated test, not default'),\n  ('3 активных = бесплатный VPN', 'Cliff at three active friends', 5.2, -7.61, 68.5, '78% stop at 1–2 registrations', 'Reject as first move'),\n  ('Выбор: деньги или VPN', 'User chooses redemption', 7.0, 18.25, 80.5, 'More UI complexity', 'Good fallback'),\n  ('20% + 7 дней другу после оплаты', 'Real recipient benefit', 9.8, 35.93, 85.8, 'Subsidizes baseline conversions', 'Stage 2'),\n  ('30-дневный referral-спринт', 'Temporary boosted rewards', 12.2, 9.78, 80.2, 'Fatigue and subsidy', 'Later campaign'),\n  ('Розыгрыш среди оплативших друзей', 'Random prize', 10.5, -24.8, 59.8, 'Legal, tax, fraud', 'Do not launch'),\n  ('Игра + фиксированный магазин', 'Deterministic points store', 10.5, 11.28, 71.5, 'Farmer traffic', 'Only after offer proof'),\n  ('Игра + случайные ценные призы', 'Cases/roulette', 14.0, -65.29, 62.1, 'Fraud, legal, reputation', 'Reject'),\n  ('Новые партнёры: $2 first-paid + 10% recurring', 'Front-loaded partner bounty', 4.0, 11.67, 76.7, 'Partner quality', 'New contracts only'),\n  ('Lifecycle/winback без скидки', 'Behavior-triggered owned CRM', 10.0, 43.8, 80.9, 'Needs measurement', 'Run in parallel'),\n  ('Внутренний баланс + 7 дней другу', 'Liquid sender reward + friend benefit', 14.0, 36.64, 87.4, 'Needs ≥24% lift in worst case', 'Recommended staged package'),\n  ('Гибрид + сезонный Doodle Route', 'Same offer plus game layer', 17.5, 18.98, 76.3, 'Game can hide weak offer', 'Stage 3 only')\n)\nSELECT * FROM strategy_snapshot;"
+      }
+    },
+    {
+      "id": "analog_analysis",
+      "label": "Public analogue review",
+      "query": {
+        "description": "Public mechanics and applicability; no performance claims inferred.",
+        "engine": "SQLite",
+        "sql": "WITH analogue_snapshot (analog, market_price, mechanic, threshold_hold, applicability, source) AS (\n  VALUES ('Zefir VPN', 'RU Telegram VPN; 199 Stars/mo', 'Friend gets 7d instead of 3; inviter +7d; 3 friends +30d; 5 subscribed friends = free while they renew', '1 / 3 / 5; paid-active condition', 'Very close product/market; performance and company size undisclosed', 'https://zefirvpn.ru/'),\n  ('Volno', 'RU Telegram VPN; 199 ₽/mo', 'Bonus days to both sides after friend’s first payment', 'First payment; exact days not public', 'Close low-ticket benchmark; result data absent', 'https://volno.online/'),\n  ('Delta VPN', 'RU VPN; 100 ₽/mo', 'Friend 1 month, inviter 15 days', 'Per friend; unlimited stated', 'Shows aggressive subsidy, not that it is profitable', 'https://deltavpn.ru/'),\n  ('Tuneway', 'RU VPN; 249 ₽/mo', 'Inviter +10d per subscribed friend; 9 friends = 3 months', 'Subscribed friend', 'Simple one-sided days; higher price than DoodleVPN', 'https://dostup24.com/'),\n  ('FastNeo VPN', 'RU Telegram VPN; 150 ₽/mo', '50% from every friend payment, withdrawal in bot', 'Public withdrawal threshold not stated', 'Closest cash recurring analogue; economics/outcomes undisclosed', 'https://fastneoapp.com/'),\n  ('Telegram Affiliate Programs', 'Telegram Mini Apps using Stars', 'Developer sets revenue-share percent and duration; commissions in Stars', 'Only referred Mini App Stars transactions', 'Potential infrastructure, not proof of user appeal; VPN advertising law still applies', 'https://core.telegram.org/api/bots/referrals')\n)\nSELECT * FROM analogue_snapshot;"
+      }
+    },
+    {
+      "id": "game_analysis",
+      "label": "Game concept evaluation",
+      "query": {
+        "description": "Expert screen against requested product, retention, cost, fraud and reputation dimensions.",
+        "engine": "SQLite",
+        "sql": "WITH game_snapshot (concept, five_second, viral, d1_d7_d30, ref_dependency, reward_cost, mvp, antifraud, vpn_fit, boredom, legal_rep) AS (\n  VALUES ('Doodle Route seasonal map', '5', '5', '4/4/3', 'High', 'Low–medium', '1–3d UI; 3–7d safe integration', '4/5', '4/5', 'Medium', 'Low if deterministic'),\n  ('Internet Passport stamps', '5', '4', '4/4/3', 'Medium', 'Low', '1–3d', '5/5', '4/5', 'Medium', 'Low'),\n  ('Shield Team 3–5 people', '4', '5', '4/4/3', 'Very high', 'Medium', '2–5d', '3/5', '4/5', 'Medium', 'Low–medium'),\n  ('Gift a Shield', '5', '5', '4/3/2', 'Very high', 'Low', '1–2d', '5/5', '5/5', 'High alone', 'Low'),\n  ('Referral Relay chain', '4', '5', '4/3/2', 'Very high', 'Medium', '2–4d', '3/5', '4/5', 'Medium', 'MLM optics risk'),\n  ('Shield City co-op', '4', '4', '4/4/3', 'Medium', 'Low', '3–7d', '4/5', '4/5', 'Medium', 'Low'),\n  ('Privacy Garden / pet', '5', '3', '4/4/3', 'Low', 'Low', '2–4d', '5/5', '4/5', 'Medium', 'Low'),\n  ('Server City builder', '4', '3', '4/4/3', 'Medium', 'Low', '3–7d', '4/5', '4/5', 'Medium', 'Low'),\n  ('Referral Boss', '4', '4', '4/3/2', 'Very high', 'Medium', '1–3d', '3/5', '3/5', 'High', 'Low'),\n  ('Mission board + badges', '5', '3', '4/3/2', 'Medium', 'Low', '1–3d', '5/5', '4/5', 'High', 'Low'),\n  ('Route leagues', '3', '4', '3/4/3', 'High', 'Medium', '3–7d', '3/5', '3/5', 'Medium', 'Competition risk'),\n  ('Treasure Map deterministic', '4', '4', '4/4/2', 'High', 'Medium', '2–4d', '4/5', '4/5', 'Medium', 'Low'),\n  ('Collectible stickers', '5', '4', '4/3/2', 'Medium', 'Very low', '1–3d', '5/5', '5/5', 'High', 'Low'),\n  ('Community milestone', '5', '3', '3/3/2', 'Low', 'Low', '1–3d', '5/5', '5/5', 'High', 'Low'),\n  ('Async expedition', '3', '4', '3/4/3', 'High', 'Medium', '3–7d', '3/5', '4/5', 'Medium', 'Low'),\n  ('Cases / roulette with valuable prizes', '5', '5', '4/3/1', 'High', 'High', '1–3d', '1/5', '1/5', 'High', 'High risk')\n)\nSELECT * FROM game_snapshot;"
+      }
+    },
+    {
+      "id": "lifecycle_analysis",
+      "label": "Lifecycle message design",
+      "query": {
+        "description": "State-triggered matrix with suppression, holdout and success events.",
+        "engine": "SQLite",
+        "sql": "WITH lifecycle_snapshot (state, timing, goal, suppression_cap, control, copy, cta, success) AS (\n  VALUES ('New user', 'Immediately', 'Start trial', 'Suppress if trial/payment; transactional; global cap', '5%', '3 дня уже доступны. Подключить на этом устройстве →', 'Подключить', 'trial_started'),\n  ('Trial not activated', '6h, then 36h only', 'Complete setup', 'Max 2 total; stop on trial/payment/support issue', '10%', 'VPN ещё не подключён. Покажем настройку за минуту.', 'Настроить', 'first_connection'),\n  ('Trial active', 'After first connection', 'Confirm value', 'Once', '5%', 'Готово — VPN работает. Если что-то не откроется, поможем здесь.', 'Проверить', 'healthy_session'),\n  ('Trial ending', '24h before expiry', 'First payment', 'Once; suppress if paid', '10%', 'Пробный доступ закончится завтра. Месяц можно продлить в два нажатия.', 'Выбрать срок', 'payment_success_48h'),\n  ('Viewed plans', '2h after exit', 'Return to checkout', 'Once/14d', '10%', 'Тариф сохранился. Вернуться к оплате?', 'Продолжить', 'payment_started'),\n  ('Clicked payment', '30m', 'Recover checkout', 'Once per intent; suppress if success', '10%', 'Оплата не завершилась. Можно продолжить с того же места.', 'Продолжить', 'payment_success_24h'),\n  ('Payment failed', '10m with provider error', 'Offer working path', 'Once/error', '5%', 'Платёж не прошёл. Попробовать другой способ?', 'Другой способ', 'payment_success_24h'),\n  ('First payment', 'Immediately', 'Activation and trust', 'Transactional', 'None', 'Оплата прошла. Доступ активен до {date}.', 'Подключить', 'first_paid_connection'),\n  ('Subscription expiry', '3d and 6h before', 'Renewal', 'Max 2; suppress if renewed', '10%', 'Доступ закончится через 3 дня. Продлить без перерыва?', 'Продлить', 'renewal'),\n  ('Former payer', '7d after expiry, then 30d', 'Winback', 'Max 2/90d; no blanket discount', '10%', 'Нужен VPN снова? Подключение и прошлые устройства сохранены.', 'Вернуться', 'reactivation'),\n  ('Referral page opened', '24h if no share', 'First share', 'Once/30d', '10%', 'Друг получит +7 дней после первой оплаты. Ссылка готова.', 'Поделиться', 'referral_share_click'),\n  ('Link sent', 'No reminder immediately', 'Avoid pressure', 'Status only', 'None', 'Ссылка отправлена. Покажем статус, когда друг откроет бота.', 'Статус', 'referral_link_open'),\n  ('First referred signup', 'Immediately', 'Explain next step', 'Once/referral', '5%', 'Друг подключился. Награда появится после его первой оплаты.', 'Статус', 'referred_payment'),\n  ('Referral paid', 'After hold/release', 'Make value liquid', 'Transactional', 'None', 'Друг оплатил: +${amount} на баланс. Им уже можно продлить VPN.', 'Использовать', 'balance_redeemed'),\n  ('Near reward', 'At deterministic threshold', 'Finish progress', 'Once/season; no fake urgency', '10%', 'До +3 дней осталась одна подтверждённая оплата друга.', 'Пригласить', 'next_verified_referral'),\n  ('Reward received', 'Immediately', 'Close loop', 'Transactional', 'None', 'Готово: +3 дня добавлены до {date}.', 'Открыть маршрут', 'reward_used')\n)\nSELECT * FROM lifecycle_snapshot;"
+      }
+    },
+    {
+      "id": "experiment_analysis",
+      "label": "Causal experiment plan",
+      "query": {
+        "description": "Sequential experiments with break-even and contamination rules.",
+        "engine": "SQLite",
+        "sql": "WITH experiment_snapshot (experiment, audience, treatment_control, primary, guardrails, mde_sample, rollout, kill, contamination) AS (\n  VALUES ('E0 Pretrial cleanup', 'New non-payers', '2 messages total vs 0', '7d payment rate', 'Bot blocks, support tickets', 'Business MDE +25%; sequential, 6–8 weeks', 'Positive contribution and P(lift>10%)≥80%', 'No lift after 8w or blocks +0.5pp', 'Hash by tg_id'),\n  ('E1 Liquid internal balance', 'Active payers exposed to referral UI', 'Spend 20% balance in VPN from $0.01 vs $10 USDT only', 'Verified paid referrals / 100 exposed', 'Cash revenue displaced, withdrawal complaints', 'Target ≥25% lift; 50/50 for 6–8 weeks', '≥60 verified payments, positive incremental contribution, posterior ≥80%', 'P(lift≥10%)<20% after 8w', 'Referrer-level assignment'),\n  ('E2 Friend +7 after first payment', 'New referral links', 'Real +7d recipient benefit vs standard trial', 'Link-open → paid within 7d', 'Next-renewal delay, refunds, fraud', 'Break-even ~16% worst-case; target ≥25%; 6–8 weeks', 'Incremental paid lift ≥25% and contribution >0', 'Lift <10%, fraud >5%, or subsidy >$1/incremental $', 'Cluster by inviter/link variant'),\n  ('E3 Partner reactivation', 'Top 10 declined partners', 'Personal reactivation kit; matched pre-period', 'Verified first payers and net revenue', 'Refunds, commission %, concentration', 'Small-N Bayesian/matched; 30 days', '≥$2 contribution per acquired payer', 'No verified payer from outreach cohort', 'Partner-specific links'),\n  ('E4 Doodle Route layer', 'Only after E1+E2 win', 'Same offer, game UI vs plain UI', 'Verified paid referrals / exposed', 'Farmer rate, D7 opens without revenue, reward cost', 'Target ≥15% beyond offer; one 30-day season', 'Positive incremental profit and ≥15% lift', 'No paid lift, farm >8%, or reward >10% referred revenue', 'Season assignment by referrer')\n)\nSELECT * FROM experiment_snapshot;"
+      }
+    },
+    {
+      "id": "channel_analysis",
+      "label": "Zero-budget channel assessment",
+      "query": {
+        "description": "Channel realism, cost, speed and legal-risk screen.",
+        "engine": "SQLite",
+        "sql": "WITH channel_snapshot (channel, realism, cost, speed, legal, decision) AS (\n  VALUES ('Existing-base lifecycle / winback', 'High', 'Low', 'Days', 'Lower but review copy', 'Do now with holdouts'),\n  ('Gifting / family/group plan', 'High', 'Low–medium', '1–3 weeks', 'Product mechanic; review promotion', 'Prototype after attribution'),\n  ('Reanimate top 10 partners', 'High', 'Performance-only', 'Days', 'VPN advertising gate', 'Prepare; activate only after counsel'),\n  ('New micro-partners', 'Medium', '$2 first-paid + 10% recurring', 'Weeks', 'High advertising risk', 'New contracts only; legal gate'),\n  ('Platform/device onboarding', 'High', 'Low', 'Days', 'Support/product content', 'Improve retention, not acquisition claim'),\n  ('Cross-bot integrations', 'Medium', 'Rev-share', 'Weeks', 'Advertising risk', 'Do not scale before counsel/attribution'),\n  ('UGC, reviews, ambassadors', 'Medium', 'Low', 'Weeks', 'Advertising/endorsement risk', 'No paid/public brief until counsel'),\n  ('SEO/public VPN content', 'Low–medium', 'Time', 'Months', 'High in Russia', 'Not a current recommendation'),\n  ('Telegram Mini App discovery', 'Low', 'Low', 'Uncertain', 'Does not bypass VPN ad law', 'Bonus distribution, not core plan'),\n  ('B2B2C / digital bundles', 'Medium', 'Rev-share', '1–3 months', 'Contract/regulatory review', 'Explore after core recovery')\n)\nSELECT * FROM channel_snapshot;"
+      }
+    },
+    {
+      "id": "plan_analysis",
+      "label": "7/30/60/90 implementation plan",
+      "query": {
+        "description": "Ordered actions and exit metrics.",
+        "engine": "SQLite",
+        "sql": "WITH plan_snapshot (horizon, action, owner_metric) AS (\n  VALUES ('Tomorrow', 'Stop daily pretrial loop; keep transactional notices. Freeze threshold-3, roulette/cases and broad 40% discounts. Create legal review brief.', 'No user receives >2 pretrial prompts total'),\n  ('7 days', 'Implement referral/view/share/payment events, delivery_id, experiment_id and 10% persistent CRM holdout. Reconcile source attribution. Contact top 10 partners for diagnosis.', '≥95% new starts and payments have first/last touch'),\n  ('30 days', 'Run E0 and E1. Ship internal balance redemption without changing earned 20% or old contracts. Build one referral page and one share message.', 'Referral funnel complete; cash displacement and contribution visible'),\n  ('60 days', 'If E1 passes, run E2 friend +7 after first confirmed payment. Pilot new-partner contract only after legal approval. Test gifting/family separately.', '≥25% paid-referral lift and positive contribution'),\n  ('90 days', 'Only if E1+E2 pass, run one 30-day Doodle Route season against identical plain offer. Roll out winning CRM matrix.', 'Game adds ≥15% paid referrals beyond offer; reward ≤10% referred revenue')\n)\nSELECT * FROM plan_snapshot;"
+      }
+    },
+    {
+      "id": "decision_analysis",
+      "label": "Priority decision table",
+      "query": {
+        "description": "Priorities synthesized from evidence, economics and risk.",
+        "engine": "SQLite",
+        "sql": "WITH decision_snapshot (priority, decision, impact, confidence, effort, now) AS (\n  VALUES (1, 'Measurement + stop pretrial spam', 'High', 'High', 'Low', 'Yes'),\n  (2, 'Internal balance from first cent', 'High', 'Medium-high', 'Low', 'Experiment'),\n  (3, 'Friend +7 after first payment', 'High', 'Medium', 'Low', 'Stage 2 experiment'),\n  (4, 'Top-10 partner reactivation', 'High', 'High diagnosis / legal gate', 'Low', 'Prepare'),\n  (5, 'Lifecycle/winback without blanket discount', 'Medium-high', 'Medium', 'Low', 'Parallel tests'),\n  (6, 'New partner contract $2 +10%', 'Medium', 'Medium', 'Medium', 'New deals only'),\n  (7, 'Doodle Route season', 'Potentially medium', 'Low', 'Low UI / medium reliable ops', 'Only after core offer wins'),\n  (8, 'Threshold 3-active free VPN', 'Low reach', 'Low', 'Low', 'No'),\n  (9, 'Random prize/cases', 'Uncertain', 'Low', 'Low', 'No')\n)\nSELECT * FROM decision_snapshot;"
+      }
+    },
+    {
+      "id": "law_281",
+      "label": "Federal Law 281-FZ, official publication",
+      "href": "https://publication.pravo.gov.ru/document/0001202507310012"
+    },
+    {
+      "id": "prosecutor_vpn",
+      "label": "Prosecutor's Office explanation of VPN advertising ban",
+      "href": "https://epp.genproc.gov.ru/ru/proc_78/activity/legal-education/explain/otherwise/e8255163/"
+    },
+    {
+      "id": "telegram_affiliate",
+      "label": "Telegram Affiliate Programs",
+      "href": "https://core.telegram.org/api/bots/referrals"
+    },
+    {
+      "id": "telegram_miniapps",
+      "label": "Telegram Mini Apps usage and Stars",
+      "href": "https://telegram.org/blog/telegram-stars?setln=en"
+    },
+    {
+      "id": "referral_cash",
+      "label": "When Giving Money Does Not Work",
+      "href": "https://www.sciencedirect.com/science/article/pii/S0167811613000906"
+    },
+    {
+      "id": "prosocial",
+      "label": "Why Prosocial Incentives Work",
+      "href": "https://www.hbs.edu/ris/Publication%20Files/GershonCryderJohn%20-%20Why%20Prosocial%20Incentives%20Work_3a65737a-0749-4008-86f6-70aa9945db97.pdf"
+    },
+    {
+      "id": "referral_value",
+      "label": "Referral Programs and Customer Value",
+      "href": "https://journals.sagepub.com/doi/abs/10.1509/jm.75.1.46"
+    },
+    {
+      "id": "gamification_rct",
+      "label": "2026 contest gamification randomized trial",
+      "href": "https://link.springer.com/article/10.1007/s11129-026-09311-3"
+    },
+    {
+      "id": "telegram_games",
+      "label": "Telegram games retention report summary",
+      "href": "https://www.theblock.co/amp/post/339563/telegram-games-had-trouble-earning-revenue-retaining-users-in-q4-report"
+    },
+    {
+      "id": "tax_prizes",
+      "label": "Federal Tax Service: prize taxation",
+      "href": "https://www.nalog.gov.ru/rn77/taxation/taxes/ndfl/ndfl_fl/"
+    }
+  ]
+}

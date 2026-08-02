@@ -1,0 +1,181 @@
+{
+  "as_of": "2026-07-31T00:00:00+03:00",
+  "gift_windows": [
+    {
+      "event": "+3 дня, май",
+      "phase": "До",
+      "phase_order": 1,
+      "days": 3,
+      "recipients": 5179,
+      "payments": 41,
+      "first": 16,
+      "repeat": 25
+    },
+    {
+      "event": "+3 дня, май",
+      "phase": "Подарок",
+      "phase_order": 2,
+      "days": 3,
+      "recipients": 5179,
+      "payments": 27,
+      "first": 13,
+      "repeat": 14
+    },
+    {
+      "event": "+3 дня, май",
+      "phase": "После",
+      "phase_order": 3,
+      "days": 3,
+      "recipients": 5179,
+      "payments": 48,
+      "first": 32,
+      "repeat": 16
+    },
+    {
+      "event": "+7 дней, июль",
+      "phase": "До",
+      "phase_order": 1,
+      "days": 7,
+      "recipients": 4707,
+      "payments": 147,
+      "first": 29,
+      "repeat": 118
+    },
+    {
+      "event": "+7 дней, июль",
+      "phase": "Подарок",
+      "phase_order": 2,
+      "days": 7,
+      "recipients": 4707,
+      "payments": 56,
+      "first": 19,
+      "repeat": 37
+    },
+    {
+      "event": "+7 дней, июль",
+      "phase": "После",
+      "phase_order": 3,
+      "days": 7,
+      "recipients": 4707,
+      "payments": 150,
+      "first": 47,
+      "repeat": 103
+    }
+  ],
+  "monthly_thresholds": [
+    {
+      "month": "Апрель с 13-го",
+      "paid_friends": 66,
+      "active_referrers": 59,
+      "reward_1": 59,
+      "reward_2": 6,
+      "reward_3": 1
+    },
+    {
+      "month": "Май",
+      "paid_friends": 94,
+      "active_referrers": 76,
+      "reward_1": 76,
+      "reward_2": 12,
+      "reward_3": 4
+    },
+    {
+      "month": "Июнь",
+      "paid_friends": 105,
+      "active_referrers": 85,
+      "reward_1": 85,
+      "reward_2": 15,
+      "reward_3": 4
+    },
+    {
+      "month": "Июль",
+      "paid_friends": 57,
+      "active_referrers": 51,
+      "reward_1": 51,
+      "reward_2": 6,
+      "reward_3": 0
+    }
+  ],
+  "variants": [
+    {
+      "variant": "30 дней за 1 оплатившего друга",
+      "july_reward_users": 51,
+      "service_months": 51.0,
+      "push": "очень сильный",
+      "cashflow_risk": "очень высокий",
+      "decision": "не запускать"
+    },
+    {
+      "variant": "30 дней за 2 оплативших друзей",
+      "july_reward_users": 6,
+      "service_months": 6.0,
+      "push": "сильный",
+      "cashflow_risk": "низкий и ограничиваемый",
+      "decision": "рекомендация"
+    },
+    {
+      "variant": "30 дней за 3 оплативших друзей",
+      "july_reward_users": 0,
+      "service_months": 0.0,
+      "push": "слабый из-за недостижимости",
+      "cashflow_risk": "низкий",
+      "decision": "не запускать первым"
+    },
+    {
+      "variant": "14 дней за каждого оплатившего",
+      "july_reward_users": 51,
+      "service_months": 26.6,
+      "push": "средний",
+      "cashflow_risk": "средний",
+      "decision": "резерв"
+    },
+    {
+      "variant": "7 дней за каждого оплатившего",
+      "july_reward_users": 51,
+      "service_months": 13.3,
+      "push": "слабый-средний",
+      "cashflow_risk": "средний",
+      "decision": "проигрывает порогу 2"
+    },
+    {
+      "variant": "+7 дней приглашённому после оплаты",
+      "july_reward_users": 57,
+      "service_months": 13.3,
+      "push": "средний",
+      "cashflow_risk": "прямо откладывает его продление",
+      "decision": "не запускать"
+    },
+    {
+      "variant": "Только текущие 20%",
+      "july_reward_users": 0,
+      "service_months": 0.0,
+      "push": "слабый",
+      "cashflow_risk": "низкий",
+      "decision": "оставить как основу, но не как толчок"
+    },
+    {
+      "variant": "Лотерея / кейсы",
+      "july_reward_users": 0,
+      "service_months": 0.0,
+      "push": "неизвестный",
+      "cashflow_risk": "непредсказуемый + fraud",
+      "decision": "не сейчас"
+    }
+  ],
+  "source_tables": [
+    "payments",
+    "platega_payments",
+    "crypto_payments",
+    "mass_grant_runs",
+    "mass_grant_results",
+    "broadcasts",
+    "broadcast_jobs",
+    "user_events",
+    "users"
+  ],
+  "validation": {
+    "july_payment_drop_pct": -61.9,
+    "july_repeat_drop_pct": -68.6,
+    "may_repeat_drop_pct": -44.0
+  }
+}

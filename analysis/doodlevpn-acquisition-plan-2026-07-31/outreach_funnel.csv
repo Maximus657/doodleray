@@ -1,0 +1,4 @@
+scenario,old_partners_contacted,old_partners_live,paid_per_old_partner,new_prospects_contacted,reply_rate,onboard_rate_of_replies,publish_rate_of_onboarded,registrations_per_live_new_partner,registration_to_paid,replies,new_partners_onboarded,new_partners_live,new_partner_registrations,paid_from_new_partners,paid_from_old_partners,total_new_payers
+Pessimistic,10,2,8,100,0.2,0.4,0.5,25,0.04,20.0,8.0,4.0,100.0,4.0,16,20.0
+Base,10,4,10,200,0.3,0.4,0.6,50,0.08,60.0,24.0,14.399999999999999,719.9999999999999,57.599999999999994,40,97.6
+Aggressive,10,6,15,300,0.35,0.45,0.7,70,0.07,105.0,47.25,33.074999999999996,2315.2499999999995,162.0675,90,252.0675
