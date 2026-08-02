@@ -1,5 +1,14 @@
 # Solved Errors
 
+## 2026-08-02 - Rust verification exhausted local build storage
+
+- Scope: DoodleRay PC cache-first control-plane and runtime-pin verification.
+- Symptom/command: `cargo test --manifest-path src-tauri/Cargo.toml --lib` failed with `No space left on device (os error 28)`.
+- Root cause: recoverable Rust, Flutter, and Xcode build caches left only about 126 MiB free.
+- Fix: ran `cargo clean`, `flutter clean`, and cleared only Xcode `DerivedData`, restoring about 3 GiB without deleting source or user files.
+- Verification: `cargo test --manifest-path src-tauri/Cargo.toml --lib` passed 102 tests; both required `cargo check` commands completed successfully.
+
+
 ## 2026-07-03 - Windows protected fallback - app timeout and stale service failure could mask a valid recovery
 
 - Symptom/command: the RC5 targeted fallback test passed, but the full

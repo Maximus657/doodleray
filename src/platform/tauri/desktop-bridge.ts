@@ -44,6 +44,10 @@ export class DesktopBridge {
     return this.command('app_api_refresh');
   }
 
+  appApiRefreshCachedProfiles(): Promise<void> {
+    return this.command('app_api_refresh_cached_profiles');
+  }
+
   appApiLogout(): Promise<void> {
     return this.command('app_api_logout');
   }

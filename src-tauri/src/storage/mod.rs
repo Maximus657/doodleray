@@ -11,6 +11,7 @@ const SECURE_STORE_CHUNK_PREFIX: &str = "chunked:v1:";
 pub(crate) const RENDERER_STATE_KEY: &str = "doodleray-storage";
 pub(crate) const APP_API_SESSION_KEY: &str = "app-api-session-v1";
 pub(crate) const APP_API_DEVICE_KEY: &str = "app-api-device-v1";
+pub(crate) const APP_API_PROFILE_CACHE_KEY: &str = "app-api-profile-cache-v1";
 
 fn validate_secure_store_key(key: &str) -> Result<(), String> {
     if key.is_empty() || key.len() > 60 {
@@ -26,9 +27,13 @@ fn validate_secure_store_key(key: &str) -> Result<(), String> {
 }
 
 fn is_reserved_secure_store_key(key: &str) -> bool {
-    [APP_API_SESSION_KEY, APP_API_DEVICE_KEY]
-        .iter()
-        .any(|reserved| key == *reserved || key.starts_with(&format!("{}.chunk.", reserved)))
+    [
+        APP_API_SESSION_KEY,
+        APP_API_DEVICE_KEY,
+        APP_API_PROFILE_CACHE_KEY,
+    ]
+    .iter()
+    .any(|reserved| key == *reserved || key.starts_with(&format!("{}.chunk.", reserved)))
 }
 
 fn validate_renderer_secure_store_key(key: &str) -> Result<(), String> {

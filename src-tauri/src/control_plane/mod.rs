@@ -13,12 +13,13 @@ use crate::storage::{
 };
 use crate::storage::{
     app_api_native_secret_delete, app_api_native_secret_get, app_api_native_secret_set,
-    secure_store_fallback_get, secure_store_keyring_get, APP_API_DEVICE_KEY, APP_API_SESSION_KEY,
-    RENDERER_STATE_KEY,
+    secure_store_fallback_get, secure_store_keyring_get, APP_API_DEVICE_KEY,
+    APP_API_PROFILE_CACHE_KEY, APP_API_SESSION_KEY, RENDERER_STATE_KEY,
 };
 #[cfg(not(windows))]
 use crate::storage::{secure_store_native_delete, secure_store_native_set};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use chrono::{DateTime, Utc};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use reqwest::Url;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -34,6 +35,7 @@ pub(super) const APP_API_CONNECTION_PROFILE_PATH: &str = "/connection-profile";
 const APP_ROUTING_ROOT_KID: &str = "dogfood-20260513-ed25519";
 const APP_ROUTING_ASSET_CANONICAL_RULE_VERSION: &str = "routing_asset.v1.lines";
 pub(super) const APP_API_SESSION_TOMBSTONE: &str = "invalidated:v1";
+const APP_API_PROFILE_CACHE_MAX_ENTRIES: usize = 8;
 
 static APP_API_MEMORY_SESSION: Mutex<Option<AppApiTokenResponse>> = Mutex::new(None);
 
@@ -318,7 +320,7 @@ pub(super) fn validate_app_routing_policy(
     Ok(policy)
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct AppApiProfileLeaseResponse {
     #[serde(default)]
     pub(super) schema_version: i32,
@@ -344,6 +346,75 @@ pub(super) struct AppApiProfileLeaseResponse {
     pub(super) profile: Option<serde_json::Value>,
     #[serde(default)]
     pub(super) transport_capability: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct AppApiProfileCache {
+    device_id: String,
+    user_uuid: Option<String>,
+    entries: Vec<AppApiProfileLeaseResponse>,
+}
+
+impl AppApiProfileCache {
+    fn for_session(session: &AppApiTokenResponse) -> Self {
+        Self {
+            device_id: session.device_id.clone(),
+            user_uuid: session.subscription.user_uuid.clone(),
+            entries: Vec::new(),
+        }
+    }
+
+    fn scope_matches(&self, session: &AppApiTokenResponse) -> bool {
+        self.device_id == session.device_id && self.user_uuid == session.subscription.user_uuid
+    }
+
+    fn profile(&self, location_id: &str, now: i64) -> Option<AppApiProfileLeaseResponse> {
+        let location_id = location_id.trim().to_ascii_lowercase();
+        self.entries
+            .iter()
+            .find(|entry| {
+                entry.location_id.trim().eq_ignore_ascii_case(&location_id)
+                    && app_api_profile_lease_is_fresh(entry, now)
+            })
+            .cloned()
+    }
+
+    fn location_ids(&self, now: i64) -> Vec<String> {
+        self.entries
+            .iter()
+            .filter(|entry| app_api_profile_lease_is_fresh(entry, now))
+            .map(|entry| entry.location_id.trim().to_ascii_lowercase())
+            .collect()
+    }
+
+    fn insert(
+        &mut self,
+        session: &AppApiTokenResponse,
+        lease: AppApiProfileLeaseResponse,
+        now: i64,
+    ) {
+        if !app_api_profile_lease_is_fresh(&lease, now) {
+            return;
+        }
+        if !self.scope_matches(session) {
+            *self = Self::for_session(session);
+        }
+        self.entries.retain(|entry| {
+            app_api_profile_lease_is_fresh(entry, now)
+                && !entry
+                    .location_id
+                    .trim()
+                    .eq_ignore_ascii_case(lease.location_id.trim())
+        });
+        self.entries.insert(0, lease);
+        self.entries.truncate(APP_API_PROFILE_CACHE_MAX_ENTRIES);
+    }
+}
+
+pub(super) fn app_api_profile_lease_is_fresh(lease: &AppApiProfileLeaseResponse, now: i64) -> bool {
+    DateTime::parse_from_rfc3339(lease.expires_at.trim())
+        .map(|expiry| expiry.timestamp() > now)
+        .unwrap_or(false)
 }
 
 #[derive(Debug, Deserialize)]
@@ -583,11 +654,58 @@ fn app_api_store_session(session: &AppApiTokenResponse) -> Result<(), String> {
     Ok(())
 }
 
+fn app_api_load_profile_cache(session: &AppApiTokenResponse) -> Result<AppApiProfileCache, String> {
+    let Some(encoded) = app_api_native_secret_get(APP_API_PROFILE_CACHE_KEY)? else {
+        return Ok(AppApiProfileCache::for_session(session));
+    };
+    let cache: AppApiProfileCache = serde_json::from_str(&encoded)
+        .map_err(|error| format!("Stored App API profile cache is invalid: {error}"))?;
+    Ok(if cache.scope_matches(session) {
+        cache
+    } else {
+        AppApiProfileCache::for_session(session)
+    })
+}
+
+fn app_api_cached_profile(
+    session: &AppApiTokenResponse,
+    location_id: &str,
+) -> Result<Option<AppApiProfileLeaseResponse>, String> {
+    Ok(app_api_load_profile_cache(session)?.profile(location_id, Utc::now().timestamp()))
+}
+
+fn app_api_cached_profile_location_ids(
+    session: &AppApiTokenResponse,
+) -> Result<Vec<String>, String> {
+    Ok(app_api_load_profile_cache(session)?.location_ids(Utc::now().timestamp()))
+}
+
+fn app_api_store_cached_profile(
+    session: &AppApiTokenResponse,
+    lease: &AppApiProfileLeaseResponse,
+) -> Result<(), String> {
+    let mut cache = app_api_load_profile_cache(session)?;
+    cache.insert(session, lease.clone(), Utc::now().timestamp());
+    let encoded = serde_json::to_string(&cache)
+        .map_err(|error| format!("App API profile cache serialize failed: {error}"))?;
+    app_api_native_secret_set(APP_API_PROFILE_CACHE_KEY, &encoded)
+}
+
+fn app_api_delete_profile_cache() -> Result<(), String> {
+    app_api_native_secret_delete(APP_API_PROFILE_CACHE_KEY)
+}
+
 fn app_api_delete_session() -> Result<(), String> {
     if let Ok(mut memory) = APP_API_MEMORY_SESSION.lock() {
         *memory = None;
     }
-    app_api_native_secret_delete(APP_API_SESSION_KEY)
+    let session_result = app_api_native_secret_delete(APP_API_SESSION_KEY);
+    let cache_result = app_api_delete_profile_cache();
+    match (session_result, cache_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(session_error), Err(cache_error)) => Err(format!("{session_error}; {cache_error}")),
+    }
 }
 
 fn app_api_invalidate_session_storage(
@@ -682,19 +800,19 @@ fn app_api_invalidate_session() -> Result<(), String> {
         *memory = None;
     }
     #[cfg(windows)]
-    {
-        return app_api_invalidate_windows_session_storage(
-            app_api_windows_keyring_delete_session,
-            app_api_windows_keyring_tombstone_session,
-            || app_api_dpapi_delete(APP_API_SESSION_KEY),
-            |value| app_api_dpapi_set(APP_API_SESSION_KEY, value),
-        );
-    }
+    let result = app_api_invalidate_windows_session_storage(
+        app_api_windows_keyring_delete_session,
+        app_api_windows_keyring_tombstone_session,
+        || app_api_dpapi_delete(APP_API_SESSION_KEY),
+        |value| app_api_dpapi_set(APP_API_SESSION_KEY, value),
+    );
     #[cfg(not(windows))]
-    app_api_invalidate_session_storage(
+    let result = app_api_invalidate_session_storage(
         || secure_store_native_delete(APP_API_SESSION_KEY),
         |value| secure_store_native_set(APP_API_SESSION_KEY, value),
-    )
+    );
+    let _ = app_api_delete_profile_cache();
+    result
 }
 
 fn app_api_load_session() -> Result<Option<AppApiTokenResponse>, String> {
@@ -1880,7 +1998,86 @@ async fn app_api_connection_profile(
                     .into(),
         });
     }
+    if !lease
+        .location_id
+        .trim()
+        .eq_ignore_ascii_case(location_id.trim())
+    {
+        return Err(AppApiHttpError {
+            status: 502,
+            message: "DoodleVPN profile location does not match the request.".into(),
+        });
+    }
+    if !app_api_profile_lease_is_fresh(&lease, Utc::now().timestamp()) {
+        return Err(AppApiHttpError {
+            status: 502,
+            message: "DoodleVPN profile is already expired.".into(),
+        });
+    }
     Ok(lease)
+}
+
+fn app_api_default_profile_request(location_id: String) -> AppConnectLocationRequest {
+    AppConnectLocationRequest {
+        location_id,
+        fallback_location_ids: Vec::new(),
+        proxy_mode: default_app_proxy_mode(),
+        system_proxy_mode: default_system_proxy_mode(),
+        socks_port: default_app_socks_port(),
+        http_port: default_app_http_port(),
+        network_stack: default_app_network_stack(),
+        dns_mode: default_app_dns_mode(),
+        strict_route: false,
+        kill_switch: false,
+        routing_rules: Vec::new(),
+    }
+}
+
+fn app_api_connect_request_from_lease(
+    lease: &AppApiProfileLeaseResponse,
+    request: &AppConnectLocationRequest,
+) -> Result<ConnectRequest, String> {
+    let mut connect_request = app_api_profile_to_connect_request(&lease.native_profile, request)?;
+    connect_request.routing_policy = Some(app_api_validated_routing_policy(lease)?);
+    Ok(connect_request)
+}
+
+async fn app_api_connect_with_lease(
+    lease: &AppApiProfileLeaseResponse,
+    request: &AppConnectLocationRequest,
+    app: tauri::AppHandle,
+) -> ConnectResult {
+    let connect_request = match app_api_connect_request_from_lease(lease, request) {
+        Ok(request) => request,
+        Err(message) => {
+            return ConnectResult {
+                success: false,
+                message,
+                health: None,
+            }
+        }
+    };
+    vpn_connect_authorized(connect_request, app.clone()).await
+}
+
+async fn app_api_refresh_cached_location_profile(
+    session: &AppApiTokenResponse,
+    location_id: &str,
+) -> Result<(), String> {
+    let lease = app_api_connection_profile(session, location_id, "background")
+        .await
+        .map_err(|error| error.to_string())?;
+    let request = app_api_default_profile_request(location_id.to_string());
+    let connect_request = app_api_connect_request_from_lease(&lease, &request)?;
+    let ping = ping_server_profile(
+        connect_request,
+        format!("app-location:{}", location_id.trim().to_ascii_lowercase()),
+    )
+    .await;
+    if ping.ping_ms < 0 {
+        return Err("DoodleVPN cached profile probe failed.".into());
+    }
+    app_api_store_cached_profile(session, &lease)
 }
 
 pub(super) fn app_api_profile_error_is_terminal(error: &AppApiHttpError) -> bool {
@@ -1961,14 +2158,33 @@ pub(super) async fn app_connect_location(
     };
     let mut last_failure = None;
     for location_id in location_ids {
+        if let Ok(Some(cached_lease)) = app_api_cached_profile(&session, &location_id) {
+            let bringup_started = Instant::now();
+            let result = app_api_connect_with_lease(&cached_lease, &request, app.clone()).await;
+            record_connect_timing("cache_bringup", bringup_started);
+            if result.success {
+                let refresh_session = session.clone();
+                let refresh_location_id = location_id.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = app_api_refresh_cached_location_profile(
+                        &refresh_session,
+                        &refresh_location_id,
+                    )
+                    .await;
+                });
+                record_connect_timing("total_to_ui", connect_started);
+                return result;
+            }
+        }
+
         let started = Instant::now();
         let lease = match app_api_connection_profile(&session, &location_id, selection_mode).await {
             Ok(lease) => lease,
-            Err(e) => {
-                let terminal = app_api_profile_error_is_terminal(&e);
+            Err(error) => {
+                let terminal = app_api_profile_error_is_terminal(&error);
                 last_failure = Some(ConnectResult {
                     success: false,
-                    message: format!("DoodleVPN connection profile failed: {}", e),
+                    message: format!("DoodleVPN connection profile failed: {error}"),
                     health: None,
                 });
                 if terminal {
@@ -1978,31 +2194,8 @@ pub(super) async fn app_connect_location(
             }
         };
         record_connect_timing("lease_fetch", started);
-        let mut connect_request =
-            match app_api_profile_to_connect_request(&lease.native_profile, &request) {
-                Ok(request) => request,
-                Err(e) => {
-                    last_failure = Some(ConnectResult {
-                        success: false,
-                        message: e,
-                        health: None,
-                    });
-                    continue;
-                }
-            };
-        connect_request.routing_policy = match app_api_validated_routing_policy(&lease) {
-            Ok(policy) => Some(policy),
-            Err(message) => {
-                last_failure = Some(ConnectResult {
-                    success: false,
-                    message,
-                    health: None,
-                });
-                continue;
-            }
-        };
         let bringup_started = Instant::now();
-        let result = vpn_connect_authorized(connect_request, app.clone()).await;
+        let result = app_api_connect_with_lease(&lease, &request, app.clone()).await;
         record_connect_timing("bringup", bringup_started);
         record_connect_timing("total", connect_started);
         let result_body = app_api_connection_result_body(
@@ -2028,6 +2221,12 @@ pub(super) async fn app_connect_location(
             .await;
         });
         if result.success {
+            if let Err(error) = app_api_store_cached_profile(&session, &lease) {
+                eprintln!(
+                    "[warn] App API profile cache write failed: {}",
+                    redact_support_line(&error)
+                );
+            }
             record_connect_timing("total_to_ui", connect_started);
             return result;
         }
@@ -2055,25 +2254,84 @@ pub(super) async fn app_ping_location(
     let lease = app_api_connection_profile(&session, &location_id, "probe")
         .await
         .map_err(|error| error.to_string())?;
-    let request = AppConnectLocationRequest {
-        location_id,
-        fallback_location_ids: Vec::new(),
-        proxy_mode: default_app_proxy_mode(),
-        system_proxy_mode: default_system_proxy_mode(),
-        socks_port: default_app_socks_port(),
-        http_port: default_app_http_port(),
-        network_stack: default_app_network_stack(),
-        dns_mode: default_app_dns_mode(),
-        strict_route: false,
-        kill_switch: false,
-        routing_rules: Vec::new(),
-    };
-    let mut connect_request = app_api_profile_to_connect_request(&lease.native_profile, &request)?;
-    connect_request.routing_policy = Some(app_api_validated_routing_policy(&lease)?);
-    Ok(ping_server_profile(connect_request, server_id).await)
+    let request = app_api_default_profile_request(location_id);
+    let connect_request = app_api_connect_request_from_lease(&lease, &request)?;
+    let result = ping_server_profile(connect_request, server_id).await;
+    if result.ping_ms >= 0 {
+        app_api_store_cached_profile(&session, &lease)?;
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+pub(super) async fn app_api_refresh_cached_profiles() -> Result<(), String> {
+    ensure_closed_control_plane_enabled()?;
+    let session =
+        app_api_load_session()?.ok_or_else(|| "DoodleVPN sign-in is required.".to_string())?;
+    if session.subscription.device_allowed == Some(false) {
+        return Err("DoodleVPN device limit reached.".into());
+    }
+    for location_id in app_api_cached_profile_location_ids(&session)? {
+        let _ = app_api_refresh_cached_location_profile(&session, &location_id).await;
+    }
+    Ok(())
 }
 
 #[tauri::command]
 pub(super) async fn app_disconnect(app: tauri::AppHandle) -> ConnectResult {
     vpn_disconnect(app).await
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+
+    fn session(device_id: &str) -> AppApiTokenResponse {
+        AppApiTokenResponse {
+            access_token: String::new(),
+            access_expires_at: String::new(),
+            expires_in: 0,
+            refresh_token: "refresh-redacted".into(),
+            refresh_expires_at: "2030-01-01T00:00:00Z".into(),
+            device_id: device_id.into(),
+            subscription: AppApiSubscriptionSummary {
+                user_uuid: Some("user-redacted".into()),
+                ..Default::default()
+            },
+        }
+    }
+
+    fn lease(location_id: &str, expiry: i64) -> AppApiProfileLeaseResponse {
+        AppApiProfileLeaseResponse {
+            schema_version: 2,
+            profile_id: "profile-redacted".into(),
+            lease_id: "lease-redacted".into(),
+            expires_at: DateTime::<Utc>::from_timestamp(expiry, 0)
+                .expect("test timestamp")
+                .to_rfc3339(),
+            location_id: location_id.into(),
+            route_kind: String::new(),
+            first_hop: String::new(),
+            target_country_id: location_id.into(),
+            entry_role: String::new(),
+            routing_rules_version: String::new(),
+            routing_policy: None,
+            native_profile: serde_json::json!({}),
+            profile: None,
+            transport_capability: None,
+        }
+    }
+
+    #[test]
+    fn profile_cache_is_session_scoped_and_expiry_bounded() {
+        let now = 1_800_000_000;
+        let owner = session("device-a");
+        let mut cache = AppApiProfileCache::for_session(&owner);
+        cache.insert(&owner, lease("de", now + 3600), now);
+        cache.insert(&owner, lease("nl", now - 1), now);
+
+        assert!(cache.profile("de", now).is_some());
+        assert!(cache.profile("nl", now).is_none());
+        assert!(!cache.scope_matches(&session("device-b")));
+    }
 }

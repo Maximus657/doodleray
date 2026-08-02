@@ -67,8 +67,9 @@ use control_plane::{
 };
 use control_plane::{
     app_api_exchange_code, app_api_exchange_legacy_subscription, app_api_locations, app_api_logout,
-    app_api_refresh, app_api_session_status, app_api_submit_diagnostics,
-    app_api_subscription_status, app_connect_location, app_disconnect, app_ping_location,
+    app_api_refresh, app_api_refresh_cached_profiles, app_api_session_status,
+    app_api_submit_diagnostics, app_api_subscription_status, app_connect_location, app_disconnect,
+    app_ping_location,
 };
 pub use control_plane::{
     AppApiAntiJammerSummary, AppApiDiagnosticsSubmission, AppApiExchangeCodeRequest,
@@ -12190,6 +12191,7 @@ pub fn run() {
             app_api_locations,
             app_api_subscription_status,
             app_api_submit_diagnostics,
+            app_api_refresh_cached_profiles,
             app_connect_location,
             app_ping_location,
             app_disconnect,

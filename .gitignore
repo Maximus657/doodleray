@@ -13,6 +13,8 @@ dist-ssr
 dist-app-store/
 windows-release/
 *.local
+__pycache__/
+*.py[cod]
 
 # Editor directories and files
 .vscode/*

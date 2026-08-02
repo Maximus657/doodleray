@@ -1,45 +1,45 @@
 {
   "xray": {
-    "version": "v26.7.11",
+    "version": "v26.7.28",
     "assets": {
       "windows_amd64": {
         "name": "Xray-windows-64.zip",
-        "sha256": "af801b62c4d41d248d3db8016d4c6e2a7ccfb7ed443e3738aeb6f9e062321512"
+        "sha256": "c7172078fca4711bcd92a4774dcd1822544579c58816197575c47533317fd8d1"
       },
       "darwin_arm64": {
         "name": "Xray-macos-arm64-v8a.zip",
-        "sha256": "61f8f74d099098af710fa43613d9934d97b901dee909801d34f496cd463956d1"
+        "sha256": "9b99a351febe31b7e0c7f22deeb1577a1da0b98aaa51aec7fd17832e68cf63d6"
       },
       "darwin_amd64": {
         "name": "Xray-macos-64.zip",
-        "sha256": "d8c116756d3a88a38a833a94bdf8bc801f69243ee888befcb56df8b4f1ec4878"
+        "sha256": "812f7d9de6d3506795eabda2f6928ba301c632c3fe6fa39c52ea8e0ed9e4e244"
       }
     }
   },
   "libxray": {
-    "tag": "v26.7.11",
-    "commit": "294fb37343205b9b0cb7b7b1b423d3d4b60d9998"
+    "tag": "v26.7.28",
+    "commit": "80263da83e96b2972455b0a94b13ee1a10e51391"
   },
   "sing_box": {
-    "version": "1.13.14",
+    "version": "1.13.15",
     "assets": {
       "windows_amd64": {
-        "name": "sing-box-1.13.14-windows-amd64.zip",
-        "sha256": "f580782c6dd10f7691c66cea1d7c421813c5fbf7e305d1ee7ce0c3a40d196341"
+        "name": "sing-box-1.13.15-windows-amd64.zip",
+        "sha256": "599b296f6e57511d36d2a6f3011aed1a86fa98418578bbb06bd6dc241b5d8877"
       },
       "darwin_arm64": {
-        "name": "sing-box-1.13.14-darwin-arm64.tar.gz",
-        "sha256": "73e8967b0fc08e17bce4263ca56ebc394822401a16497a1c4e02316c888202ab"
+        "name": "sing-box-1.13.15-darwin-arm64.tar.gz",
+        "sha256": "3452d866834c9572389e5ca73e60d4ee45a7d5b79332188c9a9e533c5fd40a6d"
       },
       "darwin_amd64": {
-        "name": "sing-box-1.13.14-darwin-amd64.tar.gz",
-        "sha256": "5245d645e847f90bb708da74bc020ae078c28489690756419685c04f56b4e3bb"
+        "name": "sing-box-1.13.15-darwin-amd64.tar.gz",
+        "sha256": "817e04f90f941b718fedd965ff05bfe72abfcc62952888b01751a6dec5547e14"
       }
     }
   },
   "gomobile": {
-    "version": "v0.0.0-20260709172247-6129f5bee9d5",
-    "sum": "h1:Mn1OzFmF0ZKX/ZayHz/UdnWHufPp1wlD9lZ5U8LRDFY="
+    "version": "v0.0.0-20260730202154-c700fe717e6e",
+    "sum": "h1:v5PGTbI7uer7FhpDeGryGytfbI8t7CDWkKukozvIsNU="
   },
   "wintun": {
     "version": "0.14.1",

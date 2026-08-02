@@ -1,8 +1,8 @@
 DoodleRay 6 — third-party notices
 
-libXray 26.7.11
+libXray 26.7.28
 Copyright (c) 2023-2025 XTLS
-https://github.com/XTLS/libXray/tree/v26.7.11
+https://github.com/XTLS/libXray/tree/v26.7.28
 
 MIT License
 
@@ -24,15 +24,15 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-Xray-core 26.7.11
+Xray-core 26.7.28
 Copyright (c) Project X contributors
-https://github.com/XTLS/Xray-core/tree/v26.7.11
+https://github.com/XTLS/Xray-core/tree/v26.7.28
 
 Xray-core is distributed under the Mozilla Public License 2.0. The complete
 license and corresponding source code for the exact unmodified version used by
 this application are available at:
 
-https://github.com/XTLS/Xray-core/blob/v26.7.11/LICENSE
-https://github.com/XTLS/Xray-core/tree/v26.7.11
+https://github.com/XTLS/Xray-core/blob/v26.7.28/LICENSE
+https://github.com/XTLS/Xray-core/tree/v26.7.28
 
 DoodleRay does not modify Xray-core source files in this release.

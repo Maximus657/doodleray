@@ -276,9 +276,12 @@ export default function Dashboard() {
     return resolveSystemProxyModeForRouting(proxyMode, systemProxyMode, routingRules);
   }, [activeSystemProxyMode, proxyMode, systemProxyMode]);
 
-  const refreshClosedControlPlane = useCallback(async (sessionOverride?: AppApiSessionStatus | null) => {
+  const refreshClosedControlPlane = useCallback(async (
+    sessionOverride?: AppApiSessionStatus | null,
+    silent = false,
+  ) => {
     if (!closedControlPlane) return;
-    setAppLocationsLoading(true);
+    if (!silent) setAppLocationsLoading(true);
     try {
       const { session, locations } = await appApiControlPlaneSnapshot(sessionOverride);
       setAppSession(session);
@@ -295,10 +298,12 @@ export default function Dashboard() {
         return;
       }
       const message = err instanceof Error ? err.message : String(err);
-      setAppLoginError(message);
-      addLog('warning', `DoodleVPN account sync failed: ${message}`);
+      if (!silent) {
+        setAppLoginError(message);
+        addLog('warning', `DoodleVPN account sync failed: ${message}`);
+      }
     } finally {
-      setAppLocationsLoading(false);
+      if (!silent) setAppLocationsLoading(false);
     }
   }, [closedControlPlane, addLog]);
 
@@ -947,15 +952,20 @@ export default function Dashboard() {
   }, [status, addSpeedPoint, setCurrentSpeed, addTraffic]);
 
   // Auto-detect clipboard links removed to prevent macOS permission spam
-  // Subscription auto-update
+  // Closed account and profile caches refresh silently and never gate the tunnel.
   useEffect(() => {
     if (closedControlPlane) {
       if (!appSession?.logged_in) return;
-      const refreshMinutes = Math.max(5, subAutoUpdateMinutes || 5);
-      const interval = setInterval(() => {
-        void refreshClosedControlPlane(appSession);
-      }, refreshMinutes * 60 * 1000);
-      return () => clearInterval(interval);
+      const refresh = () => {
+        void refreshClosedControlPlane(appSession, true);
+        void desktopBridge.appApiRefreshCachedProfiles().catch(() => undefined);
+      };
+      const interval = window.setInterval(refresh, 60 * 60 * 1000);
+      window.addEventListener('online', refresh);
+      return () => {
+        window.clearInterval(interval);
+        window.removeEventListener('online', refresh);
+      };
     }
     if (subAutoUpdateMinutes <= 0 || subscriptions.length === 0) return;
 
