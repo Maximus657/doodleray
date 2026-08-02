@@ -1,5 +1,4 @@
-import { BrowserRouter as Router, Routes, Route, useNavigate } from 'react-router-dom';
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Download, Loader2, ArrowLeft } from 'lucide-react';
 import { isEnabled } from '@tauri-apps/plugin-autostart';
 import { useTranslation } from './locales';
@@ -19,6 +18,7 @@ import { isInAppUpdateEnabled, openStoreUpdatePage } from './lib/update-channel'
 import { buildAppConnectLocationRequestFromState, isClosedLocationServer } from './lib/app-control-plane';
 import { isClosedControlPlaneEnabled, isDesktopAutostartAvailable, isNetworkExtensionOnlyBuild } from './lib/build-policy';
 import { reportConnectionError } from './lib/workshop-api';
+import { appRouteFromPathname, type AppRoute } from './lib/app-route';
 import { desktopBridge } from './platform/tauri/desktop-bridge';
 import './index.css';
 
@@ -216,13 +216,12 @@ function NotificationStack() {
  * inside the v6 glass shell. Adds a back-to-dashboard chip since the v6 shell
  * has no nav rail. Keeps pages fully functional until their own v6 reskin.
  */
-function LegacySurface({ children }: { children: ReactNode }) {
-  const navigate = useNavigate();
+function LegacySurface({ children, onBack }: { children: ReactNode; onBack: () => void }) {
   return (
     <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[26px] bg-bg-primary text-text-on-orange">
       <button
         type="button"
-        onClick={() => navigate('/')}
+        onClick={onBack}
         aria-label="Back"
         className="absolute left-4 top-4 z-40 flex h-9 items-center gap-1.5 rounded-xl border-[3px] border-black bg-white px-2.5 text-[11px] font-black uppercase tracking-widest text-black shadow-[3px_3px_0_#000] transition-all hover:-translate-y-0.5 hover:shadow-[4px_4px_0_#000] active:translate-y-0.5 active:shadow-none"
       >
@@ -234,6 +233,21 @@ function LegacySurface({ children }: { children: ReactNode }) {
 }
 
 function App() {
+  const [route, setRoute] = useState<AppRoute>(() =>
+    appRouteFromPathname(typeof window === 'undefined' ? '/' : window.location.pathname)
+  );
+
+  useEffect(() => {
+    const onPopState = () => setRoute(appRouteFromPathname(window.location.pathname));
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  const navigate = (next: AppRoute) => {
+    if (window.location.pathname !== next) window.history.pushState(null, '', next);
+    setRoute(next);
+  };
+
   useEffect(() => {
     const isTauriRuntime = () => {
       if (typeof window === 'undefined') return false;
@@ -526,18 +540,16 @@ function App() {
     };
   }, []);
 
+  const page = route === '/servers' ? <LegacySurface onBack={() => navigate('/')}><Servers /></LegacySurface>
+    : route === '/workshop' ? <LegacySurface onBack={() => navigate('/')}><Workshop /></LegacySurface>
+      : route === '/settings' ? <LegacySurface onBack={() => navigate('/')}><Settings /></LegacySurface>
+        : <Dashboard />;
+
   return (
-    <Router>
-      <AppShell>
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/servers" element={<LegacySurface><Servers /></LegacySurface>} />
-          <Route path="/workshop" element={<LegacySurface><Workshop /></LegacySurface>} />
-          <Route path="/settings" element={<LegacySurface><Settings /></LegacySurface>} />
-        </Routes>
-      </AppShell>
+    <>
+      <AppShell>{page}</AppShell>
       <NotificationStack />
-    </Router>
+    </>
   );
 }
 

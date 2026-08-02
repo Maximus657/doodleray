@@ -337,3 +337,20 @@
   `health_verdict=protected_degraded`, `route_ready=true`, and
   `dns_ready=true`. Final inspection showed no Wintun PnP ghosts and no
   DoodleRay adapters after cleanup.
+
+## 2026-08-02 - Desktop dependency audit and route regression check
+
+- Symptom/command: `npm audit --omit=dev --audit-level=high` reported current
+  PostCSS path-traversal and React Router advisories; after replacing the
+  unnecessary router, `npm run build` initially failed because the new
+  standalone route check imported `node:assert/strict` without Node types.
+- Root cause: PostCSS was transitively below the fixed release, React Router's
+  published safe ranges did not overlap across the current advisories, and the
+  four-route desktop shell did not need a routing dependency. The check itself
+  was compiled by the app TypeScript configuration.
+- Fix: pinned PostCSS through an npm override, replaced React Router with the
+  browser History API plus a four-value route allowlist, and made the check use
+  a dependency-free `Error` assertion.
+- Verification: `npm audit --omit=dev --audit-level=high`, `npm test`, and
+  `npm run build` pass; the route check preserves every supported path and
+  maps an unknown redirect path to the dashboard.

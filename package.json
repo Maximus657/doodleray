@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "test": "node --test scripts/release/check-release.test.mjs scripts/macos/app-store-static.test.mjs scripts/macos/check-app-store-build.test.mjs scripts/macos/attach-testflight-build.test.mjs && node src/platform/tauri/desktop-bridge-imports.test.mjs && node --experimental-strip-types src/platform/tauri/desktop-bridge.test.ts && node --experimental-strip-types src/lib/build-policy.test.ts && node --experimental-strip-types src/lib/redaction.test.ts && node --experimental-strip-types src/lib/ui-format.test.ts && node --experimental-strip-types src/lib/raw-xray-sanitizer.test.ts && node --experimental-strip-types src/lib/routing-rule-import.test.ts && node --experimental-strip-types src/lib/parser.test.ts && node --experimental-strip-types src/lib/connection-health.test.ts && node --experimental-strip-types src/lib/server-groups.test.ts && node --experimental-strip-types src/lib/server-selection.test.ts && node --experimental-strip-types src/pages/dashboard-state.test.ts && node --experimental-strip-types src/lib/app-control-plane.test.ts && node --experimental-strip-types src/components/v6/status.test.ts",
+    "test": "node --test scripts/release/check-release.test.mjs scripts/macos/app-store-static.test.mjs scripts/macos/check-app-store-build.test.mjs scripts/macos/attach-testflight-build.test.mjs && node src/platform/tauri/desktop-bridge-imports.test.mjs && node --experimental-strip-types src/platform/tauri/desktop-bridge.test.ts && node --experimental-strip-types src/lib/build-policy.test.ts && node --experimental-strip-types src/lib/redaction.test.ts && node --experimental-strip-types src/lib/ui-format.test.ts && node --experimental-strip-types src/lib/raw-xray-sanitizer.test.ts && node --experimental-strip-types src/lib/routing-rule-import.test.ts && node --experimental-strip-types src/lib/parser.test.ts && node --experimental-strip-types src/lib/connection-health.test.ts && node --experimental-strip-types src/lib/server-groups.test.ts && node --experimental-strip-types src/lib/server-selection.test.ts && node --experimental-strip-types src/pages/dashboard-state.test.ts && node --experimental-strip-types src/lib/app-control-plane.test.ts && node --experimental-strip-types src/lib/app-route.test.ts && node --experimental-strip-types src/components/v6/status.test.ts",
     "release:check": "node scripts/release/check-release.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview",
@@ -25,7 +25,6 @@
     "lucide-react": "^0.577.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "react-router-dom": "^7.13.1",
     "tailwindcss": "^4.2.1",
     "zustand": "^5.0.11"
   },
@@ -36,5 +35,8 @@
     "@vitejs/plugin-react": "^4.6.0",
     "typescript": "~5.8.3",
     "vite": "^7.0.4"
+  },
+  "overrides": {
+    "postcss": "8.5.18"
   }
 }
