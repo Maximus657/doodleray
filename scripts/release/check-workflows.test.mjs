@@ -3,10 +3,11 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { checkReleaseWorkflows } from './check-workflows.mjs';
 
-const repositoryRoot = new URL('../../', import.meta.url).pathname.replace(/^\/(?:[A-Za-z]:)/, (value) => value.slice(1));
+const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url));
 
 test('repository has one fail-closed production release path without Windows Authenticode', () => {
   assert.doesNotThrow(() => checkReleaseWorkflows(repositoryRoot));

@@ -1,5 +1,16 @@
 # Solved Errors
 
+## 2026-08-02 - workflow test kept URL encoding in local repository paths
+
+- Scope: verify the desktop release-workflow contract on macOS and Windows.
+- Symptom/command: `node --test scripts/release/check-workflows.test.mjs`
+  searched for a repository path containing the literal `%20`.
+- Root cause: the test used `URL.pathname` instead of converting the file URL
+  through the platform-aware standard library.
+- Fix: derive the repository root with `fileURLToPath`.
+- Verification: the standalone workflow-contract test passes from the local
+  path containing a space and remains portable to the Windows runner.
+
 ## 2026-08-02 - Rust verification exhausted local build storage
 
 - Scope: DoodleRay PC cache-first control-plane and runtime-pin verification.
@@ -354,3 +365,16 @@
 - Verification: `npm audit --omit=dev --audit-level=high`, `npm test`, and
   `npm run build` pass; the route check preserves every supported path and
   maps an unknown redirect path to the dashboard.
+
+## 2026-08-02 - CI workflow allowlist missed the active App Store attachment path
+
+- Task scope: close the desktop cross-platform CI after the macOS review handoff.
+- Symptom: the workflow-contract test rejected
+  `attach-app-store-version-macos.yml` as an unexpected active workflow.
+- Root cause: the strict allowlist was not updated when the reviewed-build
+  attachment workflow was added.
+- Fix: admit that exact workflow and validate its immutable actions,
+  least-privilege permissions, production environment, canonical script, and
+  exact App Store Connect secret contract.
+- Verification: `node --test scripts/release/check-workflows.test.mjs` and the
+  full desktop test suite pass.

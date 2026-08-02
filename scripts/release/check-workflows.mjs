@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const expectedWorkflows = ['attach-testflight-macos.yml', 'ci.yml', 'release-production.yml', 'runtime-updates.yml', 'testflight-macos.yml'];
+const expectedWorkflows = ['attach-app-store-version-macos.yml', 'attach-testflight-macos.yml', 'ci.yml', 'release-production.yml', 'runtime-updates.yml', 'testflight-macos.yml'];
 const forbiddenWindowsSigning = /WINDOWS_CODESIGN|PFX|THUMBPRINT|AUTHENTICODE|sign-windows-if-configured|sign-all-pe|Get-AuthenticodeSignature|signCommand/i;
 const appleSecrets = [
   'APPLE_DISTRIBUTION_CERTIFICATE_BASE64',
@@ -42,6 +42,7 @@ export function checkReleaseWorkflows(root) {
   const ci = read(root, '.github/workflows/ci.yml');
   const runtime = read(root, '.github/workflows/runtime-updates.yml');
   const testflight = read(root, '.github/workflows/testflight-macos.yml');
+  const attachAppStore = read(root, '.github/workflows/attach-app-store-version-macos.yml');
   const prepareWindows = read(root, 'scripts/release/Prepare-WindowsRelease.ps1');
   const publishWindows = read(root, 'scripts/release/Publish-DoodleRayDownloads.ps1');
   const updaterVerifier = read(root, 'src-tauri/examples/verify_updater_signature.rs');
@@ -97,6 +98,20 @@ export function checkReleaseWorkflows(root) {
   }
   const testflightActions = [...testflight.matchAll(/^\s*- uses:\s+([^\s#]+)/gm)].map((match) => match[1]);
   if (testflightActions.some((action) => !/@[0-9a-f]{40}$/.test(action))) errors.push('TestFlight actions must be pinned to immutable commit SHAs');
+  const attachAppStoreActions = [...attachAppStore.matchAll(/^\s*- uses:\s+([^\s#]+)/gm)].map((match) => match[1]);
+  const attachAppStoreSecrets = [...new Set(
+    [...attachAppStore.matchAll(/secrets\.([A-Z0-9_]+)/g)].map((match) => match[1]),
+  )].sort();
+  const expectedAttachAppStoreSecrets = ['APP_STORE_CONNECT_API_KEY_ID', 'APP_STORE_CONNECT_ISSUER_ID', 'APP_STORE_CONNECT_PRIVATE_KEY'];
+  if (!/^\s*workflow_dispatch:/m.test(attachAppStore)
+    || !/^permissions:\r?\n\s+contents:\s+read/m.test(attachAppStore)
+    || !/environment:\s*production/.test(attachAppStore)
+    || !expectedAttachAppStoreSecrets.every((name) => new RegExp(`secrets\\.${name}\\b`).test(attachAppStore))
+    || JSON.stringify(attachAppStoreSecrets) !== JSON.stringify(expectedAttachAppStoreSecrets)
+    || !/attach-app-store-version-build\.mjs/.test(attachAppStore)
+    || attachAppStoreActions.some((action) => !/@[0-9a-f]{40}$/.test(action))) {
+    errors.push('App Store version attachment must stay pinned, least-privilege, and production-scoped');
+  }
   if (!/if \[ "\$windows" != 'true' \] && \[ "\$mac_app_store" != 'true' \]/.test(release)
     || /Production releases require both Windows and macAppStore targets/.test(release)
     || !/upload_macos_app_store:\r?\n\s+needs: \[preflight, build_macos_app_store, upload_immutable\]/.test(release)
