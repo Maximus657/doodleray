@@ -305,7 +305,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p macos-handoff
-          ditto -c -k --sequesterRsrc --keepParent 'src-tauri/target/universal-apple-darwin/release/bundle/macos/DoodleRay VPN.app' macos-handoff/DoodleRay-app.zip
+          ditto -c -k --sequesterRsrc --keepParent 'src-tauri/target/universal-apple-darwin/release/bundle/macos/DoodleRay.app' macos-handoff/DoodleRay-app.zip
           ditto -c -k --sequesterRsrc --keepParent 'src-tauri/macos/DerivedData/Build/Products/Release/DoodleRayVPN.appex.dSYM' macos-handoff/DoodleRayVPN-dSYM.zip
           app_sha="$(shasum -a 256 macos-handoff/DoodleRay-app.zip | awk '{print $1}')"
           dsym_sha="$(shasum -a 256 macos-handoff/DoodleRayVPN-dSYM.zip | awk '{print $1}')"

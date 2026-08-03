@@ -101,6 +101,9 @@ test('CDN deployment requires an explicit least-privilege SSH user', () => {
 
 test('macOS handoff publishes durable source and digest provenance', () => {
   const release = readFileSync(join(repositoryRoot, '.github/workflows/release-production.yml'), 'utf8');
+  const build = readFileSync(join(repositoryRoot, 'scripts/macos/build-app-store.sh'), 'utf8');
+  assert.match(build, /APP_BUNDLE=.*DoodleRay\.app/);
+  assert.match(release, /--keepParent 'src-tauri\/target\/universal-apple-darwin\/release\/bundle\/macos\/DoodleRay\.app'/);
   assert.match(release, /macos-app-store-provenance\.json/);
   assert.match(release, /DoodleRay-app\.zip[\s\S]{0,240}(?:shasum|sha256)/i);
   assert.match(release, /appleArtifactShaAvailable/);
