@@ -422,3 +422,17 @@
   production path changed.
 - Verification: `cargo test --manifest-path src-tauri/Cargo.toml --features
   app-store --lib` and the subsequent macOS App Store CI job pass.
+
+## 2026-08-04 - macOS host could not cross-check the MSVC target
+
+- Task scope: compile the desktop dataplane change for the released Windows
+  target.
+- Symptom/command: local `cargo check --target x86_64-pc-windows-msvc`
+  stopped in `ring` because the macOS host has no Windows C runtime headers.
+- Root cause: installing the Rust target supplies Rust standard libraries, not
+  the proprietary MSVC SDK required by native C build scripts.
+- Fix: ran the repository's Windows CI job on `windows-latest`, where the MSVC
+  SDK is installed; no source workaround or dependency change was needed.
+- Verification: Windows CI run `30948950972` passed library tests, updater
+  verification, Tunnel Service tests, and `cargo check` for both DoodleRay
+  binaries.
