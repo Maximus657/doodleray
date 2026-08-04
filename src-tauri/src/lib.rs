@@ -4663,6 +4663,7 @@ mod tests {
         assert_eq!(report.runtime_api_port, Some(32103));
     }
 
+    #[cfg(not(all(target_os = "macos", feature = "app-store")))]
     #[test]
     fn connected_dataplane_probe_uses_the_runtime_http_port() {
         let mut report = health_report("protected", Vec::new());

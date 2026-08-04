@@ -409,3 +409,16 @@
 - Verification: `cargo fmt --manifest-path src-tauri/Cargo.toml --all
   -- --check` and `cargo test --manifest-path src-tauri/Cargo.toml
   connected_dataplane_probe_uses_the_runtime_http_port -- --nocapture` pass.
+
+## 2026-08-04 - Desktop dataplane unit test crossed the App Store cfg boundary
+
+- Task scope: validate the shared desktop dataplane gate in cross-platform CI.
+- Symptom/command: macOS CI failed in `cargo test --features app-store`
+  because the new unit test referenced a helper intentionally excluded from
+  App Store builds.
+- Root cause: the helper had the correct platform feature guard, but its
+  focused unit test did not mirror that guard.
+- Fix: applied the identical `cfg` to the focused non-App-Store test; no
+  production path changed.
+- Verification: `cargo test --manifest-path src-tauri/Cargo.toml --features
+  app-store --lib` and the subsequent macOS App Store CI job pass.
