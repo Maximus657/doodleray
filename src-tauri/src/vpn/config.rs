@@ -153,8 +153,113 @@ fn ensure_xray_api_outbound(config: &mut serde_json::Value) {
     }
 }
 
+fn is_managed_xray_candidate(outbound: &serde_json::Value) -> bool {
+    outbound
+        .get("tag")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|tag| tag.starts_with("entry-"))
+        && outbound.get("protocol").and_then(serde_json::Value::as_str) == Some("vless")
+        && outbound
+            .get("streamSettings")
+            .and_then(|stream| stream.get("network"))
+            .and_then(serde_json::Value::as_str)
+            == Some("xhttp")
+        && outbound
+            .get("streamSettings")
+            .and_then(|stream| stream.get("security"))
+            .and_then(serde_json::Value::as_str)
+            == Some("tls")
+}
+
+pub(crate) fn is_managed_xray_balancer_config(config: &serde_json::Value) -> bool {
+    let candidate_count = config
+        .get("outbounds")
+        .and_then(serde_json::Value::as_array)
+        .map(|outbounds| {
+            outbounds
+                .iter()
+                .filter(|outbound| is_managed_xray_candidate(outbound))
+                .count()
+        })
+        .unwrap_or_default();
+    if candidate_count < 2 {
+        return false;
+    }
+
+    let has_balancer = config
+        .get("routing")
+        .and_then(|routing| routing.get("balancers"))
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|balancers| {
+            balancers.iter().any(|balancer| {
+                balancer.get("tag").and_then(serde_json::Value::as_str) == Some("balancer")
+                    && balancer
+                        .get("selector")
+                        .and_then(serde_json::Value::as_array)
+                        .is_some_and(|selector| {
+                            selector.len() == 1 && selector[0].as_str() == Some("entry-")
+                        })
+                    && balancer
+                        .get("strategy")
+                        .and_then(|strategy| strategy.get("type"))
+                        .and_then(serde_json::Value::as_str)
+                        == Some("leastPing")
+            })
+        });
+    let has_observatory = config.get("burstObservatory").is_some_and(|observatory| {
+        observatory
+            .get("subjectSelector")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|selector| selector.len() == 1 && selector[0].as_str() == Some("entry-"))
+            && observatory
+                .get("pingConfig")
+                .and_then(|ping| ping.get("destination"))
+                .and_then(serde_json::Value::as_str)
+                == Some("https://connectivitycheck.gstatic.com/generate_204")
+    });
+    has_balancer && has_observatory
+}
+
 fn constrain_xray_config_to_managed_policy(config: &mut serde_json::Value, req: &ConnectRequest) {
     if req.routing_policy.is_none() {
+        return;
+    }
+
+    if is_managed_xray_balancer_config(config) {
+        if let Some(outbounds) = config
+            .get_mut("outbounds")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            outbounds.retain(|outbound| {
+                let tag = outbound
+                    .get("tag")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                let protocol = outbound
+                    .get("protocol")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                is_managed_xray_candidate(outbound)
+                    || (tag == "direct" && protocol == "freedom")
+                    || tag == "dns-out"
+                    || tag == "api"
+                    || protocol == "blackhole"
+            });
+        }
+        if let Some(routing) = config
+            .get_mut("routing")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            if let Some(balancers) = routing
+                .get_mut("balancers")
+                .and_then(serde_json::Value::as_array_mut)
+            {
+                balancers.retain(|balancer| {
+                    balancer.get("tag").and_then(serde_json::Value::as_str) == Some("balancer")
+                });
+            }
+            routing.insert("rules".into(), serde_json::json!([]));
+        }
         return;
     }
 
@@ -218,6 +323,7 @@ fn apply_xray_routing_policy(
     req: &ConnectRequest,
     include_legacy_default_split: bool,
 ) {
+    let managed_balancer = is_managed_xray_balancer_config(config);
     if !config
         .get("routing")
         .map(|value| value.is_object())
@@ -294,11 +400,20 @@ fn apply_xray_routing_policy(
         }));
     }
     if managed_dns {
-        additions.push(serde_json::json!({
+        let mut rule = serde_json::json!({
             "type": "field",
-            "inboundTag": ["dns-remote"],
-            "outboundTag": "proxy"
-        }));
+            "inboundTag": ["dns-remote"]
+        });
+        rule[if managed_balancer {
+            "balancerTag"
+        } else {
+            "outboundTag"
+        }] = serde_json::json!(if managed_balancer {
+            "balancer"
+        } else {
+            "proxy"
+        });
+        additions.push(rule);
     }
     // Resolver-originated DNS traffic must be classified before the generic
     // port-53 interception rule. Otherwise a local resolver query is sent back
@@ -366,11 +481,20 @@ fn apply_xray_routing_policy(
         rules.insert(insert_at + offset, rule);
     }
     if req.routing_policy.is_some() {
-        rules.push(serde_json::json!({
+        let mut rule = serde_json::json!({
             "type": "field",
-            "network": "tcp,udp",
-            "outboundTag": "proxy"
-        }));
+            "network": "tcp,udp"
+        });
+        rule[if managed_balancer {
+            "balancerTag"
+        } else {
+            "outboundTag"
+        }] = serde_json::json!(if managed_balancer {
+            "balancer"
+        } else {
+            "proxy"
+        });
+        rules.push(rule);
     }
 }
 

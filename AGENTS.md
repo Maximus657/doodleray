@@ -33,7 +33,7 @@ Be lazy about code volume, never lazy about reading the touched flow.
 - PC repo (this machine): `C:\Users\ilyae\Documents\DoodleRay PC`
 - Current branch: `claude/windows-6.0.1-rc-hardening` (targets `main`)
 - Stack: Tauri 2 + React + Rust.
-- Windows-first VPN client, currently at v6.0.2.
+- Windows-first VPN client, currently at v6.0.3.
 - Runtime pieces: `DoodleRayTunnelService`, `sing-box`, `xray-core`, `wintun`.
 - Two proxy engines exist in code (sing-box, Xray-core), but production
   traffic today is entirely Xray-core: VLESS+Reality+XHTTP and

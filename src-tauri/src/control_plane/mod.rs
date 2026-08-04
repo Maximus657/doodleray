@@ -18,6 +18,7 @@ use crate::storage::{
 };
 #[cfg(not(windows))]
 use crate::storage::{secure_store_native_delete, secure_store_native_set};
+use crate::vpn::config::is_managed_xray_balancer_config;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::{DateTime, Utc};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
@@ -350,6 +351,8 @@ pub(super) struct AppApiProfileLeaseResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct AppApiProfileCache {
+    #[serde(default)]
+    app_version: String,
     device_id: String,
     user_uuid: Option<String>,
     entries: Vec<AppApiProfileLeaseResponse>,
@@ -358,6 +361,7 @@ struct AppApiProfileCache {
 impl AppApiProfileCache {
     fn for_session(session: &AppApiTokenResponse) -> Self {
         Self {
+            app_version: env!("CARGO_PKG_VERSION").into(),
             device_id: session.device_id.clone(),
             user_uuid: session.subscription.user_uuid.clone(),
             entries: Vec::new(),
@@ -365,7 +369,9 @@ impl AppApiProfileCache {
     }
 
     fn scope_matches(&self, session: &AppApiTokenResponse) -> bool {
-        self.device_id == session.device_id && self.user_uuid == session.subscription.user_uuid
+        self.app_version == env!("CARGO_PKG_VERSION")
+            && self.device_id == session.device_id
+            && self.user_uuid == session.subscription.user_uuid
     }
 
     fn profile(&self, location_id: &str, now: i64) -> Option<AppApiProfileLeaseResponse> {
@@ -1529,7 +1535,11 @@ fn app_api_xray_profile_to_connect_request(
     profile: &serde_json::Value,
     request: &AppConnectLocationRequest,
 ) -> Result<ConnectRequest, String> {
-    if profile.get("format").and_then(|v| v.as_str()) != Some("xray-outbound-v1") {
+    let format = profile
+        .get("format")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+    if !matches!(format, "xray-outbound-v1" | "xray-balanced-v1") {
         return Err("Unsupported DoodleVPN Xray profile format".into());
     }
     let config = profile
@@ -1541,9 +1551,20 @@ fn app_api_xray_profile_to_connect_request(
         .get("outbounds")
         .and_then(|value| value.as_array())
         .ok_or_else(|| "DoodleVPN Xray profile is missing outbounds".to_string())?;
+    let balanced = format == "xray-balanced-v1";
+    if balanced && !is_managed_xray_balancer_config(&config) {
+        return Err("DoodleVPN Xray balancer profile is invalid".into());
+    }
     let proxy = outbounds
         .iter()
-        .find(|outbound| outbound.get("tag").and_then(|value| value.as_str()) == Some("proxy"))
+        .find(|outbound| {
+            outbound
+                .get("tag")
+                .and_then(|value| value.as_str())
+                .is_some_and(|tag| {
+                    (balanced && tag.starts_with("entry-")) || (!balanced && tag == "proxy")
+                })
+        })
         .ok_or_else(|| "DoodleVPN Xray profile is missing proxy outbound".to_string())?;
     if proxy.get("protocol").and_then(|value| value.as_str()) != Some("vless") {
         return Err("Unsupported DoodleVPN Xray outbound protocol".into());
@@ -1663,6 +1684,8 @@ pub(super) fn app_api_client_capabilities() -> serde_json::Value {
         "tun": true,
         "network_extension": cfg!(all(target_os = "macos", feature = "app-store")),
         "xray_reality": true,
+        "native_xray_xhttp": cfg!(windows) || cfg!(target_os = "macos"),
+        "xray_balancer_v1": cfg!(windows),
         "dns_hijack": true
     })
 }
@@ -2333,5 +2356,7 @@ mod cache_tests {
         assert!(cache.profile("de", now).is_some());
         assert!(cache.profile("nl", now).is_none());
         assert!(!cache.scope_matches(&session("device-b")));
+        cache.app_version = "older-release".into();
+        assert!(!cache.scope_matches(&owner));
     }
 }

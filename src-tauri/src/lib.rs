@@ -4008,6 +4008,85 @@ mod tests {
     }
 
     #[test]
+    fn managed_xhttp_balancer_keeps_candidates_but_rebuilds_routing_policy() {
+        let candidate = |tag: &str, address: &str| {
+            json!({
+                "tag": tag,
+                "protocol": "vless",
+                "settings": {"vnext": [{"address": address, "port": 443}]},
+                "streamSettings": {"network": "xhttp", "security": "tls"}
+            })
+        };
+        let native = json!({
+            "type": "xray",
+            "format": "xray-balanced-v1",
+            "connect_address": "203.0.113.10",
+            "port": 443,
+            "config": {
+                "outbounds": [
+                    candidate("entry-de-1", "203.0.113.10"),
+                    candidate("entry-de-2", "203.0.113.11"),
+                    {"tag": "bypass", "protocol": "freedom"}
+                ],
+                "burstObservatory": {
+                    "subjectSelector": ["entry-"],
+                    "pingConfig": {
+                        "destination": "https://connectivitycheck.gstatic.com/generate_204",
+                        "interval": "5m", "sampling": 1, "timeout": "3s"
+                    }
+                },
+                "routing": {
+                    "balancers": [{
+                        "tag": "balancer", "selector": ["entry-"],
+                        "strategy": {"type": "leastPing"}
+                    }, {
+                        "tag": "unsafe", "selector": ["bypass"],
+                        "strategy": {"type": "random"}
+                    }],
+                    "rules": [{
+                        "type": "field", "domain": ["domain:leak.example"],
+                        "outboundTag": "bypass"
+                    }]
+                }
+            }
+        });
+        let mut request =
+            app_api_profile_to_connect_request(&native, &sample_app_connect_request())
+                .expect("managed XHTTP balancer should map");
+        request.routing_policy = Some(AppRoutingPolicy {
+            mode: "full_tunnel".into(),
+            version: "app-routing-v2".into(),
+            ..Default::default()
+        });
+
+        let config = inject_xray_inbounds(request.raw_xray_config.clone().unwrap(), &request);
+        let outbounds = config["outbounds"].as_array().unwrap();
+        let rules = config["routing"]["rules"].as_array().unwrap();
+        let balancers = config["routing"]["balancers"].as_array().unwrap();
+
+        assert_eq!(
+            outbounds
+                .iter()
+                .filter(|outbound| outbound["tag"]
+                    .as_str()
+                    .is_some_and(|tag| tag.starts_with("entry-")))
+                .count(),
+            2
+        );
+        assert!(!outbounds.iter().any(|outbound| outbound["tag"] == "bypass"));
+        assert_eq!(balancers.len(), 1);
+        assert_eq!(balancers[0]["tag"], "balancer");
+        assert!(!rules
+            .iter()
+            .any(|rule| json_array_contains_str(&rule["domain"], "domain:leak.example")));
+        assert_eq!(rules.last().unwrap()["balancerTag"], "balancer");
+        assert!(rules.iter().any(|rule| {
+            json_array_contains_str(&rule["inboundTag"], "dns-remote")
+                && rule["balancerTag"] == "balancer"
+        }));
+    }
+
+    #[test]
     fn server_split_policy_uses_symmetric_dns_and_traffic_selectors() {
         let mut request = sample_request("tun");
         request.routing_policy = Some(AppRoutingPolicy {
@@ -4240,6 +4319,11 @@ mod tests {
         let capabilities = app_api_client_capabilities();
         assert_eq!(capabilities["windows"], json!(cfg!(windows)));
         assert_eq!(capabilities["macos"], json!(cfg!(target_os = "macos")));
+        assert_eq!(
+            capabilities["native_xray_xhttp"],
+            json!(cfg!(windows) || cfg!(target_os = "macos"))
+        );
+        assert_eq!(capabilities["xray_balancer_v1"], json!(cfg!(windows)));
         assert_eq!(
             capabilities["network_extension"],
             json!(cfg!(all(target_os = "macos", feature = "app-store")))

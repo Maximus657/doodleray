@@ -436,3 +436,20 @@
 - Verification: Windows CI run `30948950972` passed library tests, updater
   verification, Tunnel Service tests, and `cargo check` for both DoodleRay
   binaries.
+
+## 2026-08-05 - XHTTP balancer hotfix checks used stale patch context and two Cargo filters
+
+- Task scope: add the managed Windows XHTTP country balancer without extending
+  the successful connection path.
+- Symptom/command: one composite patch missed its exact Rust context;
+  `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` then showed the
+  new formatting diff, and one targeted `cargo test` invocation rejected a
+  second positional test filter.
+- Root cause: the composite patch spanned independently changed sections, the
+  Rust files had not yet been formatted, and Cargo accepts one substring test
+  filter per invocation.
+- Fix: applied the import, capability, and parser hunks separately, ran
+  `cargo fmt`, and executed the two focused filters as separate commands.
+- Verification: `cargo test --manifest-path src-tauri/Cargo.toml --lib
+  managed_xhttp_balancer` and `cargo test --manifest-path
+  src-tauri/Cargo.toml --lib app_api_capabilities_match` pass.
