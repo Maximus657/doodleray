@@ -143,6 +143,8 @@ const APP_IDENTIFIER: &str = match option_env!("DOODLERAY_APP_IDENTIFIER") {
 };
 const APP_PRODUCT_NAME: &str = "DoodleRay VPN";
 const PROFILE_PING_URL: &str = "https://captive.apple.com/hotspot-detect.html";
+#[cfg(not(all(target_os = "macos", feature = "app-store")))]
+const CONNECT_DATAPLANE_PROBE_TIMEOUT: Duration = Duration::from_secs(4);
 const APP_ROUTING_ROOT_PUBLIC_KEY_BASE64: &str = "wXPEoRe8eSiTD9a3x21WhgDAYayS0XxB_2ajIcjUtiw";
 #[cfg(all(target_os = "macos", feature = "app-store"))]
 const APP_STORE_TRAFFIC_VERIFY_URLS: [&str; 3] = [
@@ -4662,6 +4664,15 @@ mod tests {
     }
 
     #[test]
+    fn connected_dataplane_probe_uses_the_runtime_http_port() {
+        let mut report = health_report("protected", Vec::new());
+        report.runtime_http_port = Some(32102);
+
+        assert_eq!(connected_dataplane_http_port(Some(&report), 10809), 32102);
+        assert_eq!(connected_dataplane_http_port(None, 10809), 10809);
+    }
+
+    #[test]
     fn start_tunnel_request_can_omit_api_port_for_legacy_service_retry() {
         let request = tunnel_service::StartTunnelRequest {
             op_id: "op-test".into(),
@@ -6676,8 +6687,72 @@ pub(crate) async fn vpn_connect_authorized(
     }
     #[cfg(not(all(target_os = "macos", feature = "app-store")))]
     {
-        vpn_connect_direct(request, app).await
+        let requested_http_port = request.http_port;
+        let result = vpn_connect_direct(request, app.clone()).await;
+        verify_connected_dataplane(result, requested_http_port, app).await
     }
+}
+
+#[cfg(not(all(target_os = "macos", feature = "app-store")))]
+fn connected_dataplane_http_port(
+    health: Option<&ConnectionHealthReport>,
+    requested_http_port: u16,
+) -> u16 {
+    health
+        .and_then(|report| report.runtime_http_port)
+        .unwrap_or(requested_http_port)
+}
+
+#[cfg(not(all(target_os = "macos", feature = "app-store")))]
+async fn verify_connected_dataplane(
+    mut result: ConnectResult,
+    requested_http_port: u16,
+    app: tauri::AppHandle,
+) -> ConnectResult {
+    if !result.success {
+        return result;
+    }
+
+    let http_port = connected_dataplane_http_port(result.health.as_ref(), requested_http_port);
+    let probe = tokio::time::timeout(
+        CONNECT_DATAPLANE_PROBE_TIMEOUT,
+        http_get_profile_ping(http_port),
+    )
+    .await;
+    if matches!(probe, Ok(Ok(_))) {
+        if let Some(health) = result.health.as_mut() {
+            health.checks.push(health_check(
+                "vpn_dataplane",
+                "ok",
+                "VPN dataplane",
+                "HTTPS traffic passed through the active VPN profile",
+            ));
+        }
+        vpn_log("active VPN profile passed the HTTPS dataplane probe");
+        return result;
+    }
+
+    let detail = match probe {
+        Ok(Err(error)) => redact_support_line(&error),
+        Err(_) => "HTTPS dataplane probe timed out".into(),
+        Ok(Ok(_)) => unreachable!(),
+    };
+    vpn_log(&format!(
+        "active VPN profile failed the HTTPS dataplane probe: {detail}"
+    ));
+    let _ = vpn_disconnect_direct(app).await;
+    if let Some(health) = result.health.as_mut() {
+        health.verdict = "failed".into();
+        health.checks.push(health_check(
+            "vpn_dataplane",
+            "error",
+            "VPN dataplane",
+            "HTTPS traffic could not pass through the active VPN profile",
+        ));
+    }
+    result.success = false;
+    result.message = "VPN components started, but internet traffic did not become usable. DoodleRay disconnected automatically instead of showing a false connection.".into();
+    result
 }
 
 #[tauri::command]

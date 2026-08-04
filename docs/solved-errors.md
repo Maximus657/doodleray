@@ -392,3 +392,20 @@
 - Verification: `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`
   and `cargo test --manifest-path src-tauri/Cargo.toml --lib
   app_api_raw_xray_xhttp_contract_survives_windows_inbound_injection` pass.
+
+## 2026-08-04 - Dataplane-gate test could not write its Rust query cache
+
+- Task scope: make desktop connection success depend on real HTTPS traffic
+  through the active profile.
+- Symptom/command: the first formatting command ran from the repository root
+  without `--manifest-path`; after correcting that, the focused `cargo test`
+  failed with `No space left on device` while writing an incremental query
+  cache.
+- Root cause: this repository keeps `Cargo.toml` under `src-tauri`, and Xcode
+  had regenerated a 10 GiB iPhone DeviceSupport cache while the Rust build was
+  running.
+- Fix: used the explicit `src-tauri/Cargo.toml` manifest and removed only the
+  exact regenerable DeviceSupport directory for the connected iPhone/build.
+- Verification: `cargo fmt --manifest-path src-tauri/Cargo.toml --all
+  -- --check` and `cargo test --manifest-path src-tauri/Cargo.toml
+  connected_dataplane_probe_uses_the_runtime_http_port -- --nocapture` pass.
