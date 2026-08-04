@@ -4171,6 +4171,55 @@ mod tests {
     }
 
     #[test]
+    fn app_api_raw_xray_xhttp_contract_survives_windows_inbound_injection() {
+        let native = json!({
+            "type": "xray",
+            "format": "xray-outbound-v1",
+            "connect_address": "203.0.113.30",
+            "port": 443,
+            "config": {
+                "outbounds": [{
+                    "tag": "proxy",
+                    "protocol": "vless",
+                    "settings": {"vnext": [{"address": "203.0.113.30", "port": 443}]},
+                    "streamSettings": {
+                        "network": "xhttp",
+                        "security": "tls",
+                        "tlsSettings": {"serverName": "edge.example.test", "fingerprint": "firefox", "alpn": ["h2"]},
+                        "xhttpSettings": {
+                            "host": "edge.example.test",
+                            "path": "/opaque",
+                            "mode": "packet-up",
+                            "extra": {
+                                "uplinkHTTPMethod": "POST",
+                                "scMaxEachPostBytes": 131072,
+                                "scMinPostsIntervalMs": 30,
+                                "xPaddingBytes": "100-1000",
+                                "xmux": {
+                                    "maxConcurrency": 4,
+                                    "maxConnections": 0,
+                                    "cMaxReuseTimes": 8,
+                                    "hKeepAlivePeriod": 30,
+                                    "hMaxReusableSecs": 600
+                                }
+                            }
+                        }
+                    }
+                }],
+                "routing": {"rules": []}
+            }
+        });
+
+        let mapped = app_api_profile_to_connect_request(&native, &sample_app_connect_request())
+            .expect("xray profile should map");
+        let raw = mapped.raw_xray_config.clone().expect("raw xray config");
+        let expected = raw["outbounds"][0]["streamSettings"].clone();
+        let injected = inject_xray_inbounds(raw, &mapped);
+
+        assert_eq!(injected["outbounds"][0]["streamSettings"], expected);
+    }
+
+    #[test]
     fn app_api_unsupported_profile_fails_closed() {
         let native = json!({
             "type": "cdn_xhttp",

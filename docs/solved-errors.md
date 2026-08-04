@@ -378,3 +378,17 @@
   exact App Store Connect secret contract.
 - Verification: `node --test scripts/release/check-workflows.test.mjs` and the
   full desktop test suite pass.
+
+## 2026-08-04 - Windows raw-XHTTP regression check exhausted local build cache space
+
+- Task scope: verify that the Windows Xray launch path preserves a complete
+  raw XHTTP transport contract.
+- Symptom/command: the first targeted `cargo test --lib` stopped while
+  extracting build dependencies with `No space left on device (os error 28)`.
+- Root cause: the reproducible Rust `target` cache plus dependency extraction
+  exceeded the available local workspace storage.
+- Fix: ran `cargo clean --manifest-path src-tauri/Cargo.toml`; this removed
+  only the regenerable `src-tauri/target` cache, then reran the focused test.
+- Verification: `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`
+  and `cargo test --manifest-path src-tauri/Cargo.toml --lib
+  app_api_raw_xray_xhttp_contract_survives_windows_inbound_injection` pass.
