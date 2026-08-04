@@ -105,6 +105,13 @@ test('legacy Windows QA installers do not depend on the retired repository', () 
   assert.equal((qa.match(/doodleray\.clickflare\.click\/legacy\/windows\//g) ?? []).length, 2);
 });
 
+test('shipping updater remains on the first-party release channel', () => {
+  const config = JSON.parse(readFileSync(join(repositoryRoot, 'src-tauri/tauri.conf.json'), 'utf8'));
+  assert.deepEqual(config.plugins.updater.endpoints, [
+    'https://doodleray.clickflare.click/channels/direct/latest.json',
+  ]);
+});
+
 test('macOS handoff publishes durable source and digest provenance', () => {
   const release = readFileSync(join(repositoryRoot, '.github/workflows/release-production.yml'), 'utf8');
   const build = readFileSync(join(repositoryRoot, 'scripts/macos/build-app-store.sh'), 'utf8');
