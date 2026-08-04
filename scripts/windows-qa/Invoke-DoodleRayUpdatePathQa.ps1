@@ -71,7 +71,7 @@ New-Item -ItemType Directory -Force -Path "C:\DoodleRayQA\artifacts" | Out-Null
 
 `$oldInstaller = "C:\DoodleRayQA\artifacts\DoodleRay_${FromVersion}_x64-setup.exe"
 if (-not (Test-Path -LiteralPath `$oldInstaller)) {
-    `$url = "https://github.com/Maximus657/doodleray/releases/download/v$FromVersion/DoodleRay_${FromVersion}_x64-setup.exe"
+    `$url = "https://doodleray.clickflare.click/legacy/windows/$FromVersion/DoodleRay_${FromVersion}_x64-setup.exe"
     & curl.exe -L --fail --max-time 900 -o `$oldInstaller `$url
     if (`$LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath `$oldInstaller)) {
         throw "failed to download previous public installer v$FromVersion"
@@ -215,7 +215,7 @@ if (Start-AppWithCdp) {
 `$oldInstaller = "C:\DoodleRayQA\artifacts\DoodleRay_5.9.1_x64-setup.exe"
 if (-not (Test-Path -LiteralPath `$oldInstaller)) {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent `$oldInstaller) | Out-Null
-    & curl.exe -L --fail --max-time 900 -o `$oldInstaller "https://github.com/Maximus657/doodleray/releases/download/v5.9.1/DoodleRay_5.9.1_x64-setup.exe"
+    & curl.exe -L --fail --max-time 900 -o `$oldInstaller "https://doodleray.clickflare.click/legacy/windows/5.9.1/DoodleRay_5.9.1_x64-setup.exe"
     if (`$LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath `$oldInstaller)) {
         throw "failed to download previous public installer v5.9.1"
     }

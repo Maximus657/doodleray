@@ -99,6 +99,12 @@ test('CDN deployment requires an explicit least-privilege SSH user', () => {
   assert.equal((release.match(/DOWNLOADS_SSH_USER:\s*\$\{\{ vars\.DOWNLOADS_SSH_USER \}\}/g) ?? []).length, 2);
 });
 
+test('legacy Windows QA installers do not depend on the retired repository', () => {
+  const qa = readFileSync(join(repositoryRoot, 'scripts/windows-qa/Invoke-DoodleRayUpdatePathQa.ps1'), 'utf8');
+  assert.doesNotMatch(qa, /Maximus657\/doodleray\/releases\/download/);
+  assert.equal((qa.match(/doodleray\.clickflare\.click\/legacy\/windows\//g) ?? []).length, 2);
+});
+
 test('macOS handoff publishes durable source and digest provenance', () => {
   const release = readFileSync(join(repositoryRoot, '.github/workflows/release-production.yml'), 'utf8');
   const build = readFileSync(join(repositoryRoot, 'scripts/macos/build-app-store.sh'), 'utf8');
