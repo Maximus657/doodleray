@@ -30,6 +30,18 @@
   advisory component.
 - Verification: `npx tsc --noEmit` passes.
 
+## 2026-08-05 - Split-routing source search started in the wrong workspace
+
+- Scope: diagnose a Windows domain exclusion that remained proxied after a
+  reconnect.
+- Symptom/command: the first source search reported missing `src` and
+  `src-tauri` directories.
+- Root cause: it ran from the MobileAPP workspace after reading a shared UX
+  skill instead of the DoodleRay PC repository.
+- Fix: reran the focused trace from the PC repository and followed the rule
+  into the Xray-TUN bridge configuration.
+- Verification: the new bridge-level unit test passes.
+
 
 ## 2026-07-03 - Windows protected fallback - app timeout and stale service failure could mask a valid recovery
 

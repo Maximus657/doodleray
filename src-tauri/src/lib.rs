@@ -2133,8 +2133,54 @@ fn xray_tun_bridge_dns_config_for_request(
     req: &ConnectRequest,
     direct_processes: &[String],
 ) -> serde_json::Value {
-    let (domains, suffixes, regexes) = routing_policy_singbox_dns_domains(req);
+    let (mut domains, mut suffixes) = custom_domain_rule_values(req, "direct");
+    let (policy_domains, policy_suffixes, regexes) = routing_policy_singbox_dns_domains(req);
+    domains.extend(policy_domains);
+    suffixes.extend(policy_suffixes);
     singbox_dns_config_with_direct_rules("realip", &domains, &suffixes, &regexes, direct_processes)
+}
+
+fn build_xray_tun_bridge_config(
+    req: &ConnectRequest,
+    interface_name: Option<&str>,
+) -> serde_json::Value {
+    let proxy_exes = process_rule_names(req, "proxy");
+    let direct_exes = process_rule_names(req, "direct");
+    let block_exes = process_rule_names(req, "block");
+    let (direct_domains, direct_domain_suffixes) = custom_domain_rule_values(req, "direct");
+
+    let mut rules = vec![
+        serde_json::json!({ "action": "sniff" }),
+        serde_json::json!({ "protocol": "dns", "action": "hijack-dns" }),
+        serde_json::json!({ "process_name": system_bypass_process_values(), "outbound": "direct" }),
+    ];
+    push_process_route(&mut rules, &block_exes, "block");
+    push_process_route(&mut rules, &direct_exes, "direct");
+    push_process_route(&mut rules, &proxy_exes, "proxy");
+    push_domain_route(
+        &mut rules,
+        &direct_domains,
+        &direct_domain_suffixes,
+        "direct",
+    );
+    push_routing_policy_singbox_rules(&mut rules, req);
+    if req.routing_policy.is_none() {
+        rules.push(serde_json::json!({ "ip_is_private": true, "outbound": "direct" }));
+    }
+    rules.push(xray_tun_bridge_udp_rule());
+
+    serde_json::json!({
+        "log": { "level": "warn" },
+        "dns": xray_tun_bridge_dns_config_for_request(req, &direct_exes),
+        "inbounds": [tun_inbound_value(req, interface_name, effective_tun_strict_route(req))],
+        "outbounds": xray_tun_bridge_outbounds(req),
+        "route": {
+            "auto_detect_interface": true,
+            "default_domain_resolver": "dns-direct",
+            "final": "proxy",
+            "rules": rules
+        }
+    })
 }
 
 const SYSTEM_BYPASS_PROCESS_NAMES: &[&str] = &[
@@ -2188,6 +2234,26 @@ fn process_rule_names(req: &ConnectRequest, action: &str) -> Vec<String> {
     names.sort();
     names.dedup();
     names
+}
+
+fn custom_domain_rule_values(req: &ConnectRequest, action: &str) -> (Vec<String>, Vec<String>) {
+    let mut domains = Vec::new();
+    let mut domain_suffixes = Vec::new();
+    for rule in &req.routing_rules {
+        if rule.rule_type != "domain" || rule.action != action {
+            continue;
+        }
+        let value = rule.value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        if let Some(suffix) = value.strip_prefix("*.") {
+            domain_suffixes.push(suffix.to_string());
+        } else {
+            domains.push(value.to_string());
+        }
+    }
+    (domains, domain_suffixes)
 }
 
 fn tun_direct_process_exclusions_need_raw_tun_path(req: &ConnectRequest) -> bool {
@@ -5408,6 +5474,50 @@ mod tests {
     }
 
     #[test]
+    fn xray_tun_bridge_routes_custom_direct_domains_with_direct_dns() {
+        let mut req = sample_request("tun");
+        req.routing_rules = vec![
+            RoutingRuleRequest {
+                rule_type: "domain".into(),
+                value: "browserleaks.com".into(),
+                action: "direct".into(),
+            },
+            RoutingRuleRequest {
+                rule_type: "domain".into(),
+                value: "*.example.org".into(),
+                action: "direct".into(),
+            },
+        ];
+
+        let config = build_xray_tun_bridge_config(&req, Some("DoodleRay Tunnel"));
+        let rules = config["route"]["rules"].as_array().unwrap();
+        let direct_route = rules
+            .iter()
+            .find(|rule| {
+                rule["outbound"] == "direct"
+                    && json_array_contains_str(&rule["domain"], "browserleaks.com")
+            })
+            .expect("custom direct domain route missing");
+        assert!(json_array_contains_str(
+            &direct_route["domain_suffix"],
+            "example.org"
+        ));
+
+        let dns_rules = config["dns"]["rules"].as_array().unwrap();
+        let direct_dns = dns_rules
+            .iter()
+            .find(|rule| {
+                rule["server"] == "dns-direct"
+                    && json_array_contains_str(&rule["domain"], "browserleaks.com")
+            })
+            .expect("custom direct domain DNS rule missing");
+        assert!(json_array_contains_str(
+            &direct_dns["domain_suffix"],
+            "example.org"
+        ));
+    }
+
+    #[test]
     fn xray_socks_udp_is_bound_to_loopback_for_tun_bridge() {
         let req = sample_request("tun");
 
@@ -7136,37 +7246,7 @@ async fn vpn_connect_direct(mut request: ConnectRequest, app: tauri::AppHandle) 
 
         #[cfg(windows)]
         {
-            let proxy_exes = process_rule_names(&request, "proxy");
-            let direct_exes = process_rule_names(&request, "direct");
-            let block_exes = process_rule_names(&request, "block");
-
-            let mut tun_bridge_rules = vec![
-                serde_json::json!({ "action": "sniff" }),
-                serde_json::json!({ "protocol": "dns", "action": "hijack-dns" }),
-                serde_json::json!({ "process_name": system_bypass_process_values(), "outbound": "direct" }),
-            ];
-            push_process_route(&mut tun_bridge_rules, &block_exes, "block");
-            push_process_route(&mut tun_bridge_rules, &direct_exes, "direct");
-            push_process_route(&mut tun_bridge_rules, &proxy_exes, "proxy");
-            push_routing_policy_singbox_rules(&mut tun_bridge_rules, &request);
-            if request.routing_policy.is_none() {
-                tun_bridge_rules
-                    .push(serde_json::json!({ "ip_is_private": true, "outbound": "direct" }));
-            }
-            tun_bridge_rules.push(xray_tun_bridge_udp_rule());
-
-            let tun_bridge = serde_json::json!({
-                "log": { "level": "warn" },
-                "dns": xray_tun_bridge_dns_config_for_request(&request, &direct_exes),
-                "inbounds": [tun_inbound_value(&request, Some("DoodleRay Tunnel"), effective_tun_strict_route(&request))],
-                "outbounds": xray_tun_bridge_outbounds(&request),
-                "route": {
-                    "auto_detect_interface": true,
-                    "default_domain_resolver": "dns-direct",
-                    "final": "proxy",
-                    "rules": tun_bridge_rules
-                }
-            });
+            let tun_bridge = build_xray_tun_bridge_config(&request, Some("DoodleRay Tunnel"));
 
             vpn_log("starting Windows Tunnel Service graph (xray + sing-box TUN)...");
             return match tunnel_service_start(
@@ -7254,37 +7334,7 @@ async fn vpn_connect_direct(mut request: ConnectRequest, app: tauri::AppHandle) 
 
         // sing-box as TUN bridge → routes all traffic to xray's SOCKS5
         vpn_log("building TUN bridge config (sing-box -> xray SOCKS5)");
-        let proxy_exes = process_rule_names(&request, "proxy");
-        let direct_exes = process_rule_names(&request, "direct");
-        let block_exes = process_rule_names(&request, "block");
-
-        let mut tun_bridge_rules = vec![
-            serde_json::json!({ "action": "sniff" }),
-            serde_json::json!({ "protocol": "dns", "action": "hijack-dns" }),
-            serde_json::json!({ "process_name": system_bypass_process_values(), "outbound": "direct" }),
-        ];
-        push_process_route(&mut tun_bridge_rules, &block_exes, "block");
-        push_process_route(&mut tun_bridge_rules, &direct_exes, "direct");
-        push_process_route(&mut tun_bridge_rules, &proxy_exes, "proxy");
-        push_routing_policy_singbox_rules(&mut tun_bridge_rules, &request);
-        if request.routing_policy.is_none() {
-            tun_bridge_rules
-                .push(serde_json::json!({ "ip_is_private": true, "outbound": "direct" }));
-        }
-        tun_bridge_rules.push(xray_tun_bridge_udp_rule());
-
-        let tun_bridge = serde_json::json!({
-            "log": { "level": "warn" },
-            "dns": xray_tun_bridge_dns_config_for_request(&request, &direct_exes),
-            "inbounds": [tun_inbound_value(&request, None, effective_tun_strict_route(&request))],
-            "outbounds": xray_tun_bridge_outbounds(&request),
-            "route": {
-                "auto_detect_interface": true,
-                "default_domain_resolver": "dns-direct",
-                "final": "proxy",
-                "rules": tun_bridge_rules
-            }
-        });
+        let tun_bridge = build_xray_tun_bridge_config(&request, None);
 
         vpn_log("starting TUN bridge (elevated sing-box)...");
         let tun_debug_path = std::env::temp_dir()
