@@ -84,7 +84,7 @@ verify_release_dir() {
   local dir="`$1"
   (cd "`$dir" &&
     sha256sum -c sha256.txt &&
-    diff -u <(sed -E 's/^[0-9a-f]{64}  //' sha256.txt | sort) <(find . -maxdepth 1 -type f ! -name sha256.txt -printf '%f\n' | sort)
+    diff -u <(sed -E 's/^[0-9a-f]{64}  //' sha256.txt | sort) <(find . -maxdepth 1 -type f ! -name sha256.txt -printf '%f\n' | sort))
 }
 trap 'rm -rf "`$tmp" "`$archive"' EXIT
 mkdir -p "`$tmp"
