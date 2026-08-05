@@ -69,7 +69,7 @@ export function checkReleaseWorkflows(root) {
   if (!/release:check -- --published-version/.test(release)) errors.push('production release must enforce the published-version gate');
   if (!/npm run release:check/.test(ci)) errors.push('CI must run the canonical release metadata check');
   if (!/cargo test --manifest-path src-tauri\/Cargo\.toml --example verify_updater_signature/.test(ci)) errors.push('CI must run the updater signature known-vector and tamper test');
-  if (!/TAURI_SIGNING_PRIVATE_KEY/.test(release) || !/\.sig/.test(release)) errors.push('Tauri updater signing and signatures must fail closed');
+  if (!/TAURI_SIGNING_PRIVATE_KEY/.test(release) || !/FromBase64String\(\$key\)/.test(release) || !/\.sig/.test(release)) errors.push('Tauri updater signing and signatures must fail closed');
   if (!/\*\.nsis\.zip\.sig/.test(prepareWindows) || /\*\.exe\.sig/.test(prepareWindows)) errors.push('Windows release set must require the single Tauri NSIS updater signature');
   if (!/--example verify_updater_signature/.test(prepareWindows)
     || !/-TauriConfigPath src-tauri\/tauri\.conf\.json/.test(release)

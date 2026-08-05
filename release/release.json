@@ -4,6 +4,6 @@
   "channel": "stable",
   "targets": {
     "windows": true,
-    "macAppStore": false
+    "macAppStore": true
   }
 }

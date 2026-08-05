@@ -186,7 +186,16 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npx tauri build --bundles nsis --config src-tauri/tauri.windows.conf.json
+        run: |
+          $lines = @($env:TAURI_SIGNING_PRIVATE_KEY -split '\r?\n' |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { $_ -and -not $_.StartsWith('untrusted comment:') })
+          $key = $lines -join ''
+          if ([string]::IsNullOrWhiteSpace($key)) { throw 'TAURI_SIGNING_PRIVATE_KEY must contain a Minisign base64 payload' }
+          try { [Convert]::FromBase64String($key) | Out-Null }
+          catch { throw 'TAURI_SIGNING_PRIVATE_KEY must contain a valid Minisign base64 payload' }
+          $env:TAURI_SIGNING_PRIVATE_KEY = $key
+          npx tauri build --bundles nsis --config src-tauri/tauri.windows.conf.json
 
       - name: Verify and package exact updater bytes
         shell: pwsh
