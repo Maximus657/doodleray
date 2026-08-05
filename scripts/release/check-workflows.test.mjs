@@ -137,6 +137,13 @@ test('production SSH uses a pinned dedicated known-hosts file and strict inputs'
   assert.match(publisher, /ConvertTo-PosixSingleQuotedLiteral/);
 });
 
+test('immutable inventory does not require sha256.txt to hash itself', () => {
+  const publisher = readFileSync(join(repositoryRoot, 'scripts/release/Publish-DoodleRayDownloads.ps1'), 'utf8');
+  assert.match(publisher, /sha256sum -c sha256\.txt/);
+  assert.match(publisher, /find \. -maxdepth 1 -type f ! -name sha256\.txt/);
+  assert.doesNotMatch(publisher, /printf '%s\\n' sha256\.txt/);
+});
+
 test('Windows staging cryptographically verifies the exact updater signature', () => {
   const release = readFileSync(join(repositoryRoot, '.github/workflows/release-production.yml'), 'utf8');
   const prepare = readFileSync(join(repositoryRoot, 'scripts/release/Prepare-WindowsRelease.ps1'), 'utf8');
