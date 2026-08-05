@@ -373,6 +373,10 @@ export const translations = {
     // Sidebar / Updates
     newUpdate: 'New Update',
     versionAvailable: 'is available!',
+    updateAdvisoryTitle: 'Update recommended',
+    updateAdvisoryBody: 'Version {version} will soon stop being supported. VPN stays available.',
+    updateAdvisoryVpnAvailable: 'VPN remains available',
+    updateAdvisoryNotPublished: 'The update is not published yet — please try again later',
     installRestart: 'Install & Restart',
     installingUpdate: 'Installing...',
     quit: 'Quit',
@@ -770,6 +774,10 @@ export const translations = {
     // Sidebar / Updates
     newUpdate: 'Обновление',
     versionAvailable: 'доступна!',
+    updateAdvisoryTitle: 'Рекомендуем обновиться',
+    updateAdvisoryBody: 'Версия {version} скоро перестанет поддерживаться. VPN продолжает работать.',
+    updateAdvisoryVpnAvailable: 'VPN доступен',
+    updateAdvisoryNotPublished: 'Обновление ещё не опубликовано — попробуйте позже',
     installRestart: 'Установить и перезапустить',
     installingUpdate: 'Установка...',
     quit: 'Выйти',
@@ -1167,6 +1175,10 @@ export const translations = {
     // Sidebar / Updates
     newUpdate: '新版本',
     versionAvailable: '可用！',
+    updateAdvisoryTitle: '建议更新',
+    updateAdvisoryBody: '版本 {version} 即将停止支持。VPN 仍可正常使用。',
+    updateAdvisoryVpnAvailable: 'VPN 仍可使用',
+    updateAdvisoryNotPublished: '更新尚未发布，请稍后再试',
     installRestart: '安装并重启',
     installingUpdate: '安装中...',
     quit: '退出',

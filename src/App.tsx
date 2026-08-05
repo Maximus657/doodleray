@@ -99,19 +99,24 @@ function ToastContainer() {
 function UpdateBanner() {
   const { t } = useTranslation();
   const availableUpdate = useAppStore((s) => s.availableUpdate);
+  const backendUpdateMinimumVersion = useAppStore((s) => s.backendUpdateMinimumVersion);
   const updatePhase = useAppStore((s) => s.updatePhase);
   const updateStatus = useAppStore((s) => s.updateStatus);
   const updateProgress = useAppStore((s) => s.updateProgress);
   const setUpdateState = useAppStore((s) => s.setUpdateState);
 
-  if (!availableUpdate) return null;
+  const updateVersion = availableUpdate ?? backendUpdateMinimumVersion;
+  const isBackendAdvisory = !availableUpdate && !!backendUpdateMinimumVersion;
+  if (!updateVersion) return null;
 
   const isDownloading = updatePhase === 'downloading';
   const isBusy = updatePhase === 'checking' || updatePhase === 'downloading' || updatePhase === 'installing';
-  const statusLabel = updateStatusLabel(updateStatus, updatePhase, updateProgress, availableUpdate, t);
+  const statusLabel = updateStatusLabel(updateStatus, updatePhase, updateProgress, updateVersion, t);
   const secondaryLabel = isBusy || updatePhase === 'error'
     ? statusLabel || t('updating')
-    : null;
+    : isBackendAdvisory
+      ? formatMessage(t('updateAdvisoryBody'), { version: updateVersion })
+      : null;
   const progressLabel = updateProgress !== null && isDownloading ? `${updateProgress}%` : null;
 
   const handleInstall = async () => {
@@ -129,7 +134,7 @@ function UpdateBanner() {
       updateProgress: 0,
     });
     try {
-      await installAppUpdate({
+      const updated = await installAppUpdate({
         onStatus: (status) => {
           setUpdateState({
             updateStatus: status,
@@ -138,6 +143,13 @@ function UpdateBanner() {
         },
         onProgress: (progress) => setUpdateState({ updateProgress: progress }),
       });
+      if (!updated && isBackendAdvisory) {
+        setUpdateState({
+          updatePhase: 'error',
+          updateStatus: t('updateAdvisoryNotPublished'),
+          updateProgress: null,
+        });
+      }
     } catch (e) {
       console.error('Update failed:', e);
       setUpdateState({
@@ -156,11 +168,11 @@ function UpdateBanner() {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <p className="text-[12px] font-black uppercase leading-tight tracking-[0.14em] text-white">
-              {t('newUpdate')} v<span className="text-bg-primary">{availableUpdate}</span>
+              {isBackendAdvisory ? t('updateAdvisoryTitle') : t('newUpdate')} v<span className="text-bg-primary">{updateVersion}</span>
             </p>
             {!isBusy && (
               <span className="rounded-full bg-bg-primary px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-black">
-                {t('versionAvailable')}
+                {isBackendAdvisory ? t('updateAdvisoryVpnAvailable') : t('versionAvailable')}
               </span>
             )}
           </div>

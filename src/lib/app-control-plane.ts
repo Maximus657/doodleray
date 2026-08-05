@@ -23,6 +23,9 @@ export interface AppApiSubscriptionSummary {
   remnawave_status?: string;
   expires_at?: string;
   reason?: string | null;
+  update_notice?: {
+    minimum_version: string;
+  } | null;
   user_uuid?: string | null;
   username?: string | null;
   anti_jammer?: {
@@ -96,6 +99,11 @@ function parseExpireSeconds(value?: string | null): number | undefined {
   const ms = Date.parse(value);
   if (!Number.isFinite(ms) || ms <= 0) return undefined;
   return Math.floor(ms / 1000);
+}
+
+function updateNoticeMinimumVersion(session: AppApiSessionStatus | null): string | null {
+  const version = session?.subscription?.update_notice?.minimum_version?.trim() ?? '';
+  return /^\d+(?:\.\d+){1,3}$/.test(version) ? version : null;
 }
 
 function locationToServer(location: AppApiLocation): ServerConfig {
@@ -312,6 +320,7 @@ export function syncClosedLocationsToStore(
       subscriptions: state.subscriptions.filter((subscription) => subscription.url !== 'app://doodlevpn'),
       activeServer: null,
       lastSelectedServerKey: null,
+      backendUpdateMinimumVersion: null,
     });
     return;
   }
@@ -335,6 +344,7 @@ export function syncClosedLocationsToStore(
     subscriptions: [subscription],
     activeServer,
     lastSelectedServerKey: activeServer ? getServerSelectionKey(activeServer) : null,
+    backendUpdateMinimumVersion: updateNoticeMinimumVersion(session),
   });
 }
 
