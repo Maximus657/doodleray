@@ -487,3 +487,15 @@
   npm run release:check, and production release 30970086744 completed
   immutable upload, App Store upload, GitHub Release publication, and atomic
   latest promotion.
+
+## 2026-08-05 - Release-readiness inspection command was parsed by zsh
+
+- Task scope: prepare the next Windows/macOS release without publishing it.
+- Symptom/command: an inline Node inspection command failed with `zsh: bad
+  pattern` before it could read version fields.
+- Root cause: JavaScript regular-expression syntax was interpreted by zsh
+  because the shell quoting was not robust.
+- Fix: replaced it with direct, quoted file reads; no project data was changed
+  by the failed command.
+- Verification: `sed -n '1,120p' release/release.json` and the targeted
+  version reads completed successfully.

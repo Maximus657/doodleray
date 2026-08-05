@@ -21,6 +21,13 @@ test('dry-run builds locally without uploading retained artifacts', () => {
   assert.doesNotMatch(release, /^\s+cache:\s+npm\s*$/m);
 });
 
+test('production release derives the exact source from the selected main revision', () => {
+  const release = readFileSync(join(repositoryRoot, '.github/workflows/release-production.yml'), 'utf8');
+  assert.doesNotMatch(release, /^\s+source_sha:/m);
+  assert.match(release, /SOURCE_SHA:\s*\$\{\{ github\.sha \}\}/);
+  assert.match(release, /ref:\s*\$\{\{ github\.sha \}\}/);
+});
+
 test('production target graph supports Windows-only, macOS-only, and both', () => {
   const release = readFileSync(join(repositoryRoot, '.github/workflows/release-production.yml'), 'utf8');
   assert.match(release, /if \[ "\$windows" != 'true' \] && \[ "\$mac_app_store" != 'true' \]/);

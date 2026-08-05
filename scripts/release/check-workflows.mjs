@@ -58,7 +58,7 @@ export function checkReleaseWorkflows(root) {
   if (forbiddenWindowsSigning.test(activeWindowsSources)) errors.push('active release paths must not contain Windows Authenticode prerequisites');
 
   if (!/^\s*workflow_dispatch:/m.test(release)) errors.push('production release must use workflow_dispatch');
-  if (!/source_sha:/m.test(release) || !/dry_run:/m.test(release)) errors.push('production dispatch must require source_sha and expose dry_run');
+  if (/source_sha:/m.test(release) || !/dry_run:/m.test(release) || !/SOURCE_SHA:\s*\$\{\{ github\.sha \}\}/.test(release)) errors.push('production dispatch must derive its source SHA from GitHub and expose dry_run');
   if (!/group:\s*release-production/m.test(release) || !/cancel-in-progress:\s*false/m.test(release)) errors.push('production release concurrency contract is missing');
   if (!/^permissions:\r?\n\s+contents:\s+read/m.test(release)) errors.push('production workflow must default to contents: read');
   if (!/github\.ref[\s\S]{0,80}refs\/heads\/main/.test(release)

@@ -1,6 +1,6 @@
 [package]
 name = "doodleray"
-version = "6.0.3"
+version = "6.0.4"
 description = "DoodleRay VPN Client"
 authors = ["DoodleVPN"]
 edition = "2021"

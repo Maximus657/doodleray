@@ -1,6 +1,6 @@
 {
-  "version": "6.0.3",
-  "macBuild": 60028,
+  "version": "6.0.4",
+  "macBuild": 60029,
   "channel": "stable",
   "targets": {
     "windows": true,

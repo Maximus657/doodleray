@@ -3,10 +3,6 @@ name: release-production
 on:
   workflow_dispatch:
     inputs:
-      source_sha:
-        description: Exact commit SHA currently at main
-        required: true
-        type: string
       dry_run:
         description: Build and validate without tags, uploads, releases, or manifest changes
         required: true
@@ -21,7 +17,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  SOURCE_SHA: ${{ inputs.source_sha }}
+  SOURCE_SHA: ${{ github.sha }}
 
 jobs:
   preflight:
@@ -34,7 +30,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-          ref: ${{ inputs.source_sha }}
+          ref: ${{ github.sha }}
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -117,7 +113,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ inputs.source_sha }}
+          ref: ${{ github.sha }}
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -215,7 +211,7 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/release/Prepare-WindowsRelease.ps1 `
-            -SourceSha '${{ inputs.source_sha }}' `
+            -SourceSha '${{ github.sha }}' `
             -BundleDir src-tauri/target/release/bundle/nsis `
             -OutputDir windows-release `
             -TauriConfigPath src-tauri/tauri.conf.json
@@ -228,7 +224,7 @@ jobs:
         if: inputs.dry_run == false
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: windows-release-${{ needs.preflight.outputs.version }}-${{ inputs.source_sha }}
+          name: windows-release-${{ needs.preflight.outputs.version }}-${{ github.sha }}
           path: windows-release/
           if-no-files-found: error
           retention-days: 30
@@ -240,7 +236,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ inputs.source_sha }}
+          ref: ${{ github.sha }}
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -353,7 +349,7 @@ jobs:
         if: inputs.dry_run == false
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: macos-app-store-${{ needs.preflight.outputs.version }}-${{ inputs.source_sha }}
+          name: macos-app-store-${{ needs.preflight.outputs.version }}-${{ github.sha }}
           path: macos-handoff/
           if-no-files-found: error
           retention-days: 30
@@ -366,11 +362,11 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ inputs.source_sha }}
+          ref: ${{ github.sha }}
 
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
-          name: windows-release-${{ needs.preflight.outputs.version }}-${{ inputs.source_sha }}
+          name: windows-release-${{ needs.preflight.outputs.version }}-${{ github.sha }}
           path: windows-release
 
       - name: Upload immutable CDN directory
@@ -403,7 +399,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ inputs.source_sha }}
+          ref: ${{ github.sha }}
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -435,7 +431,7 @@ jobs:
 
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
-          name: macos-app-store-${{ needs.preflight.outputs.version }}-${{ inputs.source_sha }}
+          name: macos-app-store-${{ needs.preflight.outputs.version }}-${{ github.sha }}
           path: macos-handoff
 
       - name: Restore signed App Store build
@@ -483,20 +479,20 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-          ref: ${{ inputs.source_sha }}
+          ref: ${{ github.sha }}
 
       - name: Download exact Windows release bytes
         if: needs.preflight.outputs.windows == 'true'
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
-          name: windows-release-${{ needs.preflight.outputs.version }}-${{ inputs.source_sha }}
+          name: windows-release-${{ needs.preflight.outputs.version }}-${{ github.sha }}
           path: windows-release
 
       - name: Download macOS App Store provenance handoff
         if: needs.preflight.outputs.mac_app_store == 'true'
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
-          name: macos-app-store-${{ needs.preflight.outputs.version }}-${{ inputs.source_sha }}
+          name: macos-app-store-${{ needs.preflight.outputs.version }}-${{ github.sha }}
           path: macos-handoff
 
       - name: Create or verify tag and publish exact assets
@@ -571,7 +567,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ inputs.source_sha }}
+          ref: ${{ github.sha }}
 
       - name: Promote latest.json last
         shell: pwsh

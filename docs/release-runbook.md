@@ -5,10 +5,13 @@ Production has one entry point: GitHub Actions → `release-production` →
 
 ## Inputs
 
-- `source_sha`: the full 40-character SHA currently at `main`.
 - `dry_run`: keep enabled for rehearsal. A dry run builds and validates every
   enabled target but cannot create a tag, upload a build, publish a GitHub
   Release, submit to App Store Connect, or replace `latest.json`.
+
+The workflow derives the exact 40-character source SHA from the selected
+`main` revision. It refuses to continue if that revision is no longer current
+`main`, so an operator never needs to copy or type a commit hash.
 
 Version and targets come only from `release/release.json`. Windows-only,
 App-Store-only, and combined releases are supported; both target flags cannot

@@ -221,16 +221,24 @@ pub fn start_xray(config_json: &serde_json::Value) -> Result<(), String> {
 pub fn stop_xray() -> Result<(), String> {
     XRAY_STOPPING.store(true, Ordering::SeqCst);
     let mut proc = XRAY_PROCESS.lock().unwrap();
+    let had_owned_process = proc.is_some();
     if let Some(ref mut child) = *proc {
         let _ = child.kill();
         let _ = child.wait();
     }
     *proc = None;
 
-    // Brief pause to let ports release
-    std::thread::sleep(std::time::Duration::from_millis(300));
+    // A first connection has no in-process child and therefore no local port
+    // to release. Keep the existing grace period only after an owned child.
+    if xray_ports_need_release_wait(had_owned_process) {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
     clear_log_buffer();
     Ok(())
+}
+
+fn xray_ports_need_release_wait(had_owned_process: bool) -> bool {
+    had_owned_process
 }
 
 pub fn get_new_logs() -> Vec<String> {
@@ -273,5 +281,11 @@ mod tests {
         assert!(!should_skip_xray_log_line(
             "Failed to start: listen tcp 127.0.0.1:10809: bind: address already in use"
         ));
+    }
+
+    #[test]
+    fn only_waits_for_ports_after_stopping_an_owned_process() {
+        assert!(!xray_ports_need_release_wait(false));
+        assert!(xray_ports_need_release_wait(true));
     }
 }
