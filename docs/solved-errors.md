@@ -42,6 +42,19 @@
   into the Xray-TUN bridge configuration.
 - Verification: the new bridge-level unit test passes.
 
+## 2026-08-05 - Historical installer inspection used a v6-only storage path
+
+- Scope: trace the v5-to-v6 Windows installer migration that left a per-user
+  DoodleRay copy beside the Program Files installation.
+- Symptom/command: `git show v5.9.1:src-tauri/src/storage/mod.rs` reported
+  that the path did not exist in the v5.9.1 tag.
+- Root cause: the storage module layout changed after v5; that tag's relevant
+  migration contract is the bundled NSIS configuration, not the v6 module.
+- Fix: inspect the tagged installer configuration and the generated Tauri NSIS
+  template, then make the migration at the installer boundary.
+- Verification: `node --test scripts/release/check-workflows.test.mjs` covers
+  the legacy-user cleanup contract.
+
 
 ## 2026-07-03 - Windows protected fallback - app timeout and stale service failure could mask a valid recovery
 

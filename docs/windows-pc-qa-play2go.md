@@ -69,6 +69,14 @@ clean DoodleRay-owned loopback proxy state, never corporate config). It cleans
 its own injected state afterwards. Active-VPN-during-update remains a manual
 CDP/UI scenario on top of this harness.
 
+For the one-time v5 per-user to v6 Program Files migration, additionally
+verify on a disposable Windows user profile that the old HKCU `DoodleRay`
+Apps & Features entry and its install folder disappear after the v6 installer,
+while the v6 Program Files entry remains and the account session/locations
+still load. This check must be done once with a normal UAC consent update and
+once with separate administrator credentials; no legacy app-data directory or
+Credential Manager entry may be deleted.
+
 For the v6 unclean-shutdown marker, run the crash-simulation harness:
 
 ```powershell

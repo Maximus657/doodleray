@@ -44,6 +44,50 @@
   nsExec::ExecToLog /TIMEOUT=5000 'taskkill /F /IM sing-box.exe /T'
 !macroend
 
+!macro DoodleRayRemoveLegacyUserInstall
+  ; v5 could leave a separate current-user installation behind when the v6
+  ; installer moved to Program Files. Tauri's per-machine template only sees
+  ; HKLM, so retire the old HKCU entry explicitly.
+  ;
+  ; Do not ExecWait or recursively delete this location: it is user-controlled
+  ; data while this hook is elevated. Run the fixed legacy uninstaller as the
+  ; interactive user instead. Silent NSIS uninstall keeps app data unless the
+  ; user explicitly selected its delete-data checkbox.
+  ReadRegStr $0 HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\DoodleRay" "InstallLocation"
+  ${If} $0 != ""
+    StrCpy $1 $0 1
+    ${If} $1 == "$\""
+      StrCpy $1 $0 -1
+      ${If} $1 == "$\""
+        StrCpy $0 $0 -1 1
+      ${Else}
+        StrCpy $0 ""
+      ${EndIf}
+    ${EndIf}
+    ${If} $0 != ""
+    ${AndIf} ${FileExists} "$0\\DoodleRay.exe"
+    ${AndIf} ${FileExists} "$0\\uninstall.exe"
+      DetailPrint "Removing legacy per-user DoodleRay installation..."
+      nsis_tauri_utils::RunAsUser "$0\\uninstall.exe" "/S"
+      ; RunAsUser is intentionally asynchronous. The legacy uninstaller also
+      ; owns DoodleRayTunnelService, so do not install the new service until
+      ; its uninstaller has removed itself.
+      StrCpy $2 0
+      doodleray_legacy_uninstall_wait:
+        Sleep 500
+        ${IfNot} ${FileExists} "$0\\uninstall.exe"
+          Goto doodleray_legacy_uninstall_done
+        ${EndIf}
+        IntOp $2 $2 + 1
+        ${If} $2 < 120
+          Goto doodleray_legacy_uninstall_wait
+        ${EndIf}
+        Abort "Legacy per-user DoodleRay cleanup timed out. Close the old copy and retry the official installer."
+      doodleray_legacy_uninstall_done:
+    ${EndIf}
+  ${EndIf}
+!macroend
+
 !macro NSIS_HOOK_PREINSTALL
   DetailPrint "Preparing DoodleRay Tunnel Service for update..."
   ; Do not call the previously installed DoodleRayService.exe here: older
@@ -56,6 +100,7 @@
   nsExec::ExecToLog /TIMEOUT=10000 'sc stop DoodleRayTunnelService'
   nsExec::ExecToLog /TIMEOUT=10000 'sc delete DoodleRayTunnelService'
   Sleep 2000
+  !insertmacro DoodleRayRemoveLegacyUserInstall
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
