@@ -535,3 +535,20 @@
   by the failed command.
 - Verification: `sed -n '1,120p' release/release.json` and the targeted
   version reads completed successfully.
+
+## 2026-08-05 - Windows service traffic counters were hard-coded to zero
+
+- Task scope: make the connected Dashboard throughput cards reflect actual
+  service-owned VPN traffic.
+- Symptom: a protected Windows Xray-TUN connection transferred traffic while
+  both Dashboard counter cards remained at `0.0 Mb/s`.
+- Root cause: `get_traffic_stats` returned zero before querying either runtime
+  whenever a Windows Tunnel Service engine was active.
+- Fix: route service-owned Xray to its existing local `StatsService` and
+  service-owned sing-box to its existing local Clash API; keep unavailable
+  runtime counters honestly at zero.
+- Verification: `cargo fmt --manifest-path src-tauri/Cargo.toml --all --
+  --check`, `git diff --check`, and `npm test` pass. The focused Cargo test is
+  queued for an environment with the pinned Rust registry/cache available;
+  this host has no local `reqwest` index entry and its registry request timed
+  out before compilation.

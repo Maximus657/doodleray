@@ -3535,6 +3535,15 @@ mod tests {
     }
 
     #[test]
+    fn traffic_counter_matches_its_owning_engine() {
+        assert!(uses_singbox_traffic_stats("singbox-tun-service"));
+        assert!(uses_singbox_traffic_stats("singbox+app-proxy"));
+        assert!(uses_singbox_traffic_stats("singbox+app-proxy-service"));
+        assert!(!uses_singbox_traffic_stats("xray+tun-service"));
+        assert!(!uses_singbox_traffic_stats("xray+app-proxy-service"));
+    }
+
+    #[test]
     fn app_api_default_uses_the_canonical_mobile_contract() {
         assert_eq!(APP_API_DEFAULT_BASE_URL, "https://ddlvpn.lol/v1/mobile");
         assert_eq!(APP_API_CONNECTION_PROFILE_PATH, "/connection-profile");
@@ -8869,6 +8878,17 @@ fn run_xray_statsquery(xray_exe: &Path, endpoint: &str) -> Option<String> {
     }
 }
 
+fn uses_singbox_traffic_stats(engine: &str) -> bool {
+    matches!(
+        engine,
+        "singbox"
+            | "singbox-tun"
+            | "singbox-tun-service"
+            | "singbox+app-proxy"
+            | "singbox+app-proxy-service"
+    )
+}
+
 /// Get real traffic stats — dispatches to xray or sing-box clash API based on active engine
 #[tauri::command]
 async fn get_traffic_stats() -> serde_json::Value {
@@ -8890,7 +8910,7 @@ async fn get_traffic_stats() -> serde_json::Value {
     }
 
     match engine.as_str() {
-        "singbox" | "singbox-tun" => {
+        engine if uses_singbox_traffic_stats(engine) => {
             // Query sing-box clash API: GET /connections → { downloadTotal, uploadTotal }
             let client = reqwest::Client::builder()
                 .no_proxy()
@@ -8942,10 +8962,6 @@ async fn get_traffic_stats() -> serde_json::Value {
             }
             serde_json::json!({ "download": 0, "upload": 0 })
         }
-        "xray+tun-service"
-        | "singbox-tun-service"
-        | "xray+app-proxy-service"
-        | "singbox+app-proxy-service" => serde_json::json!({ "download": 0, "upload": 0 }),
         _ => {
             // xray-core stats API
             let exe_dir = std::env::current_exe()

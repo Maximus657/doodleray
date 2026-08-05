@@ -29,3 +29,15 @@ is intentionally paused.
 - Static coverage asserts exact and wildcard direct domains in both the TUN
   route and its DNS rule. Physical Windows egress proof remains required
   before claiming production runtime validation.
+
+## 2026-08-05 — Windows service traffic counters
+
+- The Dashboard throughput cards now query the runtime that owns the live
+  tunnel: Xray service modes use the configured local Xray `StatsService`,
+  while sing-box service modes use their configured local Clash API.
+- The UI receives only measured counter deltas. If an owning runtime is
+  unavailable, the existing zero value remains; no log-derived or estimated
+  speed is displayed as real traffic.
+- Focused coverage locks the engine routing so an Xray service cannot regress
+  to the prior hard-coded zero branch. Physical Windows throughput evidence
+  remains required before a release claim.
