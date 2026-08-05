@@ -453,3 +453,19 @@
 - Verification: `cargo test --manifest-path src-tauri/Cargo.toml --lib
   managed_xhttp_balancer` and `cargo test --manifest-path
   src-tauri/Cargo.toml --lib app_api_capabilities_match` pass.
+
+## 2026-08-05 - Windows updater CI rejected the configured signing material
+
+- Task scope: build the signed Windows updater for the 6.0.3 transport
+  release.
+- Symptom/command: the release CI first rejected the encoded private-key
+  wrapper, then failed the updater bundle with an incorrect private-key
+  password.
+- Root cause: migrated signing material retained a Minisign comment/wrapping
+  format and the password value included surrounding whitespace.
+- Fix: normalize only the key payload, probe the configured password before
+  the expensive bundle build, and fall back only to its trimmed form when the
+  configured value cannot unlock the existing key.
+- Verification: `node --test scripts/release/check-workflows.test.mjs`,
+  `npm run release:check`, and release dry-run `30964331697` passed the
+  signed updater build and exact updater-signature verification.
