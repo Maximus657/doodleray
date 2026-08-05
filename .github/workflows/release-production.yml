@@ -195,6 +195,20 @@ jobs:
           try { [Convert]::FromBase64String($key) | Out-Null }
           catch { throw 'TAURI_SIGNING_PRIVATE_KEY must contain a valid Minisign base64 payload' }
           $env:TAURI_SIGNING_PRIVATE_KEY = $key
+          [string]$configuredPassword = $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+          $passwordCandidates = @($configuredPassword)
+          $trimmedPassword = $configuredPassword.Trim()
+          if ($trimmedPassword -cne $configuredPassword) { $passwordCandidates += $trimmedPassword }
+          $probePath = Join-Path $env:RUNNER_TEMP 'doodleray-updater-signing-probe.txt'
+          [System.IO.File]::WriteAllText($probePath, 'DoodleRay updater signing probe')
+          $passwordAccepted = $false
+          foreach ($candidate in $passwordCandidates) {
+            $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $candidate
+            & npx tauri signer sign $probePath 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) { $passwordAccepted = $true; break }
+          }
+          Remove-Item $probePath -Force
+          if (-not $passwordAccepted) { throw 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD does not unlock TAURI_SIGNING_PRIVATE_KEY' }
           npx tauri build --bundles nsis --config src-tauri/tauri.windows.conf.json
 
       - name: Verify and package exact updater bytes
