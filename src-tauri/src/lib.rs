@@ -2193,6 +2193,9 @@ const SYSTEM_BYPASS_PROCESS_NAMES: &[&str] = &[
 ];
 
 fn effective_tun_strict_route(req: &ConnectRequest) -> bool {
+    // This protects route/DNS handling only while the TUN is alive. It is not
+    // a kill switch: once the tunnel process exits, its routes and filters go
+    // away too. A real kill switch needs service-owned WFP policy.
     req.kill_switch || req.strict_route || routing_policy_is_full_tunnel(req) || cfg!(windows)
 }
 
@@ -5199,7 +5202,7 @@ mod tests {
     }
 
     #[test]
-    fn singbox_tun_kill_switch_keeps_vpn_final_and_enables_strict_route() {
+    fn kill_switch_flag_only_enables_tun_routing_hardening() {
         let mut req = sample_request("tun");
         req.kill_switch = true;
         req.strict_route = false;

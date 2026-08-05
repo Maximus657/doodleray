@@ -41,3 +41,18 @@ is intentionally paused.
 - Focused coverage locks the engine routing so an Xray service cannot regress
   to the prior hard-coded zero branch. Physical Windows throughput evidence
   remains required before a release claim.
+
+## 2026-08-05 — Windows kill-switch truth
+
+- The former desktop toggle did not install a persistent Windows Filtering
+  Platform (WFP) policy. It only requested sing-box `strict_route`; Windows
+  TUN already forces that route/DNS hardening for every protected session.
+- `strict_route` is not a kill switch: when the TUN/engine dies, its routes
+  disappear and Windows can use the ordinary direct route. The old control
+  therefore advertised protection that did not exist during an unexpected
+  tunnel loss.
+- The unavailable toggle is removed from both desktop settings surfaces. A
+  deliberate Disconnect continues to restore normal network access; a real
+  kill switch must block only unexpected loss and requires service-owned WFP
+  filters, recovery, uninstaller cleanup, and physical Windows proof before
+  it may be exposed again.

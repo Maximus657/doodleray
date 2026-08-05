@@ -70,7 +70,6 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
   const {
     autoStart, silentAdminAutostart,
     autoConnectOnStartup, setAutoConnectOnStartup,
-    killSwitch, setKillSwitch,
     showStats, setShowStats,
     language, setLanguage,
     socksPort, setSocksPort, httpPort, setHttpPort,
@@ -301,9 +300,6 @@ export default function SettingsModal({ onClose, t }: { onClose: () => void; t: 
             <Row title={t('v6SetLaunch' as never)} sub={t('v6SetLaunchSub' as never)} onClick={toggleLaunch} pressed={launchOn} right={<Toggle on={launchOn} label={t('v6SetLaunch' as never)} />} />
           )}
           <Row title={t('v6SetAutoConnect' as never)} sub={t('v6SetAutoConnectSub' as never)} onClick={() => setAutoConnectOnStartup(!autoConnectOnStartup)} pressed={autoConnectOnStartup} right={<Toggle on={autoConnectOnStartup} label={t('v6SetAutoConnect' as never)} />} />
-          {!networkExtensionOnly && (
-            <Row title={t('v6SetKillSwitch' as never)} sub={t('v6SetKillSwitchSub' as never)} onClick={() => setKillSwitch(!killSwitch)} pressed={killSwitch} right={<Toggle on={killSwitch} label={t('v6SetKillSwitch' as never)} />} />
-          )}
           {!networkExtensionOnly && (
             <Row title={t('v6SetStats' as never)} sub={t('v6SetStatsSub' as never)} onClick={() => setShowStats(!showStats)} pressed={showStats} right={<Toggle on={showStats} label={t('v6SetStats' as never)} />} />
           )}

@@ -552,3 +552,18 @@
   queued for an environment with the pinned Rust registry/cache available;
   this host has no local `reqwest` index entry and its registry request timed
   out before compilation.
+
+## 2026-08-05 - Windows Kill Switch control advertised unavailable protection
+
+- Task scope: reconcile the desktop Kill Switch setting with the Windows
+  Tunnel Service's actual fail-closed capability.
+- Symptom: with the setting enabled, normal or failed tunnel teardown allowed
+  Windows to resume direct network traffic.
+- Root cause: the setting only fed sing-box `strict_route`; Windows already
+  enables that route/DNS hardening for every TUN session, and it does not
+  persist after the TUN process exits. No service-owned WFP policy existed.
+- Fix: removed the misleading desktop toggle and documented the exact WFP,
+  recovery, uninstaller, and physical-Windows proof gates required before
+  exposing a real Kill Switch.
+- Verification: `cargo fmt --manifest-path src-tauri/Cargo.toml --all --
+  --check`, `npx tsc --noEmit`, `npm test`, and `git diff --check` pass.

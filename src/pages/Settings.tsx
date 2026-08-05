@@ -182,7 +182,6 @@ export default function Settings() {
     networkStack, setNetworkStack,
     dnsMode, setDnsMode,
     strictRoute, setStrictRoute,
-    killSwitch, setKillSwitch,
     silentAdminAutostart, setSilentAdminAutostart,
     autoConnectOnStartup, setAutoConnectOnStartup,
     subAutoUpdateMinutes, setSubAutoUpdateMinutes,
@@ -645,12 +644,6 @@ export default function Settings() {
                 onChange={setStrictRoute}
                 label={t('strictRoute')}
                 description={t('strictRouteDesc')}
-              />
-              <Toggle
-                checked={killSwitch}
-                onChange={setKillSwitch}
-                label={t('killSwitch')}
-                description={t('killSwitchDesc')}
               />
             </div>
           </div>
