@@ -56,6 +56,7 @@ import DiagnosticsDrawer from '../components/v6/DiagnosticsDrawer';
 import DiagnosticPanel from '../components/v6/DiagnosticPanel';
 import QuickAddPanel from '../components/v6/QuickAddPanel';
 import LoginFlightOverlay from '../components/v6/LoginFlightOverlay';
+import UpdateAdvisoryBanner from '../components/v6/UpdateAdvisoryBanner';
 import { deriveOrbState, ORB_LABEL_KEY } from '../components/v6/status';
 import { selectDashboardState } from './dashboard-state';
 
@@ -1631,6 +1632,8 @@ export default function Dashboard() {
           )}
         </div>
       )}
+
+      <UpdateAdvisoryBanner />
 
       {showAddModal && legacyImportEnabled && (
         <QuickAddPanel

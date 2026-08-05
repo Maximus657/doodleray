@@ -19,6 +19,17 @@
 - Fix: ran `cargo clean`, `flutter clean`, and cleared only Xcode `DerivedData`, restoring about 3 GiB without deleting source or user files.
 - Verification: `cargo test --manifest-path src-tauri/Cargo.toml --lib` passed 102 tests; both required `cargo check` commands completed successfully.
 
+## 2026-08-05 - Update advisory move left an unused App import
+
+- Scope: move the update advisory from the fixed legacy notification stack to
+  the Dashboard v6 card stack.
+- Symptom/command: `npx tsc --noEmit` reported TS6133 for `useTranslation` in
+  `src/App.tsx`.
+- Root cause: the only caller moved with the advisory component.
+- Fix: remove the obsolete import; localization remains owned by the new v6
+  advisory component.
+- Verification: `npx tsc --noEmit` passes.
+
 
 ## 2026-07-03 - Windows protected fallback - app timeout and stale service failure could mask a valid recovery
 

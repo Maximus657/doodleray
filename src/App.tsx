@@ -1,7 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Download, Loader2, ArrowLeft } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import { isEnabled } from '@tauri-apps/plugin-autostart';
-import { useTranslation } from './locales';
 import AppShell from './components/v6/AppShell';
 import Dashboard from './pages/Dashboard';
 import Servers from './pages/Servers';
@@ -13,8 +12,7 @@ import { useToastStore } from './stores/toast-store';
 import { buildConnectRequestFromState } from './lib/connect-helpers';
 import { isHealthAcceptable, summarizeHealthFailures, waitForConnectionHealth } from './lib/connection-health';
 import { resolveConnectServer } from './lib/server-selection';
-import { checkForAppUpdate, installAppUpdate } from './lib/app-updater';
-import { isInAppUpdateEnabled, openStoreUpdatePage } from './lib/update-channel';
+import { checkForAppUpdate, installAppUpdate, updatePhaseFromStatus } from './lib/app-updater';
 import { buildAppConnectLocationRequestFromState, isClosedLocationServer } from './lib/app-control-plane';
 import { isClosedControlPlaneEnabled, isDesktopAutostartAvailable, isNetworkExtensionOnlyBuild } from './lib/build-policy';
 import { reportConnectionError } from './lib/workshop-api';
@@ -23,55 +21,6 @@ import { desktopBridge } from './platform/tauri/desktop-bridge';
 import './index.css';
 
 const invoke = desktopBridge.command.bind(desktopBridge);
-
-function formatMessage(template: string, values: Record<string, string | number>) {
-  return Object.entries(values).reduce(
-    (message, [key, value]) => message.replace(new RegExp(`\\{${key}\\}`, 'g'), String(value)),
-    template
-  );
-}
-
-function updatePhaseFromStatus(status: string): 'installing' | 'downloading' {
-  return status === 'updateClosingProcesses' ||
-    status === 'updatePreparingInstall' ||
-    status === 'updateInstallingRestarting'
-    ? 'installing'
-    : 'downloading';
-}
-
-function updateStatusLabel(
-  status: string,
-  phase: string,
-  progress: number | null,
-  version: string | null,
-  t: (key: any) => string,
-) {
-  if (progress !== null && phase === 'downloading') {
-    return formatMessage(t('updateDownloadingProgress'), { progress });
-  }
-
-  switch (status) {
-    case 'updateChecking':
-      return t('updateChecking');
-    case 'updateDownloading':
-    case 'updateDownloadingProgress':
-      return version
-        ? formatMessage(t('updateDownloadingVersion'), { version })
-        : t('updateDownloading');
-    case 'updatePreparingInstall':
-      return t('updatePreparingInstall');
-    case 'updateClosingProcesses':
-      return t('updateClosingProcesses');
-    case 'updateInstallingRestarting':
-      return t('updateInstallingRestarting');
-    case 'updateOpenStore':
-      return t('updateOpenStore');
-    case 'updateLatest':
-      return t('updateLatest');
-    default:
-      return status;
-  }
-}
 
 function ToastContainer() {
   const toasts = useToastStore(s => s.toasts);
@@ -96,128 +45,9 @@ function ToastContainer() {
   );
 }
 
-function UpdateBanner() {
-  const { t } = useTranslation();
-  const availableUpdate = useAppStore((s) => s.availableUpdate);
-  const backendUpdateMinimumVersion = useAppStore((s) => s.backendUpdateMinimumVersion);
-  const updatePhase = useAppStore((s) => s.updatePhase);
-  const updateStatus = useAppStore((s) => s.updateStatus);
-  const updateProgress = useAppStore((s) => s.updateProgress);
-  const setUpdateState = useAppStore((s) => s.setUpdateState);
-
-  const updateVersion = availableUpdate ?? backendUpdateMinimumVersion;
-  const isBackendAdvisory = !availableUpdate && !!backendUpdateMinimumVersion;
-  if (!updateVersion) return null;
-
-  const isDownloading = updatePhase === 'downloading';
-  const isBusy = updatePhase === 'checking' || updatePhase === 'downloading' || updatePhase === 'installing';
-  const statusLabel = updateStatusLabel(updateStatus, updatePhase, updateProgress, updateVersion, t);
-  const secondaryLabel = isBusy || updatePhase === 'error'
-    ? statusLabel || t('updating')
-    : isBackendAdvisory
-      ? formatMessage(t('updateAdvisoryBody'), { version: updateVersion })
-      : null;
-  const progressLabel = updateProgress !== null && isDownloading ? `${updateProgress}%` : null;
-
-  const handleInstall = async () => {
-    if (isBusy) return;
-    // Mac App Store builds delegate installation to Apple; direct Windows
-    // builds keep the signed in-app updater.
-    if (!isInAppUpdateEnabled()) {
-      await openStoreUpdatePage();
-      setUpdateState({ updatePhase: 'available', updateStatus: 'updateOpenStore', updateProgress: null });
-      return;
-    }
-    setUpdateState({
-      updatePhase: 'downloading',
-      updateStatus: 'updateDownloading',
-      updateProgress: 0,
-    });
-    try {
-      const updated = await installAppUpdate({
-        onStatus: (status) => {
-          setUpdateState({
-            updateStatus: status,
-            updatePhase: updatePhaseFromStatus(status),
-          });
-        },
-        onProgress: (progress) => setUpdateState({ updateProgress: progress }),
-      });
-      if (!updated && isBackendAdvisory) {
-        setUpdateState({
-          updatePhase: 'error',
-          updateStatus: t('updateAdvisoryNotPublished'),
-          updateProgress: null,
-        });
-      }
-    } catch (e) {
-      console.error('Update failed:', e);
-      setUpdateState({
-        updatePhase: 'error',
-        updateStatus: t('updateFailed'),
-        updateProgress: null,
-      });
-      useToastStore.getState().addToast(t('updateFailed'), 'error');
-    }
-  };
-
-  return (
-    <div className="pointer-events-auto w-full animate-slide-in-right rounded-2xl border-[3px] border-black bg-black px-4 py-3 text-white shadow-[5px_5px_0_rgba(0,0,0,0.28)]">
-      <div className="flex items-start gap-3">
-        <div className={`mt-1.5 h-3 w-3 shrink-0 rounded-full ${isBusy ? 'animate-pulse bg-amber-300' : 'bg-emerald-400'}`} />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <p className="text-[12px] font-black uppercase leading-tight tracking-[0.14em] text-white">
-              {isBackendAdvisory ? t('updateAdvisoryTitle') : t('newUpdate')} v<span className="text-bg-primary">{updateVersion}</span>
-            </p>
-            {!isBusy && (
-              <span className="rounded-full bg-bg-primary px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-black">
-                {isBackendAdvisory ? t('updateAdvisoryVpnAvailable') : t('versionAvailable')}
-              </span>
-            )}
-          </div>
-          {secondaryLabel && (
-            <p className="mt-1 text-[10px] font-black uppercase leading-snug tracking-widest text-white/65">
-              {secondaryLabel}
-            </p>
-          )}
-        </div>
-        {progressLabel && (
-          <span className="shrink-0 rounded-lg border-2 border-white bg-bg-primary px-2 py-0.5 text-[10px] font-black tabular-nums tracking-wider text-black">
-            {progressLabel}
-          </span>
-        )}
-      </div>
-
-      {(isBusy || updateProgress !== null) && (
-        <div className="mt-2.5 h-2 overflow-hidden rounded-full border-2 border-white bg-white/15">
-          {updateProgress !== null && isDownloading ? (
-            <div className="h-full bg-bg-primary transition-all duration-300" style={{ width: `${updateProgress}%` }} />
-          ) : (
-            <div className="h-full w-1/2 animate-pulse rounded-full bg-bg-primary" />
-          )}
-        </div>
-      )}
-
-      <button
-        onClick={handleInstall}
-        disabled={isBusy}
-        className="mt-2 flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-white bg-bg-primary px-3 py-2 text-[10px] font-black uppercase tracking-widest text-black shadow-[3px_3px_0_rgba(255,255,255,0.3)] transition-all hover:-translate-y-0.5 hover:shadow-[5px_5px_0_rgba(255,255,255,0.3)] active:translate-y-1 active:shadow-none disabled:cursor-wait disabled:opacity-75"
-      >
-        {isBusy ? (
-          <><Loader2 className="h-3.5 w-3.5 animate-spin" /> {progressLabel ? `${t('updateDownloading')} ${progressLabel}` : t('updating')}</>
-        ) : (
-          <><Download className="h-3.5 w-3.5 stroke-[3px]" /> {isInAppUpdateEnabled() ? t('installRestart') : t('updateOpenStore')}</>
-        )}
-      </button>
-    </div>
-  );
-}
-
 function NotificationStack() {
   return (
     <div className="fixed right-4 top-12 z-[9999] flex w-[min(320px,calc(100vw-6.5rem))] flex-col gap-2 pointer-events-none">
-      <UpdateBanner />
       <ToastContainer />
     </div>
   );
