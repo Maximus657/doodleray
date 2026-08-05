@@ -469,3 +469,21 @@
 - Verification: `node --test scripts/release/check-workflows.test.mjs`,
   `npm run release:check`, and release dry-run `30964331697` passed the
   signed updater build and exact updater-signature verification.
+
+## 2026-08-05 - Immutable updater upload compared a manifest to itself and retained Windows line endings
+
+- Task scope: publish the signed 6.0.3 Windows updater without changing an
+  existing direct-channel manifest until all release stages succeed.
+- Symptom/command: the immutable upload stopped before promotion even though
+  every payload hash validated; the inventory comparison then differed only in
+  invisible carriage-return bytes.
+- Root cause: the verifier incorrectly included sha256.txt in its own file
+  inventory, and the Windows-generated inventory used CRLF while the remote
+  directory listing used LF.
+- Fix: exclude the inventory from its payload-file comparison and normalize
+  CR before comparing names; retain the exact payload hash check and the
+  immutable/no-overwrite guard.
+- Verification: node --test scripts/release/check-workflows.test.mjs,
+  npm run release:check, and production release 30970086744 completed
+  immutable upload, App Store upload, GitHub Release publication, and atomic
+  latest promotion.
