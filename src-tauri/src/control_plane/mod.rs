@@ -1436,6 +1436,9 @@ pub(super) fn app_api_profile_to_connect_request(
     if profile_type == "xray" {
         return app_api_xray_profile_to_connect_request(profile, request);
     }
+    if profile_type == "hysteria2" {
+        return app_api_hysteria2_profile_to_connect_request(profile, request);
+    }
     let security = profile
         .get("security")
         .and_then(|v| v.as_str())
@@ -1518,6 +1521,140 @@ pub(super) fn app_api_profile_to_connect_request(
         congestion_control: None,
         udp_relay_mode: None,
         alpn: None,
+        private_key: None,
+        peer_public_key: None,
+        pre_shared_key: None,
+        local_address: None,
+        reserved: None,
+        mtu: None,
+        workers: None,
+        encryption: None,
+        raw_xray_config: None,
+        routing_policy: None,
+    })
+}
+
+fn app_api_hysteria2_profile_to_connect_request(
+    profile: &serde_json::Value,
+    request: &AppConnectLocationRequest,
+) -> Result<ConnectRequest, String> {
+    let security = profile
+        .get("security")
+        .and_then(|value| value.as_str())
+        .unwrap_or("tls");
+    if security != "tls" {
+        return Err("DoodleVPN Hysteria2 profile must use TLS".into());
+    }
+    let address = profile
+        .get("connect_address")
+        .or_else(|| profile.get("address"))
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "DoodleVPN Hysteria2 profile is missing connect address".to_string())?
+        .to_string();
+    let port = profile
+        .get("port")
+        .and_then(|value| value.as_u64())
+        .filter(|port| *port > 0 && *port <= u16::MAX as u64)
+        .ok_or_else(|| "DoodleVPN Hysteria2 profile has an invalid port".to_string())?
+        as u16;
+    let password = profile
+        .get("password")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty() && value.len() <= 4096)
+        .ok_or_else(|| "DoodleVPN Hysteria2 profile is missing authentication".to_string())?
+        .to_string();
+    let server_name = profile
+        .get("server_name")
+        .or_else(|| profile.get("sni"))
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty() && value.len() <= 255)
+        .ok_or_else(|| "DoodleVPN Hysteria2 profile is missing TLS server name".to_string())?
+        .to_string();
+    let obfs_type = profile
+        .get("obfs_type")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string);
+    if obfs_type
+        .as_deref()
+        .is_some_and(|value| value != "salamander")
+    {
+        return Err("DoodleVPN Hysteria2 profile has unsupported obfuscation".into());
+    }
+    let obfs_password = profile
+        .get("obfs_password")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string);
+    if obfs_type.is_some() && obfs_password.is_none() {
+        return Err("DoodleVPN Hysteria2 profile is missing obfuscation authentication".into());
+    }
+    let alpn = match profile.get("alpn") {
+        None => None,
+        Some(value) => {
+            let values = value
+                .as_array()
+                .filter(|values| !values.is_empty() && values.len() <= 8)
+                .ok_or_else(|| "DoodleVPN Hysteria2 profile has invalid ALPN".to_string())?;
+            let mut parsed = Vec::with_capacity(values.len());
+            for value in values {
+                let value = value
+                    .as_str()
+                    .filter(|value| !value.trim().is_empty() && value.len() <= 255)
+                    .ok_or_else(|| "DoodleVPN Hysteria2 profile has invalid ALPN".to_string())?;
+                parsed.push(value.to_string());
+            }
+            Some(parsed)
+        }
+    };
+    let bandwidth = |name: &str| -> Result<Option<u32>, String> {
+        match profile.get(name) {
+            None => Ok(None),
+            Some(value) => value
+                .as_u64()
+                .filter(|value| *value > 0 && *value <= 100_000)
+                .map(|value| Some(value as u32))
+                .ok_or_else(|| format!("DoodleVPN Hysteria2 profile has invalid {name}")),
+        }
+    };
+
+    Ok(ConnectRequest {
+        server_address: address,
+        server_port: port,
+        protocol: "hysteria2".into(),
+        uuid: None,
+        password: Some(password),
+        transport: "udp".into(),
+        security: "tls".into(),
+        sni: Some(server_name),
+        host: None,
+        path: None,
+        fingerprint: profile
+            .get("fingerprint")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.trim().is_empty() && value.len() <= 128)
+            .map(str::to_string),
+        public_key: None,
+        short_id: None,
+        flow: None,
+        proxy_mode: request.proxy_mode.clone(),
+        system_proxy_mode: request.system_proxy_mode.clone(),
+        socks_port: request.socks_port,
+        http_port: request.http_port,
+        api_port: default_xray_api_port(),
+        network_stack: request.network_stack.clone(),
+        dns_mode: request.dns_mode.clone(),
+        strict_route: request.strict_route,
+        kill_switch: request.kill_switch,
+        routing_rules: request.routing_rules.clone(),
+        obfs_type,
+        obfs_password,
+        up_mbps: bandwidth("up_mbps")?,
+        down_mbps: bandwidth("down_mbps")?,
+        congestion_control: None,
+        udp_relay_mode: None,
+        alpn,
         private_key: None,
         peer_public_key: None,
         pre_shared_key: None,
@@ -1686,6 +1823,7 @@ pub(super) fn app_api_client_capabilities() -> serde_json::Value {
         "xray_reality": true,
         "native_xray_xhttp": cfg!(windows) || cfg!(target_os = "macos"),
         "xray_balancer_v1": cfg!(windows),
+        "native_hysteria2": cfg!(windows),
         "dns_hijack": true
     })
 }

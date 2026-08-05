@@ -567,3 +567,25 @@
   exposing a real Kill Switch.
 - Verification: `cargo fmt --manifest-path src-tauri/Cargo.toml --all --
   --check`, `npx tsc --noEmit`, `npm test`, and `git diff --check` pass.
+
+## 2026-08-05 - Hysteria2 mapper test compared incompatible collection types
+
+- Scope: accept closed-control-plane Hysteria2 profiles in the Windows client.
+- Symptom/command: the focused Rust test failed with `E0308` while comparing
+  optional ALPN values.
+- Root cause: the assertion compared `Vec<String>` against a string-slice
+  collection.
+- Fix: assert against the mapper's actual `Vec<String>` representation.
+- Verification: `cargo test --manifest-path src-tauri/Cargo.toml --lib
+  app_api_hysteria2_profile -- --nocapture` passes.
+
+## 2026-08-05 - Windows QA cleanup command was interpreted by the remote shell
+
+- Scope: remove only the temporary local-transport QA artifacts from the
+  disposable Windows host.
+- Symptom/command: an inline PowerShell expression was parsed by the default
+  remote command shell before PowerShell received it.
+- Root cause: nested shell quoting did not preserve the wildcard expression.
+- Fix: pass the same narrowly scoped PowerShell cleanup through an encoded
+  command; it targets only processes and files under the temporary QA path.
+- Verification: the remote command returned `QA_ARTIFACTS_REMOVED`.

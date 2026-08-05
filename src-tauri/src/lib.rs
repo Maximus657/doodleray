@@ -3265,16 +3265,30 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
             "method": req.encryption.clone().unwrap_or("aes-256-gcm".into())
         }),
         "hysteria2" => {
+            let mut tls = serde_json::json!({
+                "enabled": true,
+                "server_name": req.sni.clone().unwrap_or(req.server_address.clone())
+            });
+            if let Some(ref alpn) = req.alpn {
+                if !alpn.is_empty() {
+                    tls["alpn"] = serde_json::json!(alpn);
+                }
+            }
+            if let Some(ref fingerprint) = req.fingerprint {
+                if !fingerprint.is_empty() {
+                    tls["utls"] = serde_json::json!({
+                        "enabled": true,
+                        "fingerprint": fingerprint,
+                    });
+                }
+            }
             let mut ob = serde_json::json!({
                 "type": "hysteria2",
                 "tag": "proxy",
                 "server": req.server_address,
                 "server_port": req.server_port,
                 "password": req.password.clone().unwrap_or_default(),
-                "tls": {
-                    "enabled": true,
-                    "server_name": req.sni.clone().unwrap_or(req.server_address.clone())
-                }
+                "tls": tls
             });
             if let Some(ref obfs) = req.obfs_type {
                 if !obfs.is_empty() {
@@ -4255,6 +4269,60 @@ mod tests {
     }
 
     #[test]
+    fn app_api_hysteria2_profile_maps_to_native_singbox_request() {
+        let native = json!({
+            "type": "hysteria2",
+            "security": "tls",
+            "connect_address": "203.0.113.44",
+            "port": 443,
+            "password": "auth-redacted",
+            "server_name": "hy2.example.test",
+            "fingerprint": "firefox",
+            "alpn": ["h3"],
+            "obfs_type": "salamander",
+            "obfs_password": "obfs-redacted",
+            "up_mbps": 20,
+            "down_mbps": 100
+        });
+
+        let mapped = app_api_profile_to_connect_request(&native, &sample_app_connect_request())
+            .expect("Hysteria2 profile should map");
+
+        assert_eq!(mapped.protocol, "hysteria2");
+        assert_eq!(mapped.transport, "udp");
+        assert_eq!(mapped.security, "tls");
+        assert_eq!(mapped.server_address, "203.0.113.44");
+        assert_eq!(mapped.server_port, 443);
+        assert_eq!(mapped.sni.as_deref(), Some("hy2.example.test"));
+        assert_eq!(mapped.alpn, Some(vec!["h3".into()]));
+        assert_eq!(mapped.obfs_type.as_deref(), Some("salamander"));
+        assert_eq!(mapped.up_mbps, Some(20));
+        assert!(!uses_xray_engine(&mapped));
+
+        let config = build_singbox_config(&mapped);
+        let outbound = &config["outbounds"][0];
+        assert_eq!(outbound["type"], json!("hysteria2"));
+        assert_eq!(outbound["tls"]["alpn"], json!(["h3"]));
+        assert_eq!(outbound["tls"]["utls"]["fingerprint"], json!("firefox"));
+        assert_eq!(outbound["obfs"]["type"], json!("salamander"));
+    }
+
+    #[test]
+    fn app_api_hysteria2_profile_rejects_missing_tls_authentication() {
+        let native = json!({
+            "type": "hysteria2",
+            "connect_address": "203.0.113.44",
+            "port": 443,
+            "server_name": "hy2.example.test"
+        });
+
+        let err = app_api_profile_to_connect_request(&native, &sample_app_connect_request())
+            .expect_err("Hysteria2 profile without auth must fail closed");
+
+        assert!(err.contains("missing authentication"));
+    }
+
+    #[test]
     fn app_api_profile_requires_routing_policy() {
         let lease = AppApiProfileLeaseResponse {
             schema_version: 2,
@@ -4402,6 +4470,7 @@ mod tests {
             json!(cfg!(windows) || cfg!(target_os = "macos"))
         );
         assert_eq!(capabilities["xray_balancer_v1"], json!(cfg!(windows)));
+        assert_eq!(capabilities["native_hysteria2"], json!(cfg!(windows)));
         assert_eq!(
             capabilities["network_extension"],
             json!(cfg!(all(target_os = "macos", feature = "app-store")))
