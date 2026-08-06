@@ -1,5 +1,6 @@
 #![cfg_attr(all(target_os = "macos", feature = "app-store"), allow(dead_code))]
 
+pub mod awg2;
 mod control_plane;
 pub mod runtime_guard;
 pub mod singbox;
@@ -296,12 +297,29 @@ fn ensure_tunnel_service_running() -> Result<(), String> {
 
     let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
         .map_err(|e| format!("Failed to open Windows service manager: {}", e))?;
-    let service = manager
-        .open_service(
-            tunnel_service::TUNNEL_SERVICE_NAME,
-            ServiceAccess::START | ServiceAccess::QUERY_STATUS,
-        )
-        .map_err(|e| format!("Tunnel service cannot be started: {}", e))?;
+    let service = match manager.open_service(
+        tunnel_service::TUNNEL_SERVICE_NAME,
+        ServiceAccess::START | ServiceAccess::QUERY_STATUS,
+    ) {
+        Ok(service) => service,
+        Err(first_error) => {
+            // A broken/incomplete update can leave the app installed without
+            // its required service. Repair it on the user's explicit Connect
+            // action instead of reporting its downstream adapter failures.
+            install_tunnel_service().map_err(|repair_error| {
+                format!(
+                    "Tunnel service is unavailable ({first_error}); automatic repair failed: {repair_error}"
+                )
+            })?;
+            ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
+                .map_err(|e| format!("Failed to reopen Windows service manager after repair: {e}"))?
+                .open_service(
+                    tunnel_service::TUNNEL_SERVICE_NAME,
+                    ServiceAccess::START | ServiceAccess::QUERY_STATUS,
+                )
+                .map_err(|e| format!("Tunnel service was not registered after repair: {e}"))?
+        }
+    };
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut start_requested = false;
     while Instant::now() < deadline {
@@ -3692,6 +3710,34 @@ mod tests {
         );
         assert!(report.can_auto_repair);
         assert!(report.copy_text.contains("repair_tried=true"));
+    }
+
+    #[test]
+    fn diagnosis_prioritizes_missing_service_over_its_downstream_failures() {
+        let health = diag_health(
+            "failed",
+            vec![],
+            vec![
+                health_check(
+                    "tunnel_service",
+                    "error",
+                    "Tunnel service",
+                    "IPC failed: Failed to connect to tunnel service pipe",
+                ),
+                health_check(
+                    "tun_adapter",
+                    "error",
+                    "TUN adapter",
+                    "DoodleRay Tunnel not found",
+                ),
+            ],
+        );
+        let report = build_network_diagnosis(&health, "tun", None, false);
+        assert_eq!(
+            report.primary_cause_code.as_deref(),
+            Some("service_unavailable")
+        );
+        assert!(report.can_auto_repair);
     }
 
     #[test]
@@ -9720,7 +9766,7 @@ fn install_tunnel_service() -> Result<String, String> {
             return Ok("Tunnel service installed; it starts only while VPN is connecting".into());
         }
     }
-    Ok("Tunnel service install started. Please try connecting again in a few seconds.".into())
+    Err("Tunnel service installation did not complete within 10 seconds. Reinstall DoodleRay from the official installer, then try again.".into())
 }
 
 #[cfg(not(windows))]
@@ -10749,7 +10795,20 @@ fn classify_diagnosis_cause(
     {
         return ("wintun_ghost_adapter".into(), true);
     }
-    // 2. Adapter missing / IPv4 readiness.
+    // 2. The service is the root owner of the adapter and local listeners.
+    // Report its absence before its expected downstream failures.
+    if (health
+        .checks
+        .iter()
+        .any(|c| c.code == "tunnel_service" && c.severity == "error")
+        || hay.contains("failed to connect to tunnel service pipe")
+        || hay.contains("service is not installed")
+        || hay.contains("did not respond"))
+        && (verdict == "failed" || verdict == "cleanup_pending" || proxy_mode == "tun")
+    {
+        return ("service_unavailable".into(), true);
+    }
+    // 3. Adapter missing / IPv4 readiness.
     if hay.contains("adapter is missing")
         || hay.contains("ipv4 readiness failed")
         || hay.contains("adapter did not become ready")
@@ -10757,7 +10816,7 @@ fn classify_diagnosis_cause(
     {
         return ("adapter_missing".into(), true);
     }
-    // 3. Service-owned core died (fake-green class).
+    // 4. Service-owned core died (fake-green class).
     if hay.contains("sing-box exited")
         || hay.contains("sing-box process is not running")
         || hay.contains("process is not running")
@@ -10765,37 +10824,30 @@ fn classify_diagnosis_cause(
     {
         return ("core_process_dead".into(), true);
     }
-    // 4. Tunnel service unreachable/dead.
-    if (health
-        .checks
-        .iter()
-        .any(|c| c.code == "tunnel_service" && c.severity == "error")
-        || hay.contains("state=failed")
-        || hay.contains("state=disconnected")
-        || hay.contains("did not respond")
-        || hay.contains("service is not installed"))
+    // 5. Tunnel service reported an unusable state after the pipe was reached.
+    if (hay.contains("state=failed") || hay.contains("state=disconnected"))
         && (verdict == "failed" || verdict == "cleanup_pending" || proxy_mode == "tun")
     {
         return ("service_unavailable".into(), false);
     }
-    // 5. Stale WinINet proxy left behind.
+    // 6. Stale WinINet proxy left behind.
     if failed_check("wininet_proxy")
         && (hay.contains("not expected loopback") || hay.contains("proxyenable=1"))
     {
         return ("wininet_stale_proxy".into(), true);
     }
-    // 6. Browser-compatibility proxy listener not ready.
+    // 7. Browser-compatibility proxy listener not ready.
     if failed_check("http_listener") || hay.contains("listener") && hay.contains("not accepting") {
         return ("compat_proxy_unready".into(), true);
     }
-    // 7. Connection is otherwise fine in a non-TUN mode: honest limited state.
+    // 8. Connection is otherwise fine in a non-TUN mode: honest limited state.
     if proxy_mode != "tun" && verdict != "failed" && verdict != "cleanup_pending" {
         if let Some(_err) = last_subscription_error {
             return ("subscription_fetch_failed".into(), false);
         }
         return ("browsers_fallback".into(), false);
     }
-    // 8. Degraded protected with no hard cause: extra probes not confirmed.
+    // 9. Degraded protected with no hard cause: extra probes not confirmed.
     if verdict == "protected_degraded" {
         return ("ipv6_quic_unverified".into(), false);
     }
@@ -10838,8 +10890,8 @@ fn diagnosis_user_text(code: &str) -> (&'static str, &'static str, &'static [&'s
         ),
         "service_unavailable" => (
             "Фоновая служба VPN не отвечает",
-            "Служба, которая управляет защитой всего компьютера, недоступна. Может помочь перезагрузка компьютера или переустановка DoodleRay.",
-            &["Перезагрузите компьютер", "Если не помогло — переустановите DoodleRay", "Сохраните отчет для поддержки"],
+            "Служба, которая управляет защитой всего компьютера, отсутствует или не запускается. DoodleRay может восстановить её сам.",
+            &["Нажмите «Починить автоматически» и подтвердите запрос Windows", "Затем подключитесь заново", "Если ремонт не завершился — сохраните отчёт для поддержки"],
         ),
         "wininet_stale_proxy" => (
             "Остались старые настройки прокси",
