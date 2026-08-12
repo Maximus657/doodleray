@@ -4524,8 +4524,14 @@ mod tests {
         let capabilities = app_api_client_capabilities();
         assert_eq!(capabilities["windows"], json!(cfg!(windows)));
         assert_eq!(capabilities["macos"], json!(cfg!(target_os = "macos")));
-        assert_eq!(capabilities["native_xray_xhttp"], json!(cfg!(windows)));
-        assert_eq!(capabilities["xray_balancer_v1"], json!(cfg!(windows)));
+        assert_eq!(
+            capabilities["native_xray_xhttp"],
+            json!(cfg!(windows) || cfg!(target_os = "macos"))
+        );
+        assert_eq!(
+            capabilities["xray_balancer_v1"],
+            json!(cfg!(windows) || cfg!(target_os = "macos"))
+        );
         assert_eq!(capabilities["native_hysteria2"], json!(cfg!(windows)));
         assert_eq!(
             capabilities["network_extension"],

@@ -1823,8 +1823,8 @@ pub(super) fn app_api_client_capabilities() -> serde_json::Value {
         "tun": true,
         "network_extension": cfg!(all(target_os = "macos", feature = "app-store")),
         "xray_reality": true,
-        "native_xray_xhttp": cfg!(windows),
-        "xray_balancer_v1": cfg!(windows),
+        "native_xray_xhttp": cfg!(windows) || cfg!(target_os = "macos"),
+        "xray_balancer_v1": cfg!(windows) || cfg!(target_os = "macos"),
         "native_hysteria2": cfg!(windows),
         "dns_hijack": true
     })
