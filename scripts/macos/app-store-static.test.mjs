@@ -89,10 +89,10 @@ test('App Store connection accepts only an authorized control-plane profile', ()
 
   assert.match(
     rust,
-    /async fn vpn_connect_authorized\(\s*request: ConnectRequest,\s*app: tauri::AppHandle,?\s*\) -> ConnectResult/,
+    /async fn vpn_connect_authorized\(\s*request: ConnectRequest,\s*app: tauri::AppHandle,\s*_connect_operation: u64,?\s*\) -> ConnectResult/,
   );
   assert.match(rust, /Direct VPN connection is unavailable in Mac App Store builds/);
-  assert.match(controlPlane, /vpn_connect_authorized\(connect_request, app\.clone\(\)\)\.await/);
+  assert.match(controlPlane, /vpn_connect_authorized\(connect_request, app\.clone\(\), connect_operation\)\.await/);
   assert.doesNotMatch(controlPlane, /vpn_connect\(connect_request, app\.clone\(\)\)\.await/);
 });
 

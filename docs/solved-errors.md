@@ -19,6 +19,42 @@
 - Fix: ran `cargo clean`, `flutter clean`, and cleared only Xcode `DerivedData`, restoring about 3 GiB without deleting source or user files.
 - Verification: `cargo test --manifest-path src-tauri/Cargo.toml --lib` passed 102 tests; both required `cargo check` commands completed successfully.
 
+## 2026-08-05 - Update advisory move left an unused App import
+
+- Scope: move the update advisory from the fixed legacy notification stack to
+  the Dashboard v6 card stack.
+- Symptom/command: `npx tsc --noEmit` reported TS6133 for `useTranslation` in
+  `src/App.tsx`.
+- Root cause: the only caller moved with the advisory component.
+- Fix: remove the obsolete import; localization remains owned by the new v6
+  advisory component.
+- Verification: `npx tsc --noEmit` passes.
+
+## 2026-08-05 - Split-routing source search started in the wrong workspace
+
+- Scope: diagnose a Windows domain exclusion that remained proxied after a
+  reconnect.
+- Symptom/command: the first source search reported missing `src` and
+  `src-tauri` directories.
+- Root cause: it ran from the MobileAPP workspace after reading a shared UX
+  skill instead of the DoodleRay PC repository.
+- Fix: reran the focused trace from the PC repository and followed the rule
+  into the Xray-TUN bridge configuration.
+- Verification: the new bridge-level unit test passes.
+
+## 2026-08-05 - Historical installer inspection used a v6-only storage path
+
+- Scope: trace the v5-to-v6 Windows installer migration that left a per-user
+  DoodleRay copy beside the Program Files installation.
+- Symptom/command: `git show v5.9.1:src-tauri/src/storage/mod.rs` reported
+  that the path did not exist in the v5.9.1 tag.
+- Root cause: the storage module layout changed after v5; that tag's relevant
+  migration contract is the bundled NSIS configuration, not the v6 module.
+- Fix: inspect the tagged installer configuration and the generated Tauri NSIS
+  template, then make the migration at the installer boundary.
+- Verification: `node --test scripts/release/check-workflows.test.mjs` covers
+  the legacy-user cleanup contract.
+
 
 ## 2026-07-03 - Windows protected fallback - app timeout and stale service failure could mask a valid recovery
 
@@ -499,3 +535,57 @@
   by the failed command.
 - Verification: `sed -n '1,120p' release/release.json` and the targeted
   version reads completed successfully.
+
+## 2026-08-05 - Windows service traffic counters were hard-coded to zero
+
+- Task scope: make the connected Dashboard throughput cards reflect actual
+  service-owned VPN traffic.
+- Symptom: a protected Windows Xray-TUN connection transferred traffic while
+  both Dashboard counter cards remained at `0.0 Mb/s`.
+- Root cause: `get_traffic_stats` returned zero before querying either runtime
+  whenever a Windows Tunnel Service engine was active.
+- Fix: route service-owned Xray to its existing local `StatsService` and
+  service-owned sing-box to its existing local Clash API; keep unavailable
+  runtime counters honestly at zero.
+- Verification: `cargo fmt --manifest-path src-tauri/Cargo.toml --all --
+  --check`, `git diff --check`, and `npm test` pass. The focused Cargo test is
+  queued for an environment with the pinned Rust registry/cache available;
+  this host has no local `reqwest` index entry and its registry request timed
+  out before compilation.
+
+## 2026-08-05 - Windows Kill Switch control advertised unavailable protection
+
+- Task scope: reconcile the desktop Kill Switch setting with the Windows
+  Tunnel Service's actual fail-closed capability.
+- Symptom: with the setting enabled, normal or failed tunnel teardown allowed
+  Windows to resume direct network traffic.
+- Root cause: the setting only fed sing-box `strict_route`; Windows already
+  enables that route/DNS hardening for every TUN session, and it does not
+  persist after the TUN process exits. No service-owned WFP policy existed.
+- Fix: removed the misleading desktop toggle and documented the exact WFP,
+  recovery, uninstaller, and physical-Windows proof gates required before
+  exposing a real Kill Switch.
+- Verification: `cargo fmt --manifest-path src-tauri/Cargo.toml --all --
+  --check`, `npx tsc --noEmit`, `npm test`, and `git diff --check` pass.
+
+## 2026-08-05 - Hysteria2 mapper test compared incompatible collection types
+
+- Scope: accept closed-control-plane Hysteria2 profiles in the Windows client.
+- Symptom/command: the focused Rust test failed with `E0308` while comparing
+  optional ALPN values.
+- Root cause: the assertion compared `Vec<String>` against a string-slice
+  collection.
+- Fix: assert against the mapper's actual `Vec<String>` representation.
+- Verification: `cargo test --manifest-path src-tauri/Cargo.toml --lib
+  app_api_hysteria2_profile -- --nocapture` passes.
+
+## 2026-08-05 - Windows QA cleanup command was interpreted by the remote shell
+
+- Scope: remove only the temporary local-transport QA artifacts from the
+  disposable Windows host.
+- Symptom/command: an inline PowerShell expression was parsed by the default
+  remote command shell before PowerShell received it.
+- Root cause: nested shell quoting did not preserve the wildcard expression.
+- Fix: pass the same narrowly scoped PowerShell cleanup through an encoded
+  command; it targets only processes and files under the temporary QA path.
+- Verification: the remote command returned `QA_ARTIFACTS_REMOVED`.

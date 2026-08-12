@@ -1,5 +1,6 @@
 #![cfg_attr(all(target_os = "macos", feature = "app-store"), allow(dead_code))]
 
+pub mod awg2;
 mod control_plane;
 pub mod runtime_guard;
 pub mod singbox;
@@ -34,11 +35,11 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, ToSocketAdd
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
-#[cfg(any(windows, all(target_os = "macos", feature = "app-store")))]
+#[cfg(windows)]
 use std::sync::atomic::AtomicBool;
 #[cfg(windows)]
 use std::sync::atomic::AtomicIsize;
-#[cfg(any(windows, all(target_os = "macos", feature = "app-store")))]
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
@@ -114,8 +115,7 @@ static QA_FRONTEND_SNAPSHOT: Mutex<Option<serde_json::Value>> = Mutex::new(None)
 
 static RUNTIME_OP_LOCK: LazyLock<tokio::sync::Mutex<()>> =
     LazyLock::new(|| tokio::sync::Mutex::new(()));
-#[cfg(all(target_os = "macos", feature = "app-store"))]
-static APP_STORE_CONNECT_CANCELLED: AtomicBool = AtomicBool::new(false);
+static AUTHORIZED_CONNECT_OPERATION: AtomicU64 = AtomicU64::new(0);
 #[cfg(windows)]
 static WINDOWS_CONNECT_CANCELLED: AtomicBool = AtomicBool::new(false);
 #[cfg(all(target_os = "macos", feature = "app-store"))]
@@ -131,6 +131,20 @@ static APP_STORE_DATAPLANE_PROBE: LazyLock<tokio::sync::Mutex<AppStoreDataplaneP
 #[cfg(all(target_os = "macos", feature = "app-store"))]
 static APP_STORE_CONNECT_STAGE: LazyLock<Mutex<String>> =
     LazyLock::new(|| Mutex::new("idle".into()));
+
+pub(crate) fn begin_authorized_connect_operation() -> u64 {
+    AUTHORIZED_CONNECT_OPERATION
+        .fetch_add(1, Ordering::SeqCst)
+        .wrapping_add(1)
+}
+
+pub(crate) fn authorized_connect_operation_is_current(operation: u64) -> bool {
+    AUTHORIZED_CONNECT_OPERATION.load(Ordering::SeqCst) == operation
+}
+
+fn cancel_authorized_connect_operation() {
+    AUTHORIZED_CONNECT_OPERATION.fetch_add(1, Ordering::SeqCst);
+}
 
 const WORKSHOP_API_HOSTS: &[&str] = &[
     "doodleraydb-doodleray-ic3y6k-c7350f-94-241-172-101.traefik.me",
@@ -296,12 +310,29 @@ fn ensure_tunnel_service_running() -> Result<(), String> {
 
     let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
         .map_err(|e| format!("Failed to open Windows service manager: {}", e))?;
-    let service = manager
-        .open_service(
-            tunnel_service::TUNNEL_SERVICE_NAME,
-            ServiceAccess::START | ServiceAccess::QUERY_STATUS,
-        )
-        .map_err(|e| format!("Tunnel service cannot be started: {}", e))?;
+    let service = match manager.open_service(
+        tunnel_service::TUNNEL_SERVICE_NAME,
+        ServiceAccess::START | ServiceAccess::QUERY_STATUS,
+    ) {
+        Ok(service) => service,
+        Err(first_error) => {
+            // A broken/incomplete update can leave the app installed without
+            // its required service. Repair it on the user's explicit Connect
+            // action instead of reporting its downstream adapter failures.
+            install_tunnel_service().map_err(|repair_error| {
+                format!(
+                    "Tunnel service is unavailable ({first_error}); automatic repair failed: {repair_error}"
+                )
+            })?;
+            ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
+                .map_err(|e| format!("Failed to reopen Windows service manager after repair: {e}"))?
+                .open_service(
+                    tunnel_service::TUNNEL_SERVICE_NAME,
+                    ServiceAccess::START | ServiceAccess::QUERY_STATUS,
+                )
+                .map_err(|e| format!("Tunnel service was not registered after repair: {e}"))?
+        }
+    };
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut start_requested = false;
     while Instant::now() < deadline {
@@ -2133,8 +2164,54 @@ fn xray_tun_bridge_dns_config_for_request(
     req: &ConnectRequest,
     direct_processes: &[String],
 ) -> serde_json::Value {
-    let (domains, suffixes, regexes) = routing_policy_singbox_dns_domains(req);
+    let (mut domains, mut suffixes) = custom_domain_rule_values(req, "direct");
+    let (policy_domains, policy_suffixes, regexes) = routing_policy_singbox_dns_domains(req);
+    domains.extend(policy_domains);
+    suffixes.extend(policy_suffixes);
     singbox_dns_config_with_direct_rules("realip", &domains, &suffixes, &regexes, direct_processes)
+}
+
+fn build_xray_tun_bridge_config(
+    req: &ConnectRequest,
+    interface_name: Option<&str>,
+) -> serde_json::Value {
+    let proxy_exes = process_rule_names(req, "proxy");
+    let direct_exes = process_rule_names(req, "direct");
+    let block_exes = process_rule_names(req, "block");
+    let (direct_domains, direct_domain_suffixes) = custom_domain_rule_values(req, "direct");
+
+    let mut rules = vec![
+        serde_json::json!({ "action": "sniff" }),
+        serde_json::json!({ "protocol": "dns", "action": "hijack-dns" }),
+        serde_json::json!({ "process_name": system_bypass_process_values(), "outbound": "direct" }),
+    ];
+    push_process_route(&mut rules, &block_exes, "block");
+    push_process_route(&mut rules, &direct_exes, "direct");
+    push_process_route(&mut rules, &proxy_exes, "proxy");
+    push_domain_route(
+        &mut rules,
+        &direct_domains,
+        &direct_domain_suffixes,
+        "direct",
+    );
+    push_routing_policy_singbox_rules(&mut rules, req);
+    if req.routing_policy.is_none() {
+        rules.push(serde_json::json!({ "ip_is_private": true, "outbound": "direct" }));
+    }
+    rules.push(xray_tun_bridge_udp_rule());
+
+    serde_json::json!({
+        "log": { "level": "warn" },
+        "dns": xray_tun_bridge_dns_config_for_request(req, &direct_exes),
+        "inbounds": [tun_inbound_value(req, interface_name, effective_tun_strict_route(req))],
+        "outbounds": xray_tun_bridge_outbounds(req),
+        "route": {
+            "auto_detect_interface": true,
+            "default_domain_resolver": "dns-direct",
+            "final": "proxy",
+            "rules": rules
+        }
+    })
 }
 
 const SYSTEM_BYPASS_PROCESS_NAMES: &[&str] = &[
@@ -2147,6 +2224,9 @@ const SYSTEM_BYPASS_PROCESS_NAMES: &[&str] = &[
 ];
 
 fn effective_tun_strict_route(req: &ConnectRequest) -> bool {
+    // This protects route/DNS handling only while the TUN is alive. It is not
+    // a kill switch: once the tunnel process exits, its routes and filters go
+    // away too. A real kill switch needs service-owned WFP policy.
     req.kill_switch || req.strict_route || routing_policy_is_full_tunnel(req) || cfg!(windows)
 }
 
@@ -2188,6 +2268,26 @@ fn process_rule_names(req: &ConnectRequest, action: &str) -> Vec<String> {
     names.sort();
     names.dedup();
     names
+}
+
+fn custom_domain_rule_values(req: &ConnectRequest, action: &str) -> (Vec<String>, Vec<String>) {
+    let mut domains = Vec::new();
+    let mut domain_suffixes = Vec::new();
+    for rule in &req.routing_rules {
+        if rule.rule_type != "domain" || rule.action != action {
+            continue;
+        }
+        let value = rule.value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        if let Some(suffix) = value.strip_prefix("*.") {
+            domain_suffixes.push(suffix.to_string());
+        } else {
+            domains.push(value.to_string());
+        }
+    }
+    (domains, domain_suffixes)
 }
 
 fn tun_direct_process_exclusions_need_raw_tun_path(req: &ConnectRequest) -> bool {
@@ -3196,16 +3296,30 @@ fn build_singbox_config(req: &ConnectRequest) -> serde_json::Value {
             "method": req.encryption.clone().unwrap_or("aes-256-gcm".into())
         }),
         "hysteria2" => {
+            let mut tls = serde_json::json!({
+                "enabled": true,
+                "server_name": req.sni.clone().unwrap_or(req.server_address.clone())
+            });
+            if let Some(ref alpn) = req.alpn {
+                if !alpn.is_empty() {
+                    tls["alpn"] = serde_json::json!(alpn);
+                }
+            }
+            if let Some(ref fingerprint) = req.fingerprint {
+                if !fingerprint.is_empty() {
+                    tls["utls"] = serde_json::json!({
+                        "enabled": true,
+                        "fingerprint": fingerprint,
+                    });
+                }
+            }
             let mut ob = serde_json::json!({
                 "type": "hysteria2",
                 "tag": "proxy",
                 "server": req.server_address,
                 "server_port": req.server_port,
                 "password": req.password.clone().unwrap_or_default(),
-                "tls": {
-                    "enabled": true,
-                    "server_name": req.sni.clone().unwrap_or(req.server_address.clone())
-                }
+                "tls": tls
             });
             if let Some(ref obfs) = req.obfs_type {
                 if !obfs.is_empty() {
@@ -3469,6 +3583,15 @@ mod tests {
     }
 
     #[test]
+    fn traffic_counter_matches_its_owning_engine() {
+        assert!(uses_singbox_traffic_stats("singbox-tun-service"));
+        assert!(uses_singbox_traffic_stats("singbox+app-proxy"));
+        assert!(uses_singbox_traffic_stats("singbox+app-proxy-service"));
+        assert!(!uses_singbox_traffic_stats("xray+tun-service"));
+        assert!(!uses_singbox_traffic_stats("xray+app-proxy-service"));
+    }
+
+    #[test]
     fn app_api_default_uses_the_canonical_mobile_contract() {
         assert_eq!(APP_API_DEFAULT_BASE_URL, "https://ddlvpn.lol/v1/mobile");
         assert_eq!(APP_API_CONNECTION_PROFILE_PATH, "/connection-profile");
@@ -3600,6 +3723,34 @@ mod tests {
         );
         assert!(report.can_auto_repair);
         assert!(report.copy_text.contains("repair_tried=true"));
+    }
+
+    #[test]
+    fn diagnosis_prioritizes_missing_service_over_its_downstream_failures() {
+        let health = diag_health(
+            "failed",
+            vec![],
+            vec![
+                health_check(
+                    "tunnel_service",
+                    "error",
+                    "Tunnel service",
+                    "IPC failed: Failed to connect to tunnel service pipe",
+                ),
+                health_check(
+                    "tun_adapter",
+                    "error",
+                    "TUN adapter",
+                    "DoodleRay Tunnel not found",
+                ),
+            ],
+        );
+        let report = build_network_diagnosis(&health, "tun", None, false);
+        assert_eq!(
+            report.primary_cause_code.as_deref(),
+            Some("service_unavailable")
+        );
+        assert!(report.can_auto_repair);
     }
 
     #[test]
@@ -4177,6 +4328,60 @@ mod tests {
     }
 
     #[test]
+    fn app_api_hysteria2_profile_maps_to_native_singbox_request() {
+        let native = json!({
+            "type": "hysteria2",
+            "security": "tls",
+            "connect_address": "203.0.113.44",
+            "port": 443,
+            "password": "auth-redacted",
+            "server_name": "hy2.example.test",
+            "fingerprint": "firefox",
+            "alpn": ["h3"],
+            "obfs_type": "salamander",
+            "obfs_password": "obfs-redacted",
+            "up_mbps": 20,
+            "down_mbps": 100
+        });
+
+        let mapped = app_api_profile_to_connect_request(&native, &sample_app_connect_request())
+            .expect("Hysteria2 profile should map");
+
+        assert_eq!(mapped.protocol, "hysteria2");
+        assert_eq!(mapped.transport, "udp");
+        assert_eq!(mapped.security, "tls");
+        assert_eq!(mapped.server_address, "203.0.113.44");
+        assert_eq!(mapped.server_port, 443);
+        assert_eq!(mapped.sni.as_deref(), Some("hy2.example.test"));
+        assert_eq!(mapped.alpn, Some(vec!["h3".into()]));
+        assert_eq!(mapped.obfs_type.as_deref(), Some("salamander"));
+        assert_eq!(mapped.up_mbps, Some(20));
+        assert!(!uses_xray_engine(&mapped));
+
+        let config = build_singbox_config(&mapped);
+        let outbound = &config["outbounds"][0];
+        assert_eq!(outbound["type"], json!("hysteria2"));
+        assert_eq!(outbound["tls"]["alpn"], json!(["h3"]));
+        assert_eq!(outbound["tls"]["utls"]["fingerprint"], json!("firefox"));
+        assert_eq!(outbound["obfs"]["type"], json!("salamander"));
+    }
+
+    #[test]
+    fn app_api_hysteria2_profile_rejects_missing_tls_authentication() {
+        let native = json!({
+            "type": "hysteria2",
+            "connect_address": "203.0.113.44",
+            "port": 443,
+            "server_name": "hy2.example.test"
+        });
+
+        let err = app_api_profile_to_connect_request(&native, &sample_app_connect_request())
+            .expect_err("Hysteria2 profile without auth must fail closed");
+
+        assert!(err.contains("missing authentication"));
+    }
+
+    #[test]
     fn app_api_profile_requires_routing_policy() {
         let lease = AppApiProfileLeaseResponse {
             schema_version: 2,
@@ -4323,7 +4528,11 @@ mod tests {
             capabilities["native_xray_xhttp"],
             json!(cfg!(windows) || cfg!(target_os = "macos"))
         );
-        assert_eq!(capabilities["xray_balancer_v1"], json!(cfg!(windows)));
+        assert_eq!(
+            capabilities["xray_balancer_v1"],
+            json!(cfg!(windows) || cfg!(target_os = "macos"))
+        );
+        assert_eq!(capabilities["native_hysteria2"], json!(cfg!(windows)));
         assert_eq!(
             capabilities["network_extension"],
             json!(cfg!(all(target_os = "macos", feature = "app-store")))
@@ -5124,7 +5333,7 @@ mod tests {
     }
 
     #[test]
-    fn singbox_tun_kill_switch_keeps_vpn_final_and_enables_strict_route() {
+    fn kill_switch_flag_only_enables_tun_routing_hardening() {
         let mut req = sample_request("tun");
         req.kill_switch = true;
         req.strict_route = false;
@@ -5404,6 +5613,50 @@ mod tests {
         assert!(json_array_contains_str(
             &rules[0]["domain_regex"],
             r"(^|\.)[^.]+\.ru$"
+        ));
+    }
+
+    #[test]
+    fn xray_tun_bridge_routes_custom_direct_domains_with_direct_dns() {
+        let mut req = sample_request("tun");
+        req.routing_rules = vec![
+            RoutingRuleRequest {
+                rule_type: "domain".into(),
+                value: "browserleaks.com".into(),
+                action: "direct".into(),
+            },
+            RoutingRuleRequest {
+                rule_type: "domain".into(),
+                value: "*.example.org".into(),
+                action: "direct".into(),
+            },
+        ];
+
+        let config = build_xray_tun_bridge_config(&req, Some("DoodleRay Tunnel"));
+        let rules = config["route"]["rules"].as_array().unwrap();
+        let direct_route = rules
+            .iter()
+            .find(|rule| {
+                rule["outbound"] == "direct"
+                    && json_array_contains_str(&rule["domain"], "browserleaks.com")
+            })
+            .expect("custom direct domain route missing");
+        assert!(json_array_contains_str(
+            &direct_route["domain_suffix"],
+            "example.org"
+        ));
+
+        let dns_rules = config["dns"]["rules"].as_array().unwrap();
+        let direct_dns = dns_rules
+            .iter()
+            .find(|rule| {
+                rule["server"] == "dns-direct"
+                    && json_array_contains_str(&rule["domain"], "browserleaks.com")
+            })
+            .expect("custom direct domain DNS rule missing");
+        assert!(json_array_contains_str(
+            &direct_dns["domain_suffix"],
+            "example.org"
         ));
     }
 
@@ -6184,13 +6437,27 @@ mod app_store_config_tests {
     use super::{
         app_store_connection_health_from_response, app_store_network_diagnostics_from_health,
         app_store_support_bundle_text, app_store_traffic_probe_quorum,
-        prepare_app_store_xray_config, rewrite_app_store_geodata_dependencies,
-        APP_STORE_DATAPLANE_HEALTH_TIMEOUT, APP_STORE_TRAFFIC_PROBE_TIMEOUT,
-        APP_STORE_TRAFFIC_VERIFY_TIMEOUT,
+        authorized_connect_operation_is_current, begin_authorized_connect_operation,
+        cancel_authorized_connect_operation, prepare_app_store_xray_config,
+        rewrite_app_store_geodata_dependencies, APP_STORE_DATAPLANE_HEALTH_TIMEOUT,
+        APP_STORE_TRAFFIC_PROBE_TIMEOUT, APP_STORE_TRAFFIC_VERIFY_TIMEOUT,
     };
     use crate::app_store_tunnel::TunnelResponse;
     use serde_json::json;
     use std::time::Duration;
+
+    #[test]
+    fn newer_app_store_operation_cancels_older_connect() {
+        let first = begin_authorized_connect_operation();
+        assert!(authorized_connect_operation_is_current(first));
+
+        let second = begin_authorized_connect_operation();
+        assert!(!authorized_connect_operation_is_current(first));
+        assert!(authorized_connect_operation_is_current(second));
+
+        cancel_authorized_connect_operation();
+        assert!(!authorized_connect_operation_is_current(second));
+    }
 
     #[test]
     fn network_extension_config_removes_local_api_and_proxy_inbounds() {
@@ -6471,9 +6738,15 @@ fn app_store_connect_stage() -> String {
 }
 
 #[cfg(all(target_os = "macos", feature = "app-store"))]
-async fn vpn_connect_app_store(request: ConnectRequest, app: tauri::AppHandle) -> ConnectResult {
+async fn vpn_connect_app_store(
+    request: ConnectRequest,
+    app: tauri::AppHandle,
+    connect_operation: u64,
+) -> ConnectResult {
     let _runtime_guard = RUNTIME_OP_LOCK.lock().await;
-    APP_STORE_CONNECT_CANCELLED.store(false, Ordering::SeqCst);
+    if !authorized_connect_operation_is_current(connect_operation) {
+        return cancelled_connect_result();
+    }
     set_app_store_connect_stage("preparing routing data");
     if let Ok(mut logs) = CONNECT_LOG.lock() {
         logs.clear();
@@ -6493,14 +6766,22 @@ async fn vpn_connect_app_store(request: ConnectRequest, app: tauri::AppHandle) -
         }
     };
     let config = build_app_store_xray_config(&request, asset_directory.as_deref());
+    if !authorized_connect_operation_is_current(connect_operation) {
+        return cancelled_connect_result();
+    }
     set_app_store_connect_stage("requesting Network Extension");
-    match wait_for_app_store_tunnel_connected(app_store_tunnel::start(config).await).await {
+    match wait_for_app_store_tunnel_connected(
+        app_store_tunnel::start(config).await,
+        connect_operation,
+    )
+    .await
+    {
         Ok(response) => {
             set_app_store_connect_stage("verifying VPN traffic");
             let verification = tokio::select! {
                 result = verify_app_store_tunnel_traffic() => result,
                 _ = async {
-                    while !APP_STORE_CONNECT_CANCELLED.load(Ordering::SeqCst) {
+                    while authorized_connect_operation_is_current(connect_operation) {
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     }
                 } => Err("connection cancelled".into()),
@@ -6553,13 +6834,22 @@ async fn vpn_connect_app_store(request: ConnectRequest, app: tauri::AppHandle) -
     }
 }
 
+pub(crate) fn cancelled_connect_result() -> ConnectResult {
+    ConnectResult {
+        success: false,
+        message: "VPN connection cancelled".into(),
+        health: None,
+    }
+}
+
 #[cfg(all(target_os = "macos", feature = "app-store"))]
 async fn wait_for_app_store_tunnel_connected(
     initial: Result<app_store_tunnel::TunnelResponse, String>,
+    connect_operation: u64,
 ) -> Result<app_store_tunnel::TunnelResponse, String> {
     let mut response = initial?;
     for attempt in 0..40 {
-        if APP_STORE_CONNECT_CANCELLED.load(Ordering::SeqCst) {
+        if !authorized_connect_operation_is_current(connect_operation) {
             return Err("VPN connection cancelled".into());
         }
         if response.success && app_store_tunnel::is_connected_status(&response.status) {
@@ -6765,10 +7055,11 @@ async fn export_app_store_support_bundle(failure_marker: Option<String>) -> Resu
 pub(crate) async fn vpn_connect_authorized(
     request: ConnectRequest,
     app: tauri::AppHandle,
+    _connect_operation: u64,
 ) -> ConnectResult {
     #[cfg(all(target_os = "macos", feature = "app-store"))]
     {
-        vpn_connect_app_store(request, app).await
+        vpn_connect_app_store(request, app, _connect_operation).await
     }
     #[cfg(not(all(target_os = "macos", feature = "app-store")))]
     {
@@ -6854,7 +7145,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
     }
     #[cfg(not(all(target_os = "macos", feature = "app-store")))]
     {
-        vpn_connect_authorized(request, app).await
+        vpn_connect_authorized(request, app, begin_authorized_connect_operation()).await
     }
 }
 
@@ -7136,37 +7427,7 @@ async fn vpn_connect_direct(mut request: ConnectRequest, app: tauri::AppHandle) 
 
         #[cfg(windows)]
         {
-            let proxy_exes = process_rule_names(&request, "proxy");
-            let direct_exes = process_rule_names(&request, "direct");
-            let block_exes = process_rule_names(&request, "block");
-
-            let mut tun_bridge_rules = vec![
-                serde_json::json!({ "action": "sniff" }),
-                serde_json::json!({ "protocol": "dns", "action": "hijack-dns" }),
-                serde_json::json!({ "process_name": system_bypass_process_values(), "outbound": "direct" }),
-            ];
-            push_process_route(&mut tun_bridge_rules, &block_exes, "block");
-            push_process_route(&mut tun_bridge_rules, &direct_exes, "direct");
-            push_process_route(&mut tun_bridge_rules, &proxy_exes, "proxy");
-            push_routing_policy_singbox_rules(&mut tun_bridge_rules, &request);
-            if request.routing_policy.is_none() {
-                tun_bridge_rules
-                    .push(serde_json::json!({ "ip_is_private": true, "outbound": "direct" }));
-            }
-            tun_bridge_rules.push(xray_tun_bridge_udp_rule());
-
-            let tun_bridge = serde_json::json!({
-                "log": { "level": "warn" },
-                "dns": xray_tun_bridge_dns_config_for_request(&request, &direct_exes),
-                "inbounds": [tun_inbound_value(&request, Some("DoodleRay Tunnel"), effective_tun_strict_route(&request))],
-                "outbounds": xray_tun_bridge_outbounds(&request),
-                "route": {
-                    "auto_detect_interface": true,
-                    "default_domain_resolver": "dns-direct",
-                    "final": "proxy",
-                    "rules": tun_bridge_rules
-                }
-            });
+            let tun_bridge = build_xray_tun_bridge_config(&request, Some("DoodleRay Tunnel"));
 
             vpn_log("starting Windows Tunnel Service graph (xray + sing-box TUN)...");
             return match tunnel_service_start(
@@ -7254,37 +7515,7 @@ async fn vpn_connect_direct(mut request: ConnectRequest, app: tauri::AppHandle) 
 
         // sing-box as TUN bridge → routes all traffic to xray's SOCKS5
         vpn_log("building TUN bridge config (sing-box -> xray SOCKS5)");
-        let proxy_exes = process_rule_names(&request, "proxy");
-        let direct_exes = process_rule_names(&request, "direct");
-        let block_exes = process_rule_names(&request, "block");
-
-        let mut tun_bridge_rules = vec![
-            serde_json::json!({ "action": "sniff" }),
-            serde_json::json!({ "protocol": "dns", "action": "hijack-dns" }),
-            serde_json::json!({ "process_name": system_bypass_process_values(), "outbound": "direct" }),
-        ];
-        push_process_route(&mut tun_bridge_rules, &block_exes, "block");
-        push_process_route(&mut tun_bridge_rules, &direct_exes, "direct");
-        push_process_route(&mut tun_bridge_rules, &proxy_exes, "proxy");
-        push_routing_policy_singbox_rules(&mut tun_bridge_rules, &request);
-        if request.routing_policy.is_none() {
-            tun_bridge_rules
-                .push(serde_json::json!({ "ip_is_private": true, "outbound": "direct" }));
-        }
-        tun_bridge_rules.push(xray_tun_bridge_udp_rule());
-
-        let tun_bridge = serde_json::json!({
-            "log": { "level": "warn" },
-            "dns": xray_tun_bridge_dns_config_for_request(&request, &direct_exes),
-            "inbounds": [tun_inbound_value(&request, None, effective_tun_strict_route(&request))],
-            "outbounds": xray_tun_bridge_outbounds(&request),
-            "route": {
-                "auto_detect_interface": true,
-                "default_domain_resolver": "dns-direct",
-                "final": "proxy",
-                "rules": tun_bridge_rules
-            }
-        });
+        let tun_bridge = build_xray_tun_bridge_config(&request, None);
 
         vpn_log("starting TUN bridge (elevated sing-box)...");
         let tun_debug_path = std::env::temp_dir()
@@ -7890,9 +8121,9 @@ async fn vpn_disconnect_app_store(app: tauri::AppHandle) -> ConnectResult {
 
 #[tauri::command]
 async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
+    cancel_authorized_connect_operation();
     #[cfg(all(target_os = "macos", feature = "app-store"))]
     {
-        APP_STORE_CONNECT_CANCELLED.store(true, Ordering::SeqCst);
         vpn_disconnect_app_store(app).await
     }
     #[cfg(not(all(target_os = "macos", feature = "app-store")))]
@@ -8819,6 +9050,17 @@ fn run_xray_statsquery(xray_exe: &Path, endpoint: &str) -> Option<String> {
     }
 }
 
+fn uses_singbox_traffic_stats(engine: &str) -> bool {
+    matches!(
+        engine,
+        "singbox"
+            | "singbox-tun"
+            | "singbox-tun-service"
+            | "singbox+app-proxy"
+            | "singbox+app-proxy-service"
+    )
+}
+
 /// Get real traffic stats — dispatches to xray or sing-box clash API based on active engine
 #[tauri::command]
 async fn get_traffic_stats() -> serde_json::Value {
@@ -8840,7 +9082,7 @@ async fn get_traffic_stats() -> serde_json::Value {
     }
 
     match engine.as_str() {
-        "singbox" | "singbox-tun" => {
+        engine if uses_singbox_traffic_stats(engine) => {
             // Query sing-box clash API: GET /connections → { downloadTotal, uploadTotal }
             let client = reqwest::Client::builder()
                 .no_proxy()
@@ -8892,10 +9134,6 @@ async fn get_traffic_stats() -> serde_json::Value {
             }
             serde_json::json!({ "download": 0, "upload": 0 })
         }
-        "xray+tun-service"
-        | "singbox-tun-service"
-        | "xray+app-proxy-service"
-        | "singbox+app-proxy-service" => serde_json::json!({ "download": 0, "upload": 0 }),
         _ => {
             // xray-core stats API
             let exe_dir = std::env::current_exe()
@@ -9582,7 +9820,7 @@ fn install_tunnel_service() -> Result<String, String> {
             return Ok("Tunnel service installed; it starts only while VPN is connecting".into());
         }
     }
-    Ok("Tunnel service install started. Please try connecting again in a few seconds.".into())
+    Err("Tunnel service installation did not complete within 10 seconds. Reinstall DoodleRay from the official installer, then try again.".into())
 }
 
 #[cfg(not(windows))]
@@ -10611,7 +10849,20 @@ fn classify_diagnosis_cause(
     {
         return ("wintun_ghost_adapter".into(), true);
     }
-    // 2. Adapter missing / IPv4 readiness.
+    // 2. The service is the root owner of the adapter and local listeners.
+    // Report its absence before its expected downstream failures.
+    if (health
+        .checks
+        .iter()
+        .any(|c| c.code == "tunnel_service" && c.severity == "error")
+        || hay.contains("failed to connect to tunnel service pipe")
+        || hay.contains("service is not installed")
+        || hay.contains("did not respond"))
+        && (verdict == "failed" || verdict == "cleanup_pending" || proxy_mode == "tun")
+    {
+        return ("service_unavailable".into(), true);
+    }
+    // 3. Adapter missing / IPv4 readiness.
     if hay.contains("adapter is missing")
         || hay.contains("ipv4 readiness failed")
         || hay.contains("adapter did not become ready")
@@ -10619,7 +10870,7 @@ fn classify_diagnosis_cause(
     {
         return ("adapter_missing".into(), true);
     }
-    // 3. Service-owned core died (fake-green class).
+    // 4. Service-owned core died (fake-green class).
     if hay.contains("sing-box exited")
         || hay.contains("sing-box process is not running")
         || hay.contains("process is not running")
@@ -10627,37 +10878,30 @@ fn classify_diagnosis_cause(
     {
         return ("core_process_dead".into(), true);
     }
-    // 4. Tunnel service unreachable/dead.
-    if (health
-        .checks
-        .iter()
-        .any(|c| c.code == "tunnel_service" && c.severity == "error")
-        || hay.contains("state=failed")
-        || hay.contains("state=disconnected")
-        || hay.contains("did not respond")
-        || hay.contains("service is not installed"))
+    // 5. Tunnel service reported an unusable state after the pipe was reached.
+    if (hay.contains("state=failed") || hay.contains("state=disconnected"))
         && (verdict == "failed" || verdict == "cleanup_pending" || proxy_mode == "tun")
     {
         return ("service_unavailable".into(), false);
     }
-    // 5. Stale WinINet proxy left behind.
+    // 6. Stale WinINet proxy left behind.
     if failed_check("wininet_proxy")
         && (hay.contains("not expected loopback") || hay.contains("proxyenable=1"))
     {
         return ("wininet_stale_proxy".into(), true);
     }
-    // 6. Browser-compatibility proxy listener not ready.
+    // 7. Browser-compatibility proxy listener not ready.
     if failed_check("http_listener") || hay.contains("listener") && hay.contains("not accepting") {
         return ("compat_proxy_unready".into(), true);
     }
-    // 7. Connection is otherwise fine in a non-TUN mode: honest limited state.
+    // 8. Connection is otherwise fine in a non-TUN mode: honest limited state.
     if proxy_mode != "tun" && verdict != "failed" && verdict != "cleanup_pending" {
         if let Some(_err) = last_subscription_error {
             return ("subscription_fetch_failed".into(), false);
         }
         return ("browsers_fallback".into(), false);
     }
-    // 8. Degraded protected with no hard cause: extra probes not confirmed.
+    // 9. Degraded protected with no hard cause: extra probes not confirmed.
     if verdict == "protected_degraded" {
         return ("ipv6_quic_unverified".into(), false);
     }
@@ -10700,8 +10944,8 @@ fn diagnosis_user_text(code: &str) -> (&'static str, &'static str, &'static [&'s
         ),
         "service_unavailable" => (
             "Фоновая служба VPN не отвечает",
-            "Служба, которая управляет защитой всего компьютера, недоступна. Может помочь перезагрузка компьютера или переустановка DoodleRay.",
-            &["Перезагрузите компьютер", "Если не помогло — переустановите DoodleRay", "Сохраните отчет для поддержки"],
+            "Служба, которая управляет защитой всего компьютера, отсутствует или не запускается. DoodleRay может восстановить её сам.",
+            &["Нажмите «Починить автоматически» и подтвердите запрос Windows", "Затем подключитесь заново", "Если ремонт не завершился — сохраните отчёт для поддержки"],
         ),
         "wininet_stale_proxy" => (
             "Остались старые настройки прокси",

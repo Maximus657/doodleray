@@ -112,6 +112,19 @@ test('legacy Windows QA installers do not depend on the retired repository', () 
   assert.equal((qa.match(/doodleray\.clickflare\.click\/legacy\/windows\//g) ?? []).length, 2);
 });
 
+test('per-machine NSIS retires a confirmed legacy per-user DoodleRay install safely', () => {
+  const hooks = readFileSync(join(repositoryRoot, 'src-tauri/nsis-hooks.nsh'), 'utf8');
+  assert.match(hooks, /ReadRegStr \$0 HKCU "Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Uninstall\\\\DoodleRay" "InstallLocation"/);
+  assert.match(hooks, /\$0\\\\DoodleRay\.exe/);
+  assert.match(hooks, /\$0\\\\uninstall\.exe/);
+  assert.match(hooks, /nsis_tauri_utils::RunAsUser "\$0\\\\uninstall\.exe" "\/S"/);
+  assert.match(hooks, /!insertmacro DoodleRayRemoveLegacyUserInstall/);
+  assert.match(hooks, /doodleray_legacy_uninstall_wait:/);
+  assert.match(hooks, /Abort "Legacy per-user DoodleRay cleanup timed out/);
+  assert.doesNotMatch(hooks, /ExecWait[^\n]*\$0\\\\uninstall\.exe/);
+  assert.doesNotMatch(hooks, /RMDir\s+\/r[^\n]*\$0/);
+});
+
 test('shipping updater remains on the first-party release channel', () => {
   const config = JSON.parse(readFileSync(join(repositoryRoot, 'src-tauri/tauri.conf.json'), 'utf8'));
   assert.deepEqual(config.plugins.updater.endpoints, [

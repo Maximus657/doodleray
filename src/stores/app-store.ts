@@ -142,6 +142,7 @@ export interface AppState {
   alwaysRunAdmin: boolean;
   autoConnectOnStartup: boolean;
   availableUpdate: string | null;
+  backendUpdateMinimumVersion: string | null;
   updatePhase: AppUpdatePhase;
   updateStatus: string;
   updateProgress: number | null;
@@ -419,6 +420,7 @@ function compactStateForPersist(state: AppState): Partial<AppState> {
     'totalUp',
     'logs',
     'availableUpdate',
+    'backendUpdateMinimumVersion',
     'updatePhase',
     'updateStatus',
     'updateProgress',
@@ -507,6 +509,7 @@ export const useAppStore = create<AppState>()(
       alwaysRunAdmin: false,
       autoConnectOnStartup: false,
       availableUpdate: null,
+      backendUpdateMinimumVersion: null,
       updatePhase: 'idle',
       updateStatus: '',
       updateProgress: null,

@@ -30,6 +30,14 @@ const UPDATE_INSTALL_TIMEOUT_MS = 4 * 60_000;
 const UPDATE_PREPARE_STEP_TIMEOUT_MS = 8_000;
 const UPDATE_PROGRESS_MIN_INTERVAL_MS = 250;
 
+export function updatePhaseFromStatus(status: string): 'installing' | 'downloading' {
+  return status === 'updateClosingProcesses' ||
+    status === 'updatePreparingInstall' ||
+    status === 'updateInstallingRestarting'
+    ? 'installing'
+    : 'downloading';
+}
+
 function timeoutError(label: string, timeoutMs: number) {
   return new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s`);
 }
