@@ -1,8 +1,10 @@
 use super::{
-    default_system_proxy_mode, default_xray_api_port, ping_server_profile, record_connect_timing,
-    redact_support_line, reset_connect_timings, system_proxy_fetch_client, vpn_connect_authorized,
-    vpn_disconnect, ConnectRequest, ConnectResult, PingResult, RoutingRuleRequest,
-    APP_PRODUCT_NAME, APP_ROUTING_ROOT_PUBLIC_KEY_BASE64,
+    authorized_connect_operation_is_current, begin_authorized_connect_operation,
+    cancelled_connect_result, default_system_proxy_mode, default_xray_api_port,
+    ping_server_profile, record_connect_timing, redact_support_line, reset_connect_timings,
+    system_proxy_fetch_client, vpn_connect_authorized, vpn_disconnect, ConnectRequest,
+    ConnectResult, PingResult, RoutingRuleRequest, APP_PRODUCT_NAME,
+    APP_ROUTING_ROOT_PUBLIC_KEY_BASE64,
 };
 #[cfg(windows)]
 use super::{ensure_tunnel_service_running, ipc};
@@ -1821,7 +1823,7 @@ pub(super) fn app_api_client_capabilities() -> serde_json::Value {
         "tun": true,
         "network_extension": cfg!(all(target_os = "macos", feature = "app-store")),
         "xray_reality": true,
-        "native_xray_xhttp": cfg!(windows) || cfg!(target_os = "macos"),
+        "native_xray_xhttp": cfg!(windows),
         "xray_balancer_v1": cfg!(windows),
         "native_hysteria2": cfg!(windows),
         "dns_hijack": true
@@ -2207,6 +2209,7 @@ async fn app_api_connect_with_lease(
     lease: &AppApiProfileLeaseResponse,
     request: &AppConnectLocationRequest,
     app: tauri::AppHandle,
+    connect_operation: u64,
 ) -> ConnectResult {
     let connect_request = match app_api_connect_request_from_lease(lease, request) {
         Ok(request) => request,
@@ -2218,7 +2221,7 @@ async fn app_api_connect_with_lease(
             }
         }
     };
-    vpn_connect_authorized(connect_request, app.clone()).await
+    vpn_connect_authorized(connect_request, app.clone(), connect_operation).await
 }
 
 async fn app_api_refresh_cached_location_profile(
@@ -2267,6 +2270,7 @@ pub(super) async fn app_connect_location(
             health: None,
         };
     }
+    let connect_operation = begin_authorized_connect_operation();
     let session = match app_api_load_session() {
         Ok(Some(session)) => session,
         Ok(None) => {
@@ -2319,9 +2323,14 @@ pub(super) async fn app_connect_location(
     };
     let mut last_failure = None;
     for location_id in location_ids {
+        if !authorized_connect_operation_is_current(connect_operation) {
+            return cancelled_connect_result();
+        }
         if let Ok(Some(cached_lease)) = app_api_cached_profile(&session, &location_id) {
             let bringup_started = Instant::now();
-            let result = app_api_connect_with_lease(&cached_lease, &request, app.clone()).await;
+            let result =
+                app_api_connect_with_lease(&cached_lease, &request, app.clone(), connect_operation)
+                    .await;
             record_connect_timing("cache_bringup", bringup_started);
             if result.success {
                 let refresh_session = session.clone();
@@ -2336,12 +2345,18 @@ pub(super) async fn app_connect_location(
                 record_connect_timing("total_to_ui", connect_started);
                 return result;
             }
+            if !authorized_connect_operation_is_current(connect_operation) {
+                return result;
+            }
         }
 
         let started = Instant::now();
         let lease = match app_api_connection_profile(&session, &location_id, selection_mode).await {
             Ok(lease) => lease,
             Err(error) => {
+                if !authorized_connect_operation_is_current(connect_operation) {
+                    return cancelled_connect_result();
+                }
                 let terminal = app_api_profile_error_is_terminal(&error);
                 last_failure = Some(ConnectResult {
                     success: false,
@@ -2354,9 +2369,13 @@ pub(super) async fn app_connect_location(
                 continue;
             }
         };
+        if !authorized_connect_operation_is_current(connect_operation) {
+            return cancelled_connect_result();
+        }
         record_connect_timing("lease_fetch", started);
         let bringup_started = Instant::now();
-        let result = app_api_connect_with_lease(&lease, &request, app.clone()).await;
+        let result =
+            app_api_connect_with_lease(&lease, &request, app.clone(), connect_operation).await;
         record_connect_timing("bringup", bringup_started);
         record_connect_timing("total", connect_started);
         let result_body = app_api_connection_result_body(

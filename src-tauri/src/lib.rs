@@ -35,11 +35,11 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, ToSocketAdd
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
-#[cfg(any(windows, all(target_os = "macos", feature = "app-store")))]
+#[cfg(windows)]
 use std::sync::atomic::AtomicBool;
 #[cfg(windows)]
 use std::sync::atomic::AtomicIsize;
-#[cfg(any(windows, all(target_os = "macos", feature = "app-store")))]
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
@@ -115,8 +115,7 @@ static QA_FRONTEND_SNAPSHOT: Mutex<Option<serde_json::Value>> = Mutex::new(None)
 
 static RUNTIME_OP_LOCK: LazyLock<tokio::sync::Mutex<()>> =
     LazyLock::new(|| tokio::sync::Mutex::new(()));
-#[cfg(all(target_os = "macos", feature = "app-store"))]
-static APP_STORE_CONNECT_CANCELLED: AtomicBool = AtomicBool::new(false);
+static AUTHORIZED_CONNECT_OPERATION: AtomicU64 = AtomicU64::new(0);
 #[cfg(windows)]
 static WINDOWS_CONNECT_CANCELLED: AtomicBool = AtomicBool::new(false);
 #[cfg(all(target_os = "macos", feature = "app-store"))]
@@ -132,6 +131,20 @@ static APP_STORE_DATAPLANE_PROBE: LazyLock<tokio::sync::Mutex<AppStoreDataplaneP
 #[cfg(all(target_os = "macos", feature = "app-store"))]
 static APP_STORE_CONNECT_STAGE: LazyLock<Mutex<String>> =
     LazyLock::new(|| Mutex::new("idle".into()));
+
+pub(crate) fn begin_authorized_connect_operation() -> u64 {
+    AUTHORIZED_CONNECT_OPERATION
+        .fetch_add(1, Ordering::SeqCst)
+        .wrapping_add(1)
+}
+
+pub(crate) fn authorized_connect_operation_is_current(operation: u64) -> bool {
+    AUTHORIZED_CONNECT_OPERATION.load(Ordering::SeqCst) == operation
+}
+
+fn cancel_authorized_connect_operation() {
+    AUTHORIZED_CONNECT_OPERATION.fetch_add(1, Ordering::SeqCst);
+}
 
 const WORKSHOP_API_HOSTS: &[&str] = &[
     "doodleraydb-doodleray-ic3y6k-c7350f-94-241-172-101.traefik.me",
@@ -4511,10 +4524,7 @@ mod tests {
         let capabilities = app_api_client_capabilities();
         assert_eq!(capabilities["windows"], json!(cfg!(windows)));
         assert_eq!(capabilities["macos"], json!(cfg!(target_os = "macos")));
-        assert_eq!(
-            capabilities["native_xray_xhttp"],
-            json!(cfg!(windows) || cfg!(target_os = "macos"))
-        );
+        assert_eq!(capabilities["native_xray_xhttp"], json!(cfg!(windows)));
         assert_eq!(capabilities["xray_balancer_v1"], json!(cfg!(windows)));
         assert_eq!(capabilities["native_hysteria2"], json!(cfg!(windows)));
         assert_eq!(
@@ -6421,13 +6431,27 @@ mod app_store_config_tests {
     use super::{
         app_store_connection_health_from_response, app_store_network_diagnostics_from_health,
         app_store_support_bundle_text, app_store_traffic_probe_quorum,
-        prepare_app_store_xray_config, rewrite_app_store_geodata_dependencies,
-        APP_STORE_DATAPLANE_HEALTH_TIMEOUT, APP_STORE_TRAFFIC_PROBE_TIMEOUT,
-        APP_STORE_TRAFFIC_VERIFY_TIMEOUT,
+        authorized_connect_operation_is_current, begin_authorized_connect_operation,
+        cancel_authorized_connect_operation, prepare_app_store_xray_config,
+        rewrite_app_store_geodata_dependencies, APP_STORE_DATAPLANE_HEALTH_TIMEOUT,
+        APP_STORE_TRAFFIC_PROBE_TIMEOUT, APP_STORE_TRAFFIC_VERIFY_TIMEOUT,
     };
     use crate::app_store_tunnel::TunnelResponse;
     use serde_json::json;
     use std::time::Duration;
+
+    #[test]
+    fn newer_app_store_operation_cancels_older_connect() {
+        let first = begin_authorized_connect_operation();
+        assert!(authorized_connect_operation_is_current(first));
+
+        let second = begin_authorized_connect_operation();
+        assert!(!authorized_connect_operation_is_current(first));
+        assert!(authorized_connect_operation_is_current(second));
+
+        cancel_authorized_connect_operation();
+        assert!(!authorized_connect_operation_is_current(second));
+    }
 
     #[test]
     fn network_extension_config_removes_local_api_and_proxy_inbounds() {
@@ -6708,9 +6732,15 @@ fn app_store_connect_stage() -> String {
 }
 
 #[cfg(all(target_os = "macos", feature = "app-store"))]
-async fn vpn_connect_app_store(request: ConnectRequest, app: tauri::AppHandle) -> ConnectResult {
+async fn vpn_connect_app_store(
+    request: ConnectRequest,
+    app: tauri::AppHandle,
+    connect_operation: u64,
+) -> ConnectResult {
     let _runtime_guard = RUNTIME_OP_LOCK.lock().await;
-    APP_STORE_CONNECT_CANCELLED.store(false, Ordering::SeqCst);
+    if !authorized_connect_operation_is_current(connect_operation) {
+        return cancelled_connect_result();
+    }
     set_app_store_connect_stage("preparing routing data");
     if let Ok(mut logs) = CONNECT_LOG.lock() {
         logs.clear();
@@ -6730,14 +6760,22 @@ async fn vpn_connect_app_store(request: ConnectRequest, app: tauri::AppHandle) -
         }
     };
     let config = build_app_store_xray_config(&request, asset_directory.as_deref());
+    if !authorized_connect_operation_is_current(connect_operation) {
+        return cancelled_connect_result();
+    }
     set_app_store_connect_stage("requesting Network Extension");
-    match wait_for_app_store_tunnel_connected(app_store_tunnel::start(config).await).await {
+    match wait_for_app_store_tunnel_connected(
+        app_store_tunnel::start(config).await,
+        connect_operation,
+    )
+    .await
+    {
         Ok(response) => {
             set_app_store_connect_stage("verifying VPN traffic");
             let verification = tokio::select! {
                 result = verify_app_store_tunnel_traffic() => result,
                 _ = async {
-                    while !APP_STORE_CONNECT_CANCELLED.load(Ordering::SeqCst) {
+                    while authorized_connect_operation_is_current(connect_operation) {
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     }
                 } => Err("connection cancelled".into()),
@@ -6790,13 +6828,22 @@ async fn vpn_connect_app_store(request: ConnectRequest, app: tauri::AppHandle) -
     }
 }
 
+pub(crate) fn cancelled_connect_result() -> ConnectResult {
+    ConnectResult {
+        success: false,
+        message: "VPN connection cancelled".into(),
+        health: None,
+    }
+}
+
 #[cfg(all(target_os = "macos", feature = "app-store"))]
 async fn wait_for_app_store_tunnel_connected(
     initial: Result<app_store_tunnel::TunnelResponse, String>,
+    connect_operation: u64,
 ) -> Result<app_store_tunnel::TunnelResponse, String> {
     let mut response = initial?;
     for attempt in 0..40 {
-        if APP_STORE_CONNECT_CANCELLED.load(Ordering::SeqCst) {
+        if !authorized_connect_operation_is_current(connect_operation) {
             return Err("VPN connection cancelled".into());
         }
         if response.success && app_store_tunnel::is_connected_status(&response.status) {
@@ -7002,10 +7049,11 @@ async fn export_app_store_support_bundle(failure_marker: Option<String>) -> Resu
 pub(crate) async fn vpn_connect_authorized(
     request: ConnectRequest,
     app: tauri::AppHandle,
+    _connect_operation: u64,
 ) -> ConnectResult {
     #[cfg(all(target_os = "macos", feature = "app-store"))]
     {
-        vpn_connect_app_store(request, app).await
+        vpn_connect_app_store(request, app, _connect_operation).await
     }
     #[cfg(not(all(target_os = "macos", feature = "app-store")))]
     {
@@ -7091,7 +7139,7 @@ async fn vpn_connect(request: ConnectRequest, app: tauri::AppHandle) -> ConnectR
     }
     #[cfg(not(all(target_os = "macos", feature = "app-store")))]
     {
-        vpn_connect_authorized(request, app).await
+        vpn_connect_authorized(request, app, begin_authorized_connect_operation()).await
     }
 }
 
@@ -8067,9 +8115,9 @@ async fn vpn_disconnect_app_store(app: tauri::AppHandle) -> ConnectResult {
 
 #[tauri::command]
 async fn vpn_disconnect(app: tauri::AppHandle) -> ConnectResult {
+    cancel_authorized_connect_operation();
     #[cfg(all(target_os = "macos", feature = "app-store"))]
     {
-        APP_STORE_CONNECT_CANCELLED.store(true, Ordering::SeqCst);
         vpn_disconnect_app_store(app).await
     }
     #[cfg(not(all(target_os = "macos", feature = "app-store")))]
