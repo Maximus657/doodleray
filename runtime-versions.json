@@ -21,25 +21,25 @@
     "commit": "80263da83e96b2972455b0a94b13ee1a10e51391"
   },
   "sing_box": {
-    "version": "1.13.15",
+    "version": "1.13.18",
     "assets": {
       "windows_amd64": {
-        "name": "sing-box-1.13.15-windows-amd64.zip",
-        "sha256": "599b296f6e57511d36d2a6f3011aed1a86fa98418578bbb06bd6dc241b5d8877"
+        "name": "sing-box-1.13.18-windows-amd64.zip",
+        "sha256": "65045155ffdc506334f01a4353889657ddfc024f72b394081a9abaef34dfbef3"
       },
       "darwin_arm64": {
-        "name": "sing-box-1.13.15-darwin-arm64.tar.gz",
-        "sha256": "3452d866834c9572389e5ca73e60d4ee45a7d5b79332188c9a9e533c5fd40a6d"
+        "name": "sing-box-1.13.18-darwin-arm64.tar.gz",
+        "sha256": "9fbc05946b584423457a2778035e0cee2d9b239a4af5ae1932d9b79991149107"
       },
       "darwin_amd64": {
-        "name": "sing-box-1.13.15-darwin-amd64.tar.gz",
-        "sha256": "817e04f90f941b718fedd965ff05bfe72abfcc62952888b01751a6dec5547e14"
+        "name": "sing-box-1.13.18-darwin-amd64.tar.gz",
+        "sha256": "500f0decfc21f7cdb2aaa4fe193b7857a41b07c38ee3a0b15bd53e3c7af3671c"
       }
     }
   },
   "gomobile": {
-    "version": "v0.0.0-20260730202154-c700fe717e6e",
-    "sum": "h1:v5PGTbI7uer7FhpDeGryGytfbI8t7CDWkKukozvIsNU="
+    "version": "v0.0.0-20260816165457-f98cc9b3c733",
+    "sum": "h1:XKMObIaAElmkdO+4SQh1iCfzwciZHJi1OblnX9BED9k="
   },
   "wintun": {
     "version": "0.14.1",
